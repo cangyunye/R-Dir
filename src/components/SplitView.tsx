@@ -7,6 +7,7 @@ import { FileList, type RenameState } from "@/components/FileList";
 import { PropertiesBar } from "@/components/PropertiesBar";
 import { TagView } from "@/components/TagView";
 import type { FileEntry, SortKey } from "@/lib/types";
+import type { OpenerItem, ShellItem } from "@/lib/openerApi";
 
 export interface PaneHandlers {
   onSort: (paneId: number, key: SortKey) => void;
@@ -16,6 +17,15 @@ export interface PaneHandlers {
   onOpen: (paneId: number, entry: FileEntry) => void;
   /** 鼠标中键点击目录：在新建标签页中打开该目录 */
   onMiddleOpen: (paneId: number, path: string) => void;
+  /** v0.4 打开方式：用指定工具打开路径 */
+  /** v0.4 打开方式 / 终端数据 */
+  openers: OpenerItem[];
+  shells: ShellItem[];
+  /** v0.4 在此处打开终端 */
+  onOpenWith: (toolId: string, path: string) => void;
+  onOpenTerminal: (shellId: string, path: string) => void;
+  /** v0.4 添加自定义打开方式（文件选择器 + 命名） */
+  onAddCustomOpener: () => Promise<void>;
   onCopy: (paneId: number, paths: string[]) => void;
   onCut: (paneId: number, paths: string[]) => void;
   onDelete: (paneId: number, paths: string[]) => void;
@@ -104,6 +114,12 @@ function PaneView({
         onClearSelection={() => h.onClearSelection(pane.id)}
         onOpen={(e) => h.onOpen(pane.id, e)}
         onMiddleOpen={(p) => h.onMiddleOpen(pane.id, p)}
+        currentDir={pane.path}
+        openers={h.openers}
+        shells={h.shells}
+        onOpenWith={(toolId, p) => h.onOpenWith(toolId, p)}
+        onOpenTerminal={(shellId, p) => h.onOpenTerminal(shellId, p)}
+        onAddCustomOpener={h.onAddCustomOpener}
         onCopy={(p) => h.onCopy(pane.id, p)}
         onCut={(p) => h.onCut(pane.id, p)}
         onDelete={(p) => h.onDelete(pane.id, p)}

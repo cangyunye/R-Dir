@@ -3,6 +3,16 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import {
+  listOpeners as apiListOpeners,
+  openWith as apiOpenWith,
+  addCustomOpener as apiAddCustomOpener,
+  listShells as apiListShells,
+  openTerminal as apiOpenTerminal,
+  type OpenerItem,
+  type ShellItem,
+} from "@/lib/openerApi";
 import type {
   ClipboardState,
   FileEntry,
@@ -323,6 +333,52 @@ export default function App() {
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
     noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
   }, []);
+
+  // ── v0.4 打开方式 / 终端 ──
+  const [openers, setOpeners] = useState<OpenerItem[]>([]);
+  const [shells, setShells] = useState<ShellItem[]>([]);
+  const refreshOpeners = useCallback(() => {
+    void apiListOpeners()
+      .then(setOpeners)
+      .catch((e) => showError(`检测打开方式失败：${e}`));
+  }, [showError]);
+  const refreshShells = useCallback(() => {
+    void apiListShells()
+      .then(setShells)
+      .catch((e) => showError(`检测终端失败：${e}`));
+  }, [showError]);
+  useEffect(() => {
+    refreshOpeners();
+    refreshShells();
+  }, [refreshOpeners, refreshShells]);
+  const handleOpenWith = useCallback(
+    (toolId: string, path: string) => {
+      void apiOpenWith(toolId, path).catch((e) => showError(`打开失败：${e}`));
+    },
+    [showError],
+  );
+  const handleOpenTerminal = useCallback(
+    (shellId: string, path: string) => {
+      void apiOpenTerminal(shellId, path).catch((e) => showError(`打开终端失败：${e}`));
+    },
+    [showError],
+  );
+  const handleAddCustomOpener = useCallback(async () => {
+    try {
+      const picked = await openDialog({
+        title: "选择可执行文件",
+        multiple: false,
+        directory: false,
+      });
+      if (!picked || Array.isArray(picked)) return;
+      const name = window.prompt("为该程序输入显示名称：", "");
+      if (!name || !name.trim()) return;
+      await apiAddCustomOpener(name.trim(), picked, []);
+      refreshOpeners();
+    } catch (e) {
+      showError(`添加打开方式失败：${e}`);
+    }
+  }, [refreshOpeners, showError]);
 
   // 主题同步
   useEffect(() => {
@@ -1696,6 +1752,11 @@ export default function App() {
     onClearSelection: clearSelection,
     onOpen: openEntry,
     onMiddleOpen: (_paneId, path) => newTab(path),
+    openers,
+    shells,
+    onOpenWith: handleOpenWith,
+    onOpenTerminal: handleOpenTerminal,
+    onAddCustomOpener: handleAddCustomOpener,
     onCopy: (paneId, paths) => doCopy(paneId, paths),
     onCut: (paneId, paths) => doCut(paneId, paths),
     onDelete: (paneId, paths) => void doDelete(paneId, paths),

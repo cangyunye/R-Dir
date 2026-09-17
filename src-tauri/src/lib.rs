@@ -8,6 +8,9 @@ mod volumes;
 #[cfg(feature = "sftp")]
 mod sftp;
 
+mod opener;
+mod filetypes;
+
 use find::FindEntry;
 use fs_ops::FileEntry;
 use search::SearchMatch;
@@ -695,6 +698,15 @@ pub fn run() {
             sftp_create_file,
             sftp_delete,
             sftp_rename,
+            // v0.4 打开方式 / 终端插件
+            opener::list_openers,
+            opener::open_with,
+            opener::add_custom_opener,
+            opener::remove_custom_opener,
+            opener::list_shells,
+            opener::open_terminal,
+            filetypes::get_filetypes,
+            filetypes::refresh_filetypes,
             // 会话保存 / 恢复
             session_save,
             session_load,
@@ -720,6 +732,15 @@ pub fn run() {
             create_file,
             search_content,
             find_files,
+            // v0.4 打开方式 / 终端插件
+            opener::list_openers,
+            opener::open_with,
+            opener::add_custom_opener,
+            opener::remove_custom_opener,
+            opener::list_shells,
+            opener::open_terminal,
+            filetypes::get_filetypes,
+            filetypes::refresh_filetypes,
             // 会话保存 / 恢复
             session_save,
             session_load,
@@ -728,6 +749,7 @@ pub fn run() {
     }
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
