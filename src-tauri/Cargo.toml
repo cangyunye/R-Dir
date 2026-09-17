@@ -1,11 +1,16 @@
 [package]
 name = "rust-file-manager"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+# 编译二进制名：与 productName 一致，保证 dev 模式 Dock/任务栏也显示 R-Dir
+name = "R-Dir"
+path = "src/main.rs"
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
@@ -27,6 +32,20 @@ dirs = "5"
 trash = "5"
 regex = "1"
 ignore = "0.4"
+# SFTP 远程文件系统插件（内置、可编译期拔出）：去掉 sftp feature 即不编译任何远程代码
+russh = { version = "0.45", optional = true }
+russh-keys = { version = "0.45", optional = true }
+async-trait = "0.1"
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
+# 密码加密存储（master-key，AES-256-GCM；密钥仅存内存）
+aes-gcm = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+base64 = { version = "0.22", optional = true }
+rand = { version = "0.8", optional = true }
+
+[features]
+default = ["sftp"]
+sftp = ["dep:russh", "dep:russh-keys", "dep:tokio", "dep:aes-gcm", "dep:sha2", "dep:base64", "dep:rand"]
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

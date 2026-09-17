@@ -2,8 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   FileEntry,
   FindEntry,
+  MasterKeyStatus,
   QuickAccessItem,
   SearchMatch,
+  SftpServerConfig,
+  SftpServerView,
   VolumeInfo,
 } from "./types";
 
@@ -66,3 +69,50 @@ export const findFiles = (
   maxDepth: number | null,
 ) =>
   invoke<FindEntry[]>("find_files", { pattern, dir, showHidden, maxDepth });
+
+// ==================== SFTP 远程服务器 ====================
+
+export const sftpListServers = () =>
+  invoke<SftpServerView[]>("sftp_list_servers");
+
+export const sftpMasterKeyStatus = () =>
+  invoke<MasterKeyStatus>("sftp_master_key_status");
+
+export const sftpSetMasterKey = (key: string) =>
+  invoke<void>("sftp_set_master_key", { key });
+
+export const sftpSaveServer = (server: SftpServerConfig) =>
+  invoke<SftpServerView[]>("sftp_save_server", { server });
+
+export const sftpRemoveServer = (id: string) =>
+  invoke<SftpServerView[]>("sftp_remove_server", { id });
+
+export const sftpConnect = (server: SftpServerConfig) =>
+  invoke<SftpServerView>("sftp_connect", { server });
+
+export const sftpDisconnect = (id: string) =>
+  invoke<void>("sftp_disconnect", { id });
+
+/** 下载远程文件到临时目录，返回本地路径（供 opener 打开） */
+export const sftpDownload = (path: string) =>
+  invoke<string>("sftp_download", { path });
+
+/** 下载远程文件到指定本地目录（粘贴/拖拽 远程→本地），返回本地路径 */
+export const sftpDownloadTo = (localDir: string, path: string) =>
+  invoke<string>("sftp_download_to", { localDir, path });
+
+/** 上传本地文件到远程目录（拖拽/复制） */
+export const sftpUpload = (local: string, dest: string, name: string) =>
+  invoke<string>("sftp_upload", { local, dest, name });
+
+export const sftpMkdir = (dir: string, name: string) =>
+  invoke<string>("sftp_mkdir", { dir, name });
+
+export const sftpCreateFile = (dir: string, name: string) =>
+  invoke<string>("sftp_create_file", { dir, name });
+
+export const sftpDelete = (paths: string[]) =>
+  invoke<void>("sftp_delete", { paths });
+
+export const sftpRename = (path: string, newName: string) =>
+  invoke<string>("sftp_rename", { path, newName });

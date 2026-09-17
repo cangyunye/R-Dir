@@ -6,6 +6,7 @@ import {
   HardDrive,
   Home,
   Image,
+  MonitorSmartphone,
   Music,
   Star,
   Tag,
@@ -13,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { QuickAccessItem, VolumeInfo } from "@/lib/types";
+import type { QuickAccessItem, SftpServerView, VolumeInfo } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TAG_DEFS } from "@/lib/persist";
 import { basename } from "@/lib/format";
@@ -45,6 +46,21 @@ function isActive(current: string, target: string): boolean {
   return current.startsWith(target + "/") || current.startsWith(target + "\\");
 }
 
+/** 服务器按分组聚合（保持原始顺序，空分组名 → "默认"） */
+function groupServers(servers: SftpServerView[]): [string, SftpServerView[]][] {
+  const order: string[] = [];
+  const map = new Map<string, SftpServerView[]>();
+  for (const sv of servers) {
+    const g = sv.group || "默认";
+    if (!map.has(g)) {
+      map.set(g, []);
+      order.push(g);
+    }
+    map.get(g)!.push(sv);
+  }
+  return order.map((g) => [g, map.get(g)!]);
+}
+
 export function Sidebar({
   quickAccess,
   volumes,
@@ -55,6 +71,9 @@ export function Sidebar({
   tagCounts,
   activeTagId,
   onSelectTag,
+  sftpServers,
+  onSftpOpen,
+  onSftpDisconnect,
 }: {
   quickAccess: QuickAccessItem[];
   volumes: VolumeInfo[];
@@ -67,7 +86,12 @@ export function Sidebar({
   tagCounts: Record<string, number>;
   activeTagId: string | null;
   onSelectTag: (tagId: string) => void;
+  /** SFTP 远程服务器（v0.2） */
+  sftpServers: SftpServerView[];
+  onSftpOpen: (sv: SftpServerView) => void;
+  onSftpDisconnect: (id: string) => void;
 }) {
+  const groupedServers = groupServers(sftpServers);
   return (
     <ScrollArea className="w-44 shrink-0 border-r bg-muted/20">
       <div className="flex flex-col gap-4 p-2">
@@ -193,6 +217,59 @@ export function Sidebar({
           {volumes.length === 0 && (
             <div className="px-2 py-1 text-xs text-muted-foreground">未检测到磁盘</div>
           )}
+        </div>
+
+        {/* SFTP 远程服务器（v0.2，内置插件；支持分组） */}
+        <div>
+          <div className="flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground">
+            <MonitorSmartphone className="h-3.5 w-3.5" /> 远程服务器
+          </div>
+          {sftpServers.length === 0 && (
+            <div className="px-2 py-1 text-xs text-muted-foreground">
+              地址栏输入 sftp:// 连接
+            </div>
+          )}
+          {groupedServers.map(([group, servers]) => (
+            <div key={group} className="mb-0.5">
+              <div className="flex items-center gap-1 px-2 pt-0.5 pb-0.5 text-[10px] font-medium text-muted-foreground/80">
+                <span className="truncate">{group || "默认"}</span>
+                <span className="tabular-nums text-[9px] text-muted-foreground/60">
+                  {servers.length}
+                </span>
+              </div>
+              {servers.map((sv) => (
+                <div key={sv.id} className="group relative">
+                  <button
+                    onClick={() => onSftpOpen(sv)}
+                    title={`${sv.user}@${sv.host}:${sv.port}${sv.connected ? "（已连接）" : ""}`}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs transition-colors",
+                      isActive(currentPath, `sftp://${sv.user}@${sv.host}:${sv.port}/`)
+                        ? "bg-accent text-accent-foreground"
+                        : "text-foreground hover:bg-accent/50",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "h-2 w-2 shrink-0 rounded-full",
+                        sv.connected ? "bg-emerald-500" : "bg-muted-foreground/40",
+                      )}
+                    />
+                    <span className="truncate">{sv.name}</span>
+                  </button>
+                  {sv.connected && (
+                    <button
+                      onClick={() => onSftpDisconnect(sv.id)}
+                      title="断开连接"
+                      className="absolute top-1/2 right-1 hidden -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
       </div>
     </ScrollArea>

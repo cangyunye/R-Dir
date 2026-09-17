@@ -8,7 +8,6 @@ import {
   FolderPlus,
   Home,
   Info,
-  Keyboard,
   LayoutPanelLeft,
   LayoutPanelTop,
   Moon,
@@ -20,6 +19,7 @@ import {
   RotateCw,
   Scissors,
   Search,
+  Settings,
   Sun,
   Trash2,
   Undo2,
@@ -278,9 +278,9 @@ export function MenuBar(actions: MenuActions) {
       </MenuButton>
 
       <MenuButton label="帮助" {...openFor("帮助")}>
-        <DropdownMenuLabel>Rust File Manager</DropdownMenuLabel>
+        <DropdownMenuLabel>R-Dir</DropdownMenuLabel>
         <DropdownMenuItem onClick={actions.onOpenSettings}>
-          <Keyboard className="mr-2 h-4 w-4" /> 快捷键一览
+          <Settings className="mr-2 h-4 w-4" /> 设置（快捷键录制与主题）
           <Shortcut id="openSettings" />
         </DropdownMenuItem>
         <DropdownMenuItem disabled>
@@ -288,8 +288,15 @@ export function MenuBar(actions: MenuActions) {
         </DropdownMenuItem>
       </MenuButton>
 
-      {/* 右上角主题切换（日 / 月） */}
-      <div className="ml-auto flex items-center">
+      {/* 右上角主题切换（日 / 月）+ 设置 */}
+      <div className="ml-auto flex items-center gap-0.5">
+        <button
+          onClick={actions.onOpenSettings}
+          title="设置（快捷键录制）"
+          className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <Settings className="h-4 w-4" />
+        </button>
         <button
           onClick={actions.onToggleTheme}
           title={actions.dark ? "切换到浅色主题" : "切换到深色主题"}

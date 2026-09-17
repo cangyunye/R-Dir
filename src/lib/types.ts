@@ -94,3 +94,48 @@ export interface FindEntry {
   rel_path: string;
   is_dir: boolean;
 }
+
+// ==================== SFTP 远程服务器（v0.2 插件） ====================
+
+/** 服务器清单条目（与 Rust servers::ServerConfigFile 对齐，camelCase） */
+export interface SftpServerConfig {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  root?: string | null;
+  /** 服务器分组（空 = 默认组） */
+  group?: string;
+  /** "Password" | "PublicKey" */
+  auth: "Password" | "PublicKey";
+  // Password
+  password?: string;
+  savePassword?: boolean;
+  // PublicKey
+  keyPath?: string;
+  passphrase?: string;
+  savePassphrase?: boolean;
+}
+
+/** 服务器视图（连接状态等，来自后端） */
+export interface SftpServerView {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  root?: string | null;
+  group: string;
+  auth: string;
+  hasSecret: boolean;
+  connected: boolean;
+}
+
+/** master-key 状态 */
+export interface MasterKeyStatus {
+  /** 是否已设置过（有校验值） */
+  configured: boolean;
+  /** 当前内存中是否已输入（会话内无需重复） */
+  active: boolean;
+}

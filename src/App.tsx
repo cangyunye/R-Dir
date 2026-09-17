@@ -25,8 +25,23 @@ import {
   parentDir,
   permanentDeleteEntries,
   renameEntry,
+  sftpConnect,
+  sftpCreateFile,
+  sftpDelete,
+  sftpDownload,
+  sftpDownloadTo,
+  sftpListServers,
+  sftpMasterKeyStatus,
+  sftpMkdir,
+  sftpRename,
+  sftpSaveServer,
+  sftpDisconnect,
+  sftpUpload,
   statPath,
 } from "@/lib/api";
+import { ConnectDialog, type SftpConnectInitial } from "@/components/ConnectDialog";
+import { MasterKeyDialog } from "@/components/MasterKeyDialog";
+import type { MasterKeyStatus, SftpServerConfig, SftpServerView } from "@/lib/types";
 import { basename } from "@/lib/format";
 import {
   collectPaneIds,
@@ -170,6 +185,45 @@ export default function App() {
   /** 快捷键配置版本号：自定义键位变更时 +1，触发菜单/设置重渲染 */
   const [keymapVer, setKeymapVer] = useState(0);
 
+  // ==================== SFTP 远程服务器（v0.2 插件） ====================
+  const [sftpServers, setSftpServers] = useState<SftpServerView[]>([]);
+  /** 已连接 id 集合（ref 同步，供 navigate 同步判断） */
+  const sftpConnectedRef = useRef<Set<string>>(new Set());
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [connectInitial, setConnectInitial] = useState<SftpConnectInitial | null>(null);
+  /** master-key 状态：configured（曾设置）/ active（本会话已输入） */
+  const [masterKeyStatus, setMasterKeyStatus] = useState<MasterKeyStatus>({
+    configured: false,
+    active: false,
+  });
+  const [masterKeyOpen, setMasterKeyOpen] = useState(false);
+  /** 主密钥设置后待重连的服务器（来自连接框解密失败） */
+  const pendingConnectRef = useRef<SftpServerConfig | null>(null);
+  /** 主密钥设置后待保存的服务器（来自连接成功但保存失败） */
+  const pendingSaveRef = useRef<SftpServerConfig | null>(null);
+
+  const syncSftpConnected = useCallback((list: SftpServerView[]) => {
+    sftpConnectedRef.current = new Set(list.filter((s) => s.connected).map((s) => s.id));
+  }, []);
+
+  const openConnect = useCallback((initial?: SftpConnectInitial | null) => {
+    setConnectInitial(initial ?? null);
+    setConnectOpen(true);
+  }, []);
+
+  /** 解析 sftp://user@host:port 的 authority */
+  const parseSftpAuthority = useCallback((path: string): { id: string; host: string; port: number; user: string } | null => {
+    const rest = path.startsWith("sftp://") ? path.slice("sftp://".length) : path;
+    const authority = rest.split("/")[0] ?? "";
+    const [userPart, hostPort] = authority.includes("@")
+      ? authority.split("@")
+      : ["", authority];
+    if (!userPart || !hostPort) return null;
+    const [host, portStr] = hostPort.includes(":") ? hostPort.split(":") : [hostPort, "22"];
+    const port = Number(portStr) || 22;
+    return { id: `${userPart}@${host}:${port}`, host, port, user: userPart };
+  }, []);
+
   const activeTab = tabs.find((t) => t.id === activeId) ?? null;
   const activePane = activeTab?.panes[activeTab.activePane] ?? null;
   const bootRef = useRef(false);
@@ -222,7 +276,18 @@ export default function App() {
         console.error("启动失败", e);
       }
     })();
-  }, []);
+    // SFTP 服务器清单（v0.2）
+    sftpListServers()
+      .then((list) => {
+        syncSftpConnected(list);
+        setSftpServers(list);
+      })
+      .catch(() => {});
+    // master-key 状态（configured 曾设置 / active 本会话已输入）
+    sftpMasterKeyStatus()
+      .then(setMasterKeyStatus)
+      .catch(() => {});
+  }, [syncSftpConnected]);
 
   const patchPane = useCallback((paneId: number, patch: Partial<PaneState>) => {
     setTabs((ts) =>
@@ -336,6 +401,14 @@ export default function App() {
   const navigate = useCallback(
     (path: string) => {
       if (!activePane || activePane.path === path) return;
+      // SFTP：未连接的服务器先弹连接对话框
+      if (path.startsWith("sftp://")) {
+        const au = parseSftpAuthority(path);
+        if (au && !sftpConnectedRef.current.has(au.id)) {
+          openConnect({ host: au.host, port: au.port, user: au.user });
+          return;
+        }
+      }
       const m = path.match(VIRTUAL_TAG_RE);
       const history = [...activePane.history.slice(0, activePane.histIndex + 1), path];
       patchPane(activePane.id, {
@@ -349,7 +422,7 @@ export default function App() {
         error: null,
       });
     },
-    [activePane, patchPane],
+    [activePane, patchPane, parseSftpAuthority, openConnect],
   );
 
   const goBack = useCallback(() => {
@@ -375,6 +448,95 @@ export default function App() {
       selection: [],
     });
   }, [activePane, patchPane]);
+
+  /** 连接成功：保存清单 + 刷新状态 + 导航到服务器根 */
+  const handleSftpConnected = useCallback(
+    async (config: SftpServerConfig) => {
+      try {
+        await sftpSaveServer(config);
+      } catch (e) {
+        const msg = String(e);
+        if (msg.includes("NEED_MASTER_KEY")) {
+          // 勾选"记住密码"但未设置主密钥 → 挂起保存，弹主密钥框
+          pendingSaveRef.current = config;
+          setMasterKeyOpen(true);
+          return;
+        }
+        showError(`保存服务器失败：${e}`);
+      }
+      const list = await sftpListServers();
+      syncSftpConnected(list);
+      setSftpServers(list);
+      navigate(`sftp://${config.user}@${config.host}:${config.port}/`);
+    },
+    [navigate, showError, syncSftpConnected],
+  );
+
+  /** 主密钥设置/验证成功后的统一处理：刷新状态 → 重试挂起的保存或连接 */
+  const handleMasterKeyDone = useCallback(
+    async (ok: boolean) => {
+      setMasterKeyOpen(false);
+      if (!ok) return;
+      try {
+        const st = await sftpMasterKeyStatus();
+        setMasterKeyStatus(st);
+      } catch {
+        /* 忽略 */
+      }
+      // 1) 挂起的保存（连接成功但保存密码需主密钥）
+      if (pendingSaveRef.current) {
+        const cfg = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        await handleSftpConnected(cfg);
+        return;
+      }
+      // 2) 挂起的连接（连接框解密已保存密码需主密钥）
+      if (pendingConnectRef.current) {
+        const cfg = pendingConnectRef.current;
+        pendingConnectRef.current = null;
+        setConnectOpen(false);
+        try {
+          await sftpConnect(cfg);
+          await handleSftpConnected(cfg);
+        } catch (e) {
+          showError(`连接失败：${e}`);
+        }
+      }
+    },
+    [handleSftpConnected, showError],
+  );
+
+  /** 连接框需要主密钥：记录挂起连接并弹出主密钥框 */
+  const requestMasterKey = useCallback((config: SftpServerConfig) => {
+    pendingConnectRef.current = config;
+    setMasterKeyOpen(true);
+  }, []);
+
+  /** 侧边栏点击服务器：已连接直达，否则弹连接框 */
+  const openSftpServer = useCallback(
+    (sv: SftpServerView) => {
+      if (sftpConnectedRef.current.has(sv.id)) {
+        navigate(`sftp://${sv.user}@${sv.host}:${sv.port}/`);
+      } else {
+        openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
+      }
+    },
+    [navigate, openConnect],
+  );
+
+  const handleSftpDisconnect = useCallback(
+    async (id: string) => {
+      try {
+        await sftpDisconnect(id);
+        const list = await sftpListServers();
+        syncSftpConnected(list);
+        setSftpServers(list);
+      } catch (e) {
+        showError(`断开失败：${e}`);
+      }
+    },
+    [showError, syncSftpConnected],
+  );
 
   const goUp = useCallback(async () => {
     if (!activePane) return;
@@ -576,7 +738,15 @@ export default function App() {
           }),
         );
       } else {
-        openPath(entry.path).catch((e) => showError(`打开失败：${e}`));
+        if (entry.path.startsWith("sftp://")) {
+          // 远程文件：先下载到临时目录再打开
+          showError("正在下载远程文件…");
+          sftpDownload(entry.path)
+            .then((local) => openPath(local))
+            .catch((e) => showError(`远程打开失败：${e}`));
+        } else {
+          openPath(entry.path).catch((e) => showError(`打开失败：${e}`));
+        }
       }
     },
     [showError],
@@ -587,6 +757,8 @@ export default function App() {
   }, []);
 
   // M1 文件操作
+  const isSftpPath = useCallback((p: string) => p.startsWith("sftp://"), []);
+
   const doCopy = useCallback(
     (paneId?: number, paths?: string[]) => {
       const p = paneId !== undefined ? paneId : activePane?.id;
@@ -665,30 +837,57 @@ export default function App() {
         .flatMap((t) => Object.values(t.panes))
         .find((p) => p.id === pid);
       if (!pane) return;
-      const isCut = clipboard.op === "cut";
       const dest = pane.path;
+      const srcs = clipboard.paths;
+      const isCut = clipboard.op === "cut";
+      const localSrcs = srcs.filter((p) => !isSftpPath(p));
+      const sftpSrcs = srcs.filter((p) => isSftpPath(p));
+      const destIsSftp = isSftpPath(dest);
       try {
-        if (isCut) {
-          const pairs = await moveEntries(clipboard.paths, dest);
-          pushOp({ kind: "move", pairs, dest, srcPane: pid, destPane: pid });
+        if (destIsSftp) {
+          // 目标远程：仅支持本地 → 远程上传；远程→远程暂不支持
+          if (sftpSrcs.length > 0) {
+            showError("双端远程传输暂不支持（方案已评估保留）");
+            if (localSrcs.length === 0) return;
+          }
+          for (const src of localSrcs) {
+            await sftpUpload(src, dest, basename(src));
+          }
           setClipboard(null);
-        } else {
-          const created = await copyEntries(clipboard.paths, dest);
-          pushOp({
-            kind: "copy",
-            src: clipboard.paths,
-            created,
-            dest,
-            srcPane: pid,
-            destPane: pid,
-          });
+          refreshPane(pid);
+          return;
         }
+        // 目标本地
+        for (const src of sftpSrcs) {
+          await sftpDownloadTo(dest, src);
+        }
+        if (localSrcs.length > 0) {
+          if (isCut) {
+            const pairs = await moveEntries(localSrcs, dest);
+            pushOp({ kind: "move", pairs, dest, srcPane: pid, destPane: pid });
+          } else {
+            const created = await copyEntries(localSrcs, dest);
+            pushOp({
+              kind: "copy",
+              src: localSrcs,
+              created,
+              dest,
+              srcPane: pid,
+              destPane: pid,
+            });
+          }
+        }
+        if (sftpSrcs.length > 0 && localSrcs.length === 0 && isCut) {
+          // 纯远程剪切粘贴：v0.2 按复制处理（不删源）
+          showError("远程剪切暂按复制处理（不删除源文件）");
+        }
+        setClipboard(null);
         refreshPane(pid);
       } catch (e) {
         showError(String(e));
       }
     },
-    [clipboard, activePane, tabs, refreshPane, showError, pushOp],
+    [clipboard, activePane, tabs, refreshPane, showError, pushOp, isSftpPath],
   );
 
   /** 复制到当前目录（Duplicate） */
@@ -696,6 +895,10 @@ export default function App() {
     if (!activePane || activePane.selection.length === 0) return;
     const paneId = activePane.id;
     const dest = activePane.path;
+    if (isSftpPath(dest)) {
+      showError("远程复制暂不支持（可拖拽到其他窗格）");
+      return;
+    }
     try {
       const created = await copyEntries(activePane.selection, dest);
       pushOp({
@@ -720,7 +923,33 @@ export default function App() {
         .find((p) => p.id === targetPaneId);
       if (!target || target.path === "") return;
       const dest = target.path;
+      const srcIsSftp = paths.some(isSftpPath);
+      const destIsSftp = isSftpPath(dest);
       try {
+        // 远程 ⇄ 远程：暂不支持（方案已评估保留）
+        if (srcIsSftp && destIsSftp) {
+          showError("双端远程传输暂不支持");
+          return;
+        }
+        // 远程 → 本地：下载
+        if (srcIsSftp && !destIsSftp) {
+          for (const p of paths) {
+            await sftpDownloadTo(dest, p);
+          }
+          refreshPane(targetPaneId);
+          refreshPane(sourcePaneId);
+          return;
+        }
+        // 本地 → 远程：上传
+        if (!srcIsSftp && destIsSftp) {
+          for (const p of paths) {
+            await sftpUpload(p, dest, basename(p));
+          }
+          refreshPane(targetPaneId);
+          refreshPane(sourcePaneId);
+          return;
+        }
+        // 本地 ⇄ 本地：原逻辑
         if (op === "move") {
           const pairs = await moveEntries(paths, dest);
           pushOp({ kind: "move", pairs, dest, srcPane: sourcePaneId, destPane: targetPaneId });
@@ -741,7 +970,7 @@ export default function App() {
         showError(String(e));
       }
     },
-    [tabs, refreshPane, showError, pushOp],
+    [tabs, refreshPane, showError, pushOp, isSftpPath],
   );
 
   const startRename = useCallback((paneId: number, entry: FileEntry) => {
@@ -756,20 +985,28 @@ export default function App() {
       const trimmed = name.trim();
       if (trimmed === "" || trimmed === r.name) return;
       try {
-        const newPath = await renameEntry(path, trimmed);
-        pushOp({ kind: "rename", oldPath: path, newPath, paneId: r.paneId });
+        const newPath = isSftpPath(path)
+          ? await sftpRename(path, trimmed)
+          : await renameEntry(path, trimmed);
+        if (!isSftpPath(path)) {
+          pushOp({ kind: "rename", oldPath: path, newPath, paneId: r.paneId });
+        }
         refreshPane(r.paneId);
       } catch (e) {
         showError(String(e));
       }
     },
-    [renaming, refreshPane, showError, pushOp],
+    [renaming, refreshPane, showError, pushOp, isSftpPath],
   );
 
   const doDeleteNow = useCallback(
     async (p: number, list: string[]) => {
       try {
-        await deleteEntries(list);
+        if (list.length > 0 && isSftpPath(list[0])) {
+          await sftpDelete(list);
+        } else {
+          await deleteEntries(list);
+        }
         setTabs((ts) =>
           ts.map((t) => {
             const pane = t.panes[p];
@@ -785,7 +1022,7 @@ export default function App() {
         showError(String(e));
       }
     },
-    [refreshPane, showError],
+    [refreshPane, showError, isSftpPath],
   );
 
   const doDelete = useCallback(
@@ -818,6 +1055,10 @@ export default function App() {
     const p = activePane?.id;
     const list = activePane?.selection ?? [];
     if (p === undefined || list.length === 0) return;
+    if (list.some(isSftpPath)) {
+      showError("远程删除直接生效（服务器无回收站），请使用删除");
+      return;
+    }
     if (!window.confirm(`永久删除 ${list.length} 项？此操作不可恢复。`)) return;
     try {
       await permanentDeleteEntries(list);
@@ -832,7 +1073,7 @@ export default function App() {
     } catch (e) {
       showError(String(e));
     }
-  }, [activePane, refreshPane, showError]);
+  }, [activePane, refreshPane, showError, isSftpPath]);
 
   const createAndRename = useCallback(
     async (paneId: number, kind: "dir" | "file") => {
@@ -842,18 +1083,23 @@ export default function App() {
       if (!pane) return;
       const name = kind === "dir" ? "新建文件夹" : "新建文件.txt";
       try {
-        const p =
-          kind === "dir"
+        const p = isSftpPath(pane.path)
+          ? kind === "dir"
+            ? await sftpMkdir(pane.path, name)
+            : await sftpCreateFile(pane.path, name)
+          : kind === "dir"
             ? await createDir(pane.path, name)
             : await createFile(pane.path, name);
-        pushOp({ kind: "create", path: p, isDir: kind === "dir", paneId });
+        if (!isSftpPath(pane.path)) {
+          pushOp({ kind: "create", path: p, isDir: kind === "dir", paneId });
+        }
         refreshPane(paneId);
         setRenaming({ paneId, path: p, name });
       } catch (e) {
         showError(String(e));
       }
     },
-    [tabs, refreshPane, showError, pushOp],
+    [tabs, refreshPane, showError, pushOp, isSftpPath],
   );
 
   /** 撤销：copy→删产物；move→按原目录移回；rename→改回；create→删除 */
@@ -1244,6 +1490,9 @@ export default function App() {
           tagCounts={Object.fromEntries(TAG_DEFS.map((t) => [t.id, tagPaths(t.id).length]))}
           activeTagId={activePane?.tagId ?? null}
           onSelectTag={(tagId) => navigate(`tags://${tagId}`)}
+          sftpServers={sftpServers}
+          onSftpOpen={openSftpServer}
+          onSftpDisconnect={handleSftpDisconnect}
         />
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1299,6 +1548,27 @@ export default function App() {
         dark={dark}
         onToggleTheme={toggleTheme}
         onBindingsChanged={() => setKeymapVer((v) => v + 1)}
+      />
+
+      <ConnectDialog
+        open={connectOpen}
+        initial={connectInitial}
+        masterKey={masterKeyStatus}
+        onNeedMasterKey={requestMasterKey}
+        onClose={() => setConnectOpen(false)}
+        onConnected={handleSftpConnected}
+      />
+
+      {/* 主密钥（master-key）：仅内存，用于加密保存的密码 */}
+      <MasterKeyDialog
+        open={masterKeyOpen}
+        configured={masterKeyStatus.configured}
+        onClose={() => {
+          setMasterKeyOpen(false);
+          pendingConnectRef.current = null;
+          pendingSaveRef.current = null;
+        }}
+        onDone={(ok) => void handleMasterKeyDone(ok)}
       />
 
       {/* 删除文件夹确认弹窗 */}
