@@ -14,6 +14,8 @@ export interface PaneHandlers {
   onSelectRange: (paneId: number, paths: string[]) => void;
   onClearSelection: (paneId: number) => void;
   onOpen: (paneId: number, entry: FileEntry) => void;
+  /** 鼠标中键点击目录：在新建标签页中打开该目录 */
+  onMiddleOpen: (paneId: number, path: string) => void;
   onCopy: (paneId: number, paths: string[]) => void;
   onCut: (paneId: number, paths: string[]) => void;
   onDelete: (paneId: number, paths: string[]) => void;
@@ -101,6 +103,7 @@ function PaneView({
         onSelectRange={(paths) => h.onSelectRange(pane.id, paths)}
         onClearSelection={() => h.onClearSelection(pane.id)}
         onOpen={(e) => h.onOpen(pane.id, e)}
+        onMiddleOpen={(p) => h.onMiddleOpen(pane.id, p)}
         onCopy={(p) => h.onCopy(pane.id, p)}
         onCut={(p) => h.onCut(pane.id, p)}
         onDelete={(p) => h.onDelete(pane.id, p)}

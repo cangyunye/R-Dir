@@ -286,7 +286,7 @@ pub async fn delete_entries(pool: &SessionPool, paths: &[String]) -> Result<(), 
         let (_, r) = parse_sftp_path(p)?;
         let a = g.stat(&r).await?;
         if a.is_dir {
-            g.rmdir(&r).await?;
+            g.remove_recursive(&r).await?;
         } else {
             g.remove(&r).await?;
         }

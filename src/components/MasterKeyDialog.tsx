@@ -88,6 +88,8 @@ export function MasterKeyDialog({
               主密钥用于加密保存的服务器密码（AES-256-GCM）。
               <br />
               它<b>只存在内存中、不会写入磁盘</b>；应用不关闭则无需重复输入。
+              <br />
+              验证通过后将自动重新连接未完成的远程目录；取消则保持当前布局、不连接。
             </span>
           </div>
           <label className="grid grid-cols-[64px_1fr] items-center gap-2 text-xs">

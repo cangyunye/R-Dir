@@ -680,7 +680,17 @@ export default function App() {
   const handleMasterKeyDone = useCallback(
     async (ok: boolean) => {
       setMasterKeyOpen(false);
-      if (!ok) return;
+      if (!ok) {
+        // 用户取消：放弃所有挂起的连接/保存/会话恢复，保持布局不连接、不刷新
+        pendingSaveRef.current = null;
+        pendingConnectRef.current = null;
+        const pending = pendingSftpRestoreRef.current;
+        pendingSftpRestoreRef.current = [];
+        for (const sp of pending) {
+          patchPane(sp.paneId, { loading: false, error: "SFTP 未连接（需要主密钥验证）" });
+        }
+        return;
+      }
       try {
         const st = await sftpMasterKeyStatus();
         setMasterKeyStatus(st);
@@ -847,9 +857,18 @@ export default function App() {
   }, [activePane, refreshPane]);
 
   // 标签页操作
-  const newTab = useCallback(() => {
-    const path = activePane?.path ?? homePath;
-    const tab = makeTab(path);
+  const newTab = useCallback((path?: string) => {
+    const target = path ?? activePane?.path ?? homePath;
+    const m = target.match(VIRTUAL_TAG_RE);
+    const pane = makePane(target);
+    if (m) pane.tagId = m[1];
+    const tab: TabState = {
+      id: nextTabId++,
+      title: m ? tagTitle(m[1]) : pane.title,
+      root: { type: "pane", paneId: pane.id },
+      activePane: pane.id,
+      panes: { [pane.id]: pane },
+    };
     setTabs((ts) => [...ts, tab]);
     setActiveId(tab.id);
   }, [activePane, homePath]);
@@ -1676,6 +1695,7 @@ export default function App() {
     onSelectRange: selectRange,
     onClearSelection: clearSelection,
     onOpen: openEntry,
+    onMiddleOpen: (_paneId, path) => newTab(path),
     onCopy: (paneId, paths) => doCopy(paneId, paths),
     onCut: (paneId, paths) => doCut(paneId, paths),
     onDelete: (paneId, paths) => void doDelete(paneId, paths),
@@ -1786,6 +1806,7 @@ export default function App() {
           volumes={volumes}
           currentPath={activePane?.path ?? ""}
           onNavigate={navigate}
+          onMiddleOpen={(path) => newTab(path)}
           customQuick={customQuick}
           onRemoveQuick={toggleQuick}
           tagCounts={Object.fromEntries(TAG_DEFS.map((t) => [t.id, tagPaths(t.id).length]))}

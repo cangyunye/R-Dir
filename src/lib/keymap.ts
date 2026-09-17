@@ -40,7 +40,7 @@ export const ACTIONS: KeyAction[] = [
   A({ id: "duplicate", label: "复制到当前目录", group: "文件操作", when: "pane", win: "mod+d", mac: "mod+d" }),
   A({ id: "rename", label: "重命名", group: "文件操作", when: "pane", win: "f2", mac: "f2" }),
   A({ id: "open", label: "打开", group: "文件操作", when: "pane", win: "enter", mac: "enter" }),
-  A({ id: "delete", label: "删除到回收站", group: "文件操作", when: "pane", win: "delete", mac: "mod+delete" }),
+  A({ id: "delete", label: "删除到回收站", group: "文件操作", when: "pane", win: "delete", mac: "mod+delete / delete" }),
   A({ id: "deletePermanent", label: "永久删除（需确认）", group: "文件操作", when: "pane", win: "shift+delete", mac: "mod+alt+delete" }),
   A({ id: "newFolder", label: "新建文件夹", group: "文件操作", when: "pane", win: "mod+shift+n", mac: "mod+shift+n" }),
   A({ id: "newFile", label: "新建文件", group: "文件操作", when: "pane", win: "mod+alt+n", mac: "mod+alt+n" }),
@@ -186,6 +186,7 @@ const KEY_ALIAS: Record<string, string> = {
   Escape: "esc",
   Enter: "enter",
   Tab: "tab",
+  Delete: "delete",
   " ": "space",
 };
 

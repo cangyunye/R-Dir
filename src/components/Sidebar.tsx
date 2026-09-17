@@ -70,6 +70,7 @@ export function Sidebar({
   volumes,
   currentPath,
   onNavigate,
+  onMiddleOpen,
   customQuick,
   onRemoveQuick,
   tagCounts,
@@ -85,6 +86,8 @@ export function Sidebar({
   volumes: VolumeInfo[];
   currentPath: string;
   onNavigate: (path: string) => void;
+  /** 鼠标中键点击项：在新建标签页中打开该路径 */
+  onMiddleOpen: (path: string) => void;
   /** 用户自定义快捷访问（右键文件 → 添加到快捷访问） */
   customQuick: string[];
   onRemoveQuick: (path: string) => void;
@@ -129,6 +132,7 @@ export function Sidebar({
               <button
                 key={item.key}
                 onClick={() => onNavigate(item.path)}
+                onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(item.path))}
                 title={item.path}
                 className={cn(
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors",
@@ -154,6 +158,7 @@ export function Sidebar({
                   >
                     <button
                       onClick={() => onNavigate(p)}
+                      onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(p))}
                       title={p}
                       className={cn(
                         "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs transition-colors",
@@ -191,6 +196,7 @@ export function Sidebar({
               <button
                 key={t.id}
                 onClick={() => onSelectTag(t.id)}
+                onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(`tags://${t.id}`))}
                 title={`查看「${t.label}」标签的文件${count > 0 ? `（${count} 项）` : ""}`}
                 className={cn(
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors",
@@ -224,6 +230,7 @@ export function Sidebar({
             <button
               key={vol.path}
               onClick={() => onNavigate(vol.path)}
+              onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(vol.path))}
               title={vol.path}
               className={cn(
                 "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors",
@@ -263,6 +270,10 @@ export function Sidebar({
                 <div key={sv.id} className="group relative">
                   <button
                     onClick={() => onSftpOpen(sv)}
+                    onAuxClick={(e) =>
+                      e.button === 1 &&
+                      (e.preventDefault(), onMiddleOpen(`sftp://${sv.user}@${sv.host}:${sv.port}/`))
+                    }
                     onContextMenu={(e) => {
                       e.preventDefault();
                       e.stopPropagation();

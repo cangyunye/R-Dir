@@ -363,6 +363,30 @@ impl SftpSession {
         Ok(())
     }
 
+    /// 递归删除目录（先删内容再删目录本身，支持非空目录）
+    pub async fn remove_recursive(&mut self, remote: &str) -> Result<(), String> {
+        self.remove_recursive_boxed(remote).await
+    }
+
+    fn remove_recursive_boxed<'a>(
+        &'a mut self,
+        remote: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move {
+            let entries = self.list_dir(remote).await?;
+            for (name, attrs) in entries {
+                let child = format!("{}/{}", remote.trim_end_matches('/'), name);
+                if attrs.is_dir {
+                    self.remove_recursive_boxed(&child).await?;
+                } else {
+                    self.remove(&child).await?;
+                }
+            }
+            self.rmdir(remote).await?;
+            Ok(())
+        })
+    }
+
     /// 重命名/移动
     pub async fn rename(&mut self, old: &str, new: &str) -> Result<(), String> {
         self.request(proto::RENAME, |b| {

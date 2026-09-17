@@ -101,6 +101,7 @@ export function FileList({
   onSelectRange,
   onClearSelection,
   onOpen,
+  onMiddleOpen,
   onCopy,
   onCut,
   onDelete,
@@ -138,6 +139,8 @@ export function FileList({
   onSelectRange: (paths: string[]) => void;
   onClearSelection: () => void;
   onOpen: (entry: FileEntry) => void;
+  /** 鼠标中键点击目录：在新建标签页中打开该目录 */
+  onMiddleOpen: (path: string) => void;
   onCopy: (paths: string[]) => void;
   onCut: (paths: string[]) => void;
   onDelete: (paths: string[]) => void;
@@ -494,6 +497,12 @@ export function FileList({
                     onSelect(entry, e.metaKey || e.ctrlKey);
                   }}
                   onDoubleClick={() => onOpen(entry)}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      if (entry.is_dir) onMiddleOpen(entry.path);
+                    }
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") onOpen(entry);
                     if (e.key === " ") {
