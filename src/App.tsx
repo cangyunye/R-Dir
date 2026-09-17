@@ -623,12 +623,12 @@ export default function App() {
     } catch {
       /* 保存失败不阻塞退出 */
     }
-    await exit(0);
+    await exit(0).catch(() => getCurrentWindow().destroy());
   }, []);
 
   /** 退出：不保存，直接退出进程 */
   const handleExitNoSave = useCallback(async () => {
-    await exit(0);
+    await exit(0).catch(() => getCurrentWindow().destroy());
   }, []);
 
   // 拦截窗口关闭 → 询问是否保存会话（v0.3.0）
