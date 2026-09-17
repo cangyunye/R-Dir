@@ -22,6 +22,9 @@ export const getHomeDir = () => invoke<string>("get_home_dir");
 
 export const parentDir = (path: string) => invoke<string>("parent_dir", { path });
 
+/** 条目类型探测：返回 "dir" / "file" / "symlink" */
+export const statPath = (path: string) => invoke<string>("stat_path", { path });
+
 /** 复制条目到目标目录；返回实际创建路径列表（冲突自动改名，供撤销记录） */
 export const copyEntries = (paths: string[], dest: string) =>
   invoke<string[]>("copy_entries", { paths, dest });

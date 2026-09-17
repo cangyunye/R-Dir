@@ -84,6 +84,8 @@ export interface MenuActions {
   dark: boolean;
   onToggleTheme: () => void;
   onOpenSettings: () => void;
+  /** 键位版本号：自定义键位变化时递增，仅用于触发菜单快捷键提示重渲染 */
+  keymapVersion?: number;
 }
 
 /** 菜单项右侧的快捷键提示（按当前平台显示已配置键位） */
@@ -137,7 +139,10 @@ export function MenuBar(actions: MenuActions) {
   });
 
   return (
-    <div className="flex h-7 items-center gap-0.5 border-b bg-muted/40 px-1.5 select-none">
+    <div
+      className="flex h-7 items-center gap-0.5 border-b bg-muted/40 px-1.5 select-none"
+      data-keymap-version={actions.keymapVersion ?? 0}
+    >
       <MenuButton label="文件" {...openFor("文件")}>
         <DropdownMenuItem onClick={actions.onNewTab}>
           <Plus className="mr-2 h-4 w-4" /> 新建标签页

@@ -83,8 +83,97 @@ export const isMac =
   typeof navigator !== "undefined" &&
   (navigator.userAgent.includes("Mac") || navigator.platform?.toLowerCase().includes("mac"));
 
-/** 动作的当前平台绑定串（如 "mod+shift+n" / "ctrl+tab"） */
+/**
+ * 用户自定义键位（M5 持久化）
+ * 结构：{ [actionId]: { win?: string; mac?: string } }
+ * 仅存当前平台录制的键位，未覆盖的字段回落到默认绑定。
+ */
+type UserBindings = Record<string, { win?: string; mac?: string }>;
+
+const KEYMAP_STORAGE_KEY = "rfm.keymap";
+
+function loadUserBindings(): UserBindings {
+  try {
+    const raw = localStorage.getItem(KEYMAP_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as UserBindings) : {};
+  } catch {
+    return {};
+  }
+}
+
+let userBindings: UserBindings = loadUserBindings();
+
+function persistUserBindings() {
+  try {
+    localStorage.setItem(KEYMAP_STORAGE_KEY, JSON.stringify(userBindings));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getUserBindings(): UserBindings {
+  return userBindings;
+}
+
+/** 该动作是否有当前平台的用户自定义键位 */
+export function hasCustomBinding(actionId: string): boolean {
+  const u = userBindings[actionId];
+  return !!u && (isMac ? !!u.mac : !!u.win);
+}
+
+/** 录制/修改当前平台键位（覆盖原自定义） */
+export function setUserBinding(actionId: string, combo: string): void {
+  const key = isMac ? "mac" : "win";
+  userBindings = {
+    ...userBindings,
+    [actionId]: { ...userBindings[actionId], [key]: combo },
+  };
+  persistUserBindings();
+}
+
+/** 清除该动作的当前平台自定义键位（回落默认） */
+export function clearUserBinding(actionId: string): void {
+  const u = userBindings[actionId];
+  if (!u) return;
+  const key = isMac ? "mac" : "win";
+  if (key === "mac") {
+    if (u.win === undefined) {
+      const { mac: _m, ...rest } = u;
+      userBindings = { ...userBindings, [actionId]: rest };
+    } else {
+      userBindings = { ...userBindings, [actionId]: { ...u, mac: undefined } };
+    }
+  } else {
+    if (u.mac === undefined) {
+      const { win: _w, ...rest } = u;
+      userBindings = { ...userBindings, [actionId]: rest };
+    } else {
+      userBindings = { ...userBindings, [actionId]: { ...u, win: undefined } };
+    }
+  }
+  persistUserBindings();
+}
+
+/** 恢复全部默认键位 */
+export function resetUserBindings(): void {
+  userBindings = {};
+  persistUserBindings();
+}
+
+/** 当前平台下该 combo 已被哪些其他动作占用（冲突检测，可排除自身） */
+export function findConflicts(combo: string, exceptActionId?: string): KeyAction[] {
+  return ACTIONS.filter(
+    (a) => a.id !== exceptActionId && bindingOf(a).split(" / ").includes(combo),
+  );
+}
+
+/** 动作的当前平台绑定串（优先用户自定义，回落默认；如 "mod+shift+n" / "ctrl+tab"） */
 export function bindingOf(a: KeyAction): string {
+  const u = userBindings[a.id];
+  if (u) {
+    const custom = isMac ? u.mac : u.win;
+    if (custom !== undefined && custom !== "") return custom;
+  }
   return isMac ? a.mac : a.win;
 }
 
@@ -103,6 +192,11 @@ export function keyEventString(e: KeyboardEvent): string {
     if (e.ctrlKey) parts.push("ctrl");
     if (e.altKey) parts.push("alt");
     if (e.shiftKey) parts.push("shift");
+    // macOS 退格键事件 key 为 "Backspace"，按删除语义归一化（匹配 mod+delete 绑定）
+    if (e.key === "Backspace") {
+      parts.push("delete");
+      return parts.join("+");
+    }
   } else {
     if (e.ctrlKey) parts.push("mod");
     if (e.altKey) parts.push("alt");

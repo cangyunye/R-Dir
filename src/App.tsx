@@ -25,6 +25,7 @@ import {
   parentDir,
   permanentDeleteEntries,
   renameEntry,
+  statPath,
 } from "@/lib/api";
 import { basename } from "@/lib/format";
 import {
@@ -38,7 +39,26 @@ import {
   setSplitRatio,
 } from "@/lib/paneTree";
 import { findAction, keyEventString } from "@/lib/keymap";
+import {
+  loadCustomQuick,
+  loadFileTags,
+  parentOf,
+  saveCustomQuick,
+  saveFileTags,
+  tagById,
+  TAG_DEFS,
+  type FileTags,
+} from "@/lib/persist";
+import { Button } from "@/components/ui/button";
+import { Trash2 } from "lucide-react";
 import { MenuBar } from "@/components/MenuBar";
+
+/** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
+const VIRTUAL_TAG_RE = /^tags:\/\/([a-z0-9_-]+)$/;
+
+function tagTitle(tagId: string): string {
+  return `标签：${tagById(tagId)?.label ?? tagId}`;
+}
 import { TabBar } from "@/components/TabBar";
 import { Toolbar } from "@/components/Toolbar";
 import { Sidebar } from "@/components/Sidebar";
@@ -139,8 +159,16 @@ export default function App() {
   const [showProperties, setShowProperties] = useState(true);
   /** 设置 / 快捷键一览对话框 */
   const [settingsOpen, setSettingsOpen] = useState(false);
-  /** 主题（默认浅色；M5 持久化用户选择） */
-  const [dark, setDark] = useState(false);
+  /** 主题（默认浅色，M5 持久化到 localStorage "rfm.theme"） */
+  const [dark, setDark] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("rfm.theme") === "dark";
+    } catch {
+      return false;
+    }
+  });
+  /** 快捷键配置版本号：自定义键位变更时 +1，触发菜单/设置重渲染 */
+  const [keymapVer, setKeymapVer] = useState(0);
 
   const activeTab = tabs.find((t) => t.id === activeId) ?? null;
   const activePane = activeTab?.panes[activeTab.activePane] ?? null;
@@ -161,7 +189,17 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
-  const toggleTheme = useCallback(() => setDark((v) => !v), []);
+  const toggleTheme = useCallback(() => {
+    setDark((v) => {
+      const nv = !v;
+      try {
+        localStorage.setItem("rfm.theme", nv ? "dark" : "light");
+      } catch {
+        /* ignore */
+      }
+      return nv;
+    });
+  }, []);
 
   // 首次启动
   useEffect(() => {
@@ -213,6 +251,23 @@ export default function App() {
   // 活动 pane 路径/刷新键变化时加载目录
   useEffect(() => {
     if (!activePane) return;
+    // 虚拟标签目录：不请求后端，清空 entries（由 TagView 渲染）
+    if (VIRTUAL_TAG_RE.test(activePane.path)) {
+      setTabs((ts) =>
+        ts.map((t) => {
+          const p = t.panes[activePane.id];
+          if (!p) return t;
+          return {
+            ...t,
+            panes: {
+              ...t.panes,
+              [activePane.id]: { ...p, loading: false, entries: [], error: null },
+            },
+          };
+        }),
+      );
+      return;
+    }
     let cancelled = false;
     setTabs((ts) =>
       ts.map((t) => {
@@ -281,13 +336,17 @@ export default function App() {
   const navigate = useCallback(
     (path: string) => {
       if (!activePane || activePane.path === path) return;
+      const m = path.match(VIRTUAL_TAG_RE);
       const history = [...activePane.history.slice(0, activePane.histIndex + 1), path];
       patchPane(activePane.id, {
         path,
-        title: basename(path),
+        title: m ? tagTitle(m[1]) : basename(path),
+        tagId: m ? m[1] : undefined,
         history,
         histIndex: history.length - 1,
         selection: [],
+        entries: m ? [] : activePane.entries,
+        error: null,
       });
     },
     [activePane, patchPane],
@@ -296,9 +355,11 @@ export default function App() {
   const goBack = useCallback(() => {
     if (!activePane || activePane.histIndex <= 0) return;
     const target = activePane.history[activePane.histIndex - 1];
+    const m = target.match(VIRTUAL_TAG_RE);
     patchPane(activePane.id, {
       path: target,
-      title: basename(target),
+      title: m ? tagTitle(m[1]) : basename(target),
+      tagId: m ? m[1] : undefined,
       histIndex: activePane.histIndex - 1,
       selection: [],
     });
@@ -476,6 +537,23 @@ export default function App() {
     [activePane, navigate, selectRange],
   );
 
+  /** 标签视图中打开条目：目录直接进入（脱离标签视图），文件定位所在目录并选中 */
+  const openTagFile = useCallback(
+    async (path: string) => {
+      try {
+        const kind = await statPath(path);
+        if (kind === "dir" || kind === "symlink") {
+          navigate(path);
+        } else {
+          openSearchResult(parentOf(path), path);
+        }
+      } catch {
+        openSearchResult(parentOf(path), path);
+      }
+    },
+    [navigate, openSearchResult],
+  );
+
   const openEntry = useCallback(
     (paneId: number, entry: FileEntry) => {
       if (entry.is_dir) {
@@ -527,6 +605,49 @@ export default function App() {
       setClipboard({ op: "cut", paths: list });
     },
     [activePane],
+  );
+
+  /** 删除文件夹确认弹窗 */
+  const [confirmDelete, setConfirmDelete] = useState<{
+    paneId: number;
+    paths: string[];
+  } | null>(null);
+
+  /** 文件标签（path → tagId[]，持久化） */
+  const [fileTags, setFileTags] = useState<FileTags>(() => loadFileTags());
+  /** 自定义快捷访问（持久化） */
+  const [customQuick, setCustomQuick] = useState<string[]>(() => loadCustomQuick());
+
+  const toggleTag = useCallback((path: string, tagId: string) => {
+    setFileTags((prev) => {
+      const cur = prev[path] ?? [];
+      const next = cur.includes(tagId)
+        ? cur.filter((t) => t !== tagId)
+        : [...cur, tagId];
+      const t = { ...prev, [path]: next };
+      if (next.length === 0) delete t[path];
+      saveFileTags(t);
+      return t;
+    });
+  }, []);
+
+  const toggleQuick = useCallback((path: string) => {
+    setCustomQuick((prev) => {
+      const next = prev.includes(path)
+        ? prev.filter((p) => p !== path)
+        : [...prev, path];
+      saveCustomQuick(next);
+      return next;
+    });
+  }, []);
+
+  /** 该标签下的所有文件路径（用于侧边栏计数与 TagView 列表） */
+  const tagPaths = useCallback(
+    (tagId: string): string[] =>
+      Object.entries(fileTags)
+        .filter(([, tags]) => tags.includes(tagId))
+        .map(([p]) => p),
+    [fileTags],
   );
 
   /** 撤销/重做栈：只记录可安全反向的操作 */
@@ -645,11 +766,8 @@ export default function App() {
     [renaming, refreshPane, showError, pushOp],
   );
 
-  const doDelete = useCallback(
-    async (paneId?: number, paths?: string[]) => {
-      const p = paneId !== undefined ? paneId : activePane?.id;
-      const list = paths ?? activePane?.selection ?? [];
-      if (p === undefined || list.length === 0) return;
+  const doDeleteNow = useCallback(
+    async (p: number, list: string[]) => {
       try {
         await deleteEntries(list);
         setTabs((ts) =>
@@ -667,8 +785,33 @@ export default function App() {
         showError(String(e));
       }
     },
-    [activePane, refreshPane, showError],
+    [refreshPane, showError],
   );
+
+  const doDelete = useCallback(
+    async (paneId?: number, paths?: string[]) => {
+      const p = paneId !== undefined ? paneId : activePane?.id;
+      const list = paths ?? activePane?.selection ?? [];
+      if (p === undefined || list.length === 0) return;
+      // 删除文件夹前弹确认框（文件直接进回收站）
+      const pane = tabs.flatMap((t) => Object.values(t.panes)).find((x) => x.id === p);
+      const hasDir = !!pane?.entries.some((e) => e.is_dir && list.includes(e.path));
+      if (hasDir) {
+        setConfirmDelete({ paneId: p, paths: list });
+        return;
+      }
+      void doDeleteNow(p, list);
+    },
+    [activePane, tabs, doDeleteNow],
+  );
+
+  /** 确认删除弹窗的"删除"按钮 */
+  const confirmDeleteNow = useCallback(() => {
+    if (!confirmDelete) return;
+    const { paneId, paths } = confirmDelete;
+    setConfirmDelete(null);
+    void doDeleteNow(paneId, paths);
+  }, [confirmDelete, doDeleteNow]);
 
   /** 永久删除（绕过回收站，需确认；不进撤销栈） */
   const doDeletePermanent = useCallback(async () => {
@@ -1003,6 +1146,8 @@ export default function App() {
     onPaste: (paneId) => void doPaste(paneId),
     onSelectAll: selectAllIn,
     onInvertSelection: invertSelectionIn,
+    onToggleTag: toggleTag,
+    onToggleQuick: toggleQuick,
   };
 
   const selectedSize = activePane
@@ -1014,6 +1159,7 @@ export default function App() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <MenuBar
+        keymapVersion={keymapVer}
         onNewTab={newTab}
         onCloseTab={() => activeTab && closeTab(activeTab.id)}
         onQuit={() => exit(0).catch(() => window.close())}
@@ -1093,6 +1239,11 @@ export default function App() {
           volumes={volumes}
           currentPath={activePane?.path ?? ""}
           onNavigate={navigate}
+          customQuick={customQuick}
+          onRemoveQuick={toggleQuick}
+          tagCounts={Object.fromEntries(TAG_DEFS.map((t) => [t.id, tagPaths(t.id).length]))}
+          activeTagId={activePane?.tagId ?? null}
+          onSelectTag={(tagId) => navigate(`tags://${tagId}`)}
         />
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1106,6 +1257,10 @@ export default function App() {
               canPaste={!!clipboard && !!activePane}
               renaming={renaming}
               dragOver={dragOver}
+              fileTags={fileTags}
+              customQuick={customQuick}
+              onOpenTagFile={openTagFile}
+              onExitTag={goBack}
               handlers={handlers}
             />
           ) : null}
@@ -1138,7 +1293,47 @@ export default function App() {
         notice={notice}
       />
 
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        dark={dark}
+        onToggleTheme={toggleTheme}
+        onBindingsChanged={() => setKeymapVer((v) => v + 1)}
+      />
+
+      {/* 删除文件夹确认弹窗 */}
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setConfirmDelete(null);
+          }}
+        >
+          <div className="w-[380px] max-w-[92vw] rounded-lg border bg-background p-4 shadow-xl">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Trash2 className="h-4 w-4 text-destructive" /> 确认删除
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              将删除 {confirmDelete.paths.length} 个项目（含文件夹），移入回收站。
+              <br />
+              文件夹的删除需要确认，文件删除不弹此框。
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setConfirmDelete(null)}>
+                取消
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={confirmDeleteNow}
+                autoFocus
+              >
+                删除
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

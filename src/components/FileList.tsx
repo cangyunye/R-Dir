@@ -3,6 +3,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Check,
   CheckSquare,
   Clipboard,
   Copy,
@@ -12,6 +13,8 @@ import {
   Pencil,
   RefreshCw,
   Scissors,
+  Star,
+  Tag,
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -23,9 +26,14 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Input } from "@/components/ui/input";
+import { TAG_DEFS, type FileTags } from "@/lib/persist";
+import { TagDots } from "@/components/TagView";
 
 const COLUMNS: { key: SortKey | null; label: string; width: string }[] = [
   { key: "name", label: "名称", width: "minmax(0, 1fr)" },
@@ -54,8 +62,12 @@ function RenameInput({
   const [value, setValue] = useState(initial);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    ref.current?.focus();
-    ref.current?.select();
+    // 延迟聚焦：避免右键菜单关闭时 radix 的焦点恢复抢先夺走输入框焦点（触发 onBlur 立即提交）
+    const t = window.setTimeout(() => {
+      ref.current?.focus();
+      ref.current?.select();
+    }, 120);
+    return () => window.clearTimeout(t);
   }, []);
   return (
     <Input
@@ -103,6 +115,10 @@ export function FileList({
   canPaste,
   onSelectAll,
   onInvertSelection,
+  fileTags,
+  customQuick,
+  onToggleTag,
+  onToggleQuick,
   dragTarget,
   dragOp,
   showHidden,
@@ -142,6 +158,10 @@ export function FileList({
   canPaste: boolean;
   onSelectAll: () => void;
   onInvertSelection: () => void;
+  fileTags: FileTags;
+  customQuick: string[];
+  onToggleTag: (path: string, tagId: string) => void;
+  onToggleQuick: (path: string) => void;
   dragTarget: boolean;
   dragOp: "copy" | "move";
   showHidden: boolean;
@@ -483,6 +503,7 @@ export function FileList({
                 >
                   <div className="flex min-w-0 items-center gap-2 px-2 py-1">
                     <FileIcon entry={entry} size={16} className="shrink-0" />
+                    <TagDots path={entry.path} fileTags={fileTags} />
                     {isRenaming ? (
                       <RenameInput
                         initial={renaming.name}
@@ -537,6 +558,36 @@ export function FileList({
                 <ContextMenuSeparator />
                 <ContextMenuItem onClick={() => onCopyPath(entry.path)}>
                   <Clipboard className="mr-2 h-4 w-4" /> 复制路径
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                {/* 标签（Finder 风格） */}
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger>
+                    <Tag className="mr-2 h-4 w-4" /> 标签
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent className="min-w-40">
+                    {TAG_DEFS.map((t) => {
+                      const checked = (fileTags[entry.path] ?? []).includes(t.id);
+                      return (
+                        <ContextMenuItem
+                          key={t.id}
+                          onClick={() => onToggleTag(entry.path, t.id)}
+                        >
+                          <span
+                            className="mr-2 h-3 w-3 rounded-full"
+                            style={{ background: t.color }}
+                          />
+                          {t.label}
+                          {checked && <Check className="ml-auto h-3.5 w-3.5" />}
+                        </ContextMenuItem>
+                      );
+                    })}
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+                {/* 快捷访问（Finder 边栏式） */}
+                <ContextMenuItem onClick={() => onToggleQuick(entry.path)}>
+                  <Star className="mr-2 h-4 w-4" />
+                  {customQuick.includes(entry.path) ? "从快捷访问移除" : "添加到快捷访问"}
                 </ContextMenuItem>
                 <ContextMenuItem onClick={onRefresh}>
                   <RefreshCw className="mr-2 h-4 w-4" /> 刷新

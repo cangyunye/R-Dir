@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PaneNode, PaneState, SplitDir } from "@/lib/types";
+import type { FileTags } from "@/lib/persist";
 import { FileList, type RenameState } from "@/components/FileList";
 import { PropertiesBar } from "@/components/PropertiesBar";
+import { TagView } from "@/components/TagView";
 import type { FileEntry, SortKey } from "@/lib/types";
 
 export interface PaneHandlers {
@@ -37,6 +39,9 @@ export interface PaneHandlers {
   onPaste: (paneId: number) => void;
   onSelectAll: (paneId: number) => void;
   onInvertSelection: (paneId: number) => void;
+  /** 标签与快捷访问 */
+  onToggleTag: (path: string, tagId: string) => void;
+  onToggleQuick: (path: string) => void;
 }
 
 function PaneView({
@@ -47,6 +52,10 @@ function PaneView({
   isActive,
   dragOver,
   canPaste,
+  fileTags,
+  customQuick,
+  onOpenTagFile,
+  onExitTag,
   handlers,
 }: {
   pane: PaneState;
@@ -56,9 +65,14 @@ function PaneView({
   isActive: boolean;
   dragOver: { targetPaneId: number; op: "copy" | "move" } | null;
   canPaste: boolean;
+  fileTags: FileTags;
+  customQuick: string[];
+  onOpenTagFile: (path: string) => void;
+  onExitTag: () => void;
   handlers: PaneHandlers;
 }) {
   const h = handlers;
+  const showingTag = pane.tagId ?? null;
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       {pane.loading && (
@@ -66,7 +80,17 @@ function PaneView({
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在加载…
         </div>
       )}
-      <FileList
+      {showingTag ? (
+        <TagView
+          tagId={showingTag}
+          fileTags={fileTags}
+          currentPath={pane.path}
+          onOpen={onOpenTagFile}
+          onExit={onExitTag}
+          isActive={isActive}
+        />
+      ) : (
+        <FileList
         paneId={pane.id}
         entries={pane.entries}
         sortKey={pane.sortKey}
@@ -91,6 +115,10 @@ function PaneView({
         canPaste={canPaste}
         onSelectAll={() => h.onSelectAll(pane.id)}
         onInvertSelection={() => h.onInvertSelection(pane.id)}
+        fileTags={fileTags}
+        customQuick={customQuick}
+        onToggleTag={h.onToggleTag}
+        onToggleQuick={h.onToggleQuick}
         dragTarget={dragOver?.targetPaneId === pane.id}
         dragOp={dragOver?.targetPaneId === pane.id ? dragOver.op : "copy"}
         showHidden={showHidden}
@@ -100,6 +128,7 @@ function PaneView({
         isActive={isActive}
         onActivate={() => h.onActivate(pane.id)}
       />
+      )}
       {showProperties && <PropertiesBar entries={pane.entries} selection={pane.selection} />}
     </div>
   );
@@ -173,6 +202,10 @@ export function SplitView({
   canPaste,
   renaming,
   dragOver,
+  fileTags,
+  customQuick,
+  onOpenTagFile,
+  onExitTag,
   handlers,
 }: {
   node: PaneNode;
@@ -183,6 +216,10 @@ export function SplitView({
   canPaste: boolean;
   renaming: RenameState | null;
   dragOver: { targetPaneId: number; op: "copy" | "move" } | null;
+  fileTags: FileTags;
+  customQuick: string[];
+  onOpenTagFile: (path: string) => void;
+  onExitTag: () => void;
   handlers: PaneHandlers;
 }) {
   if (node.type === "pane") {
@@ -197,6 +234,10 @@ export function SplitView({
         isActive={pane.id === activePaneId}
         dragOver={dragOver}
         canPaste={canPaste}
+        fileTags={fileTags}
+        customQuick={customQuick}
+        onOpenTagFile={onOpenTagFile}
+        onExitTag={onExitTag}
         handlers={handlers}
       />
     );
@@ -217,6 +258,10 @@ export function SplitView({
           canPaste={canPaste}
           renaming={renaming}
           dragOver={dragOver}
+          fileTags={fileTags}
+          customQuick={customQuick}
+          onOpenTagFile={onOpenTagFile}
+          onExitTag={onExitTag}
           handlers={handlers}
         />
       </div>
@@ -239,6 +284,10 @@ export function SplitView({
           canPaste={canPaste}
           renaming={renaming}
           dragOver={dragOver}
+          fileTags={fileTags}
+          customQuick={customQuick}
+          onOpenTagFile={onOpenTagFile}
+          onExitTag={onExitTag}
           handlers={handlers}
         />
       </div>

@@ -53,6 +53,19 @@ fn parent_dir(path: String) -> Result<String, String> {
     }
 }
 
+/// 条目类型探测：返回 "dir" / "file" / "symlink"（标签虚拟目录双击跳转用）。
+#[tauri::command]
+fn stat_path(path: String) -> Result<String, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.is_dir() {
+        Ok("dir".to_string())
+    } else if meta.file_type().is_symlink() {
+        Ok("symlink".to_string())
+    } else {
+        Ok("file".to_string())
+    }
+}
+
 /// 复制条目到目标目录，返回实际创建路径（供撤销记录）。
 #[tauri::command]
 fn copy_entries(paths: Vec<String>, dest: String) -> Result<Vec<String>, String> {
@@ -137,6 +150,7 @@ pub fn run() {
             get_quick_access,
             get_home_dir,
             parent_dir,
+            stat_path,
             copy_entries,
             move_entries,
             rename_entry,

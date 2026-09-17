@@ -42,6 +42,8 @@ export interface PaneState {
   selection: string[];
   /** 自增计数，用于触发刷新 */
   refreshKey: number;
+  /** 虚拟标签目录（tags://<tagId>）：存在时该窗格显示标签视图而非目录列表 */
+  tagId?: string;
 }
 
 /** 分割方向：row = 左右并排，col = 上下堆叠 */
