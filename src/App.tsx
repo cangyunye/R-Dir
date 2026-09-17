@@ -539,9 +539,10 @@ export default function App() {
     async (paneId?: number) => {
       if (!clipboard) return;
       const pid = paneId ?? activePane?.id;
-      const pane = pid !== undefined
-        ? tabs.flatMap((t) => Object.values(t.panes)).find((p) => p.id === pid)
-        : null;
+      if (pid === undefined) return;
+      const pane = tabs
+        .flatMap((t) => Object.values(t.panes))
+        .find((p) => p.id === pid);
       if (!pane) return;
       const isCut = clipboard.op === "cut";
       const dest = pane.path;
