@@ -1,0 +1,67 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+          - platform: windows-latest
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build & release (tauri-action)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "${{ github.ref_name }}"
+          releaseBody: |
+            **Rust File Manager v0.1.0** — 跨平台文件管理器（macOS / Windows）
+
+            功能：
+            - 菜单栏 / 标签页（可拖拽排序）/ 地址栏补全 / 左侧导航与磁盘
+            - 详情列表（lsd 字段、扩展名图标、排序、隐藏文件开关）
+            - 文件操作：复制 / 剪切 / 粘贴 / 重命名 / 删除(回收站) / 新建文件夹与文本文件 / 复制到当前目录 / 复制路径 / 撤销与重做
+            - 多选（Shift 范围 / ⌘·Ctrl 追加 / 矩形框选）与跨窗格拖拽（默认复制，Option/Alt 移动）
+            - 分屏（VSCode 式拖拽分割条，左右 / 上下 / 四宫格）
+            - 搜索：文件名（当前层 / fd 引擎递归检索）+ 内容搜索（VSCode 风格，默认当前层）
+            - 主题切换（右上角日 / 月）、右键空白菜单、快捷键系统（⌘,/F1 查看一览）
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
