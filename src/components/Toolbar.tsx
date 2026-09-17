@@ -186,10 +186,28 @@ export function Toolbar({
                 closeCompletion();
               }
             }}
-            className="h-7 pr-8 text-xs"
+            className="h-7 pr-12 text-xs"
             placeholder="输入路径后回车跳转，Tab 补全目录"
             spellCheck={false}
           />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="absolute right-6 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            title={draft.trim() && draft.trim() !== path ? "刷新到输入路径" : "刷新当前目录"}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (draft.trim() && draft.trim() !== path) {
+                onNavigate(draft.trim());
+              } else {
+                onRefresh();
+              }
+            }}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
           <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground">
             <ArrowDownToLine className="h-3.5 w-3.5 opacity-50" />
           </span>

@@ -541,16 +541,50 @@ export default function App() {
     setMasterKeyOpen(true);
   }, []);
 
-  /** 侧边栏点击服务器：已连接直达（默认目录），否则弹连接框 */
+  /** 侧边栏点击服务器：已连接直达（默认目录）；已保存凭据 → 一键重连；否则弹连接框 */
   const openSftpServer = useCallback(
     (sv: SftpServerView) => {
       if (sftpConnectedRef.current.has(sv.id)) {
         navigate(`sftp://${sv.user}@${sv.host}:${sv.port}${sv.defaultRemote || "/"}`);
-      } else {
-        openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
+        return;
       }
+      if (sv.hasSecret) {
+        // 已保存密码/口令：后端从 servers.json 取密文（master-key 解密）直接重连
+        const cfg: SftpServerConfig = {
+          id: sv.id,
+          name: sv.name,
+          host: sv.host,
+          port: sv.port,
+          user: sv.user,
+          root: sv.root ?? null,
+          group: sv.group,
+          auth: sv.auth === "key" ? "publicKey" : "password",
+          ...(sv.auth === "key"
+            ? { keyPath: "", savePassphrase: true }
+            : { password: "", savePassword: true }),
+        };
+        void (async () => {
+          try {
+            const view = await sftpConnect(cfg);
+            await handleSftpConnected(cfg, view);
+          } catch (e) {
+            const msg = String(e);
+            if (msg.includes("NEED_MASTER_KEY")) {
+              // 主密钥未输入 → 挂起连接，弹主密钥框后自动重试
+              pendingConnectRef.current = cfg;
+              setMasterKeyOpen(true);
+              return;
+            }
+            // 重连失败（如凭据已失效）→ 回退弹连接框让用户输入
+            openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
+            showError(`重连失败：${e}`);
+          }
+        })();
+        return;
+      }
+      openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
     },
-    [navigate, openConnect],
+    [navigate, openConnect, showError, handleSftpConnected],
   );
 
   /** 侧边栏右键"编辑"：回填连接框（含 root/分组/认证方式） */

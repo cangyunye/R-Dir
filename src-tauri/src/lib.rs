@@ -219,13 +219,46 @@ async fn sftp_set_master_key(
     Ok(())
 }
 
-/// 连接服务器（密码/密钥认证；存盘的加密密码在此时用 master-key 解密）
+/// 连接服务器（密码/密钥认证；存盘的加密密码在此时用 master-key 解密）。
+/// 密码/口令/密钥留空时回退到 servers.json 中已保存的配置（供"断开后一键重连"）。
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_connect(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     mut server: sftp::servers::ServerConfigFile,
 ) -> Result<sftp::ServerView, String> {
+    // 回退到已保存配置：字段留空 → 用存盘值（可能为 enc: 密文，下方统一解密）
+    let path = sftp_servers_path(&app)?;
+    let file = sftp::servers::load_file(&path);
+    if let Some(stored) = file.servers.iter().find(|s| s.id == server.id) {
+        match (&mut server.auth, &stored.auth) {
+            (
+                sftp::servers::AuthConfig::Password { password, .. },
+                sftp::servers::AuthConfig::Password { password: sp, .. },
+            ) => {
+                if password.is_empty() && !sp.is_empty() {
+                    *password = sp.clone();
+                }
+            }
+            (
+                sftp::servers::AuthConfig::PublicKey { key_path, passphrase, .. },
+                sftp::servers::AuthConfig::PublicKey {
+                    key_path: skp,
+                    passphrase: spp,
+                    ..
+                },
+            ) => {
+                if key_path.is_empty() {
+                    *key_path = skp.clone();
+                }
+                if passphrase.is_none() {
+                    *passphrase = spp.clone();
+                }
+            }
+            _ => {}
+        }
+    }
     // 密文密码 → 用 master-key 解密（内存无 key 时要求先输入）
     match &mut server.auth {
         sftp::servers::AuthConfig::Password { password, .. } => {
