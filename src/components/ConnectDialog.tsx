@@ -81,7 +81,7 @@ export function ConnectDialog({
       user: user.trim(),
       root: root.trim() || null,
       group: group.trim(),
-      auth: authMode,
+      auth: authMode === "Password" ? "password" : "publicKey",
       ...(authMode === "Password"
         ? { password, savePassword }
         : {

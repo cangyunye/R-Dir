@@ -107,8 +107,8 @@ export interface SftpServerConfig {
   root?: string | null;
   /** 服务器分组（空 = 默认组） */
   group?: string;
-  /** "Password" | "PublicKey" */
-  auth: "Password" | "PublicKey";
+  /** "password" | "publicKey"（与后端 serde camelCase 对齐） */
+  auth: "password" | "publicKey";
   // Password
   password?: string;
   savePassword?: boolean;
