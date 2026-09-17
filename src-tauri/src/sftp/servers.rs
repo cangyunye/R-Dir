@@ -13,6 +13,9 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 /// 认证配置（存盘形式）
+/// 注意：rename_all="camelCase" 只作用于 variant 名（tag 值），
+/// variant 内字段名不受影响，因此字段显式 rename 为前端 camelCase，
+/// 并用 alias 兼容旧版 snake_case 存盘文件。
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "auth", rename_all = "camelCase")]
 pub enum AuthConfig {
@@ -20,12 +23,15 @@ pub enum AuthConfig {
         /// 明文密码，或以 "enc:v1:" 开头的 AES-256-GCM 密文（save_password=true 时）
         password: String,
         /// 是否把密码写入 servers.json（false 仅本次会话内存）
+        #[serde(rename = "savePassword", alias = "save_password")]
         save_password: bool,
     },
     PublicKey {
+        #[serde(rename = "keyPath", alias = "key_path")]
         key_path: String,
         /// 加密私钥口令（save_passphrase=false 时不落盘）
         passphrase: Option<String>,
+        #[serde(rename = "savePassphrase", alias = "save_passphrase")]
         save_passphrase: bool,
     },
 }

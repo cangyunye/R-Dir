@@ -629,6 +629,46 @@ mod sftp_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 模拟前端 ConnectDialog 的真实 payload（camelCase 字段），
+    /// 覆盖 sftp_connect/sftp_save_server 的 JSON 反序列化层（此前集成测试绕过此层导致字段名 bug 漏网）
+    #[test]
+    fn auth_config_deserialize_frontend_payload() {
+        use sftp::servers::{AuthConfig, ServerConfigFile};
+        // 密码模式：auth=password + savePassword
+        let json = r#"{"id":"u@h:22","name":"t","host":"h","port":22,"user":"u","root":null,"group":"","auth":"password","password":"pw","savePassword":true}"#;
+        let cfg: ServerConfigFile = serde_json::from_str(json).expect("password payload");
+        match &cfg.auth {
+            AuthConfig::Password { password, save_password } => {
+                assert_eq!(password, "pw");
+                assert!(*save_password);
+            }
+            _ => panic!("应解析为 Password"),
+        }
+        // 公钥模式：auth=publicKey + keyPath + savePassphrase
+        let json2 = r#"{"id":"u@h:22","name":"t","host":"h","port":22,"user":"u","root":null,"group":"","auth":"publicKey","keyPath":"/Users/vigil/.ssh/id_ed25519","passphrase":null,"savePassphrase":false}"#;
+        let cfg2: ServerConfigFile = serde_json::from_str(json2).expect("publicKey payload");
+        match &cfg2.auth {
+            AuthConfig::PublicKey { key_path, passphrase, save_passphrase } => {
+                assert_eq!(key_path, "/Users/vigil/.ssh/id_ed25519");
+                assert!(passphrase.is_none());
+                assert!(!*save_passphrase);
+            }
+            _ => panic!("应解析为 PublicKey"),
+        }
+        // 旧版 snake_case 存盘文件仍可读（alias 兼容）
+        let old = r#"{"id":"u@h:22","name":"t","host":"h","port":22,"user":"u","root":null,"group":"","auth":"password","password":"pw","save_password":false}"#;
+        let cfg3: ServerConfigFile = serde_json::from_str(old).expect("old snake_case payload");
+        match &cfg3.auth {
+            AuthConfig::Password { save_password, .. } => assert!(!*save_password),
+            _ => panic!("应解析为 Password"),
+        }
+        // 序列化输出应为 camelCase（写入 servers.json 的新格式）
+        let out = serde_json::to_value(&cfg2).unwrap();
+        assert_eq!(out["auth"], "publicKey");
+        assert_eq!(out["keyPath"], "/Users/vigil/.ssh/id_ed25519");
+        assert_eq!(out["savePassphrase"], false);
+    }
+
     /// 远程写操作全链路：mkdir → touch → upload → rename → download → remove → rmdir
     #[tokio::test]
     #[ignore]
