@@ -177,7 +177,23 @@ export function bindingOf(a: KeyAction): string {
   return isMac ? a.mac : a.win;
 }
 
+/** 特殊键别名：事件 e.key → 绑定串（保持与 KEY_LABELS / 默认绑定一致） */
+const KEY_ALIAS: Record<string, string> = {
+  ArrowUp: "up",
+  ArrowDown: "down",
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  Escape: "esc",
+  Enter: "enter",
+  Tab: "tab",
+  " ": "space",
+};
+
 function normKey(k: string): string {
+  const alias = KEY_ALIAS[k];
+  if (alias) return alias;
+  // F1–F12 归一化为小写（"F5" → "f5"）
+  if (/^F\d{1,2}$/.test(k)) return k.toLowerCase();
   return k.length === 1 ? k.toLowerCase() : k;
 }
 

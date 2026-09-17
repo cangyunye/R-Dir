@@ -358,34 +358,46 @@ fn session_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 
 /// 保存会话布局（原子写：先写临时文件再改名）
 #[tauri::command]
-fn session_save(app: tauri::AppHandle, layout: SessionLayout) -> Result<(), String> {
-    let path = session_path(&app)?;
-    let json = serde_json::to_string_pretty(&layout).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| format!("写入会话失败：{e}"))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("保存会话失败：{e}"))?;
-    Ok(())
+async fn session_save(app: tauri::AppHandle, layout: SessionLayout) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = session_path(&app)?;
+        let json = serde_json::to_string_pretty(&layout).map_err(|e| e.to_string())?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json).map_err(|e| format!("写入会话失败：{e}"))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("保存会话失败：{e}"))?;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 读取最近一次会话；无会话文件返回 None
 #[tauri::command]
-fn session_load(app: tauri::AppHandle) -> Result<Option<SessionLayout>, String> {
-    let path = session_path(&app)?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let raw = std::fs::read_to_string(&path).map_err(|e| format!("读取会话失败：{e}"))?;
-    serde_json::from_str(&raw).map(Some).map_err(|e| format!("解析会话失败：{e}"))
+async fn session_load(app: tauri::AppHandle) -> Result<Option<SessionLayout>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = session_path(&app)?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = std::fs::read_to_string(&path).map_err(|e| format!("读取会话失败：{e}"))?;
+        serde_json::from_str(&raw).map(Some).map_err(|e| format!("解析会话失败：{e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 清除已保存的会话
 #[tauri::command]
-fn session_clear(app: tauri::AppHandle) -> Result<(), String> {
-    let path = session_path(&app)?;
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| format!("清除会话失败：{e}"))?;
-    }
-    Ok(())
+async fn session_clear(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = session_path(&app)?;
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| format!("清除会话失败：{e}"))?;
+        }
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 下载远程文件到临时目录，返回本地路径（供打开）

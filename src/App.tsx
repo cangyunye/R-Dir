@@ -260,7 +260,7 @@ export default function App() {
   /** 主密钥设置后待重连的服务器（来自连接框解密失败） */
   const pendingConnectRef = useRef<SftpServerConfig | null>(null);
   /** 会话恢复中挂起的 SFTP 连接（master-key 输入成功后重试） */
-  const pendingSftpRestoreRef = useRef<{ paneId: number; serverId: string }[]>([]);
+  const pendingSftpRestoreRef = useRef<{ paneId: number; serverId: string; path: string }[]>([]);
   /** 主密钥设置后待保存的服务器（来自连接成功但保存失败） */
   const pendingSaveRef = useRef<SftpServerConfig | null>(null);
 
@@ -404,12 +404,12 @@ export default function App() {
     );
   }, []);
 
-  /** 会话恢复（v0.3.0）：重建标签集合 + 分屏树 + pane 路径；SFTP 逐个重连（需 master-key） */
+  /** 会话恢复（v0.3.0）：重建标签集合 + 分屏树 + pane 路径；SFTP 并发重连（需 master-key） */
   const restoreSession = useCallback(
     async (layout: SessionLayout) => {
       const remap = new Map<number, number>();
       const restored: TabState[] = [];
-      const sftpPanes: { paneId: number; serverId: string }[] = [];
+      const sftpPanes: { paneId: number; serverId: string; path: string }[] = [];
       for (const st of layout.tabs) {
         const panes: Record<number, PaneState> = {};
         const tabId = nextTabId++;
@@ -418,7 +418,7 @@ export default function App() {
           remap.set(sp.id, p.id);
           if (sp.kind === "tag" && sp.tagId) p.tagId = sp.tagId;
           if (sp.kind === "sftp" && sp.serverId) {
-            sftpPanes.push({ paneId: p.id, serverId: sp.serverId });
+            sftpPanes.push({ paneId: p.id, serverId: sp.serverId, path: sp.path });
           }
           panes[p.id] = p;
         }
@@ -430,36 +430,54 @@ export default function App() {
       setTabs(restored);
       const idx = Math.min(Math.max(layout.activeTab, 0), restored.length - 1);
       setActiveId(restored[idx].id);
-      // 逐个恢复 SFTP 连接（后端回退已存配置 + master-key 解密）
-      for (const sp of sftpPanes) {
+      // 显式加载所有窗格（listDir effect 只监听活动 pane，非活动窗格不会自动加载）
+      const loadPaneNow = async (paneId: number, path: string) => {
         try {
-          await sftpConnect({
-            id: sp.serverId,
-            name: "",
-            host: "",
-            port: 22,
-            user: "",
-            root: null,
-            group: "",
-            auth: "password",
-          });
-          sftpConnectedRef.current.add(sp.serverId);
-          refreshPane(sp.paneId);
-          void syncSftpConnected(
-            sftpServers.map((s) => (s.id === sp.serverId ? { ...s, connected: true } : s)),
-          );
+          const entries = await listDir(path);
+          patchPane(paneId, { entries, loading: false, error: null });
         } catch (e) {
-          const msg = String(e);
-          if (msg.includes("NEED_MASTER_KEY")) {
-            pendingSftpRestoreRef.current.push(sp);
-            setMasterKeyOpen(true);
-          } else {
-            patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${msg}）` });
-          }
+          patchPane(paneId, { loading: false, error: String(e) });
+        }
+      };
+      const localPanes: { paneId: number; path: string }[] = [];
+      for (const t of restored) {
+        for (const p of Object.values(t.panes)) {
+          if (!p.path.startsWith("sftp://")) localPanes.push({ paneId: p.id, path: p.path });
         }
       }
+      void Promise.all(localPanes.map((lp) => loadPaneNow(lp.paneId, lp.path)));
+      // SFTP 并发恢复（后端回退已存配置 + master-key 解密）
+      await Promise.all(
+        sftpPanes.map(async (sp) => {
+          try {
+            await sftpConnect({
+              id: sp.serverId,
+              name: "",
+              host: "",
+              port: 22,
+              user: "",
+              root: null,
+              group: "",
+              auth: "password",
+            });
+            sftpConnectedRef.current.add(sp.serverId);
+            await loadPaneNow(sp.paneId, sp.path);
+            void syncSftpConnected(
+              sftpServers.map((s) => (s.id === sp.serverId ? { ...s, connected: true } : s)),
+            );
+          } catch (e) {
+            const msg = String(e);
+            if (msg.includes("NEED_MASTER_KEY")) {
+              pendingSftpRestoreRef.current.push(sp);
+              setMasterKeyOpen(true);
+            } else {
+              patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${msg}）` });
+            }
+          }
+        }),
+      );
     },
-    [patchPane, refreshPane, syncSftpConnected, sftpServers],
+    [patchPane, syncSftpConnected, sftpServers],
   );
 
   // 活动 pane 路径/刷新键变化时加载目录
@@ -598,19 +616,19 @@ export default function App() {
     });
   }, [activePane, patchPane]);
 
-  /** 退出：保存当前会话布局后关闭窗口 */
+  /** 退出：保存当前会话布局后退出进程（exit 兜底，避免 destroy 链路挂起） */
   const handleExitWithSave = useCallback(async () => {
     try {
       await sessionSave(serializeSession(tabsRef.current, activeIdRef.current));
     } catch {
       /* 保存失败不阻塞退出 */
     }
-    await getCurrentWindow().destroy();
+    await exit(0);
   }, []);
 
-  /** 退出：不保存，直接关闭 */
+  /** 退出：不保存，直接退出进程 */
   const handleExitNoSave = useCallback(async () => {
-    await getCurrentWindow().destroy();
+    await exit(0);
   }, []);
 
   // 拦截窗口关闭 → 询问是否保存会话（v0.3.0）
@@ -705,14 +723,15 @@ export default function App() {
               auth: "password",
             });
             sftpConnectedRef.current.add(sp.serverId);
-            refreshPane(sp.paneId);
+            const entries = await listDir(sp.path);
+            patchPane(sp.paneId, { entries, loading: false, error: null });
           } catch (e) {
             patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${e}）` });
           }
         }
       }
     },
-    [handleSftpConnected, showError, refreshPane, patchPane],
+    [handleSftpConnected, showError, patchPane],
   );
 
   /** 连接框需要主密钥：记录挂起连接并弹出主密钥框 */
