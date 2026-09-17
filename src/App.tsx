@@ -2,11 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   ClipboardState,
   FileEntry,
+  PaneNode,
   PaneState,
   QuickAccessItem,
+  SessionLayout,
   SortDir,
   SortKey,
   SplitDir,
@@ -40,6 +43,8 @@ import {
   sftpRemoveServer,
   sftpDisconnect,
   sftpUpload,
+  sessionLoad,
+  sessionSave,
   statPath,
 } from "@/lib/api";
 import { ConnectDialog, type SftpConnectInitial } from "@/components/ConnectDialog";
@@ -73,6 +78,51 @@ import { MenuBar } from "@/components/MenuBar";
 
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
 const VIRTUAL_TAG_RE = /^tags:\/\/([a-z0-9_-]+)$/;
+
+/** 从 sftp://user@host:port/path 提取 authority（= 服务器 id） */
+function sftpAuthorityId(path: string): string | null {
+  const rest = path.startsWith("sftp://") ? path.slice("sftp://".length) : path;
+  const authority = rest.split("/")[0] ?? "";
+  if (!authority || !authority.includes("@")) return null;
+  return authority;
+}
+
+/** 序列化当前标签页布局为会话快照（SFTP 只存 serverId，不含任何凭据） */
+function serializeSession(tabs: TabState[], activeId: number): SessionLayout {
+  const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeId));
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    activeTab: activeIdx,
+    tabs: tabs.map((t) => ({
+      id: t.id,
+      title: t.title,
+      activePane: t.activePane,
+      root: t.root,
+      panes: Object.values(t.panes).map((p) => {
+        if (p.path.startsWith("sftp://")) {
+          return {
+            id: p.id,
+            path: p.path,
+            kind: "sftp",
+            serverId: sftpAuthorityId(p.path) ?? undefined,
+          };
+        }
+        if (p.tagId) return { id: p.id, path: p.path, kind: "tag", tagId: p.tagId };
+        return { id: p.id, path: p.path, kind: "local" };
+      }),
+    })),
+  };
+}
+
+/** 恢复时把旧 paneId 重映射到本次新分配的 id（分屏树原样保留比例/方向） */
+function remapNode(node: PaneNode, remap: Map<number, number>): PaneNode {
+  if (node.type === "pane") {
+    const nid = remap.get(node.paneId);
+    return nid !== undefined ? { type: "pane", paneId: nid } : node;
+  }
+  return { ...node, a: remapNode(node.a, remap), b: remapNode(node.b, remap) };
+}
 
 function tagTitle(tagId: string): string {
   return `标签：${tagById(tagId)?.label ?? tagId}`;
@@ -187,6 +237,13 @@ export default function App() {
   });
   /** 快捷键配置版本号：自定义键位变更时 +1，触发菜单/设置重渲染 */
   const [keymapVer, setKeymapVer] = useState(0);
+  /** 退出询问：拦截窗口关闭，询问是否保存会话布局（v0.3.0） */
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  /** 最新 tabs/activeId（退出保存用，避免闭包过期） */
+  const tabsRef = useRef<TabState[]>([]);
+  tabsRef.current = tabs;
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
 
   // ==================== SFTP 远程服务器（v0.2 插件） ====================
   const [sftpServers, setSftpServers] = useState<SftpServerView[]>([]);
@@ -202,6 +259,8 @@ export default function App() {
   const [masterKeyOpen, setMasterKeyOpen] = useState(false);
   /** 主密钥设置后待重连的服务器（来自连接框解密失败） */
   const pendingConnectRef = useRef<SftpServerConfig | null>(null);
+  /** 会话恢复中挂起的 SFTP 连接（master-key 输入成功后重试） */
+  const pendingSftpRestoreRef = useRef<{ paneId: number; serverId: string }[]>([]);
   /** 主密钥设置后待保存的服务器（来自连接成功但保存失败） */
   const pendingSaveRef = useRef<SftpServerConfig | null>(null);
 
@@ -295,9 +354,15 @@ export default function App() {
         setHomePath(home);
         setVolumes(vols);
         setQuickAccess(qa);
-        const tab = makeTab(home);
-        setTabs([tab]);
-        setActiveId(tab.id);
+        // 会话恢复（v0.3.0）：有保存的布局则恢复，否则默认家目录
+        const layout = await sessionLoad().catch(() => null);
+        if (layout && layout.tabs && layout.tabs.length > 0) {
+          await restoreSession(layout);
+        } else {
+          const tab = makeTab(home);
+          setTabs([tab]);
+          setActiveId(tab.id);
+        }
       } catch (e) {
         console.error("启动失败", e);
       }
@@ -338,6 +403,64 @@ export default function App() {
       }),
     );
   }, []);
+
+  /** 会话恢复（v0.3.0）：重建标签集合 + 分屏树 + pane 路径；SFTP 逐个重连（需 master-key） */
+  const restoreSession = useCallback(
+    async (layout: SessionLayout) => {
+      const remap = new Map<number, number>();
+      const restored: TabState[] = [];
+      const sftpPanes: { paneId: number; serverId: string }[] = [];
+      for (const st of layout.tabs) {
+        const panes: Record<number, PaneState> = {};
+        const tabId = nextTabId++;
+        for (const sp of st.panes) {
+          const p = makePane(sp.path);
+          remap.set(sp.id, p.id);
+          if (sp.kind === "tag" && sp.tagId) p.tagId = sp.tagId;
+          if (sp.kind === "sftp" && sp.serverId) {
+            sftpPanes.push({ paneId: p.id, serverId: sp.serverId });
+          }
+          panes[p.id] = p;
+        }
+        const root = remapNode(st.root as PaneNode, remap);
+        const activePane = remap.get(st.activePane) ?? firstPaneId(root);
+        restored.push({ id: tabId, title: st.title || "", root, activePane, panes });
+      }
+      if (restored.length === 0) return;
+      setTabs(restored);
+      const idx = Math.min(Math.max(layout.activeTab, 0), restored.length - 1);
+      setActiveId(restored[idx].id);
+      // 逐个恢复 SFTP 连接（后端回退已存配置 + master-key 解密）
+      for (const sp of sftpPanes) {
+        try {
+          await sftpConnect({
+            id: sp.serverId,
+            name: "",
+            host: "",
+            port: 22,
+            user: "",
+            root: null,
+            group: "",
+            auth: "password",
+          });
+          sftpConnectedRef.current.add(sp.serverId);
+          refreshPane(sp.paneId);
+          void syncSftpConnected(
+            sftpServers.map((s) => (s.id === sp.serverId ? { ...s, connected: true } : s)),
+          );
+        } catch (e) {
+          const msg = String(e);
+          if (msg.includes("NEED_MASTER_KEY")) {
+            pendingSftpRestoreRef.current.push(sp);
+            setMasterKeyOpen(true);
+          } else {
+            patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${msg}）` });
+          }
+        }
+      }
+    },
+    [patchPane, refreshPane, syncSftpConnected, sftpServers],
+  );
 
   // 活动 pane 路径/刷新键变化时加载目录
   useEffect(() => {
@@ -475,6 +598,40 @@ export default function App() {
     });
   }, [activePane, patchPane]);
 
+  /** 退出：保存当前会话布局后关闭窗口 */
+  const handleExitWithSave = useCallback(async () => {
+    try {
+      await sessionSave(serializeSession(tabsRef.current, activeIdRef.current));
+    } catch {
+      /* 保存失败不阻塞退出 */
+    }
+    await getCurrentWindow().destroy();
+  }, []);
+
+  /** 退出：不保存，直接关闭 */
+  const handleExitNoSave = useCallback(async () => {
+    await getCurrentWindow().destroy();
+  }, []);
+
+  // 拦截窗口关闭 → 询问是否保存会话（v0.3.0）
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onCloseRequested((e) => {
+        e.preventDefault();
+        setCloseDialogOpen(true);
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {
+        /* 环境不支持时按默认直接关闭 */
+      });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
   /** 连接成功：保存清单 + 刷新状态 + 导航到服务器默认目录（root 或 home） */
   const handleSftpConnected = useCallback(
     async (config: SftpServerConfig, view?: SftpServerView) => {
@@ -531,8 +688,31 @@ export default function App() {
           showError(`连接失败：${e}`);
         }
       }
+      // 3) 挂起的会话恢复连接（主密钥验证后重试）
+      const pending = pendingSftpRestoreRef.current;
+      if (pending.length > 0) {
+        pendingSftpRestoreRef.current = [];
+        for (const sp of pending) {
+          try {
+            await sftpConnect({
+              id: sp.serverId,
+              name: "",
+              host: "",
+              port: 22,
+              user: "",
+              root: null,
+              group: "",
+              auth: "password",
+            });
+            sftpConnectedRef.current.add(sp.serverId);
+            refreshPane(sp.paneId);
+          } catch (e) {
+            patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${e}）` });
+          }
+        }
+      }
     },
-    [handleSftpConnected, showError],
+    [handleSftpConnected, showError, refreshPane, patchPane],
   );
 
   /** 连接框需要主密钥：记录挂起连接并弹出主密钥框 */
@@ -1431,8 +1611,15 @@ export default function App() {
         target?.tagName === "INPUT" ||
         target?.tagName === "TEXTAREA" ||
         target?.isContentEditable === true;
-      // 输入框聚焦时完全不拦截，保证 ⌘V 粘贴文本等原生行为
-      if (typing) return;
+      // 输入框聚焦时拦截"刷新"类快捷键，避免漏到 WebView 触发整页重载（状态全丢）
+      if (typing) {
+        const combo = keyEventString(e);
+        if (combo === "f5" || combo === "mod+r") {
+          e.preventDefault();
+          actionsRef.current.refresh?.();
+        }
+        return;
+      }
       const combo = keyEventString(e);
       const action = findAction(combo);
       if (!action) return;
@@ -1697,6 +1884,36 @@ export default function App() {
                 autoFocus
               >
                 删除
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 退出询问：是否保存会话布局（v0.3.0） */}
+      {closeDialogOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setCloseDialogOpen(false);
+          }}
+        >
+          <div className="w-[360px] max-w-[92vw] rounded-lg border bg-background p-4 shadow-xl">
+            <div className="text-sm font-semibold">保存会话布局？</div>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              下次启动可恢复当前标签页、分屏布局与各窗格路径。
+              <br />
+              SFTP 远程目录需验证主密钥后恢复，否则显示占位。
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setCloseDialogOpen(false)}>
+                取消
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void handleExitNoSave()}>
+                不保存
+              </Button>
+              <Button size="sm" onClick={() => void handleExitWithSave()} autoFocus>
+                保存并退出
               </Button>
             </div>
           </div>

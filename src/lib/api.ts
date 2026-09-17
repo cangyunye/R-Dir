@@ -5,6 +5,7 @@ import type {
   MasterKeyStatus,
   QuickAccessItem,
   SearchMatch,
+  SessionLayout,
   SftpServerConfig,
   SftpServerView,
   VolumeInfo,
@@ -116,3 +117,13 @@ export const sftpDelete = (paths: string[]) =>
 
 export const sftpRename = (path: string, newName: string) =>
   invoke<string>("sftp_rename", { path, newName });
+
+// ---- 会话保存 / 恢复（v0.3.0） ----
+export const sessionSave = (layout: SessionLayout) =>
+  invoke<void>("session_save", { layout });
+
+export const sessionLoad = () =>
+  invoke<SessionLayout | null>("session_load");
+
+export const sessionClear = () =>
+  invoke<void>("session_clear");

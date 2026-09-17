@@ -147,6 +147,32 @@ export interface TransferProgress {
   done: boolean;
 }
 
+/** 会话保存（v0.3.0）：单个窗格快照，SFTP 只存 serverId，不含任何凭据 */
+export interface SessionPane {
+  id: number;
+  path: string;
+  kind: "local" | "sftp" | "tag";
+  serverId?: string;
+  tagId?: string;
+}
+
+/** 会话保存：标签页快照（root 为分屏树 JSON） */
+export interface SessionTab {
+  id: number;
+  title: string;
+  activePane: number;
+  root: unknown;
+  panes: SessionPane[];
+}
+
+/** 会话布局（对应后端 SessionLayout，camelCase） */
+export interface SessionLayout {
+  version: number;
+  savedAt: string;
+  activeTab: number;
+  tabs: SessionTab[];
+}
+
 export interface MasterKeyStatus {
   /** 是否已设置过（有校验值） */
   configured: boolean;

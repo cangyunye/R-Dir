@@ -398,6 +398,13 @@ export function FileList({
     <div
       ref={containerRef}
       data-pane-id={paneId}
+      onMouseDownCapture={(e) => {
+        // 地址栏聚焦时：点击窗格空白保持地址栏光标；点击文件/文件夹行才允许移交焦点
+        const ae = document.activeElement as HTMLElement | null;
+        if (ae?.id === "rdir-addr-input" && !(e.target as HTMLElement).closest("[data-path]")) {
+          e.preventDefault();
+        }
+      }}
       className={cn(
         "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background transition-shadow",
         isActive ? "shadow-[inset_0_0_0_1px_hsl(var(--ring)/0.35)]" : "shadow-[inset_0_0_0_1px_transparent]",

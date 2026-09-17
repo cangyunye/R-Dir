@@ -11,6 +11,7 @@ mod sftp;
 use find::FindEntry;
 use fs_ops::FileEntry;
 use search::SearchMatch;
+use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use volumes::{QuickAccessItem, VolumeInfo};
 
@@ -228,11 +229,15 @@ async fn sftp_connect(
     state: tauri::State<'_, AppState>,
     mut server: sftp::servers::ServerConfigFile,
 ) -> Result<sftp::ServerView, String> {
-    // 回退到已保存配置：字段留空 → 用存盘值（可能为 enc: 密文，下方统一解密）
+    // 回退到已保存配置：host 留空 = 只传 id（会话恢复），整条回退存盘配置；
+    // 字段留空 → 用存盘值（可能为 enc: 密文，下方统一解密）
     let path = sftp_servers_path(&app)?;
     let file = sftp::servers::load_file(&path);
     if let Some(stored) = file.servers.iter().find(|s| s.id == server.id) {
-        match (&mut server.auth, &stored.auth) {
+        if server.host.is_empty() {
+            server = stored.clone();
+        } else {
+            match (&mut server.auth, &stored.auth) {
             (
                 sftp::servers::AuthConfig::Password { password, .. },
                 sftp::servers::AuthConfig::Password { password: sp, .. },
@@ -257,6 +262,7 @@ async fn sftp_connect(
                 }
             }
             _ => {}
+        }
         }
     }
     // 密文密码 → 用 master-key 解密（内存无 key 时要求先输入）
@@ -303,6 +309,82 @@ async fn sftp_disconnect(
 ) -> Result<(), String> {
     let mut pool = state.sftp_pool.lock().await;
     pool.remove(&id);
+    Ok(())
+}
+
+// ==================== 会话保存 / 恢复（v0.3.0） ====================
+
+/// 单个窗格的会话快照：只存路径与类型标识，SFTP 仅存 serverId，不含任何凭据
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPane {
+    pub id: u32,
+    pub path: String,
+    /// "local" | "sftp" | "tag"
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag_id: Option<String>,
+}
+
+/// 标签页快照：分屏树原样 JSON 保存（root），窗格明细在 panes
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTab {
+    pub id: u32,
+    pub title: String,
+    pub active_pane: u32,
+    pub root: serde_json::Value,
+    pub panes: Vec<SessionPane>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLayout {
+    pub version: u32,
+    pub saved_at: String,
+    pub active_tab: usize,
+    pub tabs: Vec<SessionTab>,
+}
+
+fn session_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    Ok(dir.join("session.json"))
+}
+
+/// 保存会话布局（原子写：先写临时文件再改名）
+#[tauri::command]
+fn session_save(app: tauri::AppHandle, layout: SessionLayout) -> Result<(), String> {
+    let path = session_path(&app)?;
+    let json = serde_json::to_string_pretty(&layout).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| format!("写入会话失败：{e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("保存会话失败：{e}"))?;
+    Ok(())
+}
+
+/// 读取最近一次会话；无会话文件返回 None
+#[tauri::command]
+fn session_load(app: tauri::AppHandle) -> Result<Option<SessionLayout>, String> {
+    let path = session_path(&app)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path).map_err(|e| format!("读取会话失败：{e}"))?;
+    serde_json::from_str(&raw).map(Some).map_err(|e| format!("解析会话失败：{e}"))
+}
+
+/// 清除已保存的会话
+#[tauri::command]
+fn session_clear(app: tauri::AppHandle) -> Result<(), String> {
+    let path = session_path(&app)?;
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("清除会话失败：{e}"))?;
+    }
     Ok(())
 }
 
@@ -600,7 +682,11 @@ pub fn run() {
             sftp_mkdir,
             sftp_create_file,
             sftp_delete,
-            sftp_rename
+            sftp_rename,
+            // 会话保存 / 恢复
+            session_save,
+            session_load,
+            session_clear
         ]);
     }
     #[cfg(not(feature = "sftp"))]
@@ -621,7 +707,11 @@ pub fn run() {
             create_dir,
             create_file,
             search_content,
-            find_files
+            find_files,
+            // 会话保存 / 恢复
+            session_save,
+            session_load,
+            session_clear
         ]);
     }
     builder

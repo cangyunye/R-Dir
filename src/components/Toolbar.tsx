@@ -159,6 +159,7 @@ export function Toolbar({
         <div className="relative">
           <Input
             ref={inputRef}
+            id="rdir-addr-input"
             value={draft}
             onChange={(e) => {
               setDraft(e.target.value);
