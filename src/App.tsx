@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
+import { listen } from "@tauri-apps/api/event";
 import type {
   ClipboardState,
   FileEntry,
@@ -10,6 +11,7 @@ import type {
   SortKey,
   SplitDir,
   TabState,
+  TransferProgress,
   VolumeInfo,
 } from "@/lib/types";
 import {
@@ -35,6 +37,7 @@ import {
   sftpMkdir,
   sftpRename,
   sftpSaveServer,
+  sftpRemoveServer,
   sftpDisconnect,
   sftpUpload,
   statPath,
@@ -201,6 +204,29 @@ export default function App() {
   const pendingConnectRef = useRef<SftpServerConfig | null>(null);
   /** 主密钥设置后待保存的服务器（来自连接成功但保存失败） */
   const pendingSaveRef = useRef<SftpServerConfig | null>(null);
+
+  // ==================== 传输/复制进度（本地 + SFTP） ====================
+  const [transfer, setTransfer] = useState<TransferProgress | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    let doneTimer: ReturnType<typeof setTimeout> | null = null;
+    const un = listen<TransferProgress>("transfer-progress", (e) => {
+      if (disposed) return;
+      setTransfer(e.payload);
+      if (e.payload.done && !doneTimer) {
+        doneTimer = setTimeout(() => {
+          setTransfer(null);
+          doneTimer = null;
+        }, 1500);
+      }
+    });
+    return () => {
+      disposed = true;
+      if (doneTimer) clearTimeout(doneTimer);
+      un.then((f) => f());
+    };
+  }, []);
 
   const syncSftpConnected = useCallback((list: SftpServerView[]) => {
     sftpConnectedRef.current = new Set(list.filter((s) => s.connected).map((s) => s.id));
@@ -449,11 +475,12 @@ export default function App() {
     });
   }, [activePane, patchPane]);
 
-  /** 连接成功：保存清单 + 刷新状态 + 导航到服务器根 */
+  /** 连接成功：保存清单 + 刷新状态 + 导航到服务器默认目录（root 或 home） */
   const handleSftpConnected = useCallback(
-    async (config: SftpServerConfig) => {
+    async (config: SftpServerConfig, view?: SftpServerView) => {
+      let list: SftpServerView[] | null = null;
       try {
-        await sftpSaveServer(config);
+        list = await sftpSaveServer(config);
       } catch (e) {
         const msg = String(e);
         if (msg.includes("NEED_MASTER_KEY")) {
@@ -464,10 +491,12 @@ export default function App() {
         }
         showError(`保存服务器失败：${e}`);
       }
-      const list = await sftpListServers();
+      if (!list) list = await sftpListServers().catch(() => []);
       syncSftpConnected(list);
       setSftpServers(list);
-      navigate(`sftp://${config.user}@${config.host}:${config.port}/`);
+      const v = view ?? list.find((s) => s.id === config.id);
+      const remote = v?.defaultRemote || "/";
+      navigate(`sftp://${config.user}@${config.host}:${config.port}${remote}`);
     },
     [navigate, showError, syncSftpConnected],
   );
@@ -512,16 +541,48 @@ export default function App() {
     setMasterKeyOpen(true);
   }, []);
 
-  /** 侧边栏点击服务器：已连接直达，否则弹连接框 */
+  /** 侧边栏点击服务器：已连接直达（默认目录），否则弹连接框 */
   const openSftpServer = useCallback(
     (sv: SftpServerView) => {
       if (sftpConnectedRef.current.has(sv.id)) {
-        navigate(`sftp://${sv.user}@${sv.host}:${sv.port}/`);
+        navigate(`sftp://${sv.user}@${sv.host}:${sv.port}${sv.defaultRemote || "/"}`);
       } else {
         openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
       }
     },
     [navigate, openConnect],
+  );
+
+  /** 侧边栏右键"编辑"：回填连接框（含 root/分组/认证方式） */
+  const handleSftpEdit = useCallback(
+    (sv: SftpServerView) => {
+      openConnect({
+        id: sv.id,
+        host: sv.host,
+        port: sv.port,
+        user: sv.user,
+        name: sv.name,
+        root: sv.root ?? "",
+        group: sv.group,
+        auth: sv.auth === "key" ? "publicKey" : "password",
+      });
+    },
+    [openConnect],
+  );
+
+  /** 侧边栏右键"删除服务器配置"（连接不断开） */
+  const handleSftpRemove = useCallback(
+    async (sv: SftpServerView) => {
+      if (!window.confirm(`删除服务器配置「${sv.name}」？连接不会断开。`)) return;
+      try {
+        const list = await sftpRemoveServer(sv.id);
+        syncSftpConnected(list);
+        setSftpServers(list);
+      } catch (e) {
+        showError(`删除服务器失败：${e}`);
+      }
+    },
+    [showError, syncSftpConnected],
   );
 
   const handleSftpDisconnect = useCallback(
@@ -1493,6 +1554,8 @@ export default function App() {
           sftpServers={sftpServers}
           onSftpOpen={openSftpServer}
           onSftpDisconnect={handleSftpDisconnect}
+          onSftpEdit={handleSftpEdit}
+          onSftpRemove={handleSftpRemove}
         />
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1540,6 +1603,7 @@ export default function App() {
         showHidden={showHidden}
         error={activePane?.error ?? null}
         notice={notice}
+        transfer={transfer}
       />
 
       <SettingsDialog

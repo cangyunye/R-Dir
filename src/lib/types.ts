@@ -126,6 +126,8 @@ export interface SftpServerView {
   port: number;
   user: string;
   root?: string | null;
+  /** 连接后默认进入的远程绝对路径（root 优先，否则 home） */
+  defaultRemote: string;
   group: string;
   auth: string;
   hasSecret: boolean;
@@ -133,6 +135,18 @@ export interface SftpServerView {
 }
 
 /** master-key 状态 */
+/** 传输/复制进度事件载荷（对应后端 progress.rs） */
+export interface TransferProgress {
+  /** "copy" | "move" | "upload" | "download" */
+  phase: "copy" | "move" | "upload" | "download";
+  label: string;
+  doneFiles: number;
+  totalFiles: number;
+  fileDone: number;
+  fileTotal: number;
+  done: boolean;
+}
+
 export interface MasterKeyStatus {
   /** 是否已设置过（有校验值） */
   configured: boolean;

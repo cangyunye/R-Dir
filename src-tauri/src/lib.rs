@@ -1,6 +1,7 @@
 mod find;
 mod fs_ops;
 mod ops;
+mod progress;
 mod search;
 mod volumes;
 
@@ -94,6 +95,7 @@ async fn sftp_list_servers(
 
 /// 保存（新增或更新）服务器；返回最新清单。
 /// 勾选"记住密码"时用 master-key 加密存储（未设置 master-key 返回 NEED_MASTER_KEY）。
+/// 编辑已有服务器时，密码/口令/密钥留空 = 保留原值（不覆盖）。
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_save_server(
@@ -101,9 +103,35 @@ async fn sftp_save_server(
     mut server: sftp::servers::ServerConfigFile,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<sftp::ServerView>, String> {
+    use sftp::servers::AuthConfig;
+    let path = sftp_servers_path(&app)?;
+    let mut file = sftp::servers::load_file(&path);
+    let id = sftp::servers::server_id(&server.user, &server.host, server.port);
+    // 编辑保留：已存在服务器且对应字段留空 → 沿用旧值（密文原样保留）
+    if let Some(old) = file.servers.iter().find(|s| s.id == id) {
+        match (&mut server.auth, &old.auth) {
+            (AuthConfig::Password { password, .. }, AuthConfig::Password { password: old_pw, .. }) => {
+                if password.is_empty() {
+                    *password = old_pw.clone();
+                }
+            }
+            (
+                AuthConfig::PublicKey { key_path, passphrase, save_passphrase },
+                AuthConfig::PublicKey { key_path: old_kp, passphrase: old_pp, .. },
+            ) => {
+                if key_path.is_empty() {
+                    *key_path = old_kp.clone();
+                }
+                if passphrase.is_none() && *save_passphrase {
+                    *passphrase = old_pp.clone();
+                }
+            }
+            _ => {}
+        }
+    }
     // 需要落盘的密码/口令 → 用 master-key 加密
     match &mut server.auth {
-        sftp::servers::AuthConfig::Password { password, save_password } => {
+        AuthConfig::Password { password, save_password } => {
             if *save_password && !password.is_empty() && !password.starts_with(sftp::servers::ENC_PREFIX) {
                 let mk = state.master_key.lock().await;
                 let Some(key) = mk.as_deref() else {
@@ -112,7 +140,7 @@ async fn sftp_save_server(
                 *password = sftp::servers::encrypt_password(key, password)?;
             }
         }
-        sftp::servers::AuthConfig::PublicKey { passphrase, save_passphrase, .. } => {
+        AuthConfig::PublicKey { passphrase, save_passphrase, .. } => {
             if *save_passphrase {
                 if let Some(p) = passphrase.as_deref() {
                     if !p.is_empty() && !p.starts_with(sftp::servers::ENC_PREFIX) {
@@ -126,9 +154,6 @@ async fn sftp_save_server(
             }
         }
     }
-    let path = sftp_servers_path(&app)?;
-    let mut file = sftp::servers::load_file(&path);
-    let id = sftp::servers::server_id(&server.user, &server.host, server.port);
     if let Some(existing) = file.servers.iter_mut().find(|s| s.id == id) {
         *existing = server;
     } else {
@@ -252,36 +277,57 @@ async fn sftp_disconnect(
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_download(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> Result<String, String> {
     let pool = state.sftp_pool.lock().await;
-    sftp::download(&pool, &path).await
+    sftp::download(&pool, &path, |done, total| {
+        let mut p = progress::TransferProgress::start("download", "下载中…", 1);
+        p.file_done = done;
+        p.file_total = total;
+        progress::emit(&app, &p);
+    })
+    .await
 }
 
 /// 下载远程文件到指定本地目录（粘贴/拖拽 远程→本地），返回本地路径
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_download_to(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     local_dir: String,
     path: String,
 ) -> Result<String, String> {
     let pool = state.sftp_pool.lock().await;
-    sftp::download_to(&pool, &local_dir, &path).await
+    sftp::download_to(&pool, &local_dir, &path, |done, total| {
+        let mut p = progress::TransferProgress::start("download", "下载中…", 1);
+        p.file_done = done;
+        p.file_total = total;
+        progress::emit(&app, &p);
+    })
+    .await
 }
 
 /// 上传本地文件到远程目录（拖拽/复制）
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_upload(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     local: String,
     dest: String,
     name: String,
 ) -> Result<String, String> {
     let pool = state.sftp_pool.lock().await;
-    sftp::upload(&pool, &local, &dest, &name).await
+    sftp::upload(&pool, &local, &dest, &name, |done, total| {
+        let mut p = progress::TransferProgress::start("upload", "上传中…", 1);
+        p.file_done = done;
+        p.file_total = total;
+        progress::emit(&app, &p);
+    })
+    .await
 }
 
 /// 远程新建目录
@@ -371,14 +417,58 @@ fn parent_dir(path: String) -> Result<String, String> {
 
 /// 复制条目到目标目录，返回实际创建路径（供撤销记录）。
 #[tauri::command]
-fn copy_entries(paths: Vec<String>, dest: String) -> Result<Vec<String>, String> {
-    ops::copy_entries(&paths, &dest)
+fn copy_entries(app: tauri::AppHandle, paths: Vec<String>, dest: String) -> Result<Vec<String>, String> {
+    let n = paths.len();
+    let mut done_files = 0usize;
+    let created = ops::copy_entries(&paths, &dest, &mut |file_done, file_total| {
+        let mut p = progress::TransferProgress::start("copy", "复制中…", n);
+        p.done_files = done_files;
+        p.file_done = file_done;
+        p.file_total = file_total;
+        progress::emit(&app, &p);
+    })?;
+    done_files = n;
+    progress::emit(
+        &app,
+        &progress::TransferProgress {
+            phase: "copy".into(),
+            label: "复制完成".into(),
+            done_files,
+            total_files: n,
+            file_done: 0,
+            file_total: 0,
+            done: true,
+        },
+    );
+    Ok(created)
 }
 
 /// 移动条目到目标目录，返回 (源, 目标) 路径对（供撤销记录）。
 #[tauri::command]
-fn move_entries(paths: Vec<String>, dest: String) -> Result<Vec<(String, String)>, String> {
-    ops::move_entries(&paths, &dest)
+fn move_entries(app: tauri::AppHandle, paths: Vec<String>, dest: String) -> Result<Vec<(String, String)>, String> {
+    let n = paths.len();
+    let mut done_files = 0usize;
+    let moved = ops::move_entries(&paths, &dest, &mut |file_done, file_total| {
+        let mut p = progress::TransferProgress::start("move", "移动中…", n);
+        p.done_files = done_files;
+        p.file_done = file_done;
+        p.file_total = file_total;
+        progress::emit(&app, &p);
+    })?;
+    done_files = n;
+    progress::emit(
+        &app,
+        &progress::TransferProgress {
+            phase: "move".into(),
+            label: "移动完成".into(),
+            done_files,
+            total_files: n,
+            file_done: 0,
+            file_total: 0,
+            done: true,
+        },
+    );
+    Ok(moved)
 }
 
 /// 重命名条目，返回新路径。
@@ -697,11 +787,11 @@ mod sftp_tests {
         let local = std::env::temp_dir().join(format!("rdir-upload-{}.txt", std::process::id()));
         std::fs::write(&local, "upload content 你好").unwrap();
         let remote2 = format!("{dir}/uploaded.txt");
-        sess.upload(&local, &remote2).await.expect("upload");
+        sess.upload(&local, &remote2, |_, _| {}).await.expect("upload");
         let renamed = format!("{dir}/renamed.txt");
         sess.rename(&f1, &renamed).await.expect("rename");
         let local2 = std::env::temp_dir().join(format!("rdir-download-{}.txt", std::process::id()));
-        sess.download(&remote2, &local2).await.expect("download");
+        sess.download(&remote2, &local2, |_, _| {}).await.expect("download");
         let text = std::fs::read_to_string(&local2).expect("read local");
         assert_eq!(text, "upload content 你好", "上传/下载内容往返应一致");
         // 清理：文件 + 目录 + 本地临时

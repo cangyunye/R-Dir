@@ -54,6 +54,8 @@ pub struct SftpSession {
     channel: Channel<client::Msg>,
     next_id: u32,
     buf: Vec<u8>,
+    /// 认证后默认目录（通常是用户 home，供空 root 时导航）
+    pub home: String,
 }
 
 impl SftpSession {
@@ -106,6 +108,7 @@ impl SftpSession {
             channel,
             next_id: 0,
             buf: Vec::new(),
+            home: String::new(),
         };
         let mut b = Buf::new();
         b.u8(proto::INIT);
@@ -115,6 +118,8 @@ impl SftpSession {
             return Err("sftp 握手失败：未收到 VERSION".into());
         }
         let _ver = proto::parse_version(&body)?;
+        // 默认目录：会话 cwd（通常为 home）
+        s.home = s.realpath(".").await.unwrap_or_else(|_| "/".into());
         Ok(s)
     }
 
@@ -231,7 +236,14 @@ impl SftpSession {
     }
 
     /// 打开远程文件并下载到本地路径（dest 为临时目录内的目标文件）
-    pub async fn download(&mut self, remote: &str, dest: &Path) -> Result<u64, String> {
+    /// cb(done, total)：已下载字节 / 远程文件总字节
+    pub async fn download(
+        &mut self,
+        remote: &str,
+        dest: &Path,
+        mut cb: impl FnMut(u64, u64),
+    ) -> Result<u64, String> {
+        let total = self.stat(remote).await?.size;
         let (_ty, body) = self
             .request(proto::OPEN, |b| {
                 b.str(remote);
@@ -242,7 +254,7 @@ impl SftpSession {
         let handle = read_handle(&body)?;
         let mut f = std::fs::File::create(dest).map_err(|e| format!("本地写入失败：{e}"))?;
         let mut offset: u64 = 0;
-        let mut total: u64 = 0;
+        let mut total_done: u64 = 0;
         loop {
             let (ty, body) = self
                 .request(proto::READ, |b| {
@@ -259,18 +271,26 @@ impl SftpSession {
                     std::io::Write::write_all(&mut f, &body[r.pos..])
                         .map_err(|e| format!("本地写入失败：{e}"))?;
                     offset += chunk as u64;
-                    total += chunk as u64;
+                    total_done += chunk as u64;
+                    cb(total_done, total);
                 }
                 proto::STATUS => break, // EOF：文件读取结束
                 _ => return Err("read 意外回复".into()),
             }
         }
         self.request(proto::CLOSE, |b| b.str(&handle)).await?;
-        Ok(total)
+        Ok(total_done)
     }
 
     /// 上传本地文件到远程路径（覆盖）
-    pub async fn upload(&mut self, local: &Path, remote: &str) -> Result<u64, String> {
+    /// cb(done, total)：已上传字节 / 本地文件总字节
+    pub async fn upload(
+        &mut self,
+        local: &Path,
+        remote: &str,
+        mut cb: impl FnMut(u64, u64),
+    ) -> Result<u64, String> {
+        let total = std::fs::metadata(local).map(|m| m.len()).unwrap_or(0);
         let mut f = std::fs::File::open(local).map_err(|e| format!("读取本地失败：{e}"))?;
         let (_ty, body) = self
             .request(proto::OPEN, |b| {
@@ -283,7 +303,7 @@ impl SftpSession {
         let handle = read_handle(&body)?;
         let mut offset: u64 = 0;
         let mut buf = vec![0u8; 32 * 1024];
-        let mut total: u64 = 0;
+        let mut total_done: u64 = 0;
         loop {
             let n = f.read(&mut buf).map_err(|e| format!("读取本地失败：{e}"))?;
             if n == 0 {
@@ -298,10 +318,11 @@ impl SftpSession {
             })
             .await?;
             offset += n as u64;
-            total += n as u64;
+            total_done += n as u64;
+            cb(total_done, total);
         }
         self.request(proto::CLOSE, |b| b.str(&handle)).await?;
-        Ok(total)
+        Ok(total_done)
     }
 
     /// 新建空文件（open write+creat 后立即关闭）

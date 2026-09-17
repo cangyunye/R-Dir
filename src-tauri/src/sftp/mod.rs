@@ -186,6 +186,7 @@ pub async fn stat_path(pool: &SessionPool, path: &str) -> Result<String, String>
 pub async fn download(
     pool: &SessionPool,
     path: &str,
+    mut cb: impl FnMut(u64, u64),
 ) -> Result<String, String> {
     let (authority, remote) = parse_sftp_path(path)?;
     let (user, host, port) = parse_authority(&authority)?;
@@ -200,7 +201,7 @@ pub async fn download(
     let safe = sanitize_name(&name);
     dest.push(safe);
     let mut g = sess.lock().await;
-    let _bytes = g.download(&remote, &dest).await?;
+    let _bytes = g.download(&remote, &dest, &mut cb).await?;
     Ok(dest.to_string_lossy().to_string())
 }
 
@@ -209,6 +210,7 @@ pub async fn download_to(
     pool: &SessionPool,
     local_dir: &str,
     path: &str,
+    mut cb: impl FnMut(u64, u64),
 ) -> Result<String, String> {
     let (authority, remote) = parse_sftp_path(path)?;
     let (user, host, port) = parse_authority(&authority)?;
@@ -227,19 +229,25 @@ pub async fn download_to(
         n += 1;
     }
     let mut g = sess.lock().await;
-    g.download(&remote, &dest).await?;
+    g.download(&remote, &dest, &mut cb).await?;
     Ok(dest.to_string_lossy().to_string())
 }
 
 /// 上传本地文件到远程目录
-pub async fn upload(pool: &SessionPool, local: &str, remote_dir: &str, name: &str) -> Result<String, String> {
+pub async fn upload(
+    pool: &SessionPool,
+    local: &str,
+    remote_dir: &str,
+    name: &str,
+    mut cb: impl FnMut(u64, u64),
+) -> Result<String, String> {
     let remote = join_remote(remote_dir, name);
     let (authority, _) = parse_sftp_path(remote_dir)?;
     let (user, host, port) = parse_authority(&authority)?;
     let key = pool_key(&user, &host, port);
     let sess = get_session(pool, &key).await?;
     let mut g = sess.lock().await;
-    g.upload(Path::new(local), &remote).await?;
+    g.upload(Path::new(local), &remote, &mut cb).await?;
     Ok(format!("sftp://{authority}{remote}"))
 }
 
@@ -327,11 +335,42 @@ pub struct ServerView {
     pub port: u16,
     pub user: String,
     pub root: Option<String>,
+    /// 连接后默认进入的远程绝对路径（配置 root 优先，否则会话 home）
+    pub default_remote: String,
     pub group: String,
     pub auth: String,
     /// 密码/口令已保存
     pub has_secret: bool,
     pub connected: bool,
+}
+
+/// 规范化远程目录：确保以 "/" 开头
+pub fn normalize_remote(r: &str) -> String {
+    if r.starts_with('/') {
+        r.to_string()
+    } else {
+        format!("/{r}")
+    }
+}
+
+/// 默认远程目录：会话 home（未连接时返回 "/"）
+fn session_home(pool: &SessionPool, key: &str) -> String {
+    match pool.get(key) {
+        Some(s) => s
+            .try_lock()
+            .map(|g| if g.home.is_empty() { "/".to_string() } else { g.home.clone() })
+            .unwrap_or_else(|_| "/".to_string()),
+        None => "/".to_string(),
+    }
+}
+
+/// 计算默认远程路径：root 非空 → root；否则 → 会话 home
+pub fn default_remote_for(cfg: &servers::ServerConfigFile, pool: &SessionPool) -> String {
+    let key = pool_key(&cfg.user, &cfg.host, cfg.port);
+    match cfg.root.as_deref() {
+        Some(r) if !r.is_empty() => normalize_remote(r),
+        _ => session_home(pool, &key),
+    }
 }
 
 pub fn to_view(cfg: &servers::ServerConfigFile, pool: &SessionPool) -> ServerView {
@@ -352,6 +391,7 @@ pub fn to_view(cfg: &servers::ServerConfigFile, pool: &SessionPool) -> ServerVie
         port: cfg.port,
         user: cfg.user.clone(),
         root: cfg.root.clone(),
+        default_remote: default_remote_for(cfg, pool),
         group: cfg.group.clone(),
         auth,
         has_secret,

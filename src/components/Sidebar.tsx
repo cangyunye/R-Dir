@@ -8,11 +8,15 @@ import {
   Image,
   MonitorSmartphone,
   Music,
+  Pencil,
   Star,
   Tag,
+  Trash2,
+  Unplug,
   User,
   X,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { QuickAccessItem, SftpServerView, VolumeInfo } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -74,6 +78,8 @@ export function Sidebar({
   sftpServers,
   onSftpOpen,
   onSftpDisconnect,
+  onSftpEdit,
+  onSftpRemove,
 }: {
   quickAccess: QuickAccessItem[];
   volumes: VolumeInfo[];
@@ -90,7 +96,23 @@ export function Sidebar({
   sftpServers: SftpServerView[];
   onSftpOpen: (sv: SftpServerView) => void;
   onSftpDisconnect: (id: string) => void;
+  onSftpEdit: (sv: SftpServerView) => void;
+  onSftpRemove: (sv: SftpServerView) => void;
 }) {
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; sv: SftpServerView } | null>(null);
+  const ctxRef = useRef<HTMLDivElement | null>(null);
+
+  // 点击外部 / 滚动时关闭右键菜单
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [ctxMenu]);
   const groupedServers = groupServers(sftpServers);
   return (
     <ScrollArea className="w-44 shrink-0 border-r bg-muted/20">
@@ -241,7 +263,12 @@ export function Sidebar({
                 <div key={sv.id} className="group relative">
                   <button
                     onClick={() => onSftpOpen(sv)}
-                    title={`${sv.user}@${sv.host}:${sv.port}${sv.connected ? "（已连接）" : ""}`}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setCtxMenu({ x: e.clientX, y: e.clientY, sv });
+                    }}
+                    title={`${sv.user}@${sv.host}:${sv.port}${sv.connected ? "（已连接）" : ""} · 右键编辑`}
                     className={cn(
                       "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs transition-colors",
                       isActive(currentPath, `sftp://${sv.user}@${sv.host}:${sv.port}/`)
@@ -272,6 +299,46 @@ export function Sidebar({
           ))}
         </div>
       </div>
+
+      {/* 远程服务器右键菜单：编辑 / 断开 / 删除配置 */}
+      {ctxMenu && (
+        <div
+          ref={ctxRef}
+          className="fixed z-50 min-w-[180px] rounded-md border bg-popover p-1 text-sm shadow-md"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent"
+            onClick={() => {
+              onSftpEdit(ctxMenu.sv);
+              setCtxMenu(null);
+            }}
+          >
+            <Pencil className="h-3.5 w-3.5 text-muted-foreground" /> 编辑…
+          </button>
+          {ctxMenu.sv.connected && (
+            <button
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent"
+              onClick={() => {
+                onSftpDisconnect(ctxMenu.sv.id);
+                setCtxMenu(null);
+              }}
+            >
+              <Unplug className="h-3.5 w-3.5 text-muted-foreground" /> 断开连接
+            </button>
+          )}
+          <button
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-destructive hover:bg-destructive/10"
+            onClick={() => {
+              onSftpRemove(ctxMenu.sv);
+              setCtxMenu(null);
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> 删除服务器配置
+          </button>
+        </div>
+      )}
     </ScrollArea>
   );
 }

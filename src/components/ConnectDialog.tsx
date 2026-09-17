@@ -4,14 +4,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { sftpConnect } from "@/lib/api";
-import type { MasterKeyStatus, SftpServerConfig } from "@/lib/types";
+import type { MasterKeyStatus, SftpServerConfig, SftpServerView } from "@/lib/types";
 
-/** 连接对话框的预填信息（来自地址栏 sftp:// 或侧边栏） */
+/** 连接对话框的预填信息（来自地址栏 sftp:// 或侧边栏；编辑模式带完整字段） */
 export interface SftpConnectInitial {
+  id?: string;
   host?: string;
   port?: number;
   user?: string;
   name?: string;
+  /** 默认远程目录（编辑回填） */
+  root?: string;
+  group?: string;
+  /** "password" | "publicKey"（编辑回填；缺省视为密码） */
+  auth?: "password" | "publicKey";
 }
 
 /**
@@ -36,7 +42,7 @@ export function ConnectDialog({
   /** 需要主密钥（连接解密或保存密码时）→ App 弹出主密钥框 */
   onNeedMasterKey: (config: SftpServerConfig) => void;
   onClose: () => void;
-  onConnected: (server: SftpServerConfig) => void;
+  onConnected: (server: SftpServerConfig, view: SftpServerView) => void;
 }) {
   const [host, setHost] = useState("");
   const [port, setPort] = useState(22);
@@ -59,10 +65,11 @@ export function ConnectDialog({
       setPort(initial?.port ?? 22);
       setUser(initial?.user ?? "");
       setName(initial?.name ?? "");
-      setRoot("");
+      setRoot(initial?.root ?? "");
+      setGroup(initial?.group ?? "");
       setPassword("");
       setPassphrase("");
-      setAuthMode("Password");
+      setAuthMode(initial?.auth === "publicKey" ? "PublicKey" : "Password");
       setError("");
       setLoading(false);
     }
@@ -99,8 +106,8 @@ export function ConnectDialog({
       setLoading(true);
       setError("");
       try {
-        await sftpConnect(cfg);
-        onConnected(cfg);
+        const view = await sftpConnect(cfg);
+        onConnected(cfg, view);
         onClose();
       } catch (e) {
         const msg = String(e);
