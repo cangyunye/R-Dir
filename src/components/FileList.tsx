@@ -134,6 +134,8 @@ export function FileList({
   onToggleTag,
   onToggleQuick,
   currentDir,
+  pluginOpener,
+  pluginTerminal,
   openers,
   shells,
   onOpenWith,
@@ -185,6 +187,9 @@ export function FileList({
   onToggleTag: (path: string, tagId: string) => void;
   onToggleQuick: (path: string) => void;
   currentDir: string;
+  /** v0.5 插件启用状态（false 时隐藏对应右键入口） */
+  pluginOpener: boolean;
+  pluginTerminal: boolean;
   /** v0.4 打开方式数据与回调 */
   openers: OpenerItem[];
   shells: ShellItem[];
@@ -581,7 +586,7 @@ export function FileList({
                 <ContextMenuItem onClick={() => onOpen(entry)}>
                   <FolderInput className="mr-2 h-4 w-4" /> 打开
                 </ContextMenuItem>
-                {!entry.is_dir && (
+                {!entry.is_dir && pluginOpener && (
                   <>
                     <ContextMenuSub>
                       <ContextMenuSubTrigger>
@@ -620,7 +625,7 @@ export function FileList({
                     </ContextMenuSub>
                   </>
                 )}
-                {entry.is_dir && (
+                {entry.is_dir && pluginTerminal && (
                   <ContextMenuSub>
                     <ContextMenuSubTrigger>
                       <TerminalSquare className="mr-2 h-4 w-4" /> 在此处打开终端

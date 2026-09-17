@@ -10,6 +10,7 @@ mod sftp;
 
 mod opener;
 mod filetypes;
+mod plugins;
 
 use find::FindEntry;
 use fs_ops::FileEntry;
@@ -27,6 +28,8 @@ pub struct AppState {
     /// master-key（AES-256-GCM 加密保存密码用）：仅内存、不落盘；会话期间复用
     #[cfg(feature = "sftp")]
     pub master_key: tokio::sync::Mutex<Option<Vec<u8>>>,
+    /// 插件注册表启用状态（v0.5，plugins.json 持久化）
+    pub plugins: plugins::PluginState,
 }
 
 /// 列出目录内容（目录优先、名称排序）。
@@ -37,6 +40,9 @@ async fn list_dir(
     path: String,
 ) -> Result<Vec<FileEntry>, String> {
     if path.starts_with("sftp://") {
+        if !plugins::plugin_enabled(&state.plugins, "sftp") {
+            return Err("SFTP 插件已禁用（设置 → 插件中可重新启用）".into());
+        }
         #[cfg(feature = "sftp")]
         {
             let pool = state.sftp_pool.lock().await;
@@ -55,6 +61,9 @@ async fn stat_path(
     path: String,
 ) -> Result<String, String> {
     if path.starts_with("sftp://") {
+        if !plugins::plugin_enabled(&state.plugins, "sftp") {
+            return Err("SFTP 插件已禁用（设置 → 插件中可重新启用）".into());
+        }
         #[cfg(feature = "sftp")]
         {
             let pool = state.sftp_pool.lock().await;
@@ -71,6 +80,39 @@ async fn stat_path(
     } else {
         Ok("file".to_string())
     }
+}
+
+// ==================== 插件注册表命令（v0.5） ====================
+
+/// 校验插件启用状态（返回 Err 时插件已禁用）
+fn ensure_plugin(state: &AppState, id: &str) -> Result<(), String> {
+    if plugins::plugin_enabled(&state.plugins, id) {
+        Ok(())
+    } else {
+        Err(format!("插件已禁用（设置 → 插件中可重新启用）：{id}"))
+    }
+}
+
+/// 插件清单（内置插件注册表 + 启用状态）
+#[tauri::command]
+fn list_plugins(state: tauri::State<'_, AppState>) -> Vec<plugins::PluginInfo> {
+    let map = state.plugins.enabled.lock().unwrap().clone();
+    plugins::builtin_plugins(&map)
+}
+
+/// 启用 / 禁用插件并持久化；返回最新清单
+#[tauri::command]
+fn set_plugin_enabled(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<Vec<plugins::PluginInfo>, String> {
+    plugins::set_enabled(&state.plugins, &id, enabled);
+    let file = plugins::to_file(&state.plugins);
+    plugins::save_file(&app, &file)?;
+    let map = state.plugins.enabled.lock().unwrap().clone();
+    Ok(plugins::builtin_plugins(&map))
 }
 
 // ==================== SFTP 插件命令（feature = "sftp"） ====================
@@ -91,6 +133,7 @@ async fn sftp_list_servers(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<sftp::ServerView>, String> {
+    ensure_plugin(&state, "sftp")?;
     let path = sftp_servers_path(&app)?;
     let file = sftp::servers::load_file(&path);
     let pool = state.sftp_pool.lock().await;
@@ -107,6 +150,7 @@ async fn sftp_save_server(
     mut server: sftp::servers::ServerConfigFile,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<sftp::ServerView>, String> {
+    ensure_plugin(&state, "sftp")?;
     use sftp::servers::AuthConfig;
     let path = sftp_servers_path(&app)?;
     let mut file = sftp::servers::load_file(&path);
@@ -176,6 +220,7 @@ async fn sftp_remove_server(
     id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<sftp::ServerView>, String> {
+    ensure_plugin(&state, "sftp")?;
     let path = sftp_servers_path(&app)?;
     let mut file = sftp::servers::load_file(&path);
     file.servers.retain(|s| s.id != id);
@@ -232,6 +277,7 @@ async fn sftp_connect(
     state: tauri::State<'_, AppState>,
     mut server: sftp::servers::ServerConfigFile,
 ) -> Result<sftp::ServerView, String> {
+    ensure_plugin(&state, "sftp")?;
     // 回退到已保存配置：host 留空 = 只传 id（会话恢复），整条回退存盘配置；
     // 字段留空 → 用存盘值（可能为 enc: 密文，下方统一解密）
     let path = sftp_servers_path(&app)?;
@@ -310,6 +356,7 @@ async fn sftp_disconnect(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
+    ensure_plugin(&state, "sftp")?;
     let mut pool = state.sftp_pool.lock().await;
     pool.remove(&id);
     Ok(())
@@ -411,6 +458,7 @@ async fn sftp_download(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> Result<String, String> {
+    ensure_plugin(&state, "sftp")?;
     let pool = state.sftp_pool.lock().await;
     sftp::download(&pool, &path, |done, total| {
         let mut p = progress::TransferProgress::start("download", "下载中…", 1);
@@ -430,6 +478,7 @@ async fn sftp_download_to(
     local_dir: String,
     path: String,
 ) -> Result<String, String> {
+    ensure_plugin(&state, "sftp")?;
     let pool = state.sftp_pool.lock().await;
     sftp::download_to(&pool, &local_dir, &path, |done, total| {
         let mut p = progress::TransferProgress::start("download", "下载中…", 1);
@@ -450,6 +499,7 @@ async fn sftp_upload(
     dest: String,
     name: String,
 ) -> Result<String, String> {
+    ensure_plugin(&state, "sftp")?;
     let pool = state.sftp_pool.lock().await;
     sftp::upload(&pool, &local, &dest, &name, |done, total| {
         let mut p = progress::TransferProgress::start("upload", "上传中…", 1);
@@ -468,6 +518,7 @@ async fn sftp_mkdir(
     dir: String,
     name: String,
 ) -> Result<String, String> {
+    ensure_plugin(&state, "sftp")?;
     let pool = state.sftp_pool.lock().await;
     sftp::mkdir(&pool, &dir, &name).await
 }
@@ -480,6 +531,7 @@ async fn sftp_create_file(
     dir: String,
     name: String,
 ) -> Result<String, String> {
+    ensure_plugin(&state, "sftp")?;
     let pool = state.sftp_pool.lock().await;
     sftp::create_file(&pool, &dir, &name).await
 }
@@ -491,6 +543,7 @@ async fn sftp_delete(
     state: tauri::State<'_, AppState>,
     paths: Vec<String>,
 ) -> Result<(), String> {
+    ensure_plugin(&state, "sftp")?;
     let pool = state.sftp_pool.lock().await;
     sftp::delete_entries(&pool, &paths).await
 }
@@ -503,6 +556,7 @@ async fn sftp_rename(
     path: String,
     new_name: String,
 ) -> Result<String, String> {
+    ensure_plugin(&state, "sftp")?;
     let pool = state.sftp_pool.lock().await;
     sftp::rename_entry(&pool, &path, &new_name).await
 }
@@ -663,7 +717,13 @@ async fn find_files(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default().manage(AppState::default());
+    let mut builder = tauri::Builder::default()
+        .manage(AppState::default())
+        .setup(|app| {
+            let state = app.state::<AppState>();
+            plugins::init(app.handle(), &state.plugins);
+            Ok(())
+        });
     #[cfg(feature = "sftp")]
     {
         builder = builder.invoke_handler(tauri::generate_handler![
@@ -710,7 +770,10 @@ pub fn run() {
             // 会话保存 / 恢复
             session_save,
             session_load,
-            session_clear
+            session_clear,
+            // 插件注册表（v0.5）
+            list_plugins,
+            set_plugin_enabled
         ]);
     }
     #[cfg(not(feature = "sftp"))]
@@ -744,7 +807,10 @@ pub fn run() {
             // 会话保存 / 恢复
             session_save,
             session_load,
-            session_clear
+            session_clear,
+            // 插件注册表（v0.5）
+            list_plugins,
+            set_plugin_enabled
         ]);
     }
     builder

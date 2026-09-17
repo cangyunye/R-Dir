@@ -48,3 +48,24 @@ export const refreshFileTypes = () => invoke<FileTypes>("refresh_filetypes");
 /** 在指定目录打开终端 */
 export const openTerminal = (shellId: string, path: string) =>
   invoke<void>("open_terminal", { shellId, path });
+
+// ==================== v0.5 插件注册表 ====================
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  source: string;
+  protocols: string[];
+  operations: string[];
+  enabled: boolean;
+  configurable: boolean;
+}
+
+/** 插件清单（内置插件注册表 + 启用状态） */
+export const listPlugins = () => invoke<PluginInfo[]>("list_plugins");
+
+/** 启用 / 禁用插件并持久化；返回最新清单 */
+export const setPluginEnabled = (id: string, enabled: boolean) =>
+  invoke<PluginInfo[]>("set_plugin_enabled", { id, enabled });

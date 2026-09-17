@@ -115,7 +115,15 @@ pub fn list_openers(app: tauri::AppHandle) -> Vec<OpenerItem> {
 
 /// 用指定工具打开路径（参数数组，零注入）
 #[tauri::command]
-pub fn open_with(app: tauri::AppHandle, tool_id: String, path: String) -> Result<(), String> {
+pub fn open_with(
+    app: tauri::AppHandle,
+    tool_id: String,
+    path: String,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<(), String> {
+    if !crate::plugins::plugin_enabled(&state.plugins, "opener") {
+        return Err("“打开方式”插件已禁用（设置 → 插件中可重新启用）".into());
+    }
     let cfg = load_config(&app);
     if let Some(c) = cfg.custom.iter().find(|x| x.id == tool_id) {
         return launch::launch_custom(&c.exec, &path);
@@ -184,7 +192,14 @@ pub fn list_shells() -> Vec<ShellItem> {
 
 /// 在指定目录打开终端（仅右键调用）
 #[tauri::command]
-pub fn open_terminal(shell_id: String, path: String) -> Result<(), String> {
+pub fn open_terminal(
+    shell_id: String,
+    path: String,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<(), String> {
+    if !crate::plugins::plugin_enabled(&state.plugins, "terminal") {
+        return Err("“终端”插件已禁用（设置 → 插件中可重新启用）".into());
+    }
     launch::launch_terminal(&shell_id, &path)
 }
 

@@ -6,11 +6,14 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   listOpeners as apiListOpeners,
+  listPlugins as apiListPlugins,
+  setPluginEnabled as apiSetPluginEnabled,
   openWith as apiOpenWith,
   addCustomOpener as apiAddCustomOpener,
   listShells as apiListShells,
   openTerminal as apiOpenTerminal,
   type OpenerItem,
+  type PluginInfo,
   type ShellItem,
 } from "@/lib/openerApi";
 import type {
@@ -337,6 +340,8 @@ export default function App() {
   // ── v0.4 打开方式 / 终端 ──
   const [openers, setOpeners] = useState<OpenerItem[]>([]);
   const [shells, setShells] = useState<ShellItem[]>([]);
+  /** v0.5 插件注册表 */
+  const [plugins, setPlugins] = useState<PluginInfo[] | null>(null);
   const refreshOpeners = useCallback(() => {
     void apiListOpeners()
       .then(setOpeners)
@@ -347,10 +352,24 @@ export default function App() {
       .then(setShells)
       .catch((e) => showError(`检测终端失败：${e}`));
   }, [showError]);
+  const refreshPlugins = useCallback(() => {
+    void apiListPlugins()
+      .then(setPlugins)
+      .catch((e) => showError(`读取插件清单失败：${e}`));
+  }, [showError]);
+  const handleTogglePlugin = useCallback(
+    (id: string, enabled: boolean) => {
+      void apiSetPluginEnabled(id, enabled)
+        .then(setPlugins)
+        .catch((e) => showError(`切换插件失败：${e}`));
+    },
+    [showError],
+  );
   useEffect(() => {
     refreshOpeners();
     refreshShells();
-  }, [refreshOpeners, refreshShells]);
+    refreshPlugins();
+  }, [refreshOpeners, refreshShells, refreshPlugins]);
   const handleOpenWith = useCallback(
     (toolId: string, path: string) => {
       void apiOpenWith(toolId, path).catch((e) => showError(`打开失败：${e}`));
@@ -1754,6 +1773,8 @@ export default function App() {
     onMiddleOpen: (_paneId, path) => newTab(path),
     openers,
     shells,
+    pluginOpener: plugins?.find((p) => p.id === "opener")?.enabled ?? true,
+    pluginTerminal: plugins?.find((p) => p.id === "terminal")?.enabled ?? true,
     onOpenWith: handleOpenWith,
     onOpenTerminal: handleOpenTerminal,
     onAddCustomOpener: handleAddCustomOpener,
@@ -1873,7 +1894,7 @@ export default function App() {
           tagCounts={Object.fromEntries(TAG_DEFS.map((t) => [t.id, tagPaths(t.id).length]))}
           activeTagId={activePane?.tagId ?? null}
           onSelectTag={(tagId) => navigate(`tags://${tagId}`)}
-          sftpServers={sftpServers}
+          sftpServers={plugins?.find((p) => p.id === "sftp")?.enabled === false ? [] : sftpServers}
           onSftpOpen={openSftpServer}
           onSftpDisconnect={handleSftpDisconnect}
           onSftpEdit={handleSftpEdit}
@@ -1934,6 +1955,8 @@ export default function App() {
         dark={dark}
         onToggleTheme={toggleTheme}
         onBindingsChanged={() => setKeymapVer((v) => v + 1)}
+        plugins={plugins}
+        onTogglePlugin={handleTogglePlugin}
       />
 
       <ConnectDialog

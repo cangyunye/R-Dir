@@ -20,6 +20,7 @@ import {
   setUserBinding,
 } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
+import type { PluginInfo } from "@/lib/openerApi";
 
 /**
  * 设置对话框（M5 P2）
@@ -32,12 +33,17 @@ export function SettingsDialog({
   dark,
   onToggleTheme,
   onBindingsChanged,
+  plugins,
+  onTogglePlugin,
 }: {
   open: boolean;
   onClose: () => void;
   dark: boolean;
   onToggleTheme: () => void;
   onBindingsChanged: () => void;
+  /** v0.5 插件清单（设置 → 插件分区） */
+  plugins: PluginInfo[] | null;
+  onTogglePlugin: (id: string, enabled: boolean) => void;
 }) {
   /** 正在录制键位的 actionId（null = 未录制） */
   const [recordingId, setRecordingId] = useState<string | null>(null);
@@ -284,6 +290,80 @@ export function SettingsDialog({
           ))}
         </div>
 
+        {/* v0.5 插件 */}
+        <div className="mb-4">
+          <div className="mb-1.5 text-xs font-semibold text-primary">插件</div>
+          <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
+            内置插件按统一契约登记（协议前缀 + 操作集 + 启用开关）。禁用后对应入口隐藏、
+            路由拒绝；未来外置插件（如 http-autoindex）沿用同一注册表接入。
+          </div>
+          <div className="space-y-2">
+            {plugins === null ? (
+              <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                正在加载插件清单…
+              </div>
+            ) : (
+              plugins.map((p) => (
+                <div key={p.id} className="rounded-md border px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-xs font-medium">{p.name}</span>
+                      <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+                        v{p.version}
+                      </span>
+                      <span className="shrink-0 rounded-sm bg-primary/10 px-1 py-0.5 text-[10px] text-primary">
+                        {p.source === "builtin" ? "内置" : "外置"}
+                      </span>
+                      {p.configurable && (
+                        <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+                          可配置
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      role="switch"
+                      aria-checked={p.enabled}
+                      onClick={() => onTogglePlugin(p.id, !p.enabled)}
+                      className={cn(
+                        "relative h-4.5 w-8 shrink-0 rounded-full transition-colors",
+                        p.enabled ? "bg-primary" : "bg-muted",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "absolute top-0.5 h-3.5 w-3.5 rounded-full bg-background shadow transition-all",
+                          p.enabled ? "left-4" : "left-0.5",
+                        )}
+                      />
+                    </button>
+                  </div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">{p.description}</div>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {p.protocols.map((proto) => (
+                      <span
+                        key={proto}
+                        className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground"
+                      >
+                        {proto}
+                      </span>
+                    ))}
+                    {p.operations.map((op) => (
+                      <span
+                        key={op}
+                        className="rounded-sm bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                      >
+                        {op}
+                      </span>
+                    ))}
+                    {p.protocols.length === 0 && p.operations.length === 0 && (
+                      <span className="text-[10px] text-muted-foreground">无协议 / 无操作声明</span>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
         <div className="flex items-center justify-between border-t px-4 py-2 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1">
             <Check className="h-3 w-3" /> 配置自动保存在本机（localStorage）

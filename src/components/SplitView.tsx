@@ -20,6 +20,9 @@ export interface PaneHandlers {
   /** v0.4 打开方式：用指定工具打开路径 */
   /** v0.4 打开方式 / 终端数据 */
   openers: OpenerItem[];
+  /** v0.5 插件启用状态 */
+  pluginOpener: boolean;
+  pluginTerminal: boolean;
   shells: ShellItem[];
   /** v0.4 在此处打开终端 */
   onOpenWith: (toolId: string, path: string) => void;
@@ -115,6 +118,8 @@ function PaneView({
         onOpen={(e) => h.onOpen(pane.id, e)}
         onMiddleOpen={(p) => h.onMiddleOpen(pane.id, p)}
         currentDir={pane.path}
+        pluginOpener={h.pluginOpener}
+        pluginTerminal={h.pluginTerminal}
         openers={h.openers}
         shells={h.shells}
         onOpenWith={(toolId, p) => h.onOpenWith(toolId, p)}
