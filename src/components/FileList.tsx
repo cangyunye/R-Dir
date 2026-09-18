@@ -256,6 +256,31 @@ export function FileList({
   } | null>(null);
   /** 框选激活后抑制随后的 click（避免单行选择覆盖框选结果） */
   const suppressClickRef = useRef(false);
+  /** 慢速双击重命名：记录上次单击的条目与时间 */
+  const lastClickRef = useRef<{ path: string; time: number } | null>(null);
+  /** 键盘快速定位：输入缓冲 + 3 秒超时重置 */
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const typeAheadRef = useRef("");
+  const typeAheadTimer = useRef<number | null>(null);
+  const handleTypeAhead = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key.length !== 1) return;
+    const ch = e.key.toLowerCase();
+    if (typeAheadTimer.current) window.clearTimeout(typeAheadTimer.current);
+    typeAheadTimer.current = window.setTimeout(() => {
+      typeAheadRef.current = "";
+    }, 3000);
+    typeAheadRef.current += ch;
+    const buf = typeAheadRef.current;
+    const idx = sorted.findIndex((x) => x.name.toLowerCase().startsWith(buf));
+    if (idx >= 0) {
+      onSelect(sorted[idx], false);
+      const row = listScrollRef.current?.querySelector(
+        `[data-path="${CSS.escape(sorted[idx].path)}"]`,
+      );
+      (row as HTMLElement | null)?.scrollIntoView({ block: "nearest" });
+    }
+  };
   const [rubber, setRubber] = useState<{
     left: number;
     top: number;
@@ -447,7 +472,7 @@ export function FileList({
       onClick={onActivate}
     >
       {/* 空白处右键：新建 / 粘贴 / 全选等（行上右键由行内菜单接管） */}
-      <ContextMenu>
+      <ContextMenu modal={false}>
         <ContextMenuTrigger asChild>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {/* 表头 */}
@@ -482,8 +507,18 @@ export function FileList({
 
       {/* 行 */}
       <div
+        ref={listScrollRef}
+        tabIndex={0}
         className="min-h-0 flex-1 overflow-y-auto pb-8 outline-none select-none"
         onMouseDown={startRubber}
+        onMouseDownCapture={(e) => {
+          // 地址栏聚焦时保持光标；点击输入框/文本域不抢焦点；否则聚焦列表以接收键盘快速定位
+          const ae = document.activeElement as HTMLElement | null;
+          if (ae?.id === "rdir-addr-input") return;
+          if ((e.target as HTMLElement).closest("input,textarea")) return;
+          listScrollRef.current?.focus({ preventScroll: true });
+        }}
+        onKeyDown={handleTypeAhead}
       >
         {dragTarget && (
           <div className="sticky top-0 z-10 flex h-6 items-center justify-center bg-primary/10 text-[11px] font-medium text-primary">
@@ -496,7 +531,7 @@ export function FileList({
           const isRenaming = renaming?.path === entry.path;
           const targets = selection.includes(entry.path) ? selection : [entry.path];
           return (
-            <ContextMenu key={entry.path}>
+            <ContextMenu key={entry.path} modal={false}>
               <ContextMenuTrigger asChild>
                 <div
                   role="row"
@@ -508,6 +543,17 @@ export function FileList({
                     if (suppressClickRef.current) {
                       suppressClickRef.current = false;
                       return;
+                    }
+                    // 慢速双击（Finder 风格）：两次独立单击同一条目、间隔 >450ms → 重命名
+                    if (e.detail === 1) {
+                      const now = Date.now();
+                      const last = lastClickRef.current;
+                      if (last && last.path === entry.path && now - last.time > 450 && now - last.time < 3000) {
+                        lastClickRef.current = null;
+                        onRename(entry);
+                        return;
+                      }
+                      lastClickRef.current = { path: entry.path, time: now };
                     }
                     if (e.shiftKey) {
                       e.preventDefault();
