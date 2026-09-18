@@ -262,16 +262,23 @@ export function FileList({
   const listScrollRef = useRef<HTMLDivElement>(null);
   const typeAheadRef = useRef("");
   const typeAheadTimer = useRef<number | null>(null);
+  const [typeAhead, setTypeAhead] = useState("");
+  const [typeAheadFading, setTypeAheadFading] = useState(false);
   const handleTypeAhead = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key.length !== 1) return;
     const ch = e.key.toLowerCase();
     if (typeAheadTimer.current) window.clearTimeout(typeAheadTimer.current);
-    typeAheadTimer.current = window.setTimeout(() => {
-      typeAheadRef.current = "";
-    }, 3000);
     typeAheadRef.current += ch;
     const buf = typeAheadRef.current;
+    setTypeAhead(buf);
+    setTypeAheadFading(false);
+    // 2 秒未输入：重置缓冲并开始淡出提示
+    typeAheadTimer.current = window.setTimeout(() => {
+      typeAheadRef.current = "";
+      setTypeAheadFading(true);
+      window.setTimeout(() => setTypeAhead(""), 500);
+    }, 2000);
     const idx = sorted.findIndex((x) => x.name.toLowerCase().startsWith(buf));
     if (idx >= 0) {
       onSelect(sorted[idx], false);
@@ -471,6 +478,17 @@ export function FileList({
       )}
       onClick={onActivate}
     >
+      {/* 键盘快速定位提示：窗体右上角，输入后 2 秒淡出 */}
+      {typeAhead && (
+        <div
+          className={cn(
+            "pointer-events-none absolute right-3 top-1 z-20 rounded-md border border-primary/20 bg-background/90 px-2 py-0.5 text-xs font-medium text-primary shadow-sm transition-opacity duration-500",
+            typeAheadFading ? "opacity-0" : "opacity-100",
+          )}
+        >
+          定位：{typeAhead}
+        </div>
+      )}
       {/* 空白处右键：新建 / 粘贴 / 全选等（行上右键由行内菜单接管） */}
       <ContextMenu modal={false}>
         <ContextMenuTrigger asChild>
