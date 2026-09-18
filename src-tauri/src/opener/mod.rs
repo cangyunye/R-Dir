@@ -91,12 +91,8 @@ fn save_config(app: &tauri::AppHandle, cfg: &OpenersConfig) -> Result<(), String
 /// 列出现有打开方式（内置探测 + Agent + 用户自定义）
 #[tauri::command]
 pub fn list_openers(app: tauri::AppHandle) -> Vec<OpenerItem> {
+    // v0.6.3 起只返回用户自定义注册的打开方式，不再探测系统内置工具
     let mut items = Vec::new();
-    for it in detect::builtin_openers() {
-        let mut it = it;
-        it.detected = detect::detect_opener(&mut it);
-        items.push(it);
-    }
     let cfg = load_config(&app);
     for c in &cfg.custom {
         let exists = std::path::Path::new(&c.exec).exists();
@@ -127,9 +123,6 @@ pub fn open_with(
     let cfg = load_config(&app);
     if let Some(c) = cfg.custom.iter().find(|x| x.id == tool_id) {
         return launch::launch_custom(&c.exec, &path);
-    }
-    if let Some(it) = detect::builtin_openers().into_iter().find(|x| x.id == tool_id) {
-        return launch::launch_opener(&it, &path);
     }
     Err(format!("未找到工具：{tool_id}"))
 }

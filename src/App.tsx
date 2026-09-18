@@ -366,10 +366,14 @@ export default function App() {
     },
     [showError],
   );
+  // 工具/插件检测延迟到首帧空闲后执行，避免拖慢首次渲染
   useEffect(() => {
-    refreshOpeners();
-    refreshShells();
-    refreshPlugins();
+    const t = window.setTimeout(() => {
+      refreshOpeners();
+      refreshShells();
+      refreshPlugins();
+    }, 300);
+    return () => window.clearTimeout(t);
   }, [refreshOpeners, refreshShells, refreshPlugins]);
   const handleOpenWith = useCallback(
     (toolId: string, path: string) => {

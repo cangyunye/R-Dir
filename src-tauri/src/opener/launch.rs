@@ -4,26 +4,13 @@
 use std::path::Path;
 use std::process::Command;
 
-use super::{OpenerItem, detect};
+use super::detect;
 
 fn is_mac() -> bool {
     cfg!(target_os = "macos")
 }
 
 /// 用内置/Agent 工具打开路径
-pub fn launch_opener(it: &OpenerItem, path: &str) -> Result<(), String> {
-    let exec = it.exec.as_deref().ok_or_else(|| format!("{} 未检测到安装", it.name))?;
-    if is_mac() && !it.cli {
-        // .app：open -a <name> -- <path>
-        launch(&Command::new("open").arg("-a").arg(exec).arg("--").arg(path), None)
-    } else if is_mac() {
-        launch(&Command::new(exec).arg(path), parent_of(path))
-    } else {
-        launch(&Command::new(exec).arg(path), parent_of(path))
-    }
-}
-
-/// 用用户自定义工具打开（exec 为可执行文件路径）
 pub fn launch_custom(exec: &str, path: &str) -> Result<(), String> {
     if is_mac() && exec.ends_with(".app") {
         // .app 包：open -a（用包名）
