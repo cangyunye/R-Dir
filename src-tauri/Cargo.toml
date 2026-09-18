@@ -1,6 +1,6 @@
 [package]
 name = "rust-file-manager"
-version = "0.5.0"
+version = "0.6.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -33,6 +33,8 @@ dirs = "5"
 trash = "5"
 regex = "1"
 ignore = "0.4"
+# HTTP autoindex 插件：轻量同步 HTTP 客户端（rustls，无系统依赖）
+ureq = { version = "2", default-features = false, features = ["rustls", "gzip"] }
 # SFTP 远程文件系统插件（内置、可编译期拔出）：去掉 sftp feature 即不编译任何远程代码
 russh = { version = "0.45", optional = true }
 russh-keys = { version = "0.45", optional = true }

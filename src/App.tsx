@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -8,6 +8,7 @@ import {
   listOpeners as apiListOpeners,
   listPlugins as apiListPlugins,
   setPluginEnabled as apiSetPluginEnabled,
+  httpDownloadTo,
   openWith as apiOpenWith,
   addCustomOpener as apiAddCustomOpener,
   listShells as apiListShells,
@@ -1126,7 +1127,10 @@ export default function App() {
           }),
         );
       } else {
-        if (entry.path.startsWith("sftp://")) {
+        if (entry.path.startsWith("http://") || entry.path.startsWith("https://")) {
+          // HTTP autoindex 文件：默认浏览器打开（只读浏览）
+          openUrl(entry.path).catch((e) => showError(`打开 URL 失败：${e}`));
+        } else if (entry.path.startsWith("sftp://")) {
           // 远程文件：先下载到临时目录再打开
           showError("正在下载远程文件…");
           sftpDownload(entry.path)
@@ -1146,6 +1150,10 @@ export default function App() {
 
   // M1 文件操作
   const isSftpPath = useCallback((p: string) => p.startsWith("sftp://"), []);
+  const isHttpPath = useCallback(
+    (p: string) => p.startsWith("http://") || p.startsWith("https://"),
+    [],
+  );
 
   const doCopy = useCallback(
     (paneId?: number, paths?: string[]) => {
@@ -1313,7 +1321,31 @@ export default function App() {
       const dest = target.path;
       const srcIsSftp = paths.some(isSftpPath);
       const destIsSftp = isSftpPath(dest);
+      const srcIsHttp = paths.some(isHttpPath);
+      const destIsHttp = isHttpPath(dest);
       try {
+        // HTTP 为只读协议：远程间传输 / 上传一律拒绝
+        if (srcIsHttp && destIsHttp) {
+          showError("HTTP autoindex 为只读协议，不支持远程间传输");
+          return;
+        }
+        if (srcIsHttp && destIsSftp) {
+          showError("HTTP → SFTP 暂不支持");
+          return;
+        }
+        if (!srcIsHttp && destIsHttp) {
+          showError("HTTP autoindex 为只读协议，不支持上传");
+          return;
+        }
+        // HTTP → 本地：下载
+        if (srcIsHttp) {
+          for (const p of paths) {
+            await httpDownloadTo(dest, p);
+          }
+          refreshPane(targetPaneId);
+          refreshPane(sourcePaneId);
+          return;
+        }
         // 远程 ⇄ 远程：暂不支持（方案已评估保留）
         if (srcIsSftp && destIsSftp) {
           showError("双端远程传输暂不支持");
@@ -1358,7 +1390,7 @@ export default function App() {
         showError(String(e));
       }
     },
-    [tabs, refreshPane, showError, pushOp, isSftpPath],
+    [tabs, refreshPane, showError, pushOp, isSftpPath, isHttpPath],
   );
 
   const startRename = useCallback((paneId: number, entry: FileEntry) => {

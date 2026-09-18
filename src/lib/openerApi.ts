@@ -69,3 +69,7 @@ export const listPlugins = () => invoke<PluginInfo[]>("list_plugins");
 /** 启用 / 禁用插件并持久化；返回最新清单 */
 export const setPluginEnabled = (id: string, enabled: boolean) =>
   invoke<PluginInfo[]>("set_plugin_enabled", { id, enabled });
+
+/** HTTP autoindex：下载文件到本地目录（流式 + 进度条），返回实际路径 */
+export const httpDownloadTo = (localDir: string, url: string) =>
+  invoke<string>("http_download_to", { localDir, url });

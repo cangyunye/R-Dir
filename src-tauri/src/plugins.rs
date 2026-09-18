@@ -82,6 +82,17 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         configurable: true,
     });
     v.push(PluginInfo {
+        id: "http".into(),
+        name: "HTTP autoindex 目录浏览".into(),
+        description: "解析 nginx autoindex 页面为文件 / 文件夹列表，支持上下层 URL 导航（只读浏览）".into(),
+        version: "0.6".into(),
+        source: "builtin".into(),
+        protocols: vec!["http://".into(), "https://".into()],
+        operations: vec!["list".into(), "read".into()],
+        enabled: enabled("http"),
+        configurable: false,
+    });
+    v.push(PluginInfo {
         id: "opener".into(),
         name: "打开方式".into(),
         description: "右键自定义打开方式：用户自行注册工具，参数数组安全启动".into(),

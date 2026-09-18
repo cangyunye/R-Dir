@@ -11,6 +11,7 @@ mod sftp;
 mod opener;
 mod filetypes;
 mod plugins;
+mod http_autoindex;
 
 use find::FindEntry;
 use fs_ops::FileEntry;
@@ -50,6 +51,15 @@ async fn list_dir(
         }
         #[cfg(not(feature = "sftp"))]
         return Err("SFTP 插件未编译（该构建已拔出远程功能）".into());
+    }
+    if path.starts_with("http://") || path.starts_with("https://") {
+        if !plugins::plugin_enabled(&state.plugins, "http") {
+            return Err("HTTP autoindex 插件已禁用（设置 → 插件中可重新启用）".into());
+        }
+        let url = path;
+        return tokio::task::spawn_blocking(move || http_autoindex::list_http_dir(&url))
+            .await
+            .map_err(|e| format!("HTTP 请求任务失败：{e}"))?;
     }
     fs_ops::list_dir(&path)
 }
@@ -590,6 +600,9 @@ fn get_home_dir() -> Result<String, String> {
 /// 返回父目录；已是根目录时返回自身。
 #[tauri::command]
 fn parent_dir(path: String) -> Result<String, String> {
+    if path.starts_with("http://") || path.starts_with("https://") {
+        return Ok(http_autoindex::parent_http_url(&path).unwrap_or(path));
+    }
     let p = std::path::Path::new(&path);
     match p.parent() {
         Some(parent) if parent.as_os_str() != p.as_os_str() => {
@@ -773,7 +786,9 @@ pub fn run() {
             session_clear,
             // 插件注册表（v0.5）
             list_plugins,
-            set_plugin_enabled
+            set_plugin_enabled,
+            // HTTP autoindex 插件（v0.6）
+            http_autoindex::http_download_to
         ]);
     }
     #[cfg(not(feature = "sftp"))]
@@ -810,7 +825,9 @@ pub fn run() {
             session_clear,
             // 插件注册表（v0.5）
             list_plugins,
-            set_plugin_enabled
+            set_plugin_enabled,
+            // HTTP autoindex 插件（v0.6）
+            http_autoindex::http_download_to
         ]);
     }
     builder
