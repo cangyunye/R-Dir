@@ -478,11 +478,11 @@ export function FileList({
       )}
       onClick={onActivate}
     >
-      {/* 键盘快速定位提示：窗体右上角，输入后 2 秒淡出 */}
+      {/* 键盘快速定位提示：面板中央大字号，输入后 2 秒淡出 */}
       {typeAhead && (
         <div
           className={cn(
-            "pointer-events-none absolute right-3 top-1 z-20 rounded-md border border-primary/20 bg-background/90 px-2 py-0.5 text-xs font-medium text-primary shadow-sm transition-opacity duration-500",
+            "pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-primary/25 bg-background/85 px-5 py-3 text-3xl font-bold text-primary shadow-lg backdrop-blur-sm transition-opacity duration-500",
             typeAheadFading ? "opacity-0" : "opacity-100",
           )}
         >
