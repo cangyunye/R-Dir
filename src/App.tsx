@@ -516,12 +516,25 @@ export default function App() {
         }
       };
       const localPanes: { paneId: number; path: string }[] = [];
+      const firstActive = restored[idx]?.activePane;
       for (const t of restored) {
         for (const p of Object.values(t.panes)) {
-          if (!p.path.startsWith("sftp://")) localPanes.push({ paneId: p.id, path: p.path });
+          if (p.path.startsWith("sftp://")) continue;
+          if (p.id === firstActive) continue; // 首屏：活动窗格由 listDir effect 加载
+          localPanes.push({ paneId: p.id, path: p.path });
         }
       }
-      void Promise.all(localPanes.map((lp) => loadPaneNow(lp.paneId, lp.path)));
+      // 其余窗格分批加载（每批 3 个），避免启动期并发渲染风暴导致闪屏/卡顿
+      const BATCH = 3;
+      (async () => {
+        for (let i = 0; i < localPanes.length; i += BATCH) {
+          const batch = localPanes.slice(i, i + BATCH);
+          await Promise.all(batch.map((lp) => loadPaneNow(lp.paneId, lp.path)));
+          if (i + BATCH < localPanes.length) {
+            await new Promise((r) => setTimeout(r, 30));
+          }
+        }
+      })();
       // SFTP 并发恢复（后端回退已存配置 + master-key 解密）
       await Promise.all(
         sftpPanes.map(async (sp) => {
