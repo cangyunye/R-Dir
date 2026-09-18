@@ -187,6 +187,7 @@ const KEY_ALIAS: Record<string, string> = {
   Enter: "enter",
   Tab: "tab",
   Delete: "delete",
+  Backspace: "backspace",
   " ": "space",
 };
 

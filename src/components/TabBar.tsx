@@ -32,6 +32,16 @@ export function TabBar({
     setDragIdx(null);
   };
 
+  /** 新建标签：pointerup + click 双通道触发 + 300ms 去重
+   *  （WKWebView / WebView2 个别版本 click 事件合成不可靠） */
+  const lastNewAt = useRef(0);
+  const handleNew = () => {
+    const now = Date.now();
+    if (now - lastNewAt.current < 300) return;
+    lastNewAt.current = now;
+    onNew();
+  };
+
   useEffect(() => {
     if (dragStartRef.current === null) return;
     const onMove = (e: MouseEvent) => {
@@ -110,11 +120,12 @@ export function TabBar({
       <Button
         variant="ghost"
         size="sm"
-        className="mb-0.5 h-6 w-6 px-0 text-muted-foreground"
-        onClick={onNew}
+        className="mb-0.5 h-7 w-7 px-0 text-muted-foreground"
+        onClick={handleNew}
+        onPointerUp={handleNew}
         title="新建标签页"
       >
-        <Plus className="h-3.5 w-3.5" />
+        <Plus className="h-4 w-4" />
       </Button>
     </div>
   );

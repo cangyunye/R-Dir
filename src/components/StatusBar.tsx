@@ -1,4 +1,4 @@
-import { AlertCircle, FolderOpen, Layers, Loader2 } from "lucide-react";
+import { AlertCircle, FolderOpen, Layers, Loader2, X } from "lucide-react";
 import { formatSize } from "@/lib/format";
 import type { TransferProgress } from "@/lib/types";
 
@@ -18,6 +18,7 @@ export function StatusBar({
   error,
   notice,
   transfer,
+  onCancelDownload,
 }: {
   path: string;
   total: number;
@@ -27,6 +28,7 @@ export function StatusBar({
   error: string | null;
   notice: string | null;
   transfer?: TransferProgress | null;
+  onCancelDownload?: (url: string) => void;
 }) {
   const pct =
     transfer && transfer.fileTotal > 0
@@ -75,6 +77,15 @@ export function StatusBar({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-3">
+          {transfer && !transfer.done && transfer.phase === "download" && transfer.id && onCancelDownload && (
+            <button
+              onClick={() => onCancelDownload(transfer.id!)}
+              title="停止下载"
+              className="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] text-destructive hover:bg-destructive/10"
+            >
+              <X className="h-3 w-3" /> 停止
+            </button>
+          )}
           <span>{total} 项{showHidden ? "（含隐藏）" : ""}</span>
           {selected.length > 0 && (
             <span className="flex items-center gap-1">

@@ -24,6 +24,34 @@ export function tagById(id: string): TagDef | undefined {
   return TAG_DEFS.find((t) => t.id === id);
 }
 
+/** 用户自定义标签名（颜色 id → 显示名），v0.6.4 起支持右键重命名标签 */
+export type TagNames = Record<string, string>;
+
+const TAG_NAMES_KEY = "rfm.tag-names";
+
+export function loadTagNames(): TagNames {
+  try {
+    const raw = localStorage.getItem(TAG_NAMES_KEY);
+    return raw ? (JSON.parse(raw) as TagNames) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveTagNames(names: TagNames): void {
+  try {
+    localStorage.setItem(TAG_NAMES_KEY, JSON.stringify(names));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 标签显示名：优先用户自定义，回落预设 */
+export function tagLabel(def: TagDef, names: TagNames): string {
+  const c = names[def.id]?.trim();
+  return c || def.label;
+}
+
 /** 文件路径 → 标签 id 列表 */
 export type FileTags = Record<string, string[]>;
 

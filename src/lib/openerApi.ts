@@ -71,5 +71,8 @@ export const setPluginEnabled = (id: string, enabled: boolean) =>
   invoke<PluginInfo[]>("set_plugin_enabled", { id, enabled });
 
 /** HTTP autoindex：下载文件到本地目录（流式 + 进度条），返回实际路径 */
+export const cancelHttpDownload = (url: string) =>
+  invoke("cancel_http_download", { url });
+
 export const httpDownloadTo = (localDir: string, url: string) =>
   invoke<string>("http_download_to", { localDir, url });

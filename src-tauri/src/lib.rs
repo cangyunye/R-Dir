@@ -635,6 +635,7 @@ fn copy_entries(app: tauri::AppHandle, paths: Vec<String>, dest: String) -> Resu
             file_done: 0,
             file_total: 0,
             done: true,
+            id: None,
         },
     );
     Ok(created)
@@ -663,6 +664,7 @@ fn move_entries(app: tauri::AppHandle, paths: Vec<String>, dest: String) -> Resu
             file_done: 0,
             file_total: 0,
             done: true,
+            id: None,
         },
     );
     Ok(moved)
@@ -788,7 +790,8 @@ pub fn run() {
             list_plugins,
             set_plugin_enabled,
             // HTTP autoindex 插件（v0.6）
-            http_autoindex::http_download_to
+            http_autoindex::http_download_to,
+            http_autoindex::cancel_http_download
         ]);
     }
     #[cfg(not(feature = "sftp"))]
@@ -827,7 +830,8 @@ pub fn run() {
             list_plugins,
             set_plugin_enabled,
             // HTTP autoindex 插件（v0.6）
-            http_autoindex::http_download_to
+            http_autoindex::http_download_to,
+            http_autoindex::cancel_http_download
         ]);
     }
     builder

@@ -9,6 +9,7 @@ import {
   listPlugins as apiListPlugins,
   setPluginEnabled as apiSetPluginEnabled,
   httpDownloadTo,
+  cancelHttpDownload,
   openWith as apiOpenWith,
   addCustomOpener as apiAddCustomOpener,
   listShells as apiListShells,
@@ -83,8 +84,12 @@ import {
   saveCustomQuick,
   saveFileTags,
   tagById,
+  tagLabel,
+  loadTagNames,
+  saveTagNames,
   TAG_DEFS,
   type FileTags,
+  type TagNames,
 } from "@/lib/persist";
 import { Button } from "@/components/ui/button";
 import { Trash2 } from "lucide-react";
@@ -138,8 +143,10 @@ function remapNode(node: PaneNode, remap: Map<number, number>): PaneNode {
   return { ...node, a: remapNode(node.a, remap), b: remapNode(node.b, remap) };
 }
 
-function tagTitle(tagId: string): string {
-  return `标签：${tagById(tagId)?.label ?? tagId}`;
+function tagTitle(tagId: string, names?: TagNames): string {
+  const def = tagById(tagId);
+  const n = names ?? loadTagNames();
+  return `标签：${def ? tagLabel(def, n) : tagId}`;
 }
 import { TabBar } from "@/components/TabBar";
 import { Toolbar } from "@/components/Toolbar";
@@ -1200,6 +1207,15 @@ export default function App() {
 
   /** 文件标签（path → tagId[]，持久化） */
   const [fileTags, setFileTags] = useState<FileTags>(() => loadFileTags());
+  // 自定义标签名（v0.6.4 右键重命名）
+  const [tagNames, setTagNames] = useState<TagNames>(() => loadTagNames());
+  const renameTag = useCallback((tagId: string, label: string) => {
+    setTagNames((prev) => {
+      const next = { ...prev, [tagId]: label.trim() };
+      saveTagNames(next);
+      return next;
+    });
+  }, []);
   /** 自定义快捷访问（持久化） */
   const [customQuick, setCustomQuick] = useState<string[]>(() => loadCustomQuick());
 
@@ -1941,6 +1957,8 @@ export default function App() {
           customQuick={customQuick}
           onRemoveQuick={toggleQuick}
           tagCounts={Object.fromEntries(TAG_DEFS.map((t) => [t.id, tagPaths(t.id).length]))}
+          tagNames={tagNames}
+          onRenameTag={renameTag}
           activeTagId={activePane?.tagId ?? null}
           onSelectTag={(tagId) => navigate(`tags://${tagId}`)}
           sftpServers={plugins?.find((p) => p.id === "sftp")?.enabled === false ? [] : sftpServers}
@@ -1962,6 +1980,8 @@ export default function App() {
               renaming={renaming}
               dragOver={dragOver}
               fileTags={fileTags}
+              tagNames={tagNames}
+              onRenameTag={renameTag}
               customQuick={customQuick}
               onOpenTagFile={openTagFile}
               onExitTag={goBack}
@@ -1996,6 +2016,7 @@ export default function App() {
         error={activePane?.error ?? null}
         notice={notice}
         transfer={transfer}
+        onCancelDownload={(url) => void cancelHttpDownload(url)}
       />
 
       <SettingsDialog

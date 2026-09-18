@@ -13,6 +13,7 @@ import {
   Pencil,
   RefreshCw,
   Scissors,
+  Settings2,
   Star,
   Trash2,
   Plus,
@@ -29,7 +30,9 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Input } from "@/components/ui/input";
-import { TAG_DEFS, type FileTags } from "@/lib/persist";
+import { Button } from "@/components/ui/button";
+import { TAG_DEFS, tagLabel, type FileTags, type TagNames } from "@/lib/persist";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { OpenerItem, ShellItem } from "@/lib/openerApi";
 import { TagDots } from "@/components/TagView";
 
@@ -124,6 +127,8 @@ export function FileList({
   onSelectAll,
   onInvertSelection,
   fileTags,
+  tagNames,
+  onRenameTag,
   customQuick,
   onToggleTag,
   onToggleQuick,
@@ -177,6 +182,8 @@ export function FileList({
   onSelectAll: () => void;
   onInvertSelection: () => void;
   fileTags: FileTags;
+  tagNames: TagNames;
+  onRenameTag: (tagId: string, label: string) => void;
   customQuick: string[];
   onToggleTag: (path: string, tagId: string) => void;
   onToggleQuick: (path: string) => void;
@@ -254,6 +261,21 @@ export function FileList({
   const lastClickRef = useRef<{ path: string; time: number } | null>(null);
   /** 键盘快速定位：输入缓冲 + 3 秒超时重置 */
   const listScrollRef = useRef<HTMLDivElement>(null);
+  // 标签重命名对话框（v0.6.4）
+  const [renameTagOpen, setRenameTagOpen] = useState(false);
+  const [renameTagId, setRenameTagId] = useState<string>("red");
+  const [renameTagInput, setRenameTagInput] = useState("");
+  const openRenameTagDialog = () => {
+    setRenameTagId("red");
+    setRenameTagInput(tagLabel(TAG_DEFS[0], tagNames));
+    setRenameTagOpen(true);
+  };
+  const submitRenameTag = () => {
+    const label = renameTagInput.trim();
+    if (!label) return;
+    onRenameTag(renameTagId, label);
+    setRenameTagOpen(false);
+  };
   const typeAheadRef = useRef("");
   const typeAheadTimer = useRef<number | null>(null);
   const [typeAhead, setTypeAhead] = useState("");
@@ -455,9 +477,54 @@ export function FileList({
   };
 
   return (
-    <div
-      ref={containerRef}
-      data-pane-id={paneId}
+    <>
+      <Dialog open={renameTagOpen} onOpenChange={setRenameTagOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>重命名标签</DialogTitle>
+            <DialogDescription>自定义标签显示名称（不影响已标记的文件）</DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-1.5">
+            {TAG_DEFS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => {
+                  setRenameTagId(t.id);
+                  setRenameTagInput(tagLabel(t, tagNames));
+                }}
+                className={cn(
+                  "h-5 w-5 rounded-full transition-transform",
+                  renameTagId === t.id && "scale-125 ring-2 ring-ring ring-offset-2",
+                )}
+                style={{ background: t.color }}
+                title={tagLabel(t, tagNames)}
+              />
+            ))}
+          </div>
+          <Input
+            value={renameTagInput}
+            onChange={(e) => setRenameTagInput(e.target.value)}
+            placeholder="标签名称"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitRenameTag();
+              if (e.key === "Escape") setRenameTagOpen(false);
+            }}
+          />
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setRenameTagOpen(false)}>
+              取消
+            </Button>
+            <Button size="sm" onClick={submitRenameTag} disabled={!renameTagInput.trim()}>
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <div
+        ref={containerRef}
+        data-pane-id={paneId}
       onMouseDownCapture={(e) => {
         // 地址栏聚焦时：点击窗格空白保持地址栏光标；点击文件/文件夹行才允许移交焦点
         const ae = document.activeElement as HTMLElement | null;
@@ -727,11 +794,14 @@ export function FileList({
                         className="mr-2 h-3 w-3 rounded-full"
                         style={{ background: t.color }}
                       />
-                      {t.label}
+                      {tagLabel(t, tagNames)}
                       {checked && <Check className="ml-auto h-3.5 w-3.5" />}
                     </ContextMenuItem>
                   );
                 })}
+                <ContextMenuItem onSelect={() => openRenameTagDialog()}>
+                  <Settings2 className="mr-2 h-4 w-4" /> 重命名标签…
+                </ContextMenuItem>
                 <ContextMenuSeparator />
                 {/* 快捷访问（Finder 边栏式） */}
                 <ContextMenuItem onClick={() => onToggleQuick(entry.path)}>
@@ -820,5 +890,6 @@ export function FileList({
         </ContextMenuContent>
       </ContextMenu>
     </div>
+    </>
   );
 }

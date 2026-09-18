@@ -86,10 +86,14 @@ pub fn quick_access() -> Vec<QuickAccessItem> {
     ];
     for (key, f) in candidates {
         if let Some(p) = f() {
-            items.push(QuickAccessItem {
-                key: key.to_string(),
-                path: p.to_string_lossy().to_string(),
-            });
+            // 仅收录实际存在的目录：OneDrive 重定向 / 已删除的库目录（如 Windows My Music）跳过，
+            // 避免侧边栏出现不可访问的快捷项
+            if p.is_dir() {
+                items.push(QuickAccessItem {
+                    key: key.to_string(),
+                    path: p.to_string_lossy().to_string(),
+                });
+            }
         }
     }
     items

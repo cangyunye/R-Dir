@@ -145,6 +145,8 @@ export interface TransferProgress {
   fileDone: number;
   fileTotal: number;
   done: boolean;
+  /** 可选任务标识（http 下载 = url，用于取消） */
+  id?: string;
 }
 
 /** 会话保存（v0.3.0）：单个窗格快照，SFTP 只存 serverId，不含任何凭据 */

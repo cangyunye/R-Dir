@@ -8,10 +8,29 @@
 use crate::fs_ops::FileEntry;
 use crate::progress;
 use regex::Regex;
+use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+// v0.6.3 起 60s：10s 整体超时导致慢速大文件（如 30MB）下载中断
+const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// 进行中的 http 下载取消标志表（key = url）
+static DOWNLOAD_CANCELS: std::sync::OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+    std::sync::OnceLock::new();
+fn download_cancels() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    DOWNLOAD_CANCELS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 取消指定 url 的下载（由前端传输面板“停止”按钮触发）
+#[tauri::command]
+pub fn cancel_http_download(url: String) {
+    if let Some(c) = download_cancels().lock().unwrap().get(&url) {
+        c.store(true, Ordering::Relaxed);
+    }
+}
 
 /// 请求 nginx autoindex 页面并解析为文件列表。
 /// url 必须以 / 结尾（目录视图）；非 200 / 解析失败返回 Err。
@@ -203,12 +222,22 @@ pub async fn http_download_to(
     if !crate::plugins::plugin_enabled(&state.plugins, "http") {
         return Err("HTTP autoindex 插件已禁用（设置 → 插件中可重新启用）".into());
     }
-    tokio::task::spawn_blocking(move || download_impl(&app, &local_dir, &url))
+    let cancel = Arc::new(AtomicBool::new(false));
+    download_cancels().lock().unwrap().insert(url.clone(), cancel.clone());
+    let cleanup_url = url.clone();
+    let res = tokio::task::spawn_blocking(move || download_impl(&app, &local_dir, &url, &cancel))
         .await
-        .map_err(|e| format!("下载任务失败：{e}"))?
+        .map_err(|e| format!("下载任务失败：{e}"))?;
+    download_cancels().lock().unwrap().remove(&cleanup_url);
+    res
 }
 
-fn download_impl(app: &tauri::AppHandle, local_dir: &str, url: &str) -> Result<String, String> {
+fn download_impl(
+    app: &tauri::AppHandle,
+    local_dir: &str,
+    url: &str,
+    cancel: &AtomicBool,
+) -> Result<String, String> {
     let name = url_last_segment(url)?;
     let dest = std::path::Path::new(local_dir).join(&name);
     // 重名安全：追加 (n) 后缀（与本地复制语义一致）
@@ -235,12 +264,18 @@ fn download_impl(app: &tauri::AppHandle, local_dir: &str, url: &str) -> Result<S
         if n == 0 {
             break;
         }
+        if cancel.load(Ordering::Relaxed) {
+            drop(f);
+            let _ = std::fs::remove_file(&dest);
+            return Err("下载已取消".into());
+        }
         f.write_all(&buf[..n]).map_err(|e| format!("写入失败：{e}"))?;
         done += n as u64;
         if total > 0 {
             let mut p = progress::TransferProgress::start("download", "下载中…", 1);
             p.file_done = done;
             p.file_total = total;
+            p.id = Some(url.to_string());
             progress::emit(app, &p);
         }
     }
@@ -248,6 +283,7 @@ fn download_impl(app: &tauri::AppHandle, local_dir: &str, url: &str) -> Result<S
         let mut p = progress::TransferProgress::start("download", "下载完成", 1);
         p.file_done = done;
         p.file_total = total;
+        p.id = Some(url.to_string());
         progress::emit(app, &p);
     }
     Ok(dest.to_string_lossy().to_string())

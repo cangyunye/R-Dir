@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { FolderOpen, Tag, X } from "lucide-react";
-import { tagById, type FileTags } from "@/lib/persist";
+import { tagById, tagLabel, type FileTags, type TagNames } from "@/lib/persist";
 import { FileIcon } from "@/components/FileIcon";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 export function TagView({
   tagId,
   fileTags,
+  tagNames,
   currentPath,
   onOpen,
   onExit,
@@ -18,6 +19,7 @@ export function TagView({
 }: {
   tagId: string;
   fileTags: FileTags;
+  tagNames: TagNames;
   currentPath: string;
   onOpen: (path: string) => void;
   onExit: () => void;
@@ -63,7 +65,7 @@ export function TagView({
           style={{ background: def?.color ?? "#8e8e93" }}
         />
         <span className="font-medium text-foreground">
-          标签：{def?.label ?? tagId}
+          标签：{def ? tagLabel(def, tagNames) : tagId}
         </span>
         <span className="text-muted-foreground">{files.length} 项</span>
         <button

@@ -20,7 +20,10 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { QuickAccessItem, SftpServerView, VolumeInfo } from "@/lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { TAG_DEFS } from "@/lib/persist";
+import { TAG_DEFS, tagLabel, type TagNames } from "@/lib/persist";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { basename } from "@/lib/format";
 
 const QUICK_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -74,6 +77,8 @@ export function Sidebar({
   customQuick,
   onRemoveQuick,
   tagCounts,
+  tagNames,
+  onRenameTag,
   activeTagId,
   onSelectTag,
   sftpServers,
@@ -93,6 +98,8 @@ export function Sidebar({
   onRemoveQuick: (path: string) => void;
   /** 每个标签下的文件数量 */
   tagCounts: Record<string, number>;
+  tagNames: TagNames;
+  onRenameTag: (tagId: string, label: string) => void;
   activeTagId: string | null;
   onSelectTag: (tagId: string) => void;
   /** SFTP 远程服务器（v0.2） */
@@ -103,6 +110,22 @@ export function Sidebar({
   onSftpRemove: (sv: SftpServerView) => void;
 }) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; sv: SftpServerView } | null>(null);
+  // 标签重命名（v0.6.4 右键侧边栏标签）
+  const [renameTagOpen, setRenameTagOpen] = useState(false);
+  const [renameTagId, setRenameTagId] = useState<string>("red");
+  const [renameTagInput, setRenameTagInput] = useState("");
+  const openRenameTag = (id: string) => {
+    const def = TAG_DEFS.find((t) => t.id === id) ?? TAG_DEFS[0];
+    setRenameTagId(id);
+    setRenameTagInput(tagLabel(def, tagNames));
+    setRenameTagOpen(true);
+  };
+  const submitRenameTag = () => {
+    const label = renameTagInput.trim();
+    if (!label) return;
+    onRenameTag(renameTagId, label);
+    setRenameTagOpen(false);
+  };
   const ctxRef = useRef<HTMLDivElement | null>(null);
 
   // 点击外部 / 滚动时关闭右键菜单
@@ -118,6 +141,51 @@ export function Sidebar({
   }, [ctxMenu]);
   const groupedServers = groupServers(sftpServers);
   return (
+    <>
+    <Dialog open={renameTagOpen} onOpenChange={setRenameTagOpen}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>重命名标签</DialogTitle>
+          <DialogDescription>自定义标签显示名称（不影响已标记的文件）</DialogDescription>
+        </DialogHeader>
+        <div className="flex items-center gap-1.5">
+          {TAG_DEFS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => {
+                setRenameTagId(t.id);
+                setRenameTagInput(tagLabel(t, tagNames));
+              }}
+              className={cn(
+                "h-5 w-5 rounded-full transition-transform",
+                renameTagId === t.id && "scale-125 ring-2 ring-ring ring-offset-2",
+              )}
+              style={{ background: t.color }}
+              title={tagLabel(t, tagNames)}
+            />
+          ))}
+        </div>
+        <Input
+          value={renameTagInput}
+          onChange={(e) => setRenameTagInput(e.target.value)}
+          placeholder="标签名称"
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submitRenameTag();
+            if (e.key === "Escape") setRenameTagOpen(false);
+          }}
+        />
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={() => setRenameTagOpen(false)}>
+            取消
+          </Button>
+          <Button size="sm" onClick={submitRenameTag} disabled={!renameTagInput.trim()}>
+            保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     <ScrollArea className="w-44 shrink-0 border-r bg-muted/20">
       <div className="flex flex-col gap-4 p-2">
         {/* 快速访问（内置 + 用户自定义） */}
@@ -197,7 +265,11 @@ export function Sidebar({
                 key={t.id}
                 onClick={() => onSelectTag(t.id)}
                 onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(`tags://${t.id}`))}
-                title={`查看「${t.label}」标签的文件${count > 0 ? `（${count} 项）` : ""}`}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openRenameTag(t.id);
+                }}
+                title={`查看「${tagLabel(t, tagNames)}」标签的文件${count > 0 ? `（${count} 项）` : ""}`}
                 className={cn(
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors",
                   active
@@ -211,7 +283,7 @@ export function Sidebar({
                   className="h-3 w-3 shrink-0 rounded-full"
                   style={{ background: t.color }}
                 />
-                <span className="flex-1 truncate">{t.label}</span>
+                <span className="flex-1 truncate">{tagLabel(t, tagNames)}</span>
                 {count > 0 && (
                   <span className="tabular-nums text-[10px] text-muted-foreground">
                     {count}
@@ -351,5 +423,6 @@ export function Sidebar({
         </div>
       )}
     </ScrollArea>
+    </>
   );
 }

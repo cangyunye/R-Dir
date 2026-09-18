@@ -19,6 +19,8 @@ pub struct TransferProgress {
     pub file_total: u64,
     /// 全部完成
     pub done: bool,
+    /// 可选任务标识（http 下载 = url，用于取消命令定位）
+    pub id: Option<String>,
 }
 
 impl TransferProgress {
@@ -31,6 +33,7 @@ impl TransferProgress {
             file_done: 0,
             file_total: 0,
             done: false,
+            id: None,
         }
     }
 }

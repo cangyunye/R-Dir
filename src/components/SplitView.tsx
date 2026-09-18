@@ -6,6 +6,7 @@ import type { FileTags } from "@/lib/persist";
 import { FileList, type RenameState } from "@/components/FileList";
 import { PropertiesBar } from "@/components/PropertiesBar";
 import { TagView } from "@/components/TagView";
+import type { TagNames } from "@/lib/persist";
 import type { FileEntry, SortKey } from "@/lib/types";
 import type { OpenerItem, ShellItem } from "@/lib/openerApi";
 
@@ -68,6 +69,8 @@ function PaneView({
   dragOver,
   canPaste,
   fileTags,
+  tagNames,
+  onRenameTag,
   customQuick,
   onOpenTagFile,
   onExitTag,
@@ -81,6 +84,8 @@ function PaneView({
   dragOver: { targetPaneId: number; op: "copy" | "move" } | null;
   canPaste: boolean;
   fileTags: FileTags;
+  tagNames: TagNames;
+  onRenameTag: (tagId: string, label: string) => void;
   customQuick: string[];
   onOpenTagFile: (path: string) => void;
   onExitTag: () => void;
@@ -99,6 +104,7 @@ function PaneView({
         <TagView
           tagId={showingTag}
           fileTags={fileTags}
+          tagNames={tagNames}
           currentPath={pane.path}
           onOpen={onOpenTagFile}
           onExit={onExitTag}
@@ -140,6 +146,8 @@ function PaneView({
         onSelectAll={() => h.onSelectAll(pane.id)}
         onInvertSelection={() => h.onInvertSelection(pane.id)}
         fileTags={fileTags}
+        tagNames={tagNames}
+        onRenameTag={onRenameTag}
         customQuick={customQuick}
         onToggleTag={h.onToggleTag}
         onToggleQuick={h.onToggleQuick}
@@ -227,6 +235,8 @@ export function SplitView({
   renaming,
   dragOver,
   fileTags,
+  tagNames,
+  onRenameTag,
   customQuick,
   onOpenTagFile,
   onExitTag,
@@ -241,6 +251,8 @@ export function SplitView({
   renaming: RenameState | null;
   dragOver: { targetPaneId: number; op: "copy" | "move" } | null;
   fileTags: FileTags;
+  tagNames: TagNames;
+  onRenameTag: (tagId: string, label: string) => void;
   customQuick: string[];
   onOpenTagFile: (path: string) => void;
   onExitTag: () => void;
@@ -259,6 +271,8 @@ export function SplitView({
         dragOver={dragOver}
         canPaste={canPaste}
         fileTags={fileTags}
+        tagNames={tagNames}
+        onRenameTag={onRenameTag}
         customQuick={customQuick}
         onOpenTagFile={onOpenTagFile}
         onExitTag={onExitTag}
@@ -283,6 +297,8 @@ export function SplitView({
           renaming={renaming}
           dragOver={dragOver}
           fileTags={fileTags}
+          tagNames={tagNames}
+          onRenameTag={onRenameTag}
           customQuick={customQuick}
           onOpenTagFile={onOpenTagFile}
           onExitTag={onExitTag}
@@ -309,6 +325,8 @@ export function SplitView({
           renaming={renaming}
           dragOver={dragOver}
           fileTags={fileTags}
+          tagNames={tagNames}
+          onRenameTag={onRenameTag}
           customQuick={customQuick}
           onOpenTagFile={onOpenTagFile}
           onExitTag={onExitTag}
