@@ -17,6 +17,20 @@ use std::time::Duration;
 // v0.6.3 起 60s：10s 整体超时导致慢速大文件（如 30MB）下载中断
 const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// 下载用 HTTP 客户端：读/写超时代替整体超时。
+/// ureq 的 Request::timeout 作用于整个请求（含 body），大文件慢速下载会被掐断；
+/// AgentBuilder::timeout_read 只限制单次读等待，持续传输不受限。
+static DOWNLOAD_AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+fn download_agent() -> &'static ureq::Agent {
+    DOWNLOAD_AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(10))
+            .timeout_read(HTTP_TIMEOUT)
+            .timeout_write(HTTP_TIMEOUT)
+            .build()
+    })
+}
+
 /// 进行中的 http 下载取消标志表（key = url）
 static DOWNLOAD_CANCELS: std::sync::OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> =
     std::sync::OnceLock::new();
@@ -232,33 +246,108 @@ pub async fn http_download_to(
     res
 }
 
-fn download_impl(
-    app: &tauri::AppHandle,
+/// 下载实现（进度经回调发出，便于单元测试不依赖 AppHandle）
+fn download_with_progress(
     local_dir: &str,
     url: &str,
     cancel: &AtomicBool,
+    emit: &mut dyn FnMut(&progress::TransferProgress),
 ) -> Result<String, String> {
     let name = url_last_segment(url)?;
     let dest = std::path::Path::new(local_dir).join(&name);
     // 重名安全：追加 (n) 后缀（与本地复制语义一致）
     let dest = unique_dest(dest);
+    // 断点续传：同目录下 `文件名.part` 为未完成文件（v0.6.5）
+    let part = std::path::PathBuf::from(format!("{}.part", dest.display()));
 
-    let resp = ureq::get(url)
-        .timeout(HTTP_TIMEOUT)
-        .call()
-        .map_err(|e| http_err(&e))?;
-    if !(200..300).contains(&resp.status()) {
-        return Err(format!("HTTP {}（{}）", resp.status(), url));
+    // 已有 .part → 从已下载字节续传；否则从头下载
+    let done0: u64 = std::fs::metadata(&part)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    let (mut resp, mut resumed) = {
+        if done0 > 0 {
+            match download_agent()
+                .get(url)
+                .set("Range", &format!("bytes={done0}-"))
+                .call()
+            {
+                Ok(r) => (r, true),
+                // 服务器不支持 Range 起点（文件已变小等）→ 删除 .part 从头下载
+                Err(ureq::Error::Status(416, _)) => {
+                    let _ = std::fs::remove_file(&part);
+                    (
+                        download_agent()
+                            .get(url)
+                            .call()
+                            .map_err(|e| http_err(&e))?,
+                        false,
+                    )
+                }
+                Err(e) => return Err(http_err(&e)),
+            }
+        } else {
+            (
+                download_agent()
+                    .get(url)
+                    .call()
+                    .map_err(|e| http_err(&e))?,
+                false,
+            )
+        }
+    };
+
+    let status = resp.status();
+    if status == 200 {
+        // 服务器忽略/不支持 Range → 从头下载，覆盖已有 .part
+        resumed = false;
+        let _ = std::fs::remove_file(&part);
+    } else if status != 206 {
+        return Err(format!("HTTP {}（{}）", status, url));
     }
-    let total: u64 = resp
+
+    // 206 时校验 Content-Range 起点与 .part 大小一致，不一致则从头下载
+    if resumed {
+        if let Some(cr) = resp.header("Content-Range") {
+            // 格式：bytes <start>-<end>/<total>
+            let start = cr
+                .split('/')
+                .next()
+                .and_then(|range| range.trim_start_matches("bytes ").split('-').next())
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .unwrap_or(0);
+            if start != done0 {
+                resumed = false;
+                let _ = std::fs::remove_file(&part);
+                resp = download_agent()
+                    .get(url)
+                    .call()
+                    .map_err(|e| http_err(&e))?;
+                if resp.status() != 200 {
+                    return Err(format!("HTTP {}（{}）", resp.status(), url));
+                }
+            }
+        }
+    }
+
+    let remaining: u64 = resp
         .header("Content-Length")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
+    // 进度总量：续传时 = 已下载 + 剩余；从头 = Content-Length
+    let total: u64 = if resumed { done0 + remaining } else { remaining };
 
     let mut reader = resp.into_reader();
-    let mut f = std::fs::File::create(&dest).map_err(|e| format!("创建文件失败：{e}"))?;
+    let mut f = if resumed && done0 > 0 {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&part)
+            .map_err(|e| format!("打开续传文件失败：{e}"))?
+    } else {
+        std::fs::File::create(&part).map_err(|e| format!("创建文件失败：{e}"))?
+    };
     let mut buf = [0u8; 64 * 1024];
-    let mut done: u64 = 0;
+    let mut done: u64 = done0;
     loop {
         let n = reader.read(&mut buf).map_err(|e| format!("读取失败：{e}"))?;
         if n == 0 {
@@ -266,8 +355,11 @@ fn download_impl(
         }
         if cancel.load(Ordering::Relaxed) {
             drop(f);
-            let _ = std::fs::remove_file(&dest);
-            return Err("下载已取消".into());
+            // 已下载 > 0 → 保留 .part 供续传；尚未写任何字节 → 清理空文件
+            if done == 0 {
+                let _ = std::fs::remove_file(&part);
+            }
+            return Err(format!("下载已暂停（已保存 {} 字节，重新下载将自动续传）", done));
         }
         f.write_all(&buf[..n]).map_err(|e| format!("写入失败：{e}"))?;
         done += n as u64;
@@ -276,17 +368,31 @@ fn download_impl(
             p.file_done = done;
             p.file_total = total;
             p.id = Some(url.to_string());
-            progress::emit(app, &p);
+            emit(&p);
         }
     }
+    f.flush().map_err(|e| format!("写入失败：{e}"))?;
+    drop(f);
+    // 续传完成：.part 重命名为最终文件名
+    std::fs::rename(&part, &dest).map_err(|e| format!("完成文件失败：{e}"))?;
     if total > 0 {
         let mut p = progress::TransferProgress::start("download", "下载完成", 1);
         p.file_done = done;
         p.file_total = total;
         p.id = Some(url.to_string());
-        progress::emit(app, &p);
+        emit(&p);
     }
     Ok(dest.to_string_lossy().to_string())
+}
+
+/// 命令入口：进度转发到前端传输面板
+fn download_impl(
+    app: &tauri::AppHandle,
+    local_dir: &str,
+    url: &str,
+    cancel: &AtomicBool,
+) -> Result<String, String> {
+    download_with_progress(local_dir, url, cancel, &mut |p| progress::emit(app, p))
 }
 
 /// 提取 URL 最后一段作为文件名（去 query/fragment，百分号解码）
@@ -443,6 +549,88 @@ mod tests {
         assert!(meta.len() > 100, "README 应大于 100 字节");
         println!("downloaded {} ({} bytes)", dest.display(), meta.len());
         let _ = std::fs::remove_file(&dest);
+    }
+
+    /// 断点续传联调（本机 nginx 8082 仓库根，40MB）：
+    /// A 完整下载 → B 造 .part 前 10MB 后续传 → C 下载中取消且 .part 保留
+    #[test]
+    #[ignore]
+    fn live_resume_download_8081() {
+        let url = "http://localhost:8082/src-tauri/target/rdir-test/resume_src.bin";
+        let dir = std::env::temp_dir().join("rdir-http-resume-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mk");
+
+        // A) 完整下载
+        let cancel = Arc::new(AtomicBool::new(false));
+        let dest = download_with_progress(dir.to_str().unwrap(), url, &cancel, &mut |_| {}).expect("full download");
+        let meta = std::fs::metadata(&dest).expect("meta");
+        assert_eq!(meta.len(), 40 * 1024 * 1024, "完整下载大小");
+        let part = format!("{}.part", dest);
+        assert!(!std::path::Path::new(&part).exists(), "完成后不应有 .part");
+        std::fs::remove_file(&dest).expect("rm full");
+
+        // B) 手动造 .part（前 10MB）模拟中断现场 → 续传
+        {
+            let resp = download_agent().get(url).call().expect("GET head");
+            let mut reader = resp.into_reader();
+            let mut f = std::fs::File::create(&part).expect("create part");
+            let mut buf = [0u8; 64 * 1024];
+            let mut got = 0u64;
+            while got < 10 * 1024 * 1024 {
+                let n = reader.read(&mut buf).expect("read");
+                if n == 0 {
+                    break;
+                }
+                f.write_all(&buf[..n]).expect("write");
+                got += n as u64;
+            }
+            f.flush().expect("flush");
+            drop(f);
+            assert_eq!(got, 10 * 1024 * 1024);
+        }
+        let cancel2 = Arc::new(AtomicBool::new(false));
+        let dest2 = download_with_progress(dir.to_str().unwrap(), url, &cancel2, &mut |_| {}).expect("resume download");
+        let meta2 = std::fs::metadata(&dest2).expect("meta2");
+        assert_eq!(meta2.len(), 40 * 1024 * 1024, "续传后大小");
+        assert!(
+            !std::path::Path::new(&format!("{}.part", dest2)).exists(),
+            "续传完成无 .part"
+        );
+        std::fs::remove_file(&dest2).expect("rm resumed");
+
+        // C) 取消语义（确定性）：已有 .part 时取消 → 返回“已暂停”且 .part 保留
+        let part3 = format!("{}.part", dest2);
+        {
+            let resp = download_agent().get(url).call().expect("GET head");
+            let mut reader = resp.into_reader();
+            let mut f = std::fs::File::create(&part3).expect("create part3");
+            let mut buf = [0u8; 64 * 1024];
+            let mut got = 0u64;
+            while got < 10 * 1024 * 1024 {
+                let n = reader.read(&mut buf).expect("read");
+                if n == 0 {
+                    break;
+                }
+                f.write_all(&buf[..n]).expect("write");
+                got += n as u64;
+            }
+            f.flush().expect("flush");
+            drop(f);
+        }
+        let cancel3 = Arc::new(AtomicBool::new(true));
+        let err = download_with_progress(dir.to_str().unwrap(), url, &cancel3, &mut |_| {})
+            .err()
+            .expect("应返回错误");
+        assert!(err.contains("已暂停"), "err={err}");
+        let meta3 = std::fs::metadata(&part3).expect("part3 应保留");
+        assert!(meta3.len() > 0, "取消后 .part 应非空");
+        println!(
+            "resume test passed: resumed_size={} canceled_part={}",
+            meta2.len(),
+            meta3.len()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
