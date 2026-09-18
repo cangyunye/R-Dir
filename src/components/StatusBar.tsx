@@ -1,4 +1,4 @@
-import { AlertCircle, FolderOpen, Layers, Loader2, X } from "lucide-react";
+import { AlertCircle, FolderOpen, Layers, Loader2, X , Share2 } from "lucide-react";
 import { formatSize } from "@/lib/format";
 import type { TransferProgress } from "@/lib/types";
 
@@ -19,6 +19,7 @@ export function StatusBar({
   notice,
   transfer,
   onCancelDownload,
+  onSharePanel,
 }: {
   path: string;
   total: number;
@@ -29,6 +30,8 @@ export function StatusBar({
   notice: string | null;
   transfer?: TransferProgress | null;
   onCancelDownload?: (url: string) => void;
+  /** v0.7：打开分享管理面板 */
+  onSharePanel?: () => void;
 }) {
   const pct =
     transfer && transfer.fileTotal > 0
@@ -77,6 +80,15 @@ export function StatusBar({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-3">
+          {onSharePanel && (
+            <button
+              onClick={onSharePanel}
+              title="分享管理"
+              className="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] hover:bg-muted"
+            >
+              <Share2 className="h-3 w-3" /> 分享
+            </button>
+          )}
           {transfer && !transfer.done && transfer.phase === "download" && transfer.id && onCancelDownload && (
             <button
               onClick={() => onCancelDownload(transfer.id!)}

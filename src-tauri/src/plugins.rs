@@ -92,6 +92,18 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         enabled: enabled("http"),
         configurable: false,
     });
+    #[cfg(feature = "share")]
+    v.push(PluginInfo {
+        id: "share".into(),
+        name: "窗口分享".into(),
+        description: "把当前窗口目录分享为链接：他人浏览器只读浏览 + Range 断点续传下载；支持上溯开关、连接数上限、有效期".into(),
+        version: "0.7".into(),
+        source: "builtin".into(),
+        protocols: vec!["share://".into()],
+        operations: vec!["read".into(), "transfer".into()],
+        enabled: enabled("share"),
+        configurable: false,
+    });
     v.push(PluginInfo {
         id: "opener".into(),
         name: "打开方式".into(),

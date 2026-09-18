@@ -12,6 +12,8 @@ mod opener;
 mod filetypes;
 mod plugins;
 mod http_autoindex;
+#[cfg(feature = "share")]
+mod share;
 
 use find::FindEntry;
 use fs_ops::FileEntry;
@@ -31,6 +33,9 @@ pub struct AppState {
     pub master_key: tokio::sync::Mutex<Option<Vec<u8>>>,
     /// 插件注册表启用状态（v0.5，plugins.json 持久化）
     pub plugins: plugins::PluginState,
+    /// 窗口分享管理器（v0.7，feature = "share"）
+    #[cfg(feature = "share")]
+    pub share: share::ShareState,
 }
 
 /// 列出目录内容（目录优先、名称排序）。
@@ -732,9 +737,12 @@ async fn find_files(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default()
-        .manage(AppState::default())
-        .setup(|app| {
+    let mut builder = tauri::Builder::default().manage(AppState::default());
+    #[cfg(feature = "share")]
+    {
+        builder = builder.manage(share::ShareState::default());
+    }
+    builder = builder.setup(|app| {
             let state = app.state::<AppState>();
             plugins::init(app.handle(), &state.plugins);
             Ok(())
@@ -791,7 +799,12 @@ pub fn run() {
             set_plugin_enabled,
             // HTTP autoindex 插件（v0.6）
             http_autoindex::http_download_to,
-            http_autoindex::cancel_http_download
+            http_autoindex::cancel_http_download,
+            // 窗口分享插件（v0.7）
+            share::share_create,
+            share::share_list,
+            share::share_stop,
+            share::share_stop_by_dir
         ]);
     }
     #[cfg(not(feature = "sftp"))]
@@ -834,12 +847,32 @@ pub fn run() {
             http_autoindex::cancel_http_download
         ]);
     }
+    #[cfg(feature = "share")]
+    {
+        builder = builder.invoke_handler(tauri::generate_handler![
+            share::share_create,
+            share::share_list,
+            share::share_stop,
+            share::share_stop_by_dir
+        ]);
+    }
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // v0.7：应用退出时停止所有分享服务
+            if let tauri::RunEvent::Exit = event {
+                #[cfg(feature = "share")]
+                {
+                    if let Some(share_state) = app_handle.try_state::<share::ShareState>() {
+                        share::shutdown_all(&share_state.manager);
+                    }
+                }
+            }
+        });
 }
 
 /// SFTP 插件集成测试：连接本机 SSH（127.0.0.1），密钥认证 + 列目录。

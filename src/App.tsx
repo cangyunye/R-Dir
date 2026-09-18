@@ -91,6 +91,7 @@ import {
   type FileTags,
   type TagNames,
 } from "@/lib/persist";
+import { shareStopByDir } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Trash2 } from "lucide-react";
 import { MenuBar } from "@/components/MenuBar";
@@ -155,6 +156,8 @@ import { SplitView, type PaneHandlers } from "@/components/SplitView";
 import { SearchPanel } from "@/components/SearchPanel";
 import { StatusBar } from "@/components/StatusBar";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { ShareDialog } from "@/components/ShareDialog";
+import { SharePanel } from "@/components/SharePanel";
 
 let nextTabId = 1;
 let nextPaneId = 1;
@@ -248,6 +251,13 @@ export default function App() {
   const [showProperties, setShowProperties] = useState(true);
   /** 设置 / 快捷键一览对话框 */
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** v0.7 分享：创建弹窗（右键分享此目录） */
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [shareDir, setShareDir] = useState("");
+  /** v0.7 分享：管理面板（状态栏按钮） */
+  const [sharePanelOpen, setSharePanelOpen] = useState(false);
+  /** share://changed 事件版本号，驱动面板刷新 */
+  const [shareVer, setShareVer] = useState(0);
   /** 主题（默认浅色，M5 持久化到 localStorage "rfm.theme"） */
   const [dark, setDark] = useState<boolean>(() => {
     try {
@@ -288,7 +298,19 @@ export default function App() {
   // ==================== 传输/复制进度（本地 + SFTP） ====================
   const [transfer, setTransfer] = useState<TransferProgress | null>(null);
 
+  
+  // v0.7 分享事件：创建/到期/停止 → 刷新管理面板
   useEffect(() => {
+    let un: (() => void) | undefined;
+    void listen("share://changed", () => {
+      setShareVer((v) => v + 1);
+    }).then((u) => {
+      un = u;
+    });
+    return () => un?.();
+  }, []);
+
+useEffect(() => {
     let disposed = false;
     let doneTimer: ReturnType<typeof setTimeout> | null = null;
     const un = listen<TransferProgress>("transfer-progress", (e) => {
@@ -979,7 +1001,17 @@ export default function App() {
         if (ts.length <= 1) return ts;
         const idx = ts.findIndex((t) => t.id === id);
         const target = ts[idx];
-        if (target) closedTabsRef.current.push({ tab: target, index: idx });
+        if (target) {
+          closedTabsRef.current.push({ tab: target, index: idx });
+          // v0.7：关闭被分享的标签 → 自动停止其目录分享
+          const dirs = new Set<string>();
+          for (const pane of Object.values(target.panes)) {
+            if (pane.path && !pane.path.startsWith("sftp://") && !pane.path.startsWith("http")) {
+              dirs.add(pane.path);
+            }
+          }
+          dirs.forEach((d) => void shareStopByDir(d));
+        }
         const next = ts.filter((t) => t.id !== id);
         if (id === activeId) {
           const neighbor = next[Math.max(0, idx - 1)];
@@ -1857,6 +1889,10 @@ export default function App() {
     onRatioChange,
     onNewFolder: (paneId) => void createAndRename(paneId, "dir"),
     onNewFile: (paneId) => void createAndRename(paneId, "file"),
+    onShareDir: (dir) => {
+      setShareDir(dir);
+      setShareDialogOpen(true);
+    },
     onPaste: (paneId) => void doPaste(paneId),
     onSelectAll: selectAllIn,
     onInvertSelection: invertSelectionIn,
@@ -2017,6 +2053,34 @@ export default function App() {
         notice={notice}
         transfer={transfer}
         onCancelDownload={(url) => void cancelHttpDownload(url)}
+        onSharePanel={() => setSharePanelOpen(true)}
+      />
+
+      <ShareDialog
+        open={shareDialogOpen}
+        dir={shareDir}
+        onClose={() => setShareDialogOpen(false)}
+        onCreated={() => {
+          setShareDialogOpen(false);
+          setSharePanelOpen(true);
+        }}
+        onError={(msg) => {
+          showError(msg);
+          setShareDialogOpen(false);
+        }}
+      />
+
+      <SharePanel
+        key={shareVer}
+        open={sharePanelOpen}
+        onClose={() => setSharePanelOpen(false)}
+        onNewShare={() => {
+          setSharePanelOpen(false);
+          if (activePane) {
+            setShareDir(activePane.path);
+            setShareDialogOpen(true);
+          }
+        }}
       />
 
       <SettingsDialog

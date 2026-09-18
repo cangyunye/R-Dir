@@ -181,3 +181,32 @@ export interface MasterKeyStatus {
   /** 当前内存中是否已输入（会话内无需重复） */
   active: boolean;
 }
+
+// ---- v0.7 窗口分享 ----
+export interface ShareConnLog {
+  ip: string;
+  ua: string;
+  connectedAt: number;
+  lastActive: number;
+}
+
+export interface ShareSessionView {
+  id: string;
+  token: string;
+  dir: string;
+  perm: string;
+  allowParent: boolean;
+  maxConns: number;
+  port: number;
+  url: string;
+  expiresAt: number | null;
+  conns: ShareConnLog[];
+}
+
+export interface ShareCreateResult {
+  id: string;
+  token: string;
+  port: number;
+  url: string;
+  expiresAt: number | null;
+}

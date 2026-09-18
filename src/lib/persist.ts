@@ -102,3 +102,48 @@ export function parentOf(p: string): string {
   if (i <= 0) return "/";
   return norm.slice(0, i);
 }
+
+// ---- v0.7 分享设置 ----
+const SHARE_ALLOW_PARENT_KEY = "rfm.share-allow-parent";
+const SHARE_DEFAULT_EXPIRES_KEY = "rfm.share-default-expires";
+
+/** 分享是否允许接收方上溯到父目录（默认 false：严格锁定分享根内） */
+export function loadShareAllowParent(): boolean {
+  try {
+    return localStorage.getItem(SHARE_ALLOW_PARENT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveShareAllowParent(v: boolean): void {
+  try {
+    localStorage.setItem(SHARE_ALLOW_PARENT_KEY, v ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 分享默认有效期（小时）；null = 永久（直到关闭客户端/主动停止） */
+export function loadShareDefaultExpires(): number | null {
+  try {
+    const raw = localStorage.getItem(SHARE_DEFAULT_EXPIRES_KEY);
+    if (!raw) return 24; // 默认 24 小时
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return 24;
+  }
+}
+
+export function saveShareDefaultExpires(hours: number | null): void {
+  try {
+    if (hours == null) {
+      localStorage.removeItem(SHARE_DEFAULT_EXPIRES_KEY);
+    } else {
+      localStorage.setItem(SHARE_DEFAULT_EXPIRES_KEY, String(hours));
+    }
+  } catch {
+    /* ignore */
+  }
+}

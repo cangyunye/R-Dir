@@ -52,6 +52,8 @@ export interface PaneHandlers {
   /** 空白右键菜单（作用于指定窗格） */
   onNewFolder: (paneId: number) => void;
   onNewFile: (paneId: number) => void;
+  /** v0.7：分享此目录（右键） */
+  onShareDir: (dir: string) => void;
   onPaste: (paneId: number) => void;
   onSelectAll: (paneId: number) => void;
   onInvertSelection: (paneId: number) => void;
@@ -141,6 +143,7 @@ function PaneView({
         onDragOverChange={h.onDragOverChange}
         onNewFolder={() => h.onNewFolder(pane.id)}
         onNewFile={() => h.onNewFile(pane.id)}
+        onShareDir={(dir) => h.onShareDir(dir)}
         onPaste={() => h.onPaste(pane.id)}
         canPaste={canPaste}
         onSelectAll={() => h.onSelectAll(pane.id)}

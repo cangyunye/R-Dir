@@ -127,3 +127,26 @@ export const sessionLoad = () =>
 
 export const sessionClear = () =>
   invoke<void>("session_clear");
+
+// ---- 窗口分享（v0.7） ----
+export const shareCreate = (
+  dir: string,
+  allowParent: boolean,
+  maxConns: number,
+  expiresHours: number | null
+) =>
+  invoke<import("./types").ShareCreateResult>("share_create", {
+    dir,
+    allowParent,
+    maxConns,
+    expiresHours,
+  });
+
+export const shareList = () =>
+  invoke<import("./types").ShareSessionView[]>("share_list");
+
+export const shareStop = (id: string) =>
+  invoke<void>("share_stop", { id });
+
+export const shareStopByDir = (dir: string) =>
+  invoke<number>("share_stop_by_dir", { dir });

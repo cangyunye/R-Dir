@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Scissors,
   Settings2,
+  Share2,
   Star,
   Trash2,
   Plus,
@@ -122,6 +123,7 @@ export function FileList({
   onDragOverChange,
   onNewFolder,
   onNewFile,
+  onShareDir,
   onPaste,
   canPaste,
   onSelectAll,
@@ -177,6 +179,8 @@ export function FileList({
   onDragOverChange: (target: { targetPaneId: number; op: "copy" | "move" } | null) => void;
   onNewFolder: () => void;
   onNewFile: () => void;
+  /** v0.7：右键「分享此目录」 */
+  onShareDir: (dir: string) => void;
   onPaste: () => void;
   canPaste: boolean;
   onSelectAll: () => void;
@@ -882,6 +886,10 @@ export function FileList({
           </ContextMenuItem>
           <ContextMenuItem onClick={onInvertSelection}>
             <CheckSquare className="mr-2 h-4 w-4" /> 反向选择
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => onShareDir(currentDir)}>
+            <Share2 className="mr-2 h-4 w-4" /> 分享此目录…
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onRefresh}>

@@ -21,6 +21,12 @@ import {
 } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
 import type { PluginInfo } from "@/lib/openerApi";
+import {
+  loadShareAllowParent,
+  saveShareAllowParent,
+  loadShareDefaultExpires,
+  saveShareDefaultExpires,
+} from "@/lib/persist";
 
 /**
  * 设置对话框（M5 P2）
@@ -45,6 +51,9 @@ export function SettingsDialog({
   plugins: PluginInfo[] | null;
   onTogglePlugin: (id: string, enabled: boolean) => void;
 }) {
+  /** v0.7 分享设置 */
+  const [shareAllowParent, setShareAllowParent] = useState(() => loadShareAllowParent());
+  const [shareExpiresHours, setShareExpiresHours] = useState<number | null>(() => loadShareDefaultExpires());
   /** 正在录制键位的 actionId（null = 未录制） */
   const [recordingId, setRecordingId] = useState<string | null>(null);
   /** 冲突提示（combo → 占用者 label） */
@@ -288,6 +297,51 @@ export function SettingsDialog({
               </div>
             </div>
           ))}
+        </div>
+
+        {/* v0.7 分享设置 */}
+        <div className="mb-4">
+          <div className="mb-1.5 text-xs font-semibold text-primary">分享</div>
+          <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
+            分享为链接时的默认行为：是否允许接收方上溯父目录（默认关闭，严格锁定分享根内）、默认有效期。
+          </div>
+          <div className="space-y-2">
+            <label className="flex items-center justify-between rounded-md border px-3 py-2 text-xs">
+              <span>允许接收方上溯到父目录（仅浏览）</span>
+              <input
+                type="checkbox"
+                checked={shareAllowParent}
+                onChange={(e) => {
+                  setShareAllowParent(e.target.checked);
+                  saveShareAllowParent(e.target.checked);
+                }}
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs">
+              <span>默认有效期（小时）</span>
+              <input
+                type="number"
+                min={1}
+                placeholder="永久"
+                value={shareExpiresHours ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const n = Number(v);
+                  if (v === "" || !Number.isFinite(n) || n <= 0) {
+                    setShareExpiresHours(null);
+                    saveShareDefaultExpires(null);
+                  } else {
+                    setShareExpiresHours(n);
+                    saveShareDefaultExpires(n);
+                  }
+                }}
+                className="w-24 rounded border bg-background px-2 py-1 text-right"
+              />
+            </label>
+            <p className="pl-1 text-[11px] text-muted-foreground">
+              留空 = 永久（直到关闭客户端或主动停止分享）。
+            </p>
+          </div>
         </div>
 
         {/* v0.5 插件 */}

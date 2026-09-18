@@ -1,6 +1,6 @@
 [package]
 name = "rust-file-manager"
-version = "0.6.5"
+version = "0.7.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -39,6 +39,13 @@ ureq = { version = "2", default-features = false, features = ["rustls", "gzip"] 
 russh = { version = "0.45", optional = true }
 russh-keys = { version = "0.45", optional = true }
 async-trait = "0.1"
+# v0.7 分享服务（内置插件，feature = "share" 可编译期拔出）：内嵌 HTTP 文件服务
+axum = { version = "0.8", optional = true, features = ["ws", "http1"] }
+# 分享链接展示用局域网地址探测
+local-ip-address = { version = "0.6", optional = true }
+# 流式文件下载（ReaderStream）
+tokio-util = { version = "0.7", optional = true, features = ["io"] }
+futures-util = { version = "0.3", optional = true }
 tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
 # 密码加密存储（master-key，AES-256-GCM；密钥仅存内存）
 aes-gcm = { version = "0.10", optional = true }
@@ -47,8 +54,10 @@ base64 = { version = "0.22", optional = true }
 rand = { version = "0.8", optional = true }
 
 [features]
-default = ["sftp"]
+default = ["sftp", "share"]
 sftp = ["dep:russh", "dep:russh-keys", "dep:tokio", "dep:aes-gcm", "dep:sha2", "dep:base64", "dep:rand"]
+# v0.7 窗口分享（内置插件）：去掉 share 即不编译分享服务
+share = ["dep:axum", "dep:tokio", "dep:local-ip-address", "dep:tokio-util", "dep:futures-util"]
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
