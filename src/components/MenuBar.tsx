@@ -135,7 +135,10 @@ export function MenuBar(actions: MenuActions) {
   const openFor = (label: string) => ({
     open: openMenu === label,
     onOpenChange: (o: boolean) => setOpenMenu(o ? label : null),
-    onHover: () => setOpenMenu(label),
+    // 经典菜单栏行为：必须先点击打开一个菜单，之后悬停才能切换；未打开时悬停不触发
+    onHover: () => {
+      if (openMenu !== null) setOpenMenu(label);
+    },
   });
 
   return (
@@ -284,7 +287,7 @@ export function MenuBar(actions: MenuActions) {
           <Shortcut id="openSettings" />
         </DropdownMenuItem>
         <DropdownMenuItem disabled>
-          <Info className="mr-2 h-4 w-4" /> 版本 0.6.2（Tauri 2 + React）
+          <Info className="mr-2 h-4 w-4" /> 版本 0.6.3（Tauri 2 + React）
         </DropdownMenuItem>
       </MenuButton>
 

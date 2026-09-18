@@ -14,11 +14,8 @@ import {
   RefreshCw,
   Scissors,
   Star,
-  Tag,
   Trash2,
-  ExternalLink,
   Plus,
-  TerminalSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
@@ -29,9 +26,6 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Input } from "@/components/ui/input";
@@ -549,7 +543,7 @@ export function FileList({
           const isRenaming = renaming?.path === entry.path;
           const targets = selection.includes(entry.path) ? selection : [entry.path];
           return (
-            <ContextMenu key={entry.path} modal={false}>
+            <ContextMenu key={entry.path}>
               <ContextMenuTrigger asChild>
                 <div
                   role="row"
@@ -652,63 +646,49 @@ export function FileList({
                 </ContextMenuItem>
                 {!entry.is_dir && pluginOpener && (
                   <>
-                    <ContextMenuSub>
-                      <ContextMenuSubTrigger>
-                        <ExternalLink className="mr-2 h-4 w-4" /> 打开方式
-                      </ContextMenuSubTrigger>
-                      <ContextMenuSubContent className="max-h-80 min-w-52 overflow-y-auto">
-                        {(() => {
-                          const customs = openersForEntry(openers);
-                          return (
-                            <>
-                              {customs.length === 0 ? (
-                                <ContextMenuItem disabled>
-                                  未注册打开方式，可点击下方“选择其他应用…”添加
-                                </ContextMenuItem>
-                              ) : (
-                                <>
-                                  <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                                    自定义
-                                  </div>
-                                  {customs.map((o) => (
-                                    <ContextMenuItem key={o.id} onClick={() => onOpenWith(o.id, entry.path)}>
-                                      <span className="mr-2 h-3 w-3 rounded-sm border border-muted-foreground/30" />
-                                      <span className="flex-1">{o.name}</span>
-                                    </ContextMenuItem>
-                                  ))}
-                                </>
-                              )}
-                            </>
-                          );
-                        })()}
-                        <ContextMenuSeparator />
-                        <ContextMenuItem onClick={() => void onAddCustomOpener()}>
-                          <Plus className="mr-2 h-4 w-4" /> 选择其他应用…
+                    <ContextMenuSeparator />
+                    <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      打开方式
+                    </div>
+                    {(() => {
+                      const customs = openersForEntry(openers);
+                      return customs.length === 0 ? (
+                        <ContextMenuItem disabled>
+                          未注册打开方式，可点击下方“选择其他应用…”添加
                         </ContextMenuItem>
-                      </ContextMenuSubContent>
-                    </ContextMenuSub>
+                      ) : (
+                        customs.map((o) => (
+                          <ContextMenuItem key={o.id} onClick={() => onOpenWith(o.id, entry.path)}>
+                            <span className="mr-2 h-3 w-3 rounded-sm border border-muted-foreground/30" />
+                            <span className="flex-1">{o.name}</span>
+                          </ContextMenuItem>
+                        ))
+                      );
+                    })()}
+                    <ContextMenuItem onClick={() => void onAddCustomOpener()}>
+                      <Plus className="mr-2 h-4 w-4" /> 选择其他应用…
+                    </ContextMenuItem>
                   </>
                 )}
                 {entry.is_dir && pluginTerminal && (
-                  <ContextMenuSub>
-                    <ContextMenuSubTrigger>
-                      <TerminalSquare className="mr-2 h-4 w-4" /> 在此处打开终端
-                    </ContextMenuSubTrigger>
-                    <ContextMenuSubContent className="min-w-44">
-                      {shells.map((sh) => (
-                        <ContextMenuItem
-                          key={sh.id}
-                          disabled={!sh.detected}
-                          onClick={() => onOpenTerminal(sh.id, entry.path)}
-                        >
-                          <span className="flex-1">{sh.name}</span>
-                          {!sh.detected && (
-                            <span className="text-[10px] text-muted-foreground">未安装</span>
-                          )}
-                        </ContextMenuItem>
-                      ))}
-                    </ContextMenuSubContent>
-                  </ContextMenuSub>
+                  <>
+                    <ContextMenuSeparator />
+                    <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      在此处打开终端
+                    </div>
+                    {shells.map((sh) => (
+                      <ContextMenuItem
+                        key={sh.id}
+                        disabled={!sh.detected}
+                        onClick={() => onOpenTerminal(sh.id, entry.path)}
+                      >
+                        <span className="flex-1">{sh.name}</span>
+                        {!sh.detected && (
+                          <span className="text-[10px] text-muted-foreground">未安装</span>
+                        )}
+                      </ContextMenuItem>
+                    ))}
+                  </>
                 )}
                 <ContextMenuSeparator />
                 <ContextMenuItem onClick={() => onCopy(targets)}>
@@ -731,30 +711,28 @@ export function FileList({
                   <Clipboard className="mr-2 h-4 w-4" /> 复制路径
                 </ContextMenuItem>
                 <ContextMenuSeparator />
-                {/* 标签（Finder 风格） */}
-                <ContextMenuSub>
-                  <ContextMenuSubTrigger>
-                    <Tag className="mr-2 h-4 w-4" /> 标签
-                  </ContextMenuSubTrigger>
-                  <ContextMenuSubContent className="min-w-40">
-                    {TAG_DEFS.map((t) => {
-                      const checked = (fileTags[entry.path] ?? []).includes(t.id);
-                      return (
-                        <ContextMenuItem
-                          key={t.id}
-                          onClick={() => onToggleTag(entry.path, t.id)}
-                        >
-                          <span
-                            className="mr-2 h-3 w-3 rounded-full"
-                            style={{ background: t.color }}
-                          />
-                          {t.label}
-                          {checked && <Check className="ml-auto h-3.5 w-3.5" />}
-                        </ContextMenuItem>
-                      );
-                    })}
-                  </ContextMenuSubContent>
-                </ContextMenuSub>
+                {/* 标签（Finder 风格，直接平铺避免 WKWebView 子菜单点击失效） */}
+                <ContextMenuSeparator />
+                <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  标签
+                </div>
+                {TAG_DEFS.map((t) => {
+                  const checked = (fileTags[entry.path] ?? []).includes(t.id);
+                  return (
+                    <ContextMenuItem
+                      key={t.id}
+                      onSelect={() => onToggleTag(entry.path, t.id)}
+                    >
+                      <span
+                        className="mr-2 h-3 w-3 rounded-full"
+                        style={{ background: t.color }}
+                      />
+                      {t.label}
+                      {checked && <Check className="ml-auto h-3.5 w-3.5" />}
+                    </ContextMenuItem>
+                  );
+                })}
+                <ContextMenuSeparator />
                 {/* 快捷访问（Finder 边栏式） */}
                 <ContextMenuItem onClick={() => onToggleQuick(entry.path)}>
                   <Star className="mr-2 h-4 w-4" />
@@ -798,14 +776,11 @@ export function FileList({
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="min-w-48">
-          <ContextMenuItem onClick={onNewFolder}>
-            <FolderPlus className="mr-2 h-4 w-4" /> 新建文件夹
-          </ContextMenuItem>
-          <ContextMenuSub>
-            <ContextMenuSubTrigger>
-              <TerminalSquare className="mr-2 h-4 w-4" /> 在此处打开终端
-            </ContextMenuSubTrigger>
-            <ContextMenuSubContent className="min-w-44">
+          {pluginTerminal && (
+            <>
+              <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                在此处打开终端
+              </div>
               {shells.map((sh) => (
                 <ContextMenuItem
                   key={sh.id}
@@ -818,8 +793,12 @@ export function FileList({
                   )}
                 </ContextMenuItem>
               ))}
-            </ContextMenuSubContent>
-          </ContextMenuSub>
+              <ContextMenuSeparator />
+            </>
+          )}
+          <ContextMenuItem onClick={onNewFolder}>
+            <FolderPlus className="mr-2 h-4 w-4" /> 新建文件夹
+          </ContextMenuItem>
           <ContextMenuItem onClick={onNewFile}>
             <FilePlus2 className="mr-2 h-4 w-4" /> 新建文本文件
           </ContextMenuItem>

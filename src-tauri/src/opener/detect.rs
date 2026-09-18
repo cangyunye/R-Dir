@@ -39,22 +39,18 @@ pub fn find_win_cli(cmd: &str) -> Option<String> {
     None
 }
 
-/// 终端清单：win = Windows Terminal / PowerShell / cmd / fish / nushell；mac = Terminal / iTerm2 / fish / nushell / zsh
+/// 终端清单（v0.6.2 精简）：mac = zsh / iTerm2；win = PowerShell(默认) / cmd / nushell
+/// 说明：fish 已移除；macOS 不再列 Terminal.app 直开（zsh 即经 Terminal 执行）
 pub fn shell_items() -> Vec<ShellItem> {
     if is_mac() {
         vec![
-            shell("terminal", "终端 (Terminal)", std::path::Path::new("/System/Applications/Utilities/Terminal.app").exists()),
-            shell("iterm", "iTerm2", std::path::Path::new("/Applications/iTerm.app").exists()),
-            shell("fish", "fish", find_cli("fish").is_some()),
-            shell("nu", "nushell", find_cli("nu").is_some()),
             shell("zsh", "zsh", find_cli("zsh").is_some()),
+            shell("iterm", "iTerm2", std::path::Path::new("/Applications/iTerm.app").exists()),
         ]
     } else {
         vec![
-            shell("wt", "Windows Terminal", find_win_cli("wt").is_some()),
             shell("powershell", "PowerShell", true),
             shell("cmd", "命令提示符 (cmd)", true),
-            shell("fish", "fish", find_win_cli("fish").is_some()),
             shell("nu", "nushell", find_win_cli("nu").is_some()),
         ]
     }
