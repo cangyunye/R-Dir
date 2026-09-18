@@ -2,7 +2,17 @@
 
 基于 **Tauri 2 + Rust + React + TypeScript + Tailwind v4 + shadcn/ui** 的跨平台文件管理器（macOS / Windows）。
 
-> 🚀 **v0.1.0** 已发布：支持 Win + Mac 的 release 构建（GitHub Actions 自动打包）。下载见 [Releases](https://github.com/cangyunye/R-Dir/releases)。
+> 🚀 最新发布见 [Releases](https://github.com/cangyunye/R-Dir/releases)（GitHub Actions 自动打包 Win + Mac）。
+
+### macOS 安装说明
+
+应用未使用 Apple 开发者证书签名（个人项目），首次打开若提示「已损坏，无法打开」，执行：
+
+```bash
+xattr -cr /Applications/R-Dir.app
+```
+
+或右键应用 →「打开」→ 确认即可正常使用。
 
 ## v0.1.0 功能速览
 
