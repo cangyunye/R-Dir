@@ -275,6 +275,7 @@ export function SplitView({
   customQuick: string[];
   onOpenTagFile: (path: string) => void;
   onExitTag: (paneId: number) => void;
+  activeStyle: "waterfall" | "lift";
   handlers: PaneHandlers;
 }) {
   if (node.type === "pane") {
