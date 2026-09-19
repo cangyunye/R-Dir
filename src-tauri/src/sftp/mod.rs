@@ -241,8 +241,8 @@ pub async fn upload(
     name: &str,
     mut cb: impl FnMut(u64, u64),
 ) -> Result<String, String> {
-    let remote = join_remote(remote_dir, name);
-    let (authority, _) = parse_sftp_path(remote_dir)?;
+    let (authority, rdir) = parse_sftp_path(remote_dir)?;
+    let remote = join_remote(&rdir, name);
     let (user, host, port) = parse_authority(&authority)?;
     let key = pool_key(&user, &host, port);
     let sess = get_session(pool, &key).await?;
@@ -253,8 +253,8 @@ pub async fn upload(
 
 /// 远程新建目录
 pub async fn mkdir(pool: &SessionPool, remote_dir: &str, name: &str) -> Result<String, String> {
-    let remote = join_remote(remote_dir, name);
-    let (authority, _) = parse_sftp_path(remote_dir)?;
+    let (authority, rdir) = parse_sftp_path(remote_dir)?;
+    let remote = join_remote(&rdir, name);
     let (user, host, port) = parse_authority(&authority)?;
     let key = pool_key(&user, &host, port);
     let sess = get_session(pool, &key).await?;
@@ -265,8 +265,8 @@ pub async fn mkdir(pool: &SessionPool, remote_dir: &str, name: &str) -> Result<S
 
 /// 远程新建空文件
 pub async fn create_file(pool: &SessionPool, remote_dir: &str, name: &str) -> Result<String, String> {
-    let remote = join_remote(remote_dir, name);
-    let (authority, _) = parse_sftp_path(remote_dir)?;
+    let (authority, rdir) = parse_sftp_path(remote_dir)?;
+    let remote = join_remote(&rdir, name);
     let (user, host, port) = parse_authority(&authority)?;
     let key = pool_key(&user, &host, port);
     let sess = get_session(pool, &key).await?;

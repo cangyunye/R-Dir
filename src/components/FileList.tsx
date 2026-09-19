@@ -282,12 +282,21 @@ export function FileList({
   /** v0.8.3 虚拟滚动：固定行高，只渲染可视区 +/- buffer 行 */
   const ROW_HEIGHT = 26;
   const [scrollTop, setScrollTop] = useState(0);
-  const [viewportH, setViewportH] = useState(0);
+  const [viewportH, setViewportH] = useState(400); // 初始给个合理值，避免首帧只渲染前 6 行
   const onListScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     setScrollTop(el.scrollTop);
     setViewportH(el.clientHeight);
   };
+  // 挂载后用 ResizeObserver 校正实际高度
+  useEffect(() => {
+    const el = listScrollRef.current;
+    if (!el) return;
+    setViewportH(el.clientHeight);
+    const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // 标签重命名对话框（v0.6.4）
   const [renameTagOpen, setRenameTagOpen] = useState(false);
   const [renameTagId, setRenameTagId] = useState<string>("red");
