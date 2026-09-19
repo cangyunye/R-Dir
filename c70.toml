@@ -1,6 +1,6 @@
-[package]
+﻿[package]
 name = "rust-file-manager"
-version = "0.7.1"
+version = "0.7.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"

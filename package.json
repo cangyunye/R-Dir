@@ -1,7 +1,7 @@
 {
   "name": "rust-file-manager",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -35,5 +35,6 @@
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",
     "vite": "^8.0.16"
-  }
+  },
+  "packageManager": "pnpm@12.4.2"
 }
