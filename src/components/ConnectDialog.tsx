@@ -92,7 +92,7 @@ export function ConnectDialog({
       ...(authMode === "Password"
         ? { password, savePassword }
         : {
-            keyPath: keyPath.trim() || undefined,
+            keyPath: keyPath.trim(),
             passphrase: passphrase || undefined,
             savePassphrase,
           }),

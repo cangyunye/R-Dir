@@ -719,8 +719,16 @@ useEffect(() => {
       // SFTP：未连接的服务器先弹连接对话框
       if (path.startsWith("sftp://")) {
         const au = parseSftpAuthority(path);
-        if (au && !sftpConnectedRef.current.has(au.id)) {
+        // 已连接且有完整 authority：直接导航
+        if (au && sftpConnectedRef.current.has(au.id)) {
+          // fall through to patchPane
+        } else if (au) {
+          // 有 authority 但未连接：弹连接框预填
           openConnect({ host: au.host, port: au.port, user: au.user });
+          return;
+        } else {
+          // 只有 "sftp://" 没有 host/user：弹空白连接框
+          openConnect({});
           return;
         }
       }
