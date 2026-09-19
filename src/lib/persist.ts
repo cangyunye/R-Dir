@@ -1,4 +1,4 @@
-/**
+﻿/**
  * M5 配置持久化：文件标签（Finder 风格）+ 自定义快捷访问
  * 均存 localStorage，结构简单、可安全忽略失败。
  */
@@ -190,4 +190,59 @@ export function saveUiFontSize(n: number): void {
 /** 字体大小 → 根缩放系数（13px = 1.0，分母固定为原始基准，不随默认值变） */
 export function uiFontZoom(n: number): number {
   return n / 13;
+}
+
+// ---- v0.8.1 字体族 ----
+export const UI_FONT_FAMILIES: { id: string; label: string; stack: string }[] = [
+  { id: "system", label: "系统默认", stack: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' },
+  { id: "msyahei", label: "微软雅黑", stack: '"Microsoft YaHei", "微软雅黑", system-ui, sans-serif' },
+  { id: "pingfang", label: "苹方", stack: '"PingFang SC", "Hiragino Sans GB", system-ui, sans-serif' },
+  { id: "simsun", label: "宋体", stack: '"SimSun", "宋体", serif' },
+  { id: "menlo", label: "等宽", stack: '"JetBrains Mono", Menlo, Consolas, monospace' },
+  { id: "custom", label: "自定义...", stack: "" },
+];
+
+const UI_FONT_FAMILY_KEY = "rfm.ui-font-family";
+
+export function loadUiFontFamily(): string {
+  try {
+    const raw = localStorage.getItem(UI_FONT_FAMILY_KEY);
+    if (!raw) {
+      // 默认：Windows 用微软雅黑，macOS 用苹方
+      const isMac = /Mac|iPhone/.test(navigator.platform);
+      return isMac ? "pingfang" : "msyahei";
+    }
+    return raw;
+  } catch {
+    return "system";
+  }
+}
+
+export function saveUiFontFamily(id: string): void {
+  try {
+    localStorage.setItem(UI_FONT_FAMILY_KEY, id);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function uiFontFamilyStack(id: string): string {
+  if (id === "custom") {
+    try {
+      const custom = localStorage.getItem("rfm.ui-font-family-custom") || "Arial";
+      return `"${custom}", system-ui, sans-serif`;
+    } catch {
+      return UI_FONT_FAMILIES[0].stack;
+    }
+  }
+  const f = UI_FONT_FAMILIES.find((x) => x.id === id);
+  return f ? f.stack : UI_FONT_FAMILIES[0].stack;
+}
+
+export function saveUiFontFamilyCustom(name: string): void {
+  try {
+    localStorage.setItem("rfm.ui-font-family-custom", name);
+  } catch {
+    /* ignore */
+  }
 }

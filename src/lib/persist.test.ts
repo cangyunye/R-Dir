@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+﻿import { describe, it, expect, beforeEach } from "vitest";
 import {
   tagById,
   tagLabel,
@@ -8,6 +8,10 @@ import {
   saveFileTags,
   parentOf,
   loadShareAllowParent,
+  loadUiFontFamily,
+  saveUiFontFamily,
+  uiFontFamilyStack,
+  UI_FONT_FAMILIES,
   saveShareAllowParent,
   loadUiFontSize,
   saveUiFontSize,
@@ -106,5 +110,61 @@ describe("UI 字体", () => {
   it("uiFontZoom 以 13 为基准", () => {
     expect(uiFontZoom(13)).toBe(1);
     expect(uiFontZoom(15)).toBeCloseTo(15 / 13, 2);
+  });
+});
+
+// ---- v0.8.1 字体族 ----
+describe("字体族配置", () => {
+  it("loadUiFontFamily 默认 msyahei（Windows）", () => {
+    localStorage.clear();
+    const id = loadUiFontFamily();
+    // jsdom 的 navigator.platform 是 Win32
+    expect(id).toBe("msyahei");
+  });
+
+  it("saveUiFontFamily 持久化", () => {
+    saveUiFontFamily("menlo");
+    expect(loadUiFontFamily()).toBe("menlo");
+  });
+
+  it("uiFontFamilyStack 返回正确 stack", () => {
+    expect(uiFontFamilyStack("msyahei")).toContain("Microsoft YaHei");
+    expect(uiFontFamilyStack("pingfang")).toContain("PingFang");
+    expect(uiFontFamilyStack("menlo")).toContain("Menlo");
+  });
+
+  it("自定义字体返回 custom stack", () => {
+    localStorage.setItem("rfm.ui-font-family-custom", "Consolas");
+    expect(uiFontFamilyStack("custom")).toContain("Consolas");
+  });
+
+  it("UI_FONT_FAMILIES 包含 5 种预设 + 自定义", () => {
+    expect(UI_FONT_FAMILIES.length).toBe(6);
+    expect(UI_FONT_FAMILIES.map((f) => f.id)).toContain("msyahei");
+    expect(UI_FONT_FAMILIES.map((f) => f.id)).toContain("custom");
+  });
+});
+
+// ---- v0.8.1 字体族 ----
+describe("字体族", () => {
+  it("默认 Windows 返回 msyahei", () => {
+    // jsdom navigator.platform 是 Win32
+    const id = loadUiFontFamily();
+    expect(id).toBe("msyahei");
+  });
+
+  it("uiFontFamilyStack 返回对应 stack", () => {
+    expect(uiFontFamilyStack("msyahei")).toContain("Microsoft YaHei");
+    expect(uiFontFamilyStack("pingfang")).toContain("PingFang");
+    expect(uiFontFamilyStack("system")).toContain("system-ui");
+  });
+
+  it("uiFontFamilyStack 未知 id 返回 system", () => {
+    expect(uiFontFamilyStack("unknown")).toContain("system-ui");
+  });
+
+  it("saveUiFontFamily 后 loadUiFontFamily 返回相同值", () => {
+    saveUiFontFamily("pingfang");
+    expect(loadUiFontFamily()).toBe("pingfang");
   });
 });

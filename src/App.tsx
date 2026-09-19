@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
@@ -93,6 +93,10 @@ import {
   loadUiFontSize,
   saveUiFontSize,
   uiFontZoom,
+  loadUiFontFamily,
+  saveUiFontFamily,
+  uiFontFamilyStack,
+  UI_FONT_FAMILIES,
   type FileTags,
   type TagNames,
 } from "@/lib/persist";
@@ -278,6 +282,8 @@ export default function App() {
   const [keymapVer, setKeymapVer] = useState(0);
   /** v0.8 界面字体大小（13px=100%，作用于整个界面，根缩放） */
   const [uiFontSize, setUiFontSize] = useState<number>(() => loadUiFontSize());
+  /** v0.8.1 字体族 */
+  const [uiFontFamily, setUiFontFamily] = useState<string>(() => loadUiFontFamily());
   /** v0.8.5 开屏飞鸟：React mount 后短暂显示，800ms 后淡出 */
   const [splashVisible, setSplashVisible] = useState(true);
   const [splashFading, setSplashFading] = useState(false);
@@ -286,7 +292,8 @@ export default function App() {
   // 界面字体：13px=100%，根元素 zoom 整体缩放（与窗口级 Ctrl+滚轮缩放相乘叠加）
   useEffect(() => {
     document.documentElement.style.zoom = String(uiFontZoom(uiFontSize));
-  }, [uiFontSize]);
+    document.documentElement.style.fontFamily = uiFontFamilyStack(uiFontFamily);
+  }, [uiFontSize, uiFontFamily]);
   // v0.8.5 开屏飞鸟：mount 后 600ms 开始淡出，1000ms 后完全卸载
   useEffect(() => {
     const t1 = setTimeout(() => setSplashFading(true), 600);
@@ -2144,6 +2151,7 @@ useEffect(() => {
               customQuick={customQuick}
               onOpenTagFile={openTagFile}
               onExitTag={exitTagViewForPane}
+              activeStyle={(localStorage.getItem("rdir.active-style") as "waterfall" | "lift") || "lift"}
               handlers={handlers}
             />
           ) : null}
@@ -2219,6 +2227,12 @@ useEffect(() => {
           setUiFontSize(n);
           saveUiFontSize(n);
         }}
+        uiFontFamily={uiFontFamily}
+        onUiFontFamilyChange={(id) => {
+          setUiFontFamily(id);
+          saveUiFontFamily(id);
+        }}
+        fontFamilies={UI_FONT_FAMILIES}
       />
 
       <ConnectDialog

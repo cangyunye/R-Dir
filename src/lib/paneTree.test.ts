@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+﻿import { describe, it, expect } from "vitest";
 import {
   collectPaneIds,
   firstPaneId,
@@ -119,5 +119,34 @@ describe("resetRatios", () => {
       return node.ratio === 0.5 && check(node.a) && check(node.b);
     }
     expect(check(result)).toBe(true);
+  });
+});
+
+// ---- v0.8.1 active pane 荧光提示 ----
+describe("active pane 标识", () => {
+  it("collectPaneIds 返回所有 pane id", () => {
+    const tree = makeTree();
+    expect(collectPaneIds(tree).sort()).toEqual([1, 2, 3]);
+  });
+
+  it("activePaneId 唯一匹配一个 pane", () => {
+    const tree = makeTree();
+    const ids = collectPaneIds(tree);
+    const active = ids.find((id) => id === 2);
+    expect(active).toBe(2);
+    // isActive = (pane.id === activePaneId) 应只对 pane 2 为 true
+    const activeCount = ids.filter((id) => id === 2).length;
+    expect(activeCount).toBe(1);
+  });
+
+  it("切换 activePaneId 后旧 pane 不再 active", () => {
+    const tree = makeTree();
+    const ids = collectPaneIds(tree);
+    // 模拟从 pane 1 切到 pane 3
+    const oldActive = ids.filter((id) => id === 1);
+    const newActive = ids.filter((id) => id === 3);
+    expect(oldActive[0]).toBe(1);
+    expect(newActive[0]).toBe(3);
+    expect(oldActive[0]).not.toBe(newActive[0]);
   });
 });

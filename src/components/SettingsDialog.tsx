@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
   Keyboard,
@@ -46,6 +46,9 @@ export function SettingsDialog({
   onTogglePlugin,
   uiFontSize,
   onUiFontChange,
+  uiFontFamily,
+  onUiFontFamilyChange,
+  fontFamilies,
 }: {
   open: boolean;
   onClose: () => void;
@@ -58,6 +61,9 @@ export function SettingsDialog({
   /** v0.8 界面字体大小（10–18，默认 13，作用于整个界面） */
   uiFontSize: number;
   onUiFontChange: (n: number) => void;
+  uiFontFamily: string;
+  onUiFontFamilyChange: (id: string) => void;
+  fontFamilies: { id: string; label: string }[];
 }) {
   /** v0.7 分享设置 */
   const [shareAllowParent, setShareAllowParent] = useState(() => loadShareAllowParent());
@@ -265,8 +271,39 @@ export function SettingsDialog({
                     </div>
                   </div>
                   <p className="mt-1 pl-1 text-[11px] text-muted-foreground">
-                    默认 13px；与窗口内 Ctrl+滚轮缩放相互叠加（如 80% 字体 × 130% 窗口 = 104%）。
+                    默认 15px；与窗口内 Ctrl+滚轮缩放相互叠加（如 80% 字体 × 130% 窗口 = 104%）。
                   </p>
+                  <div className="mt-2 flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs">
+                    <span className="flex items-center gap-1.5 text-foreground">
+                      <Type className="h-3.5 w-3.5 text-muted-foreground" />
+                      字体族
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={uiFontFamily}
+                        onChange={(e) => onUiFontFamilyChange(e.target.value)}
+                        className="rounded border bg-background px-2 py-1 text-xs"
+                      >
+                        {fontFamilies.map((f) => (
+                          <option key={f.id} value={f.id}>{f.label}</option>
+                        ))}
+                      </select>
+                      {uiFontFamily === "custom" && (
+                        <input
+                          type="text"
+                          placeholder="输入字体名，如 Consolas"
+                          className="w-40 rounded border bg-background px-2 py-1 text-xs"
+                          onBlur={(e) => {
+                            if (e.target.value.trim()) {
+                              localStorage.setItem("rfm.ui-font-family-custom", e.target.value.trim());
+                              // 触发重渲染
+                              onUiFontFamilyChange("custom");
+                            }
+                          }}
+                        />
+                      )}
+                    </div>
+                  </div>
                 </div>
               </>
             )}

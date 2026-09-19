@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PaneNode, PaneState, SplitDir } from "@/lib/types";
@@ -83,10 +83,12 @@ function PaneView({
   customQuick,
   onOpenTagFile,
   onExitTag,
+  activeStyle,
   handlers,
 }: {
   pane: PaneState;
   showHidden: boolean;
+  activeStyle: "waterfall" | "lift";
   showProperties: boolean;
   renaming: RenameState | null;
   isActive: boolean;
@@ -98,12 +100,14 @@ function PaneView({
   customQuick: string[];
   onOpenTagFile: (path: string) => void;
   onExitTag: (paneId: number) => void;
+  activeStyle: "waterfall" | "lift";
   handlers: PaneHandlers;
 }) {
   const h = handlers;
   const showingTag = pane.tagId ?? null;
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+    <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", isActive && activeStyle === "waterfall" && "shadow-[inset_0_2px_0_0_hsl(var(--primary)/0.3)]", isActive && activeStyle === "lift" && "ring-1 ring-primary/50 shadow-[0_8px_24px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.1)] -translate-y-[1px]")}>
+      {isActive && activeStyle === "waterfall" && <div className="pointer-events-none absolute left-0 right-0 top-0 z-20 h-12 bg-gradient-to-b from-sky-400/25 via-sky-400/8 to-transparent" />}
       {pane.loading && (
         <div className="absolute inset-x-0 top-0 z-10 flex h-6 items-center justify-center gap-2 bg-background/80 text-xs text-muted-foreground backdrop-blur-sm">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在加载…
@@ -255,6 +259,7 @@ export function SplitView({
   customQuick,
   onOpenTagFile,
   onExitTag,
+  activeStyle,
   handlers,
 }: {
   node: PaneNode;
@@ -271,6 +276,7 @@ export function SplitView({
   customQuick: string[];
   onOpenTagFile: (path: string) => void;
   onExitTag: (paneId: number) => void;
+  activeStyle: "waterfall" | "lift";
   handlers: PaneHandlers;
 }) {
   if (node.type === "pane") {
@@ -291,6 +297,7 @@ export function SplitView({
         customQuick={customQuick}
         onOpenTagFile={onOpenTagFile}
         onExitTag={onExitTag}
+        activeStyle={activeStyle}
         handlers={handlers}
       />
     );
@@ -317,6 +324,7 @@ export function SplitView({
           customQuick={customQuick}
           onOpenTagFile={onOpenTagFile}
           onExitTag={onExitTag}
+          activeStyle={activeStyle}
           handlers={handlers}
         />
       </div>
@@ -345,6 +353,7 @@ export function SplitView({
           customQuick={customQuick}
           onOpenTagFile={onOpenTagFile}
           onExitTag={onExitTag}
+          activeStyle={activeStyle}
           handlers={handlers}
         />
       </div>
