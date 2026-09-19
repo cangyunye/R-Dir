@@ -155,12 +155,23 @@ export const UI_FONT_MIN = 10;
 export const UI_FONT_MAX = 18;
 export const UI_FONT_DEFAULT = 15;
 
+/** 迁移标记：v0.8.0 前默认 13px，之后默认 15px。老用户首次启动升级到 15。 */
+const UI_FONT_MIGRATED_KEY = "rfm.ui-font-migrated-v080";
+
 export function loadUiFontSize(): number {
   try {
     const raw = localStorage.getItem(UI_FONT_KEY);
+    // 首次启动（从未设置过字体）→ 默认 15
     if (!raw) return UI_FONT_DEFAULT;
     const n = Number(raw);
     if (!Number.isFinite(n)) return UI_FONT_DEFAULT;
+    // 老用户：存了旧默认 13px 且未迁移过 → 升级到 15
+    const migrated = localStorage.getItem(UI_FONT_MIGRATED_KEY) === "1";
+    if (n <= 13 && !migrated) {
+      localStorage.setItem(UI_FONT_MIGRATED_KEY, "1");
+      localStorage.setItem(UI_FONT_KEY, String(UI_FONT_DEFAULT));
+      return UI_FONT_DEFAULT;
+    }
     return Math.min(UI_FONT_MAX, Math.max(UI_FONT_MIN, n));
   } catch {
     return UI_FONT_DEFAULT;

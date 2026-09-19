@@ -756,6 +756,31 @@ useEffect(() => {
     });
   }, [activePane, patchPane]);
 
+  /** 退出标签视图：操作指定 pane（不一定是 activePane），回到 history 里最后一个非 tags:// 的真实目录 */
+  const exitTagViewForPane = useCallback(
+    (paneId: number) => {
+      const pane = activeTab?.panes?.[paneId];
+      if (!pane) return;
+      let idx = pane.histIndex;
+      while (idx >= 0 && pane.history[idx].match(VIRTUAL_TAG_RE)) {
+        idx--;
+      }
+      if (idx < 0) {
+        patchPane(paneId, { tagId: undefined });
+        return;
+      }
+      const target = pane.history[idx];
+      patchPane(paneId, {
+        path: target,
+        title: basename(target),
+        tagId: undefined,
+        histIndex: idx,
+        selection: [],
+      });
+    },
+    [tabs, patchPane],
+  );
+
   const goForward = useCallback(() => {
     if (!activePane || activePane.histIndex >= activePane.history.length - 1) return;
     const target = activePane.history[activePane.histIndex + 1];
@@ -2071,7 +2096,9 @@ useEffect(() => {
         onForward={goForward}
         onUp={goUp}
         onRefresh={refresh}
-        path={activePane?.path ?? ""}
+        path={activePane?.path.match(VIRTUAL_TAG_RE)
+          ? tagTitle(activePane.path.match(VIRTUAL_TAG_RE)![1], tagNames)
+          : (activePane?.path ?? "")}
         cwd={activePane?.path ?? homePath}
         onNavigate={navigate}
         searchOpen={searchOpen}
@@ -2116,7 +2143,7 @@ useEffect(() => {
               onRenameTag={renameTag}
               customQuick={customQuick}
               onOpenTagFile={openTagFile}
-              onExitTag={goBack}
+              onExitTag={exitTagViewForPane}
               handlers={handlers}
             />
           ) : null}

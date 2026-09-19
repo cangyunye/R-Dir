@@ -97,7 +97,7 @@ function PaneView({
   onRenameTag: (tagId: string, label: string) => void;
   customQuick: string[];
   onOpenTagFile: (path: string) => void;
-  onExitTag: () => void;
+  onExitTag: (paneId: number) => void;
   handlers: PaneHandlers;
 }) {
   const h = handlers;
@@ -116,7 +116,7 @@ function PaneView({
           tagNames={tagNames}
           currentPath={pane.path}
           onOpen={onOpenTagFile}
-          onExit={onExitTag}
+          onExit={() => onExitTag(pane.id)}
           isActive={isActive}
         />
       ) : (
@@ -270,7 +270,7 @@ export function SplitView({
   onRenameTag: (tagId: string, label: string) => void;
   customQuick: string[];
   onOpenTagFile: (path: string) => void;
-  onExitTag: () => void;
+  onExitTag: (paneId: number) => void;
   handlers: PaneHandlers;
 }) {
   if (node.type === "pane") {
