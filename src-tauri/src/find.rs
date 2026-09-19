@@ -88,7 +88,7 @@ pub fn find_files(
 fn rel_path(path: &Path, root: &Path) -> String {
     match path.strip_prefix(root) {
         Ok(rel) => {
-            let s = rel.to_string_lossy().into_owned();
+            let s = rel.to_string_lossy().replace('\\', "/");
             if s.is_empty() {
                 path.file_name()
                     .map(|n| n.to_string_lossy().into_owned())
