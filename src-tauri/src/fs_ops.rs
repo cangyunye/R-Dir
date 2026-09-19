@@ -65,12 +65,34 @@ impl FileEntry {
     }
 }
 
+/// Windows：跳过 Known Folder 历史残留目录（旧系统升级遗留的 My Music / My Pictures /
+/// My Videos / My Documents 等）。资源管理器通过 shell 命名空间隐藏它们，R-Dir 直接过滤，
+/// 避免文件列表出现点击后"没有权限访问"的幽灵目录。
+#[cfg(target_os = "windows")]
+fn is_legacy_known_folder(name: &str) -> bool {
+    let n = name.to_lowercase();
+    matches!(
+        n.as_str(),
+        "my music" | "my pictures" | "my videos" | "my documents"
+    )
+}
+
 /// 读取目录并返回排序后的条目：目录优先，再按名称（不区分大小写）。
 pub fn list_dir(path: &str) -> Result<Vec<FileEntry>, String> {
     let p = Path::new(path);
     let rd = std::fs::read_dir(p).map_err(|e| format!("无法读取目录 {}：{}", path, e))?;
     let mut entries: Vec<FileEntry> = rd
         .filter_map(|e| e.ok())
+        .filter(|e| {
+            #[cfg(target_os = "windows")]
+            {
+                !is_legacy_known_folder(&e.file_name().to_string_lossy())
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                true
+            }
+        })
         .map(|e| FileEntry::from_path(e.path()))
         .collect();
     entries.sort_by(|a, b| {

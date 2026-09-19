@@ -78,6 +78,13 @@ export function TabBar({
           tabIndex={0}
           data-tab-idx={idx}
           onClick={() => onSelect(tab.id)}
+          onAuxClick={(e) => {
+            // 鼠标中键关闭标签页（阻止默认自动滚动）
+            if (e.button === 1) {
+              e.preventDefault();
+              onClose(tab.id);
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter") onSelect(tab.id);
           }}

@@ -86,9 +86,10 @@ pub fn quick_access() -> Vec<QuickAccessItem> {
     ];
     for (key, f) in candidates {
         if let Some(p) = f() {
-            // 仅收录实际存在的目录：OneDrive 重定向 / 已删除的库目录（如 Windows My Music）跳过，
-            // 避免侧边栏出现不可访问的快捷项
-            if p.is_dir() {
+            // 仅收录实际可访问的目录：dirs 在 Windows 用 KF_FLAG_DONT_VERIFY 返回已知文件夹
+            // 默认路径（不验证存在），OneDrive 重定向 / 已删除的库目录（如 My Music）可能
+            // 存在但无权限。read_dir 可枚举才算可用，避免侧边栏出现点击后"没有权限访问"的项。
+            if p.is_dir() && p.read_dir().is_ok() {
                 items.push(QuickAccessItem {
                     key: key.to_string(),
                     path: p.to_string_lossy().to_string(),
