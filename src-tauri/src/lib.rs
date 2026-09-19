@@ -1,3 +1,4 @@
+mod compress;
 mod find;
 mod fs_ops;
 mod ops;
@@ -814,6 +815,8 @@ pub fn run() {
         // HTTP autoindex 插件（v0.6）
         http_autoindex::http_download_to,
         http_autoindex::cancel_http_download,
+        // 压缩（v0.8：zip / tar / tgz，仅打包）
+        compress::compress_items,
         // 窗口分享插件（v0.7）
         #[cfg(feature = "share")]
         share::share_create,

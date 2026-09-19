@@ -53,6 +53,10 @@ export const createDir = (parent: string, name: string) =>
 export const createFile = (parent: string, name: string) =>
   invoke<string>("create_file", { parent, name });
 
+/** 压缩选中条目到 target_dir（zip / tar / tgz，仅打包）；返回生成文件路径 */
+export const compressItems = (paths: string[], targetDir: string, format: "zip" | "tar" | "tgz") =>
+  invoke<string>("compress_items", { paths, targetDir, format });
+
 /** 内容搜索（字面量关键词，可递归/大小写开关） */
 export const searchContent = (
   query: string,

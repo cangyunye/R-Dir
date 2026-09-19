@@ -147,3 +147,36 @@ export function saveShareDefaultExpires(hours: number | null): void {
     /* ignore */
   }
 }
+
+// ---- v0.8 界面字体大小（整体缩放等效，13px = 100%，范围 10–18） ----
+const UI_FONT_KEY = "rfm.ui-font";
+
+export const UI_FONT_MIN = 10;
+export const UI_FONT_MAX = 18;
+export const UI_FONT_DEFAULT = 13;
+
+export function loadUiFontSize(): number {
+  try {
+    const raw = localStorage.getItem(UI_FONT_KEY);
+    if (!raw) return UI_FONT_DEFAULT;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return UI_FONT_DEFAULT;
+    return Math.min(UI_FONT_MAX, Math.max(UI_FONT_MIN, n));
+  } catch {
+    return UI_FONT_DEFAULT;
+  }
+}
+
+export function saveUiFontSize(n: number): void {
+  try {
+    const v = Math.min(UI_FONT_MAX, Math.max(UI_FONT_MIN, n));
+    localStorage.setItem(UI_FONT_KEY, String(v));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 字体大小 → 根缩放系数（13px = 1.0） */
+export function uiFontZoom(n: number): number {
+  return n / UI_FONT_DEFAULT;
+}

@@ -18,6 +18,7 @@ import {
   Star,
   Trash2,
   Plus,
+  FileArchive,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
@@ -150,6 +151,11 @@ export function FileList({
   onRenameCancel,
   isActive,
   onActivate,
+  zoom,
+  onZoomChange,
+  onBack,
+  onForward,
+  onCompress,
 }: {
   paneId: number;
   entries: FileEntry[];
@@ -209,6 +215,14 @@ export function FileList({
   onRenameCancel: () => void;
   isActive: boolean;
   onActivate: () => void;
+  /** v0.8 窗口级缩放（0.5–2.0）与 Ctrl+滚轮回调 */
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
+  /** v0.8 鼠标侧键：后退 / 前进（button 3 / 4） */
+  onBack: () => void;
+  onForward: () => void;
+  /** v0.8 压缩为 zip / tar / tgz（仅打包） */
+  onCompress: (paths: string[], format: "zip" | "tar" | "tgz") => void;
 }) {
   const sorted = useMemo(() => {
     const visible = showHidden
@@ -284,6 +298,14 @@ export function FileList({
   const typeAheadTimer = useRef<number | null>(null);
   const [typeAhead, setTypeAhead] = useState("");
   const [typeAheadFading, setTypeAheadFading] = useState(false);
+  /** v0.8 缩放百分比提示（Ctrl+滚轮后显示，1.2s 淡出） */
+  const [zoomTip, setZoomTip] = useState<number | null>(null);
+  const zoomTipTimer = useRef<number | null>(null);
+  const showZoomTip = (z: number) => {
+    setZoomTip(z);
+    if (zoomTipTimer.current) window.clearTimeout(zoomTipTimer.current);
+    zoomTipTimer.current = window.setTimeout(() => setZoomTip(null), 1200);
+  };
   const handleTypeAhead = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key.length !== 1) return;
@@ -529,6 +551,28 @@ export function FileList({
       <div
         ref={containerRef}
         data-pane-id={paneId}
+        style={{ zoom }}
+        onWheel={(e) => {
+          // v0.8 Ctrl+滚轮：窗口级缩放（与浏览器一致），阻止默认滚动
+          if (!e.ctrlKey) return;
+          e.preventDefault();
+          const step = e.deltaY < 0 ? 0.1 : -0.1;
+          const next = Math.min(2, Math.max(0.5, Math.round((zoom + step) * 10) / 10));
+          if (next !== zoom) {
+            onZoomChange(next);
+            showZoomTip(next);
+          }
+        }}
+        onAuxClick={(e) => {
+          // v0.8 鼠标侧键：后退(3) / 前进(4)，行为同浏览器
+          if (e.button === 3) {
+            e.preventDefault();
+            onBack();
+          } else if (e.button === 4) {
+            e.preventDefault();
+            onForward();
+          }
+        }}
       onMouseDownCapture={(e) => {
         // 地址栏聚焦时：点击窗格空白保持地址栏光标；点击文件/文件夹行才允许移交焦点
         const ae = document.activeElement as HTMLElement | null;
@@ -552,6 +596,12 @@ export function FileList({
           )}
         >
           定位：{typeAhead}
+        </div>
+      )}
+      {/* v0.8 缩放百分比提示：面板中央，1.2s 淡出 */}
+      {zoomTip !== null && (
+        <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-primary/25 bg-background/85 px-4 py-1.5 text-xl font-semibold text-primary shadow-lg backdrop-blur-sm">
+          {Math.round(zoomTip * 100)}%
         </div>
       )}
       {/* 空白处右键：新建 / 粘贴 / 全选等（行上右键由行内菜单接管） */}
@@ -761,6 +811,20 @@ export function FileList({
                     ))}
                   </>
                 )}
+                <ContextMenuSeparator />
+                {/* v0.8 压缩为（仅打包；平铺避免 WKWebView 子菜单失效） */}
+                <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  压缩为
+                </div>
+                <ContextMenuItem onClick={() => onCompress(targets, "zip")}>
+                  <FileArchive className="mr-2 h-4 w-4" /> zip
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => onCompress(targets, "tar")}>
+                  <FileArchive className="mr-2 h-4 w-4" /> tar（仅打包）
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => onCompress(targets, "tgz")}>
+                  <FileArchive className="mr-2 h-4 w-4" /> tgz（tar + gzip）
+                </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem onClick={() => onCopy(targets)}>
                   <Copy className="mr-2 h-4 w-4" /> 复制

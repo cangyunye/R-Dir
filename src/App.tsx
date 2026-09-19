@@ -61,6 +61,7 @@ import {
   sessionLoad,
   sessionSave,
   statPath,
+  compressItems,
 } from "@/lib/api";
 import { ConnectDialog, type SftpConnectInitial } from "@/components/ConnectDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
@@ -88,6 +89,9 @@ import {
   loadTagNames,
   saveTagNames,
   TAG_DEFS,
+  loadUiFontSize,
+  saveUiFontSize,
+  uiFontZoom,
   type FileTags,
   type TagNames,
 } from "@/lib/persist";
@@ -126,10 +130,12 @@ function serializeSession(tabs: TabState[], activeId: number): SessionLayout {
             path: p.path,
             kind: "sftp",
             serverId: sftpAuthorityId(p.path) ?? undefined,
+            zoom: p.zoom,
           };
         }
-        if (p.tagId) return { id: p.id, path: p.path, kind: "tag", tagId: p.tagId };
-        return { id: p.id, path: p.path, kind: "local" };
+        if (p.tagId)
+          return { id: p.id, path: p.path, kind: "tag", tagId: p.tagId, zoom: p.zoom };
+        return { id: p.id, path: p.path, kind: "local", zoom: p.zoom };
       }),
     })),
   };
@@ -195,6 +201,7 @@ function makePane(path: string): PaneState {
     error: null,
     sortKey: "name",
     sortDir: "asc",
+    zoom: 1,
     selection: [],
     refreshKey: 0,
   };
@@ -268,8 +275,14 @@ export default function App() {
   });
   /** 快捷键配置版本号：自定义键位变更时 +1，触发菜单/设置重渲染 */
   const [keymapVer, setKeymapVer] = useState(0);
+  /** v0.8 界面字体大小（13px=100%，作用于整个界面，根缩放） */
+  const [uiFontSize, setUiFontSize] = useState<number>(() => loadUiFontSize());
   /** 退出询问：拦截窗口关闭，询问是否保存会话布局（v0.3.0） */
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  // 界面字体：13px=100%，根元素 zoom 整体缩放（与窗口级 Ctrl+滚轮缩放相乘叠加）
+  useEffect(() => {
+    document.documentElement.style.zoom = String(uiFontZoom(uiFontSize));
+  }, [uiFontSize]);
   /** 最新 tabs/activeId（退出保存用，避免闭包过期） */
   const tabsRef = useRef<TabState[]>([]);
   tabsRef.current = tabs;
@@ -524,6 +537,7 @@ useEffect(() => {
         const tabId = nextTabId++;
         for (const sp of st.panes) {
           const p = makePane(sp.path);
+          if (typeof sp.zoom === "number" && sp.zoom >= 0.5 && sp.zoom <= 2) p.zoom = sp.zoom;
           remap.set(sp.id, p.id);
           if (sp.kind === "tag" && sp.tagId) p.tagId = sp.tagId;
           if (sp.kind === "sftp" && sp.serverId) {
@@ -1746,6 +1760,34 @@ useEffect(() => {
     setSearchCmd({ tab, tick: Date.now() });
   }, []);
 
+  /** v0.8 窗口级缩放更新（Ctrl+滚轮，0.5–2.0，步进 0.1） */
+  const setPaneZoom = useCallback((paneId: number, zoom: number) => {
+    setTabs((ts) =>
+      ts.map((t) => {
+        const pane = t.panes[paneId];
+        if (!pane) return t;
+        const z = Math.min(2, Math.max(0.5, Math.round(zoom * 10) / 10));
+        return { ...t, panes: { ...t.panes, [paneId]: { ...pane, zoom: z } } };
+      }),
+    );
+  }, []);
+
+  /** v0.8 压缩选中项（zip / tar / tgz，仅打包，进度走 transfer-progress） */
+  const doCompress = useCallback(
+    async (paneId: number, paths: string[], format: "zip" | "tar" | "tgz") => {
+      const pane = tabs.find((t) => t.panes[paneId])?.panes[paneId];
+      if (!pane || paths.length === 0) return;
+      try {
+        const out = await compressItems(paths, pane.path, format);
+        refreshPane(paneId);
+        showError(`已生成 ${basename(out)}`);
+      } catch (e) {
+        showError(`压缩失败：${e}`);
+      }
+    },
+    [tabs, refreshPane, showError],
+  );
+
   // 快捷键：统一 keydown 分发（动作注册表 keymap.ts）
   const actionsRef = useRef<Record<string, () => void>>({});
   actionsRef.current = {
@@ -1898,6 +1940,10 @@ useEffect(() => {
     onInvertSelection: invertSelectionIn,
     onToggleTag: toggleTag,
     onToggleQuick: toggleQuick,
+    onZoomChange: setPaneZoom,
+    onBack: goBack,
+    onForward: goForward,
+    onCompress: (paneId, paths, fmt) => void doCompress(paneId, paths, fmt),
   };
 
   const selectedSize = activePane
@@ -2091,6 +2137,11 @@ useEffect(() => {
         onBindingsChanged={() => setKeymapVer((v) => v + 1)}
         plugins={plugins}
         onTogglePlugin={handleTogglePlugin}
+        uiFontSize={uiFontSize}
+        onUiFontChange={(n) => {
+          setUiFontSize(n);
+          saveUiFontSize(n);
+        }}
       />
 
       <ConnectDialog

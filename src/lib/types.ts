@@ -38,6 +38,8 @@ export interface PaneState {
   error: string | null;
   sortKey: SortKey;
   sortDir: SortDir;
+  /** v0.8 窗口级缩放（0.5–2.0，Ctrl+滚轮，随会话保存） */
+  zoom: number;
   /** 选中条目路径，首项为主选中 */
   selection: string[];
   /** 自增计数，用于触发刷新 */
@@ -137,8 +139,8 @@ export interface SftpServerView {
 /** master-key 状态 */
 /** 传输/复制进度事件载荷（对应后端 progress.rs） */
 export interface TransferProgress {
-  /** "copy" | "move" | "upload" | "download" */
-  phase: "copy" | "move" | "upload" | "download";
+  /** "copy" | "move" | "upload" | "download" | "compress" */
+  phase: "copy" | "move" | "upload" | "download" | "compress";
   label: string;
   doneFiles: number;
   totalFiles: number;
@@ -156,6 +158,8 @@ export interface SessionPane {
   kind: "local" | "sftp" | "tag";
   serverId?: string;
   tagId?: string;
+  /** v0.8 窗口缩放（旧会话缺省 1） */
+  zoom?: number;
 }
 
 /** 会话保存：标签页快照（root 为分屏树 JSON） */

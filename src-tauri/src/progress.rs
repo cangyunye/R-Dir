@@ -38,8 +38,8 @@ impl TransferProgress {
     }
 }
 
-/// 向所有前端窗口推送进度（同步命令与异步命令均可调用）
-pub fn emit(app: &tauri::AppHandle, p: &TransferProgress) {
+/// 向所有前端窗口推送进度（同步命令与异步命令均可调用；泛型 Runtime 便于单测 mock）
+pub fn emit<R: tauri::Runtime>(app: &tauri::AppHandle<R>, p: &TransferProgress) {
     use tauri::Emitter;
     let _ = app.emit("transfer-progress", p);
 }

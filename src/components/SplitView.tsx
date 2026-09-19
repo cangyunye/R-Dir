@@ -60,6 +60,13 @@ export interface PaneHandlers {
   /** 标签与快捷访问 */
   onToggleTag: (path: string, tagId: string) => void;
   onToggleQuick: (path: string) => void;
+  /** v0.8 窗口缩放（Ctrl+滚轮） */
+  onZoomChange: (paneId: number, zoom: number) => void;
+  /** v0.8 鼠标侧键：后退 / 前进 */
+  onBack: () => void;
+  onForward: () => void;
+  /** v0.8 压缩为 zip / tar / tgz（仅打包） */
+  onCompress: (paneId: number, paths: string[], format: "zip" | "tar" | "tgz") => void;
 }
 
 function PaneView({
@@ -162,6 +169,11 @@ function PaneView({
         onRenameCancel={h.onRenameCancel}
         isActive={isActive}
         onActivate={() => h.onActivate(pane.id)}
+        zoom={pane.zoom}
+        onZoomChange={(z) => h.onZoomChange(pane.id, z)}
+        onBack={h.onBack}
+        onForward={h.onForward}
+        onCompress={(paths, fmt) => h.onCompress(pane.id, paths, fmt)}
       />
       )}
       {showProperties && <PropertiesBar entries={pane.entries} selection={pane.selection} />}

@@ -1,6 +1,6 @@
 [package]
 name = "rust-file-manager"
-version = "0.7.2"
+version = "0.8.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -33,6 +33,10 @@ dirs = "5"
 trash = "5"
 regex = "1"
 ignore = "0.4"
+# v0.8 压缩（zip / tar / tgz，仅打包，纯 Rust）
+zip = "1"
+tar = "0.4"
+flate2 = "1"
 # HTTP autoindex 插件：轻量同步 HTTP 客户端（rustls，无系统依赖）
 ureq = { version = "2", default-features = false, features = ["rustls", "gzip"] }
 # SFTP 远程文件系统插件（内置、可编译期拔出）：去掉 sftp feature 即不编译任何远程代码

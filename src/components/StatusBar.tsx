@@ -7,6 +7,7 @@ const PHASE_LABEL: Record<TransferProgress["phase"], string> = {
   move: "移动",
   upload: "上传",
   download: "下载",
+  compress: "压缩",
 };
 
 export function StatusBar({
