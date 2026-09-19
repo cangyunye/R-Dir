@@ -279,6 +279,15 @@ export function FileList({
   const lastClickRef = useRef<{ path: string; time: number } | null>(null);
   /** 键盘快速定位：输入缓冲 + 3 秒超时重置 */
   const listScrollRef = useRef<HTMLDivElement>(null);
+  /** v0.8.3 虚拟滚动：固定行高，只渲染可视区 +/- buffer 行 */
+  const ROW_HEIGHT = 26;
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(0);
+  const onListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    setScrollTop(el.scrollTop);
+    setViewportH(el.clientHeight);
+  };
   // 标签重命名对话框（v0.6.4）
   const [renameTagOpen, setRenameTagOpen] = useState(false);
   const [renameTagId, setRenameTagId] = useState<string>("red");
@@ -324,10 +333,14 @@ export function FileList({
     const idx = sorted.findIndex((x) => x.name.toLowerCase().startsWith(buf));
     if (idx >= 0) {
       onSelect(sorted[idx], false);
-      const row = listScrollRef.current?.querySelector(
-        `[data-path="${CSS.escape(sorted[idx].path)}"]`,
-      );
-      (row as HTMLElement | null)?.scrollIntoView({ block: "nearest" });
+      const el = listScrollRef.current;
+      if (el) {
+        const target = idx * ROW_HEIGHT;
+        const top = el.scrollTop;
+        const bottom = top + el.clientHeight - ROW_HEIGHT;
+        if (target < top) el.scrollTop = target;
+        else if (target > bottom) el.scrollTop = target - el.clientHeight + ROW_HEIGHT * 2;
+      }
     }
   };
   const [rubber, setRubber] = useState<{
@@ -652,13 +665,25 @@ export function FileList({
           listScrollRef.current?.focus({ preventScroll: true });
         }}
         onKeyDown={handleTypeAhead}
+        onScroll={onListScroll}
       >
         {dragTarget && (
           <div className="sticky top-0 z-10 flex h-6 items-center justify-center bg-primary/10 text-[11px] font-medium text-primary">
             {dragOp === "copy" ? "复制到此处（按住 Option 切换移动）" : "移动到此处"}
           </div>
         )}
-        {sorted.map((entry) => {
+        {/* v0.8.3 虚拟滚动：只渲染可视区 +/- buffer 行 */}
+        {(() => {
+          const BUFFER = 6;
+          const total = sorted.length;
+          const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER);
+          const end = Math.min(total, Math.ceil((scrollTop + viewportH) / ROW_HEIGHT) + BUFFER);
+          const padTop = start * ROW_HEIGHT;
+          const padBottom = (total - end) * ROW_HEIGHT;
+          return (
+            <>
+              {padTop > 0 && <div style={{ height: padTop }} />}
+              {sorted.slice(start, end).map((entry) => {
           const selected = selection.includes(entry.path);
           const isPrimary = primary === entry.path;
           const isRenaming = renaming?.path === entry.path;
@@ -725,7 +750,10 @@ export function FileList({
                     selected ? "bg-primary/10" : "hover:bg-muted/40",
                     isPrimary && "ring-1 ring-inset ring-primary/40",
                   )}
-                  style={{ gridTemplateColumns: COLUMNS.map((c) => c.width).join(" ") }}
+                  style={{
+                    gridTemplateColumns: COLUMNS.map((c) => c.width).join(" "),
+                    height: ROW_HEIGHT,
+                  }}
                 >
                   <div className="flex min-w-0 items-center gap-2 px-2 py-1">
                     <FileIcon entry={entry} size={16} className="shrink-0" />
@@ -890,7 +918,11 @@ export function FileList({
               </ContextMenuContent>
             </ContextMenu>
           );
-        })}
+              })}
+              {padBottom > 0 && <div style={{ height: padBottom }} />}
+            </>
+          );
+        })()}
         {sorted.length === 0 && (
           <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">
             此目录为空
