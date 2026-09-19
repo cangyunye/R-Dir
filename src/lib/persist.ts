@@ -176,7 +176,7 @@ export function saveUiFontSize(n: number): void {
   }
 }
 
-/** 字体大小 → 根缩放系数（13px = 1.0） */
+/** 字体大小 → 根缩放系数（13px = 1.0，分母固定为原始基准，不随默认值变） */
 export function uiFontZoom(n: number): number {
-  return n / UI_FONT_DEFAULT;
+  return n / 13;
 }
