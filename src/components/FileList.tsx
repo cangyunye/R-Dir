@@ -761,7 +761,7 @@ export function FileList({
                   </div>
                 </div>
               </ContextMenuTrigger>
-              <ContextMenuContent className="min-w-48">
+              <ContextMenuContent className="min-w-48" collisionPadding={10} style={{ maxHeight: "calc(100vh - 20px)", overflowY: "auto" }}>
                 <ContextMenuItem onClick={() => onOpen(entry)}>
                   <FolderInput className="mr-2 h-4 w-4" /> 打开
                 </ContextMenuItem>
@@ -809,6 +809,14 @@ export function FileList({
                         )}
                       </ContextMenuItem>
                     ))}
+                  </>
+                )}
+                {entry.is_dir && (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => onShareDir(entry.path)}>
+                      <Share2 className="mr-2 h-4 w-4" /> 分享此目录…
+                    </ContextMenuItem>
                   </>
                 )}
                 <ContextMenuSeparator />
@@ -913,7 +921,7 @@ export function FileList({
       </div>
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent className="min-w-48">
+        <ContextMenuContent className="min-w-48" collisionPadding={10} style={{ maxHeight: "calc(100vh - 20px)", overflowY: "auto" }}>
           {pluginTerminal && (
             <>
               <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">

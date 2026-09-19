@@ -12,6 +12,7 @@ import {
   Unlock,
 } from "lucide-react";
 import { shareCreate } from "@/lib/api";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   loadShareAllowParent,
   loadShareDefaultExpires,
@@ -212,14 +213,12 @@ export function ShareDialog({
                     )}
                     {copied ? "已复制" : "复制链接"}
                   </button>
-                  <a
-                    href={result.url}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    onClick={() => void openUrl(result.url)}
                     className="flex items-center gap-1 rounded border px-2 py-1 text-[11px] hover:bg-muted"
                   >
                     <ExternalLink className="h-3 w-3" /> 打开验证
-                  </a>
+                  </button>
                 </div>
               </div>
             </div>

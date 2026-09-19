@@ -306,13 +306,19 @@ pub async fn serve(
         .await
         .map_err(|e| format!("端口绑定失败：{e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    eprintln!("[share] starting axum on 0.0.0.0:{}", port);
     let handle = tauri::async_runtime::spawn(async move {
-        let _ = axum::serve(
+        match axum::serve(
             listener,
             router.into_make_service_with_connect_info::<SocketAddr>(),
         )
-        .await;
+        .await
+        {
+            Ok(_) => eprintln!("[share] server on port {} exited cleanly", port),
+            Err(e) => eprintln!("[share] server on port {} error: {}", port, e),
+        }
     });
+    eprintln!("[share] axum task spawned, port {}", port);
     Ok((port, handle))
 }
 

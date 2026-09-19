@@ -153,7 +153,7 @@ const UI_FONT_KEY = "rfm.ui-font";
 
 export const UI_FONT_MIN = 10;
 export const UI_FONT_MAX = 18;
-export const UI_FONT_DEFAULT = 13;
+export const UI_FONT_DEFAULT = 15;
 
 export function loadUiFontSize(): number {
   try {
