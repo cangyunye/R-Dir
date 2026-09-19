@@ -20,18 +20,21 @@ pub struct FileEntry {
 }
 
 impl FileEntry {
-    fn from_path(path: PathBuf) -> Self {
-        let name = path
+    /// 从 DirEntry 直接构造：用枚举时已拿到的 file_type/metadata，避免对每个条目
+    /// 再做一次 symlink_metadata + metadata 的双重 stat（大目录下 2N 次 syscall 极慢）。
+    fn from_direntry(entry: std::fs::DirEntry) -> Self {
+        let path = entry.path();
+        let name = entry
             .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string_lossy().to_string());
-        let symlink_meta = std::fs::symlink_metadata(&path);
-        let meta = std::fs::metadata(&path); // 跟随符号链接
-        let is_symlink = symlink_meta
-            .as_ref()
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false);
-        let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            .to_string_lossy()
+            .to_string();
+        // DirEntry.file_type() 来自目录枚举本身，零额外 syscall
+        let ft = entry.file_type();
+        let is_symlink = ft.as_ref().map(|f| f.is_symlink()).unwrap_or(false);
+        let is_dir_fallback = ft.as_ref().map(|f| f.is_dir()).unwrap_or(false);
+        // DirEntry.metadata() 一次 syscall（比 symlink_metadata+metadata 两次少一半）
+        let meta = entry.metadata();
+        let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(is_dir_fallback);
         let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
         let modified = meta
             .as_ref()
@@ -93,7 +96,7 @@ pub fn list_dir(path: &str) -> Result<Vec<FileEntry>, String> {
                 true
             }
         })
-        .map(|e| FileEntry::from_path(e.path()))
+        .map(FileEntry::from_direntry)
         .collect();
     entries.sort_by(|a, b| {
         b.is_dir
