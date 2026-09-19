@@ -83,4 +83,5 @@ jobs:
             - 主题切换（右上角日 / 月）、右键空白菜单、快捷键系统（⌘,/F1 查看一览）
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.args }}
+          # 显式指定 features：default 解析在 CI 环境不稳定（v0.7.0/v0.7.1 曾缺失 sftp/http 模块）
+          args: --features sftp,share ${{ matrix.args }}
