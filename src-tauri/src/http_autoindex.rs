@@ -46,7 +46,13 @@ pub fn cancel_http_download(url: String) {
     }
 }
 
-/// 请求 nginx autoindex 页面并解析为文件列表。
+/// 请求 HTTP 目录索引并解析为文件列表（v0.7.2 三层判定）。
+///
+/// ① 响应头快筛：Content-Type=application/json → JSON 索引；Content-Disposition=attachment
+///    或文件类型 → 判定为文件；text/html → ② 体嗅探。
+/// ② 体特征嗅探：`<h1>Index of` 强签名 → autoindex HTML 解析器；JSON 顶层结构 → JSON
+///    解析器；普通网页（无索引签名）→ 提示非目录。
+///
 /// url 必须以 / 结尾（目录视图）；非 200 / 解析失败返回 Err。
 pub fn list_http_dir(url: &str) -> Result<Vec<FileEntry>, String> {
     let resp = ureq::get(url)
@@ -56,10 +62,67 @@ pub fn list_http_dir(url: &str) -> Result<Vec<FileEntry>, String> {
     if !(200..300).contains(&resp.status()) {
         return Err(format!("HTTP {}（{}）", resp.status(), url));
     }
-    let body = resp
-        .into_string()
+
+    // ① 响应头快筛
+    if resp
+        .header("Content-Disposition")
+        .map(|v| v.to_ascii_lowercase().contains("attachment"))
+        .unwrap_or(false)
+    {
+        return Err("该 URL 是一个文件（Content-Disposition: attachment），不是目录索引".into());
+    }
+    let ctype = resp.header("Content-Type").unwrap_or("").to_ascii_lowercase();
+    let is_json = ctype.contains("application/json") || ctype.contains("+json");
+    let is_html = ctype.contains("text/html") || ctype.is_empty();
+
+    // 读取响应体（上限 4MB：目录索引页远小于此；超大响应判定为非目录，避免误读大文件/网页）
+    let mut reader = resp.into_reader();
+    let mut body = Vec::new();
+    reader
+        .take((MAX_INDEX_BODY + 1) as u64)
+        .read_to_end(&mut body)
         .map_err(|e| format!("读取响应失败：{e}"))?;
-    parse_autoindex_html(&body, url)
+    if body.len() > MAX_INDEX_BODY {
+        return Err("响应体过大，判定为非目录索引页（可尝试直接下载）".into());
+    }
+    let body_str = String::from_utf8_lossy(&body).into_owned();
+
+    // ② 分发解析器
+    if is_json || looks_like_json(&body_str) {
+        return parse_json_index(&body_str, url);
+    }
+    if is_html || looks_like_html(&body_str) {
+        if looks_like_autoindex(&body_str) {
+            return parse_autoindex_html(&body_str, url);
+        }
+        return Err("该 URL 是普通网页（非目录索引），可用浏览器打开".into());
+    }
+    Err("该 URL 是文件而非目录索引（可尝试直接打开/下载）".into())
+}
+
+/// 目录索引响应体读取上限（字节）：nginx autoindex 千级条目也远小于此。
+const MAX_INDEX_BODY: usize = 4 * 1024 * 1024;
+
+/// 响应体首字符是否为 JSON 结构（`{` 或 `[`，跳过空白）。
+fn looks_like_json(s: &str) -> bool {
+    let t = s.trim_start();
+    t.starts_with('{') || t.starts_with('[')
+}
+
+/// 响应体是否具备 HTML 特征（`<html` / `<!doctype` / `<h1` / `<pre`）。
+fn looks_like_html(s: &str) -> bool {
+    let t = s.to_ascii_lowercase();
+    t.contains("<html")
+        || t.contains("<!doctype")
+        || t.contains("<h1")
+        || t.contains("<pre")
+        || t.contains("<a href=")
+}
+
+/// nginx autoindex 强签名：`<h1>Index of`（标题行）+ 链接。
+fn looks_like_autoindex(s: &str) -> bool {
+    let t = s.to_ascii_lowercase();
+    t.contains("<h1>index of") || (t.contains("index of") && t.contains("<a href="))
 }
 
 /// 解析 nginx autoindex HTML（html 格式），base_url 以 / 结尾。
@@ -96,7 +159,14 @@ pub fn parse_autoindex_html(html: &str, base_url: &str) -> Result<Vec<FileEntry>
         // 尝试解析该行的日期与大小（meta_re 用行末锚定；取 <a> 结束后的行内容）
         let mut size = 0u64;
         let mut modified: Option<i64> = None;
-        let line_after = &html[m.end()..html.len().min(m.end() + 400)];
+        // 字符安全截取：m.end() 是字节索引，autoindex 含中文文件名时可能落在 UTF-8
+        // 字符中间，直接切片会 panic（v0.7.2 修复）
+        let line_after = html
+            .get(m.end()..)
+            .unwrap_or("")
+            .chars()
+            .take(400)
+            .collect::<String>();
         let line = line_after.lines().next().unwrap_or("");
         if let Some(mt) = meta_re.captures(line) {
             modified = parse_nginx_time(&mt[1]);
@@ -120,6 +190,154 @@ pub fn parse_autoindex_html(html: &str, base_url: &str) -> Result<Vec<FileEntry>
         return Err("该 URL 不是 autoindex 目录页（未找到任何链接）".into());
     }
     Ok(entries)
+}
+
+/// 解析 JSON 目录索引（v0.7.2，协议见 docs/http-index-compat.md）。
+///
+/// 约定协议：
+/// ```json
+/// { "path": "/dir/", "entries": [
+///   {"name": "assets", "type": "dir",  "size": null, "modified": "2026-09-19T10:00:00Z"},
+///   {"name": "a.txt",  "type": "file", "size": 7982, "modified": "2026-09-19T08:50:00Z"}
+/// ]}
+/// ```
+/// 宽松兼容：顶层可为数组或含 entries/files/list/items 数组的对象；
+/// 字段别名：name/filename、type/is_dir/directory/kind、modified/mtime。
+/// JSON 中为明文文件名（含中文），拼接 URL 时做路径段百分号编码。
+pub fn parse_json_index(body: &str, base_url: &str) -> Result<Vec<FileEntry>, String> {
+    // base_url 归一化：如 /index.json 是"目录代理"文件，子 URL 基于其父目录（http://host/dir/）
+    let dir_base = if base_url.ends_with('/') {
+        base_url.to_string()
+    } else {
+        parent_http_url(base_url).unwrap_or_else(|| base_url.to_string())
+    };
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("JSON 索引解析失败：{e}"))?;
+
+    let arr: &Vec<serde_json::Value> = match &v {
+        serde_json::Value::Array(a) => a,
+        serde_json::Value::Object(o) => {
+            let mut found = None;
+            for key in ["entries", "files", "list", "items"] {
+                if let Some(serde_json::Value::Array(a)) = o.get(key) {
+                    found = Some(a);
+                    break;
+                }
+            }
+            found.ok_or_else(|| {
+                "JSON 索引缺少条目数组（期望顶层数组或 entries/files/list 字段）".to_string()
+            })?
+        }
+        _ => return Err("JSON 索引顶层应为数组或对象".into()),
+    };
+
+    let mut entries = Vec::new();
+    for item in arr {
+        let obj = item
+            .as_object()
+            .ok_or_else(|| "JSON 条目应为对象".to_string())?;
+        let name = obj
+            .get("name")
+            .or_else(|| obj.get("filename"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "JSON 条目缺少 name/filename 字段".to_string())?;
+        if name == ".." || name == "." {
+            continue;
+        }
+        // type / is_dir / directory / kind；无显式类型时按 name 尾斜杠推断
+        let is_dir = match obj
+            .get("type")
+            .or_else(|| obj.get("kind"))
+            .and_then(|v| v.as_str())
+            .map(|t| t.to_ascii_lowercase())
+        {
+            Some(t) => matches!(t.as_str(), "dir" | "directory" | "folder"),
+            None => obj
+                .get("is_dir")
+                .or_else(|| obj.get("directory"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or_else(|| name.ends_with('/')),
+        };
+        let size = obj
+            .get("size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| {
+                // 兼容 size 为字符串 "7982"
+                obj.get("size").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()).unwrap_or(0)
+            });
+        let modified = obj
+            .get("modified")
+            .or_else(|| obj.get("mtime"))
+            .and_then(|v| v.as_str())
+            .and_then(parse_iso_time);
+
+        let clean_name = name.trim_end_matches('/').to_string();
+        let mut child_url = join_url(&dir_base, &url_encode_path_segment(&clean_name));
+        // JSON 的目录名不带尾斜杠（与 autoindex 的 href 不同），目录 URL 需补 / 以进入子目录
+        if is_dir && !child_url.ends_with('/') {
+            child_url.push('/');
+        }
+        entries.push(FileEntry {
+            extension: ext_from_name(&clean_name),
+            name: clean_name,
+            path: child_url,
+            is_dir,
+            is_symlink: false,
+            size,
+            modified,
+            created: None,
+            permissions: if is_dir { "drwxr-xr-x".into() } else { "-rw-r--r--".into() },
+        });
+    }
+    if entries.is_empty() {
+        return Err("JSON 索引为空（无可用条目）".into());
+    }
+    Ok(entries)
+}
+
+/// URL 路径段百分号编码（UTF-8 逐字节）：保留字母数字与 -_.~ 及 /（分段拼接用）。
+fn url_encode_path_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    for b in s.as_bytes() {
+        let c = *b as char;
+        if b.is_ascii_alphanumeric() || matches!(*b, b'-' | b'_' | b'.' | b'~') {
+            out.push(c);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// 解析 ISO-8601 时间（"2026-09-19T10:00:00Z" 或带 ±HH:MM 偏移）→ Unix 毫秒。
+/// 无 chrono 依赖，手写解析（复用 days_from_civil 算法）。
+fn parse_iso_time(s: &str) -> Option<i64> {
+    let s = s.trim();
+    // 兼容 "2026-09-19 10:00:00"（空格分隔）与 "2026-09-19T10:00:00Z"
+    let date_part = s.get(..10)?;
+    let mut dt = date_part.split('-');
+    let year: i64 = dt.next()?.parse().ok()?;
+    let month: i64 = dt.next()?.parse().ok()?;
+    let day: i64 = dt.next()?.parse().ok()?;
+
+    let time_part = s.get(11..)?;
+    let time_part = time_part.trim_end_matches('Z').trim_end_matches('z');
+    let time_part = time_part.split(['+', '-']).next().unwrap_or("00:00:00");
+    let hm: Vec<&str> = time_part.split(':').collect();
+    let hour: i64 = hm.first()?.parse().ok()?;
+    let minute: i64 = hm.get(1).map(|v| v.parse().ok()).unwrap_or(Some(0))?;
+    let second: i64 = hm.get(2).and_then(|v| v.split('.').next()).map(|v| v.parse().ok()).unwrap_or(Some(0))?;
+
+    // days_from_civil（Howard Hinnant 算法）
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some((days * 86400 + hour * 3600 + minute * 60 + second) * 1000)
 }
 
 /// 拼接子 URL：base 以 / 结尾，href 为相对路径（保留 nginx 原始编码）。
@@ -502,6 +720,62 @@ mod tests {
         assert!(v[0].modified.is_some());
     }
 
+    /// v0.7.2 JSON 索引解析（约定协议 + 宽松变体）
+    #[test]
+    fn parses_json_index() {
+        let body = r#"{
+          "path": "/",
+          "entries": [
+            {"name": "中文目录", "type": "dir",  "size": null, "modified": "2026-09-19T10:00:00Z"},
+            {"name": "readme.md", "type": "file", "size": 7982, "modified": "2026-09-19T08:50:00Z"},
+            {"name": "legacy.txt", "is_dir": false, "mtime": "2026-09-18T00:00:00Z"}
+          ]
+        }"#;
+        let v = parse_json_index(body, "http://localhost:8082/").unwrap();
+        assert_eq!(v.len(), 3);
+        assert!(v[0].is_dir);
+        // 中文名 → 路径段百分号编码
+        assert_eq!(v[0].path, "http://localhost:8082/%E4%B8%AD%E6%96%87%E7%9B%AE%E5%BD%95/");
+        assert_eq!(v[0].modified.unwrap(), 1789812000000); // 2026-09-19T10:00:00Z
+        assert!(!v[1].is_dir);
+        assert_eq!(v[1].size, 7982);
+        assert!(!v[2].is_dir);
+
+        // 顶层数组变体 + 无 type 推断（尾斜杠目录）
+        let arr = r#"[{"name":"docs/","size":0},{"name":"a.txt","size":5}]"#;
+        let v2 = parse_json_index(arr, "http://h/d/").unwrap();
+        assert_eq!(v2.len(), 2);
+        assert!(v2[0].is_dir);
+        assert_eq!(v2[0].path, "http://h/d/docs/");
+        assert!(!v2[1].is_dir);
+
+        // 非法 JSON / 缺条目数组 → Err
+        assert!(parse_json_index("not json", "http://h/").is_err());
+        assert!(parse_json_index(r#"{"foo":1}"#, "http://h/").is_err());
+    }
+
+    /// ISO 时间解析（含 Z / 空格分隔 / 无秒）
+    #[test]
+    fn iso_time() {
+        assert_eq!(parse_iso_time("2026-09-19T10:00:00Z").unwrap(), 1789812000000);
+        assert_eq!(parse_iso_time("2026-09-19 10:00:00").unwrap(), 1789812000000);
+        assert_eq!(parse_iso_time("2026-09-19T10:00:00+08:00").unwrap(), 1789812000000);
+        assert_eq!(parse_iso_time("2026-09-19T10:00").unwrap(), 1789812000000);
+    }
+
+    /// 判定函数
+    #[test]
+    fn sniffers() {
+        assert!(looks_like_autoindex("<h1>Index of /</h1><a href=\"a/\">a/</a>"));
+        assert!(looks_like_autoindex("Index of / <pre><a href=\"../\">"));
+        assert!(!looks_like_autoindex("<html><body>hello</body></html>"));
+        assert!(looks_like_json("  {\"entries\":[]}"));
+        assert!(looks_like_json("[1,2]"));
+        assert!(!looks_like_json("<html>"));
+        assert!(looks_like_html("<html><body>"));
+        assert!(looks_like_html("<!doctype html>"));
+    }
+
     /// 真实 nginx 联调：需本机 8082 已启动 autoindex（brew services 或手动 nginx）
     #[test]
     #[ignore]
@@ -526,6 +800,33 @@ mod tests {
             parent_http_url(&sub_dir.path),
             Some("http://localhost:8082/".into())
         );
+    }
+
+    /// 真实 nginx JSON 索引联调：8082 的 index.json（约定协议）
+    #[test]
+    #[ignore]
+    fn live_nginx_json_8082() {
+        let v = list_http_dir("http://localhost:8082/index.json").expect("json list");
+        assert!(!v.is_empty(), "应解析出条目");
+        let dirs = v.iter().filter(|e| e.is_dir).count();
+        let files = v.iter().filter(|e| !e.is_dir).count();
+        println!("json entries={} dirs={} files={}", v.len(), dirs, files);
+        for e in v.iter().take(4) {
+            println!(
+                "  [{}] {} size={} mod={:?}",
+                if e.is_dir { "D" } else { "F" },
+                e.name,
+                e.size,
+                e.modified
+            );
+        }
+        assert!(dirs >= 1 && files >= 1);
+        // 中文条目 → URL 已编码，可请求子目录
+        if let Some(d) = v.iter().find(|e| e.is_dir) {
+            // 中文条目 → URL 已编码，可请求子目录
+            let sub = list_http_dir(&d.path).expect("sub list");
+            println!("sub {} -> {} entries", d.path, sub.len());
+        }
     }
 
     /// 真实下载联调：从 8082 下载 README.md 到系统临时目录
