@@ -747,115 +747,84 @@ pub fn run() {
             plugins::init(app.handle(), &state.plugins);
             Ok(())
         });
-    #[cfg(feature = "sftp")]
-    {
-        builder = builder.invoke_handler(tauri::generate_handler![
-            list_dir,
-            complete_path,
-            get_volumes,
-            get_quick_access,
-            get_home_dir,
-            parent_dir,
-            stat_path,
-            copy_entries,
-            move_entries,
-            rename_entry,
-            delete_entries,
-            permanent_delete_entries,
-            create_dir,
-            create_file,
-            search_content,
-            find_files,
-            // SFTP 插件命令
-            sftp_list_servers,
-            sftp_save_server,
-            sftp_remove_server,
-            sftp_master_key_status,
-            sftp_set_master_key,
-            sftp_connect,
-            sftp_disconnect,
-            sftp_download,
-            sftp_download_to,
-            sftp_upload,
-            sftp_mkdir,
-            sftp_create_file,
-            sftp_delete,
-            sftp_rename,
-            // v0.4 打开方式 / 终端插件
-            opener::list_openers,
-            opener::open_with,
-            opener::add_custom_opener,
-            opener::remove_custom_opener,
-            opener::list_shells,
-            opener::open_terminal,
-            filetypes::get_filetypes,
-            filetypes::refresh_filetypes,
-            // 会话保存 / 恢复
-            session_save,
-            session_load,
-            session_clear,
-            // 插件注册表（v0.5）
-            list_plugins,
-            set_plugin_enabled,
-            // HTTP autoindex 插件（v0.6）
-            http_autoindex::http_download_to,
-            http_autoindex::cancel_http_download,
-            // 窗口分享插件（v0.7）
-            share::share_create,
-            share::share_list,
-            share::share_stop,
-            share::share_stop_by_dir
-        ]);
-    }
-    #[cfg(not(feature = "sftp"))]
-    {
-        builder = builder.invoke_handler(tauri::generate_handler![
-            list_dir,
-            complete_path,
-            get_volumes,
-            get_quick_access,
-            get_home_dir,
-            parent_dir,
-            stat_path,
-            copy_entries,
-            move_entries,
-            rename_entry,
-            delete_entries,
-            permanent_delete_entries,
-            create_dir,
-            create_file,
-            search_content,
-            find_files,
-            // v0.4 打开方式 / 终端插件
-            opener::list_openers,
-            opener::open_with,
-            opener::add_custom_opener,
-            opener::remove_custom_opener,
-            opener::list_shells,
-            opener::open_terminal,
-            filetypes::get_filetypes,
-            filetypes::refresh_filetypes,
-            // 会话保存 / 恢复
-            session_save,
-            session_load,
-            session_clear,
-            // 插件注册表（v0.5）
-            list_plugins,
-            set_plugin_enabled,
-            // HTTP autoindex 插件（v0.6）
-            http_autoindex::http_download_to,
-            http_autoindex::cancel_http_download
-        ]);
-    }
-    #[cfg(feature = "share")]
-    {
-        builder = builder.invoke_handler(tauri::generate_handler![
-            share::share_create,
-            share::share_list,
-            share::share_stop,
-            share::share_stop_by_dir
-        ]);
-    }
+    // 注意：tauri Builder::invoke_handler 是“覆盖”语义（后调覆盖先调），
+    // 因此所有命令必须合并到同一个 generate_handler! 中，用 cfg 属性按 feature 裁剪，
+    // 否则 v0.7 独立 share 块会覆盖掉 sftp 块的全部命令（曾导致 list_dir/sftp 丢失）。
+    builder = builder.invoke_handler(tauri::generate_handler![
+        list_dir,
+        complete_path,
+        get_volumes,
+        get_quick_access,
+        get_home_dir,
+        parent_dir,
+        stat_path,
+        copy_entries,
+        move_entries,
+        rename_entry,
+        delete_entries,
+        permanent_delete_entries,
+        create_dir,
+        create_file,
+        search_content,
+        find_files,
+        #[cfg(feature = "sftp")]
+        sftp_list_servers,
+        #[cfg(feature = "sftp")]
+        sftp_save_server,
+        #[cfg(feature = "sftp")]
+        sftp_remove_server,
+        #[cfg(feature = "sftp")]
+        sftp_master_key_status,
+        #[cfg(feature = "sftp")]
+        sftp_set_master_key,
+        #[cfg(feature = "sftp")]
+        sftp_connect,
+        #[cfg(feature = "sftp")]
+        sftp_disconnect,
+        #[cfg(feature = "sftp")]
+        sftp_download,
+        #[cfg(feature = "sftp")]
+        sftp_download_to,
+        #[cfg(feature = "sftp")]
+        sftp_upload,
+        #[cfg(feature = "sftp")]
+        sftp_mkdir,
+        #[cfg(feature = "sftp")]
+        sftp_create_file,
+        #[cfg(feature = "sftp")]
+        sftp_delete,
+        #[cfg(feature = "sftp")]
+        sftp_rename,
+        // v0.4 打开方式 / 终端插件
+        opener::list_openers,
+        opener::open_with,
+        opener::add_custom_opener,
+        opener::remove_custom_opener,
+        opener::list_shells,
+        opener::open_terminal,
+        filetypes::get_filetypes,
+        filetypes::refresh_filetypes,
+        // 会话保存 / 恢复
+        session_save,
+        session_load,
+        session_clear,
+        // 插件注册表（v0.5）
+        list_plugins,
+        set_plugin_enabled,
+        // HTTP autoindex 插件（v0.6）
+        http_autoindex::http_download_to,
+        http_autoindex::cancel_http_download,
+        // 窗口分享插件（v0.7）
+        #[cfg(feature = "share")]
+        share::share_create,
+        #[cfg(feature = "share")]
+        share::share_list,
+        #[cfg(feature = "share")]
+        share::share_stop,
+        #[cfg(feature = "share")]
+        share::share_stop_by_dir
+    ]);
+
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

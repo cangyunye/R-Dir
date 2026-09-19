@@ -1,6 +1,6 @@
 [package]
 name = "rust-file-manager"
-version = "0.7.2"
+version = "0.7.3"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -62,8 +62,9 @@ share = ["dep:axum", "dep:tokio", "dep:local-ip-address", "dep:tokio-util", "dep
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
+# thin LTO：fat LTO 在 Windows MSVC 链接器上会 STATUS_STACK_BUFFER_OVERRUN（v0.7 全量命令回归后触发）
 codegen-units = 1
-lto = true
+lto = "thin"
 opt-level = 3
 panic = "abort"
 strip = true
