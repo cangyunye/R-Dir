@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+﻿import { describe, it, expect } from "vitest";
 import {
   isSftpPath,
   isHttpPath,
@@ -57,5 +57,32 @@ describe("joinRemote（回归：不能把 sftp:// 前缀拼进去）", () => {
     expect(result.startsWith("/")).toBe(true);
     expect(result.startsWith("sftp://")).toBe(false);
     expect(result).not.toContain("@");
+  });
+});
+
+// ---- v0.8.x 新建文件夹路径拼接回归 ----
+describe("sftp 新建文件夹路径拼接", () => {
+  it("joinRemote 在 sftp://host:port/root 下拼接子目录", () => {
+    const base = "sftp://kali@192.168.31.100:22/home/kali";
+    expect(joinRemote(base, "新建文件夹")).toBe(
+      "sftp://kali@192.168.31.100:22/home/kali/新建文件夹",
+    );
+  });
+  it("joinRemote 在 sftp://host:port/root/ 下不重复斜杠", () => {
+    const base = "sftp://kali@192.168.31.100:22/home/kali/";
+    expect(joinRemote(base, "新建文件夹")).toBe(
+      "sftp://kali@192.168.31.100:22/home/kali/新建文件夹",
+    );
+  });
+  it("joinRemote 根目录 / 下拼接", () => {
+    const base = "sftp://kali@192.168.31.100:22/";
+    expect(joinRemote(base, "data")).toBe(
+      "sftp://kali@192.168.31.100:22/data",
+    );
+  });
+  it("isSftpPath 识别 sftp:// 前缀", () => {
+    expect(isSftpPath("sftp://kali@192.168.31.100:22/home/kali")).toBe(true);
+    expect(isSftpPath("C:\\Users")).toBe(false);
+    expect(isSftpPath("tags://red")).toBe(false);
   });
 });

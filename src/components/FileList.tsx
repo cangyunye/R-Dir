@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -327,6 +327,9 @@ export function FileList({
   const handleTypeAhead = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key.length !== 1) return;
+    // 重命名/搜索输入框聚焦时不触发快速定位
+    const t = e.target as HTMLElement;
+    if (t.closest("input,textarea")) return;
     const ch = e.key.toLowerCase();
     if (typeAheadTimer.current) window.clearTimeout(typeAheadTimer.current);
     typeAheadRef.current += ch;
