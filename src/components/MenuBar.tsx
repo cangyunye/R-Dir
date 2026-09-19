@@ -287,7 +287,7 @@ export function MenuBar(actions: MenuActions) {
           <Shortcut id="openSettings" />
         </DropdownMenuItem>
         <DropdownMenuItem disabled>
-          <Info className="mr-2 h-4 w-4" /> 版本 0.7.3（Tauri 2 + React）
+          <Info className="mr-2 h-4 w-4" /> 版本 0.7.0（Tauri 2 + React）
         </DropdownMenuItem>
       </MenuButton>
 

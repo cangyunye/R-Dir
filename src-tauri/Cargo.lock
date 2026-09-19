@@ -3916,7 +3916,7 @@ dependencies = [
 
 [[package]]
 name = "rust-file-manager"
-version = "0.7.3"
+version = "0.7.0"
 dependencies = [
  "aes-gcm",
  "async-trait",
