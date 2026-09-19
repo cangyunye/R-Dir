@@ -86,6 +86,9 @@ export const sftpMasterKeyStatus = () =>
 export const sftpSetMasterKey = (key: string) =>
   invoke<void>("sftp_set_master_key", { key });
 
+export const sftpResetMasterKey = () =>
+  invoke<void>("sftp_reset_master_key");
+
 export const sftpSaveServer = (server: SftpServerConfig) =>
   invoke<SftpServerView[]>("sftp_save_server", { server });
 

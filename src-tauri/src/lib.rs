@@ -284,6 +284,30 @@ async fn sftp_set_master_key(
     Ok(())
 }
 
+/// 重置主密钥：清除校验值和所有已加密密码（密钥连接不受影响）。
+#[cfg(feature = "sftp")]
+#[tauri::command]
+async fn sftp_reset_master_key(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let path = sftp_servers_path(&app)?;
+    let mut file = sftp::servers::load_file(&path);
+    file.master_key_check = None;
+    // 清空所有 enc:v1: 开头的密码（无法解密的密文）
+    for srv in file.servers.iter_mut() {
+        if let sftp::servers::AuthConfig::Password { password, save_password, .. } = &mut srv.auth {
+            if password.starts_with(sftp::servers::ENC_PREFIX) {
+                password.clear();
+                *save_password = false;
+            }
+        }
+    }
+    *state.master_key.lock().await = None;
+    sftp::servers::save_file(&path, &file)?;
+    Ok(())
+}
+
 /// 连接服务器（密码/密钥认证；存盘的加密密码在此时用 master-key 解密）。
 /// 密码/口令/密钥留空时回退到 servers.json 中已保存的配置（供"断开后一键重连"）。
 #[cfg(feature = "sftp")]
@@ -778,6 +802,7 @@ pub fn run() {
         sftp_master_key_status,
         #[cfg(feature = "sftp")]
         sftp_set_master_key,
+        sftp_reset_master_key,
         #[cfg(feature = "sftp")]
         sftp_connect,
         #[cfg(feature = "sftp")]

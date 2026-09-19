@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { KeyRound, Loader2, ShieldCheck, X } from "lucide-react";
+import { KeyRound, Loader2, ShieldCheck, X, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { sftpSetMasterKey } from "@/lib/api";
+import { sftpSetMasterKey, sftpResetMasterKey } from "@/lib/api";
 
 /**
  * 主密钥（master-key）对话框
@@ -27,6 +27,7 @@ export function MasterKeyDialog({
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -34,6 +35,7 @@ export function MasterKeyDialog({
       setConfirm("");
       setError("");
       setLoading(false);
+      setConfirmReset(false);
     }
   }, [open]);
 
@@ -58,6 +60,58 @@ export function MasterKeyDialog({
       setLoading(false);
     }
   };
+
+  const doReset = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      await sftpResetMasterKey();
+      onDone(true);
+    } catch (e) {
+      setError(String(e));
+      setLoading(false);
+    }
+  };
+
+  // 重置确认框
+  if (confirmReset) {
+    return (
+      <div
+        className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget && !loading) setConfirmReset(false);
+        }}
+      >
+        <div className="w-[420px] max-w-[92vw] rounded-lg border bg-background p-5 shadow-xl">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <AlertTriangle className="h-4 w-4 text-destructive" />
+            重置主密钥？
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            重置后所有已保存的<b>密码登录</b>服务器将无法自动连接，需要重新输入密码。
+            <br />
+            <b>密钥登录</b>的服务器不受影响（私钥在文件系统）。
+            <br />
+            主机、用户名、分组等配置保留。
+          </p>
+          {error && (
+            <div className="mt-2 rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+              {error}
+            </div>
+          )}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setConfirmReset(false)} disabled={loading}>
+              取消
+            </Button>
+            <Button variant="destructive" size="sm" onClick={() => void doReset()} disabled={loading}>
+              {loading && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+              确认重置
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -122,14 +176,24 @@ export function MasterKeyDialog({
             </div>
           )}
 
-          <div className="mt-1 flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={onClose} disabled={loading}>
-              取消
-            </Button>
-            <Button size="sm" onClick={() => void submit()} disabled={loading}>
-              {loading && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
-              {configured ? "解锁" : "设置并保存"}
-            </Button>
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmReset(true)}
+              className="text-xs text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+              disabled={loading}
+            >
+              {configured ? "忘记主密钥？" : ""}
+            </button>
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" onClick={onClose} disabled={loading}>
+                取消
+              </Button>
+              <Button size="sm" onClick={() => void submit()} disabled={loading}>
+                {loading && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                {configured ? "解锁" : "设置并保存"}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
