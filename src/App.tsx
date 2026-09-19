@@ -97,7 +97,7 @@ import {
 } from "@/lib/persist";
 import { shareStopByDir } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import { Trash2, Bird } from "lucide-react";
 import { MenuBar } from "@/components/MenuBar";
 
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
@@ -277,12 +277,24 @@ export default function App() {
   const [keymapVer, setKeymapVer] = useState(0);
   /** v0.8 界面字体大小（13px=100%，作用于整个界面，根缩放） */
   const [uiFontSize, setUiFontSize] = useState<number>(() => loadUiFontSize());
+  /** v0.8.5 开屏飞鸟：React mount 后短暂显示，800ms 后淡出 */
+  const [splashVisible, setSplashVisible] = useState(true);
+  const [splashFading, setSplashFading] = useState(false);
   /** 退出询问：拦截窗口关闭，询问是否保存会话布局（v0.3.0） */
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   // 界面字体：13px=100%，根元素 zoom 整体缩放（与窗口级 Ctrl+滚轮缩放相乘叠加）
   useEffect(() => {
     document.documentElement.style.zoom = String(uiFontZoom(uiFontSize));
   }, [uiFontSize]);
+  // v0.8.5 开屏飞鸟：mount 后 600ms 开始淡出，1000ms 后完全卸载
+  useEffect(() => {
+    const t1 = setTimeout(() => setSplashFading(true), 600);
+    const t2 = setTimeout(() => setSplashVisible(false), 1100);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, []);
   /** 最新 tabs/activeId（退出保存用，避免闭包过期） */
   const tabsRef = useRef<TabState[]>([]);
   tabsRef.current = tabs;
@@ -1953,6 +1965,46 @@ useEffect(() => {
     : 0;
 
   return (
+    <>
+    {splashVisible && (
+      <div
+        className={
+          "fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-background transition-opacity duration-500 " +
+          (splashFading ? "opacity-0" : "opacity-100")
+        }
+      >
+        <div className="relative flex h-12 w-48 items-center justify-center overflow-hidden">
+          <Bird
+            className="absolute text-primary"
+            style={{
+              width: 32,
+              height: 32,
+              animation: "rdir-bird-fly 1.2s ease-in-out forwards",
+            }}
+          />
+        </div>
+        <div className="mt-4 h-0.5 w-48 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full bg-primary"
+            style={{ animation: "rdir-progress 1.2s ease-out forwards" }}
+          />
+        </div>
+        <style>{`
+          @keyframes rdir-bird-fly {
+            0% { left: -40px; transform: translateY(0); }
+            25% { transform: translateY(-6px); }
+            50% { transform: translateY(2px); }
+            75% { transform: translateY(-4px); }
+            100% { left: 100%; transform: translateY(0); }
+          }
+          @keyframes rdir-progress {
+            0% { width: 0%; }
+            70% { width: 85%; }
+            100% { width: 100%; }
+          }
+        `}</style>
+      </div>
+    )}
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <MenuBar
         keymapVersion={keymapVer}
@@ -2229,5 +2281,6 @@ useEffect(() => {
         </div>
       )}
     </div>
+    </>
   );
 }
