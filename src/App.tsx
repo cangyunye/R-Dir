@@ -715,7 +715,12 @@ useEffect(() => {
   // 导航（作用于活动 pane）
   const navigate = useCallback(
     (path: string) => {
-      if (!activePane || activePane.path === path) return;
+      if (!activePane) return;
+      // 路径相同也刷新（SFTP 连接成功后 entries 可能还是旧本地内容）
+      if (activePane.path === path) {
+        refreshPane(activePane.id);
+        return;
+      }
       // SFTP：未连接的服务器先弹连接对话框
       if (path.startsWith("sftp://")) {
         const au = parseSftpAuthority(path);
