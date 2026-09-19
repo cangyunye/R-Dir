@@ -32,6 +32,7 @@ import type {
   TransferProgress,
   VolumeInfo,
 } from "@/lib/types";
+import { parseSftpAuthority, isSftpPath, isHttpPath } from "@/lib/sftp-path";
 import {
   copyEntries,
   createDir,
@@ -365,17 +366,6 @@ useEffect(() => {
   }, []);
 
   /** 解析 sftp://user@host:port 的 authority */
-  const parseSftpAuthority = useCallback((path: string): { id: string; host: string; port: number; user: string } | null => {
-    const rest = path.startsWith("sftp://") ? path.slice("sftp://".length) : path;
-    const authority = rest.split("/")[0] ?? "";
-    const [userPart, hostPort] = authority.includes("@")
-      ? authority.split("@")
-      : ["", authority];
-    if (!userPart || !hostPort) return null;
-    const [host, portStr] = hostPort.includes(":") ? hostPort.split(":") : [hostPort, "22"];
-    const port = Number(portStr) || 22;
-    return { id: `${userPart}@${host}:${port}`, host, port, user: userPart };
-  }, []);
 
   const activeTab = tabs.find((t) => t.id === activeId) ?? null;
   const activePane = activeTab?.panes[activeTab.activePane] ?? null;
@@ -1244,11 +1234,6 @@ useEffect(() => {
   }, []);
 
   // M1 文件操作
-  const isSftpPath = useCallback((p: string) => p.startsWith("sftp://"), []);
-  const isHttpPath = useCallback(
-    (p: string) => p.startsWith("http://") || p.startsWith("https://"),
-    [],
-  );
 
   const doCopy = useCallback(
     (paneId?: number, paths?: string[]) => {
