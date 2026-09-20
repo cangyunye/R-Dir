@@ -362,10 +362,11 @@ export function FileList({
     onDragOverChange,
     onClearSelection,
     onSelectRange,
+    onSelect,
     selection,
     paneId,
   });
-  propsRef.current = { onDropPaths, onDragOverChange, onClearSelection, onSelectRange, selection, paneId };
+  propsRef.current = { onDropPaths, onDragOverChange, onClearSelection, onSelectRange, onSelect, selection, paneId };
 
   const cleanupDrag = () => {
     window.removeEventListener("mousemove", onWinMouseMove);
@@ -491,15 +492,19 @@ export function FileList({
     if (e.button !== 0) return;
     e.stopPropagation();
     const fromSelected = propsRef.current.selection.includes(entry.path);
+    const additive = e.metaKey || e.ctrlKey;
     if (fromSelected) {
       // 从已选中项按下 → 文件拖拽（复制/移动）
       dragCandRef.current = { x: e.clientX, y: e.clientY, paths: targetsFor(entry) };
     } else {
+      // 立即选中（无修饰键）：按下即高亮，避免"松开才选中"的延迟感；
+      // 随后若拖动框选，会由框选结果覆盖；修饰键/Shift 交给 click 处理，避免双触发
+      if (!additive && !e.shiftKey) propsRef.current.onSelect(entry, false);
       // 从未选中项按下 → 框选起点（Windows 资源管理器语义）
       rubberRef.current = {
         x0: e.clientX,
         y0: e.clientY,
-        additive: e.metaKey || e.ctrlKey || e.shiftKey,
+        additive: additive || e.shiftKey,
         fromRow: true,
       };
     }
@@ -763,7 +768,7 @@ export function FileList({
                     }
                   }}
                   className={cn(
-                    "grid cursor-default items-center border-b text-[13px] transition-colors",
+                    "grid cursor-default items-center border-b text-[13px]",
                     selected ? "bg-primary/10" : "hover:bg-muted/40",
                     isPrimary && "ring-1 ring-inset ring-primary/40",
                   )}

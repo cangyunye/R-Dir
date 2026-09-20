@@ -203,7 +203,7 @@ export function Sidebar({
                 onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(item.path))}
                 title={item.path}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors",
+                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
                   isActive(currentPath, item.path)
                     ? "bg-accent text-accent-foreground"
                     : "text-foreground hover:bg-accent/50",
@@ -229,7 +229,7 @@ export function Sidebar({
                       onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(p))}
                       title={p}
                       className={cn(
-                        "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs transition-colors",
+                        "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",
                         isActive(currentPath, p)
                           ? "bg-accent text-accent-foreground"
                           : "text-foreground hover:bg-accent/50",
@@ -271,7 +271,7 @@ export function Sidebar({
                 }}
                 title={`查看「${tagLabel(t, tagNames)}」标签的文件${count > 0 ? `（${count} 项）` : ""}`}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors",
+                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
                   active
                     ? "bg-accent text-accent-foreground"
                     : count === 0
@@ -305,7 +305,7 @@ export function Sidebar({
               onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(vol.path))}
               title={vol.path}
               className={cn(
-                "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors",
+                "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
                 isActive(currentPath, vol.path)
                   ? "bg-accent text-accent-foreground"
                   : "text-foreground hover:bg-accent/50",
@@ -353,7 +353,7 @@ export function Sidebar({
                     }}
                     title={`${sv.user}@${sv.host}:${sv.port}${sv.connected ? "（已连接）" : ""} · 右键编辑`}
                     className={cn(
-                      "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs transition-colors",
+                      "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",
                       isActive(currentPath, `sftp://${sv.user}@${sv.host}:${sv.port}/`)
                         ? "bg-accent text-accent-foreground"
                         : "text-foreground hover:bg-accent/50",

@@ -111,7 +111,7 @@ export function TabBar({
             setDragging(true);
           }}
           className={cn(
-            "group flex h-7 max-w-52 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-xs transition-colors",
+            "group flex h-7 max-w-52 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-xs",
             tab.id === activeId
               ? "border-border bg-background text-foreground"
               : "border-transparent text-muted-foreground hover:bg-muted/50",

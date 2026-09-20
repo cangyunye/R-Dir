@@ -91,7 +91,7 @@ export function TagView({
               key={p}
               onClick={() => onOpen(p)}
               title={`${p}\n双击跳转所在目录（当前：${currentPath}）`}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent/60"
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
             >
               <FileIcon
                 entry={{
