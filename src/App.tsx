@@ -100,7 +100,7 @@ import {
   type FileTags,
   type TagNames,
 } from "@/lib/persist";
-import { shareStopByDir } from "@/lib/api";
+import { shareStopByDir, shareList } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Trash2, Bird } from "lucide-react";
 import { MenuBar } from "@/components/MenuBar";
@@ -1973,8 +1973,20 @@ useEffect(() => {
     onRatioChange,
     onNewFolder: (paneId) => void createAndRename(paneId, "dir"),
     onNewFile: (paneId) => void createAndRename(paneId, "file"),
-    onShareDir: (dir) => {
+    onShareDir: async (dir) => {
       setShareDir(dir);
+      // 检查是否已有同目录的活跃分享
+      try {
+        const sessions = await shareList();
+        const existing = sessions.find((s) => s.dir === dir);
+        if (existing) {
+          // 已有活跃分享 → 打开分享面板查看当前配置
+          setSharePanelOpen(true);
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
       setShareDialogOpen(true);
     },
     onPaste: (paneId) => void doPaste(paneId),

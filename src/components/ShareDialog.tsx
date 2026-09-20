@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   Check,
@@ -54,6 +54,15 @@ export function ShareDialog({
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ShareCreateResult | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // 每次打开时重置结果，避免显示上次已停止的旧链接
+  useEffect(() => {
+    if (open) {
+      setResult(null);
+      setCopied(false);
+      setBusy(false);
+    }
+  }, [open]);
 
   const expiresHours = () => {
     if (expiresMode === "forever") return null;

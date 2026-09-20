@@ -9,6 +9,7 @@ import {
   Square,
 } from "lucide-react";
 import { shareList, shareStop } from "@/lib/api";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ShareSessionView } from "@/lib/types";
 
 function fmtTime(unix: number | null): string {
@@ -188,14 +189,12 @@ export function SharePanel({
                     <Copy className="h-3 w-3" />
                     {copiedId === s.id ? "已复制" : "复制"}
                   </button>
-                  <a
-                    href={s.url}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    onClick={() => void openUrl(s.url)}
                     className="flex items-center gap-1 rounded border px-2 py-1 text-[11px] hover:bg-muted"
                   >
                     <ExternalLink className="h-3 w-3" /> 打开
-                  </a>
+                  </button>
                   <button
                     onClick={() => void stop(s.id)}
                     disabled={busyId === s.id}
