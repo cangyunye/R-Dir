@@ -1,6 +1,6 @@
 [package]
 name = "rust-file-manager"
-version = "0.8.1"
+version = "0.9.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -33,10 +33,7 @@ dirs = "5"
 trash = "5"
 regex = "1"
 ignore = "0.4"
-# v0.8 压缩（zip / tar / tgz，仅打包，纯 Rust）
-zip = "1"
-tar = "0.4"
-flate2 = "1"
+# v0.9 压缩改为调用系统命令（ditto / powershell / tar / zip），不再依赖 Rust crate
 # HTTP autoindex 插件：轻量同步 HTTP 客户端（rustls，无系统依赖）
 ureq = { version = "2", default-features = false, features = ["rustls", "gzip"] }
 # SFTP 远程文件系统插件（内置、可编译期拔出）：去掉 sftp feature 即不编译任何远程代码
@@ -56,6 +53,15 @@ aes-gcm = { version = "0.10", optional = true }
 sha2 = { version = "0.10", optional = true }
 base64 = { version = "0.22", optional = true }
 rand = { version = "0.8", optional = true }
+
+# 系统剪贴板文件格式（跨应用复制粘贴文件）：平台特定，仅编译对应平台
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+clipboard-win = "5"
 
 [features]
 default = ["sftp", "share"]

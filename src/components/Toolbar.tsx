@@ -26,6 +26,7 @@ export function Toolbar({
   searchOpen,
   onToggleSearch,
   focusTick,
+  trailing,
 }: {
   canBack: boolean;
   canForward: boolean;
@@ -40,6 +41,8 @@ export function Toolbar({
   onToggleSearch: () => void;
   /** 快捷键聚焦信号（Ctrl+L / ⌘+L） */
   focusTick: number;
+  /** 搜索按钮右侧的插槽（如「已连接窗格」下拉） */
+  trailing?: React.ReactNode;
 }) {
   const [draft, setDraft] = useState(path);
   const [completions, setCompletions] = useState<string[]>([]);
@@ -246,6 +249,8 @@ export function Toolbar({
       >
         <Search className="h-4 w-4" />
       </Button>
+
+      {trailing}
     </div>
   );
 }

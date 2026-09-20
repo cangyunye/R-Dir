@@ -24,17 +24,20 @@ import type {
   PaneNode,
   PaneState,
   QuickAccessItem,
+  ResolutionPlan,
   SessionLayout,
   SortDir,
   SortKey,
   SplitDir,
   TabState,
+  TransferConflict,
   TransferProgress,
   VolumeInfo,
 } from "@/lib/types";
-import { parseSftpAuthority, isSftpPath, isHttpPath } from "@/lib/sftp-path";
+import { parseSftpAuthority, isSftpPath, isHttpPath, sftpUrl } from "@/lib/sftp-path";
 import {
   copyEntries,
+  copyEntriesPlan,
   createDir,
   createFile,
   deleteEntries,
@@ -43,6 +46,10 @@ import {
   getVolumes,
   listDir,
   moveEntries,
+  moveEntriesPlan,
+  scanConflicts,
+  clipboardWriteFiles,
+  clipboardReadFiles,
   parentDir,
   permanentDeleteEntries,
   renameEntry,
@@ -65,6 +72,7 @@ import {
   compressItems,
 } from "@/lib/api";
 import { ConnectDialog, type SftpConnectInitial } from "@/components/ConnectDialog";
+import { ConflictDialog } from "@/components/ConflictDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
 import type { MasterKeyStatus, SftpServerConfig, SftpServerView } from "@/lib/types";
 import { basename } from "@/lib/format";
@@ -102,7 +110,13 @@ import {
 } from "@/lib/persist";
 import { shareStopByDir, shareList } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Trash2, Bird } from "lucide-react";
+import { Trash2, Bird, ListTree } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { MenuBar } from "@/components/MenuBar";
 
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
@@ -126,6 +140,7 @@ function serializeSession(tabs: TabState[], activeId: number): SessionLayout {
     tabs: tabs.map((t) => ({
       id: t.id,
       title: t.title,
+      customTitle: t.customTitle,
       activePane: t.activePane,
       root: t.root,
       panes: Object.values(t.panes).map((p) => {
@@ -237,8 +252,13 @@ export default function App() {
   const [quickAccess, setQuickAccess] = useState<QuickAccessItem[]>([]);
   const [showHidden, setShowHidden] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  /** 搜索面板冻结的目标窗格 id（打开时锁定，切换窗格不再自动重搜） */
+  const [searchPaneId, setSearchPaneId] = useState<number | null>(null);
   const [homePath, setHomePath] = useState("");
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
+  /** 同名冲突裁决：非空时显示 ConflictDialog，resolve 存 ref 供异步等待 */
+  const [conflictReq, setConflictReq] = useState<TransferConflict[] | null>(null);
+  const conflictResolver = useRef<((plan: ResolutionPlan | null) => void) | null>(null);
   const [renaming, setRenaming] = useState<{
     paneId: number;
     path: string;
@@ -327,6 +347,8 @@ export default function App() {
   const pendingSftpRestoreRef = useRef<{ paneId: number; serverId: string; path: string }[]>([]);
   /** 主密钥设置后待保存的服务器（来自连接成功但保存失败） */
   const pendingSaveRef = useRef<SftpServerConfig | null>(null);
+  /** 地址栏输入带 path 的 sftp URL 时，记住目标远程路径，连接成功后直达 */
+  const pendingSftpPathRef = useRef<string | null>(null);
 
   // ==================== 传输/复制进度（本地 + SFTP） ====================
   const [transfer, setTransfer] = useState<TransferProgress | null>(null);
@@ -376,6 +398,37 @@ useEffect(() => {
 
   const activeTab = tabs.find((t) => t.id === activeId) ?? null;
   const activePane = activeTab?.panes[activeTab.activePane] ?? null;
+  /** 搜索面板冻结的窗格（被关闭时回落到活动窗格） */
+  const searchPane = (() => {
+    if (searchPaneId === null) return activePane;
+    for (const t of tabs) {
+      const p = t.panes[searchPaneId];
+      if (p) return p;
+    }
+    return activePane;
+  })();
+  /** 所有窗格（跨标签），供路径栏右侧「已连接窗格」下拉 */
+  const paneList = (() => {
+    const out: {
+      tabId: number;
+      paneId: number;
+      title: string;
+      path: string;
+      active: boolean;
+    }[] = [];
+    for (const t of tabs) {
+      for (const p of Object.values(t.panes)) {
+        out.push({
+          tabId: t.id,
+          paneId: p.id,
+          title: p.title || p.path,
+          path: p.path,
+          active: t.id === activeId && p.id === t.activePane,
+        });
+      }
+    }
+    return out;
+  })();
   const bootRef = useRef(false);
   const noticeTimer = useRef<number | null>(null);
   /** 内容搜索结果定位：目录加载完成后选中该文件 */
@@ -556,7 +609,14 @@ useEffect(() => {
         }
         const root = remapNode(st.root as PaneNode, remap);
         const activePane = remap.get(st.activePane) ?? firstPaneId(root);
-        restored.push({ id: tabId, title: st.title || "", root, activePane, panes });
+        restored.push({
+          id: tabId,
+          title: st.title || "",
+          customTitle: st.customTitle,
+          root,
+          activePane,
+          panes,
+        });
       }
       if (restored.length === 0) return;
       setTabs(restored);
@@ -713,26 +773,32 @@ useEffect(() => {
   const navigate = useCallback(
     (path: string) => {
       if (!activePane) return;
-      // 路径相同也刷新（SFTP 连接成功后 entries 可能还是旧本地内容）
-      if (activePane.path === path) {
-        refreshPane(activePane.id);
-        return;
-      }
-      // SFTP：未连接的服务器先弹连接对话框
+      // SFTP：连接状态必须先判断——否则会话重启后未连接时，
+      // 重新输入同一路径只会走到"同路径刷新"而报错，不会弹连接框
       if (path.startsWith("sftp://")) {
         const au = parseSftpAuthority(path);
-        // 已连接且有完整 authority：直接导航
         if (au && sftpConnectedRef.current.has(au.id)) {
-          // fall through to patchPane
+          // 已连接：同路径刷新，否则继续导航
+          if (activePane.path === path) {
+            refreshPane(activePane.id);
+            return;
+          }
         } else if (au) {
-          // 有 authority 但未连接：弹连接框预填
+          // 有 authority 但未连接：记住目标路径，弹连接框预填，连上后直达该路径
+          pendingSftpPathRef.current =
+            au.remotePath && au.remotePath !== "/" ? au.remotePath : null;
           openConnect({ host: au.host, port: au.port, user: au.user });
           return;
         } else {
           // 只有 "sftp://" 没有 host/user：弹空白连接框
+          pendingSftpPathRef.current = null;
           openConnect({});
           return;
         }
+      } else if (activePane.path === path) {
+        // 本地路径相同也刷新
+        refreshPane(activePane.id);
+        return;
       }
       const m = path.match(VIRTUAL_TAG_RE);
       const history = [...activePane.history.slice(0, activePane.histIndex + 1), path];
@@ -853,8 +919,11 @@ useEffect(() => {
       syncSftpConnected(list);
       setSftpServers(list);
       const v = view ?? list.find((s) => s.id === config.id);
-      const remote = v?.defaultRemote || "/";
-      navigate(`sftp://${config.user}@${config.host}:${config.port}${remote}`);
+      // 地址栏带 path 的 URL → 直达该路径；否则落到服务器默认目录（root/home）
+      const pendingPath = pendingSftpPathRef.current;
+      pendingSftpPathRef.current = null;
+      const remote = pendingPath ?? v?.defaultRemote ?? "/";
+      navigate(sftpUrl(config.user, config.host, config.port, remote));
     },
     [navigate, showError, syncSftpConnected],
   );
@@ -867,6 +936,7 @@ useEffect(() => {
         // 用户取消：放弃所有挂起的连接/保存/会话恢复，保持布局不连接、不刷新
         pendingSaveRef.current = null;
         pendingConnectRef.current = null;
+        pendingSftpPathRef.current = null;
         const pending = pendingSftpRestoreRef.current;
         pendingSftpRestoreRef.current = [];
         for (const sp of pending) {
@@ -937,7 +1007,7 @@ useEffect(() => {
   const openSftpServer = useCallback(
     (sv: SftpServerView) => {
       if (sftpConnectedRef.current.has(sv.id)) {
-        navigate(`sftp://${sv.user}@${sv.host}:${sv.port}${sv.defaultRemote || "/"}`);
+        navigate(sftpUrl(sv.user, sv.host, sv.port, sv.defaultRemote || "/"));
         return;
       }
       if (sv.hasSecret) {
@@ -1085,6 +1155,25 @@ useEffect(() => {
   );
 
   const selectTab = useCallback((id: number) => setActiveId(id), []);
+
+  /** 激活指定标签页中的某个窗格（路径栏右侧「已连接窗格」下拉） */
+  const activatePane = useCallback((tabId: number, paneId: number) => {
+    setActiveId(tabId);
+    setTabs((ts) =>
+      ts.map((t) =>
+        t.id === tabId
+          ? { ...t, activePane: paneId, title: t.panes[paneId]?.title ?? t.title }
+          : t,
+      ),
+    );
+  }, []);
+
+  /** 右键标签重命名：空串恢复自动标题 */
+  const renameTab = useCallback((id: number, title: string) => {
+    setTabs((ts) =>
+      ts.map((t) => (t.id === id ? { ...t, customTitle: title || undefined } : t)),
+    );
+  }, []);
 
   const cycleTab = useCallback(
     (delta: number) => {
@@ -1273,6 +1362,8 @@ useEffect(() => {
       const list = paths ?? activePane?.selection ?? [];
       if (p === undefined || list.length === 0) return;
       setClipboard({ op: "copy", paths: list });
+      // 跨应用：同时写入系统剪贴板文件列表（best-effort，失败不影响应用内粘贴）
+      void clipboardWriteFiles(list).catch(() => {});
     },
     [activePane],
   );
@@ -1283,8 +1374,51 @@ useEffect(() => {
       const list = paths ?? activePane?.selection ?? [];
       if (p === undefined || list.length === 0) return;
       setClipboard({ op: "cut", paths: list });
+      void clipboardWriteFiles(list).catch(() => {});
     },
     [activePane],
+  );
+
+  /** 弹出冲突裁决弹窗，等待用户完成全部裁决；返回方案或 null（停止） */
+  const promptConflicts = useCallback(
+    (conflicts: TransferConflict[]) =>
+      new Promise<ResolutionPlan | null>((resolve) => {
+        conflictResolver.current = resolve;
+        setConflictReq(conflicts);
+      }),
+    [],
+  );
+
+  const finishConflicts = useCallback((plan: ResolutionPlan | null) => {
+    setConflictReq(null);
+    const resolve = conflictResolver.current;
+    conflictResolver.current = null;
+    resolve?.(plan);
+  }, []);
+
+  /**
+   * 带冲突裁决的复制/移动。先扫描同名冲突，弹窗收集裁决，再执行。
+   * 返回 null 表示用户「停止」或无需操作。
+   */
+  const runTransfer = useCallback(
+    async (
+      op: "copy" | "move",
+      paths: string[],
+      dest: string,
+    ): Promise<{ created?: string[]; moved?: [string, string][] } | null> => {
+      const conflicts = await scanConflicts(paths, dest);
+      let plan: ResolutionPlan = {};
+      if (conflicts.length > 0) {
+        const decision = await promptConflicts(conflicts);
+        if (!decision) return null;
+        plan = decision;
+      }
+      if (op === "move") {
+        return { moved: await moveEntriesPlan(paths, dest, plan) };
+      }
+      return { created: await copyEntriesPlan(paths, dest, plan) };
+    },
+    [promptConflicts],
   );
 
   /** 删除文件夹确认弹窗 */
@@ -1347,7 +1481,6 @@ useEffect(() => {
 
   const doPaste = useCallback(
     async (paneId?: number) => {
-      if (!clipboard) return;
       const pid = paneId ?? activePane?.id;
       if (pid === undefined) return;
       const pane = tabs
@@ -1355,8 +1488,15 @@ useEffect(() => {
         .find((p) => p.id === pid);
       if (!pane) return;
       const dest = pane.path;
-      const srcs = clipboard.paths;
-      const isCut = clipboard.op === "cut";
+      // 优先应用内剪贴板；为空则读系统剪贴板文件列表（跨应用粘贴）
+      let op: "copy" | "cut" = clipboard?.op ?? "copy";
+      let srcs = clipboard?.paths ?? [];
+      if (srcs.length === 0) {
+        srcs = await clipboardReadFiles().catch(() => []);
+        op = "copy";
+        if (srcs.length === 0) return;
+      }
+      const isCut = op === "cut";
       const localSrcs = srcs.filter((p) => !isSftpPath(p));
       const sftpSrcs = srcs.filter((p) => isSftpPath(p));
       const destIsSftp = isSftpPath(dest);
@@ -1379,15 +1519,15 @@ useEffect(() => {
           await sftpDownloadTo(dest, src);
         }
         if (localSrcs.length > 0) {
-          if (isCut) {
-            const pairs = await moveEntries(localSrcs, dest);
-            pushOp({ kind: "move", pairs, dest, srcPane: pid, destPane: pid });
-          } else {
-            const created = await copyEntries(localSrcs, dest);
+          const r = await runTransfer(isCut ? "move" : "copy", localSrcs, dest);
+          if (r === null) return; // 用户「停止」：保留剪贴板，不清理
+          if (r.moved) {
+            pushOp({ kind: "move", pairs: r.moved, dest, srcPane: pid, destPane: pid });
+          } else if (r.created) {
             pushOp({
               kind: "copy",
               src: localSrcs,
-              created,
+              created: r.created,
               dest,
               srcPane: pid,
               destPane: pid,
@@ -1404,7 +1544,7 @@ useEffect(() => {
         showError(String(e));
       }
     },
-    [clipboard, activePane, tabs, refreshPane, showError, pushOp, isSftpPath],
+    [clipboard, activePane, tabs, refreshPane, showError, pushOp, isSftpPath, runTransfer],
   );
 
   /** 复制到当前目录（Duplicate） */
@@ -1417,11 +1557,12 @@ useEffect(() => {
       return;
     }
     try {
-      const created = await copyEntries(activePane.selection, dest);
+      const r = await runTransfer("copy", activePane.selection, dest);
+      if (!r || !r.created) return; // 用户「停止」
       pushOp({
         kind: "copy",
         src: activePane.selection,
-        created,
+        created: r.created,
         dest,
         srcPane: paneId,
         destPane: paneId,
@@ -1430,7 +1571,7 @@ useEffect(() => {
     } catch (e) {
       showError(String(e));
     }
-  }, [activePane, refreshPane, showError, pushOp]);
+  }, [activePane, refreshPane, showError, pushOp, runTransfer]);
 
   /** 跨窗格拖拽落盘：目标 pane 的路径执行复制/移动，源、目标均刷新 */
   const doDropPaths = useCallback(
@@ -1490,16 +1631,16 @@ useEffect(() => {
           refreshPane(sourcePaneId);
           return;
         }
-        // 本地 ⇄ 本地：原逻辑
-        if (op === "move") {
-          const pairs = await moveEntries(paths, dest);
-          pushOp({ kind: "move", pairs, dest, srcPane: sourcePaneId, destPane: targetPaneId });
-        } else {
-          const created = await copyEntries(paths, dest);
+        // 本地 ⇄ 本地：带冲突裁决
+        const r = await runTransfer(op, paths, dest);
+        if (r === null) return; // 用户「停止」
+        if (r.moved) {
+          pushOp({ kind: "move", pairs: r.moved, dest, srcPane: sourcePaneId, destPane: targetPaneId });
+        } else if (r.created) {
           pushOp({
             kind: "copy",
             src: paths,
-            created,
+            created: r.created,
             dest,
             srcPane: sourcePaneId,
             destPane: targetPaneId,
@@ -1511,7 +1652,7 @@ useEffect(() => {
         showError(String(e));
       }
     },
-    [tabs, refreshPane, showError, pushOp, isSftpPath, isHttpPath],
+    [tabs, refreshPane, showError, pushOp, isSftpPath, isHttpPath, runTransfer],
   );
 
   const startRename = useCallback((paneId: number, entry: FileEntry) => {
@@ -1797,10 +1938,25 @@ useEffect(() => {
   }, []);
 
   // 搜索外部命令
-  const openSearch = useCallback((tab: "name" | "content") => {
+  const openSearch = useCallback(
+    (tab: "name" | "content") => {
+      setSearchPaneId(activePane?.id ?? null);
+      setSearchOpen(true);
+      setSearchCmd({ tab, tick: Date.now() });
+    },
+    [activePane],
+  );
+
+  /** 打开搜索面板：冻结当前活动窗格（切换窗格不再自动重搜） */
+  const openSearchPanel = useCallback(() => {
+    setSearchPaneId(activePane?.id ?? null);
     setSearchOpen(true);
-    setSearchCmd({ tab, tick: Date.now() });
-  }, []);
+  }, [activePane]);
+  const closeSearchPanel = useCallback(() => setSearchOpen(false), []);
+  const toggleSearchPanel = useCallback(() => {
+    if (searchOpen) closeSearchPanel();
+    else openSearchPanel();
+  }, [searchOpen, openSearchPanel, closeSearchPanel]);
 
   /** v0.8 窗口级缩放更新（Ctrl+滚轮，0.5–2.0，步进 0.1） */
   const setPaneZoom = useCallback((paneId: number, zoom: number) => {
@@ -2059,11 +2215,11 @@ useEffect(() => {
         onHome={() => homePath && navigate(homePath)}
         onRefresh={refresh}
         onToggleHidden={() => setShowHidden((v) => !v)}
-        onToggleSearch={() => setSearchOpen((v) => !v)}
+        onToggleSearch={toggleSearchPanel}
         onCopy={() => doCopy()}
         onCut={() => doCut()}
         onPaste={() => void doPaste()}
-        canPaste={!!clipboard && !!activePane}
+        canPaste={!!activePane}
         onRename={() => {
           if (activePane?.selection.length === 1) {
             const e = activePane.entries.find((x) => x.path === activePane.selection[0]);
@@ -2098,12 +2254,13 @@ useEffect(() => {
       />
 
       <TabBar
-        tabs={tabs.map((t) => ({ id: t.id, title: t.title }))}
+        tabs={tabs.map((t) => ({ id: t.id, title: t.customTitle ?? t.title }))}
         activeId={activeId}
         onSelect={selectTab}
         onClose={closeTab}
         onNew={newTab}
         onReorder={reorderTab}
+        onRename={renameTab}
       />
 
       <Toolbar
@@ -2121,8 +2278,39 @@ useEffect(() => {
         cwd={activePane?.path ?? homePath}
         onNavigate={navigate}
         searchOpen={searchOpen}
-        onToggleSearch={() => setSearchOpen((v) => !v)}
+        onToggleSearch={toggleSearchPanel}
         focusTick={addressFocusTick}
+        trailing={
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                title="已连接的路径（窗格列表）"
+              >
+                <ListTree className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-72 w-80 overflow-y-auto">
+              {paneList.map((p) => (
+                <DropdownMenuItem
+                  key={`${p.tabId}:${p.paneId}`}
+                  onClick={() => activatePane(p.tabId, p.paneId)}
+                  className="flex items-center gap-2"
+                >
+                  <span className="w-3 shrink-0 text-center font-mono text-primary">
+                    {p.active ? "*" : ""}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs">{p.title}</span>
+                  <span className="max-w-44 truncate text-[10px] text-muted-foreground">
+                    {p.path}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        }
       />
 
       <div className="flex min-h-0 flex-1">
@@ -2154,7 +2342,7 @@ useEffect(() => {
               activePaneId={activeTab.activePane}
               showHidden={showHidden}
               showProperties={showProperties}
-              canPaste={!!clipboard && !!activePane}
+              canPaste={!!activePane}
               renaming={renaming}
               dragOver={dragOver}
               fileTags={fileTags}
@@ -2169,11 +2357,12 @@ useEffect(() => {
           ) : null}
         </div>
 
-        {searchOpen && activePane && (
+        {searchOpen && searchPane && (
           <SearchPanel
-            entries={activePane.entries}
-            dir={activePane.path}
+            entries={searchPane.entries}
+            dir={searchPane.path}
             cmd={searchCmd}
+            onClose={closeSearchPanel}
             onOpen={(e) => {
               if (e.is_dir) {
                 navigate(e.path);
@@ -2252,7 +2441,10 @@ useEffect(() => {
         initial={connectInitial}
         masterKey={masterKeyStatus}
         onNeedMasterKey={requestMasterKey}
-        onClose={() => setConnectOpen(false)}
+        onClose={() => {
+          setConnectOpen(false);
+          pendingSftpPathRef.current = null;
+        }}
         onConnected={handleSftpConnected}
       />
 
@@ -2267,6 +2459,11 @@ useEffect(() => {
         }}
         onDone={(ok) => void handleMasterKeyDone(ok)}
       />
+
+      {/* 同名冲突裁决弹窗 */}
+      {conflictReq && (
+        <ConflictDialog conflicts={conflictReq} onDone={finishConflicts} />
+      )}
 
       {/* 删除文件夹确认弹窗 */}
       {confirmDelete && (

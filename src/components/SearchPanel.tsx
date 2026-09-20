@@ -5,6 +5,7 @@ import {
   FolderSearch,
   Loader2,
   SearchX,
+  X,
   Zap,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -60,6 +61,7 @@ export function SearchPanel({
   cmd,
   onOpen,
   onOpenContent,
+  onClose,
 }: {
   entries: FileEntry[];
   dir: string;
@@ -67,6 +69,8 @@ export function SearchPanel({
   cmd: { tab: "name" | "content"; tick: number } | null;
   onOpen: (entry: FileEntry) => void;
   onOpenContent: (dir: string, filePath: string) => void;
+  /** 关闭搜索面板（右上角 ×） */
+  onClose: () => void;
 }) {
   const [mode, setMode] = useState("name");
   const [query, setQuery] = useState("");
@@ -176,6 +180,24 @@ export function SearchPanel({
 
   return (
     <div className="flex w-64 shrink-0 flex-col border-l bg-muted/15">
+      {/* 标题 + 关闭（冻结的搜索目标目录随面板展示） */}
+      <div className="flex items-center gap-1 px-2 pt-2">
+        <span className="shrink-0 text-[11px] font-medium text-muted-foreground">搜索</span>
+        <span
+          className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground/70"
+          title={dir}
+        >
+          {dir}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          title="关闭搜索面板"
+          className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
       <Tabs value={mode} onValueChange={setMode} className="flex min-h-0 flex-1 flex-col">
         <div className="p-2 pb-0">
           <TabsList className="grid w-full grid-cols-2">

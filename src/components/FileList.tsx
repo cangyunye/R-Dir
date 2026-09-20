@@ -13,7 +13,6 @@ import {
   Pencil,
   RefreshCw,
   Scissors,
-  Settings2,
   Share2,
   Star,
   Trash2,
@@ -301,11 +300,6 @@ export function FileList({
   const [renameTagOpen, setRenameTagOpen] = useState(false);
   const [renameTagId, setRenameTagId] = useState<string>("red");
   const [renameTagInput, setRenameTagInput] = useState("");
-  const openRenameTagDialog = () => {
-    setRenameTagId("red");
-    setRenameTagInput(tagLabel(TAG_DEFS[0], tagNames));
-    setRenameTagOpen(true);
-  };
   const submitRenameTag = () => {
     const label = renameTagInput.trim();
     if (!label) return;
@@ -707,6 +701,17 @@ export function FileList({
                   role="row"
                   tabIndex={0}
                   data-path={entry.path}
+                  draggable="true"
+                  onDragStart={(e) => {
+                    // 跨应用拖出：把文件路径传给 OS
+                    // 选中文本为空时拖当前项，否则拖选中项
+                    const paths = selection.includes(entry.path) ? selection : [entry.path];
+                    // text/uri-list: file:///abs/path
+                    const uriList = paths.map(p => 'file://' + p.replace(/\\/g, '/')).join('\r\n');
+                    e.dataTransfer.setData('text/uri-list', uriList);
+                    e.dataTransfer.setData('text/plain', paths.join('\n'));
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
                   onMouseDown={(e) => startRowPress(e, entry)}
                   onClick={(e) => {
                     // 框选刚结束，抑制随后的 click，避免单行选择覆盖框选结果

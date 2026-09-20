@@ -66,7 +66,10 @@ export type PaneNode = { type: "pane"; paneId: number } | SplitNode;
 /** 标签页：一棵 pane 树 + 全部 pane 状态 */
 export interface TabState {
   id: number;
+  /** 自动标题（随活动窗格路径变化） */
   title: string;
+  /** 用户右键自定义标题；存在时优先展示，随会话保存 */
+  customTitle?: string;
   root: PaneNode;
   /** 当前聚焦的 pane id */
   activePane: number;
@@ -79,6 +82,25 @@ export interface ClipboardState {
   op: ClipOp;
   paths: string[];
 }
+
+/** 一条同名冲突（Rust ops::Conflict，camelCase） */
+export interface TransferConflict {
+  src: string;
+  dest: string;
+  srcKind: "file" | "dir";
+  destKind: "file" | "dir";
+  /** 默认改名（`name_1.ext`） */
+  suggest: string;
+}
+
+/** 单条冲突裁决（Rust ops::Resolution 的 wire 格式） */
+export type TransferResolution =
+  | { action: "overwrite" }
+  | { action: "skip" }
+  | { action: "rename"; name: string };
+
+/** dest 路径 → 裁决 */
+export type ResolutionPlan = Record<string, TransferResolution>;
 
 /** 内容搜索（ripgrep 风格）单条命中 */
 export interface SearchMatch {
@@ -166,6 +188,8 @@ export interface SessionPane {
 export interface SessionTab {
   id: number;
   title: string;
+  /** 用户自定义标签名（可选，随会话保存） */
+  customTitle?: string;
   activePane: number;
   root: unknown;
   panes: SessionPane[];

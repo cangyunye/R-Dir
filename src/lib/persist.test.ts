@@ -16,7 +16,6 @@ import {
   loadUiFontSize,
   saveUiFontSize,
   uiFontZoom,
-  UI_FONT_DEFAULT,
   UI_FONT_MIN,
   autoUiFontSize,
   UI_FONT_MAX,

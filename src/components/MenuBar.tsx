@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { ACTIONS, bindingOf, formatBinding } from "@/lib/keymap";
+import pkg from "../../package.json";
 
 export interface MenuActions {
   // 标签
@@ -287,7 +288,7 @@ export function MenuBar(actions: MenuActions) {
           <Shortcut id="openSettings" />
         </DropdownMenuItem>
         <DropdownMenuItem disabled>
-          <Info className="mr-2 h-4 w-4" /> 版本 0.8.1（Tauri 2 + React）
+          <Info className="mr-2 h-4 w-4" /> 版本 {pkg.version}（Tauri 2 + React）
         </DropdownMenuItem>
       </MenuButton>
 

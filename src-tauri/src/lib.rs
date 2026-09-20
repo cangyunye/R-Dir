@@ -1,3 +1,4 @@
+mod clipboard;
 mod compress;
 mod find;
 mod fs_ops;
@@ -700,6 +701,86 @@ fn move_entries(app: tauri::AppHandle, paths: Vec<String>, dest: String) -> Resu
     Ok(moved)
 }
 
+/// 扫描复制/移动前需用户裁决的同名冲突（同名目录可合并，不返回冲突）。
+#[tauri::command]
+fn scan_conflicts(paths: Vec<String>, dest: String) -> Result<Vec<ops::Conflict>, String> {
+    ops::scan_conflicts(&paths, &dest)
+}
+
+/// 按冲突裁决表复制，返回实际创建路径（供撤销记录）。
+#[tauri::command]
+fn copy_entries_plan(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    dest: String,
+    resolutions: std::collections::HashMap<String, ops::Resolution>,
+) -> Result<Vec<String>, String> {
+    let n = paths.len();
+    let created = ops::copy_entries_plan(&paths, &dest, &resolutions, &mut |file_done, file_total| {
+        let mut p = progress::TransferProgress::start("copy", "复制中…", n);
+        p.file_done = file_done;
+        p.file_total = file_total;
+        progress::emit(&app, &p);
+    })?;
+    progress::emit(
+        &app,
+        &progress::TransferProgress {
+            phase: "copy".into(),
+            label: "复制完成".into(),
+            done_files: n,
+            total_files: n,
+            file_done: 0,
+            file_total: 0,
+            done: true,
+            id: None,
+        },
+    );
+    Ok(created)
+}
+
+/// 按冲突裁决表移动，返回 (源, 目标) 路径对（供撤销反向移动）。
+#[tauri::command]
+fn move_entries_plan(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    dest: String,
+    resolutions: std::collections::HashMap<String, ops::Resolution>,
+) -> Result<Vec<(String, String)>, String> {
+    let n = paths.len();
+    let moved = ops::move_entries_plan(&paths, &dest, &resolutions, &mut |file_done, file_total| {
+        let mut p = progress::TransferProgress::start("move", "移动中…", n);
+        p.file_done = file_done;
+        p.file_total = file_total;
+        progress::emit(&app, &p);
+    })?;
+    progress::emit(
+        &app,
+        &progress::TransferProgress {
+            phase: "move".into(),
+            label: "移动完成".into(),
+            done_files: n,
+            total_files: n,
+            file_done: 0,
+            file_total: 0,
+            done: true,
+            id: None,
+        },
+    );
+    Ok(moved)
+}
+
+/// 把文件列表写入系统剪贴板（跨应用复制）。
+#[tauri::command]
+fn clipboard_write_files(paths: Vec<String>) -> Result<(), String> {
+    clipboard::write_file_list(&paths)
+}
+
+/// 从系统剪贴板读取文件列表（跨应用粘贴）。
+#[tauri::command]
+fn clipboard_read_files() -> Result<Vec<String>, String> {
+    clipboard::read_file_list()
+}
+
 /// 重命名条目，返回新路径。
 #[tauri::command]
 fn rename_entry(path: String, new_name: String) -> Result<String, String> {
@@ -785,6 +866,11 @@ pub fn run() {
         stat_path,
         copy_entries,
         move_entries,
+        scan_conflicts,
+        copy_entries_plan,
+        move_entries_plan,
+        clipboard_write_files,
+        clipboard_read_files,
         rename_entry,
         delete_entries,
         permanent_delete_entries,

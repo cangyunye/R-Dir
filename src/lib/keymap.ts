@@ -200,6 +200,33 @@ function normKey(k: string): string {
 }
 
 /**
+ * 物理键位 → 基础字符。
+ * 带 Shift 时 `e.key` 会变成符号（"." → ">"、"\" → "|"…），而绑定用的是基础字符，
+ * 所以按 `e.code` 归一化，保证 `mod+shift+.` / `mod+\` 等在任何平台都能命中。
+ */
+const CODE_KEY: Record<string, string> = {
+  Period: ".",
+  Comma: ",",
+  Slash: "/",
+  Semicolon: ";",
+  Quote: "'",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Backslash: "\\",
+  Minus: "-",
+  Equal: "=",
+  Backquote: "`",
+  Space: "space",
+};
+
+/** 事件的“主键字符”：优先按物理键位（e.code）归一化，回落 e.key */
+export function eventKeyOf(e: KeyboardEvent): string {
+  const byCode = e.code ? CODE_KEY[e.code] : undefined;
+  if (byCode) return byCode;
+  return normKey(e.key);
+}
+
+/**
  * 将 KeyboardEvent 归一化为绑定串（如 "mod+shift+n" / "f2" / "escape"）。
  * mac 分支同时识别 meta（mod）与 ctrl（ctrl+tab 例外）；win 分支 mod=ctrl。
  */
@@ -220,7 +247,7 @@ export function keyEventString(e: KeyboardEvent): string {
     if (e.altKey) parts.push("alt");
     if (e.shiftKey) parts.push("shift");
   }
-  parts.push(normKey(e.key));
+  parts.push(eventKeyOf(e));
   return parts.join("+");
 }
 

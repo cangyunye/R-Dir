@@ -37,3 +37,14 @@ export function joinRemote(remoteDir: string, name: string): string {
   const base = remoteDir.endsWith("/") ? remoteDir : remoteDir + "/";
   return base + name;
 }
+
+/** 构造 sftp 虚拟路径；remotePath 缺省/不以 / 开头时补成绝对路径。 */
+export function sftpUrl(
+  user: string,
+  host: string,
+  port: number,
+  remotePath: string,
+): string {
+  const p = remotePath && remotePath.startsWith("/") ? remotePath : `/${remotePath || ""}`;
+  return `sftp://${user}@${host}:${port}${p}`;
+}

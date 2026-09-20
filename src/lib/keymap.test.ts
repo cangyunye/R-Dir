@@ -85,6 +85,113 @@ describe("keyEventString（Windows 分支）", () => {
   it("Ctrl+L", () => {
     expect(keyEventString(ev({ key: "l", ctrlKey: true }))).toBe("mod+l");
   });
+
+  // 回归：Windows 上 Shift+. 的 e.key 是 ">"，按 e.code 归一化后应仍命中
+  it("Ctrl+Shift+. （真实 e.key='>'）→ mod+shift+.", () => {
+    const shifted = {
+      key: ">",
+      code: "Period",
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: true,
+      metaKey: false,
+    } as KeyboardEvent;
+    expect(keyEventString(shifted)).toBe("mod+shift+.");
+    expect(findAction(keyEventString(shifted))?.id).toBe("toggleHidden");
+  });
+
+  it("Ctrl+Shift+\\ （真实 e.key='|'）→ mod+shift+\\", () => {
+    const shifted = {
+      key: "|",
+      code: "Backslash",
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: true,
+      metaKey: false,
+    } as KeyboardEvent;
+    expect(keyEventString(shifted)).toBe("mod+shift+\\");
+    expect(findAction(keyEventString(shifted))?.id).toBe("focusNextPane");
+  });
+});
+
+// ---- 全量快捷键：绑定串 → 真实键盘事件 → 动作（Windows）----
+describe("全量快捷键事件级验证（Windows）", () => {
+  const CODE_OF: Record<string, string> = {
+    ".": "Period",
+    ",": "Comma",
+    "/": "Slash",
+    ";": "Semicolon",
+    "'": "Quote",
+    "[": "BracketLeft",
+    "]": "BracketRight",
+    "\\": "Backslash",
+    "-": "Minus",
+    "=": "Equal",
+    "`": "Backquote",
+  };
+  const SHIFTED: Record<string, string> = {
+    ".": ">",
+    ",": "<",
+    "/": "?",
+    ";": ":",
+    "'": '"',
+    "[": "{",
+    "]": "}",
+    "\\": "|",
+    "-": "_",
+    "=": "+",
+    "`": "~",
+  };
+  const KEY_OF: Record<string, string> = {
+    up: "ArrowUp",
+    down: "ArrowDown",
+    left: "ArrowLeft",
+    right: "ArrowRight",
+    esc: "Escape",
+    enter: "Enter",
+    tab: "Tab",
+    backspace: "Backspace",
+    delete: "Delete",
+    space: " ",
+  };
+
+  /** 按绑定串构造一个尽量真实的 KeyboardEvent（含 Shift 改变 e.key 的情况） */
+  function evFromCombo(combo: string): KeyboardEvent {
+    const parts = combo.split("+");
+    const keyPart = parts[parts.length - 1];
+    const mods = parts.slice(0, -1);
+    const shift = mods.includes("shift");
+    let key = keyPart;
+    let code = "";
+    if (CODE_OF[keyPart]) {
+      code = CODE_OF[keyPart];
+      key = shift ? (SHIFTED[keyPart] ?? keyPart) : keyPart;
+    } else if (KEY_OF[keyPart]) {
+      key = KEY_OF[keyPart];
+    } else if (/^f\d{1,2}$/.test(keyPart)) {
+      key = keyPart.toUpperCase();
+    } else {
+      key = shift ? keyPart.toUpperCase() : keyPart;
+    }
+    return {
+      key,
+      code,
+      ctrlKey: mods.includes("mod"),
+      altKey: mods.includes("alt"),
+      shiftKey: shift,
+      metaKey: false,
+    } as KeyboardEvent;
+  }
+
+  for (const a of ACTIONS) {
+    for (const combo of a.win.split(" / ")) {
+      it(`${a.id}：${combo} 可触发`, () => {
+        const ev = evFromCombo(combo);
+        expect(keyEventString(ev)).toBe(combo);
+        expect(findAction(keyEventString(ev))?.id).toBe(a.id);
+      });
+    }
+  }
 });
 
 // ---- findAction 全量快捷键映射（Windows）----
