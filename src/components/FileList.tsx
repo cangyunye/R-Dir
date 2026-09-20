@@ -40,6 +40,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import type { OpenerItem, ShellItem } from "@/lib/openerApi";
 import { TagDots } from "@/components/TagView";
 import { MenuGroup } from "@/components/MenuGroup";
+import { openersForEntry } from "@/lib/openers";
 
 const COLUMNS: { key: SortKey | null; label: string; width: string }[] = [
   { key: "name", label: "名称", width: "minmax(0, 1fr)" },
@@ -60,10 +61,6 @@ function extLabel(entry: FileEntry): string {
  * 存在大量寻址盲区（如 Edge 实际安装名为 Microsoft Edge.app），误报“未安装”，
  * 故 v0.4 起移除所有内置探测展示，右键“打开”即系统默认方式（可靠），
  * 其余工具由用户自行注册。 */
-function openersForEntry(openers: OpenerItem[]): OpenerItem[] {
-  return openers.filter((o) => o.kind === "custom");
-}
-
 /** 行内重命名输入框 */
 function RenameInput({
   initial,
@@ -209,7 +206,7 @@ export function FileList({
   shells: ShellItem[];
   onOpenWith: (toolId: string, path: string) => void;
   onOpenTerminal: (shellId: string, path: string) => void;
-  onAddCustomOpener: (path?: string) => Promise<void>;
+  onAddCustomOpener: (path?: string, ext?: string) => Promise<void>;
   dragTarget: boolean;
   dragOp: "copy" | "move";
   showHidden: boolean;
@@ -841,7 +838,7 @@ export function FileList({
                     onToggle={toggleMenuGroup}
                   >
                     {(() => {
-                      const customs = openersForEntry(openers);
+                      const customs = openersForEntry(openers, entry.extension);
                       return customs.length === 0 ? (
                         <ContextMenuItem disabled>
                           未注册打开方式，可点击下方“选择其他应用…”添加
@@ -856,7 +853,7 @@ export function FileList({
                       );
                     })()}
                     <ContextMenuSeparator />
-                    <ContextMenuItem onClick={() => void onAddCustomOpener(entry.path)}>
+                    <ContextMenuItem onClick={() => void onAddCustomOpener(entry.path, entry.extension)}>
                       <Plus className="mr-2 h-4 w-4" /> 选择其他应用…
                     </ContextMenuItem>
                   </MenuGroup>

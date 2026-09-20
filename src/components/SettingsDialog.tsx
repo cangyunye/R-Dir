@@ -1,12 +1,15 @@
 ﻿import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
+  ExternalLink,
   Keyboard,
   Moon,
+  Plus,
   Puzzle,
   RotateCcw,
   Share2,
   Sun,
+  Trash2,
   Type,
   X,
 } from "lucide-react";
@@ -23,7 +26,8 @@ import {
   setUserBinding,
 } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
-import type { PluginInfo } from "@/lib/openerApi";
+import type { OpenerItem, PluginInfo } from "@/lib/openerApi";
+import { normalizeExts } from "@/lib/openers";
 import {
   loadShareAllowParent,
   saveShareAllowParent,
@@ -49,6 +53,10 @@ export function SettingsDialog({
   uiFontFamily,
   onUiFontFamilyChange,
   fontFamilies,
+  openers,
+  onAddOpener,
+  onRemoveOpener,
+  onSetOpenerExtensions,
 }: {
   open: boolean;
   onClose: () => void;
@@ -64,6 +72,11 @@ export function SettingsDialog({
   uiFontFamily: string;
   onUiFontFamilyChange: (id: string) => void;
   fontFamilies: { id: string; label: string }[];
+  /** v0.11 打开方式（扩展名关联管理） */
+  openers: OpenerItem[];
+  onAddOpener: () => void;
+  onRemoveOpener: (id: string) => void;
+  onSetOpenerExtensions: (id: string, extensions: string[]) => void;
 }) {
   /** v0.7 分享设置 */
   const [shareAllowParent, setShareAllowParent] = useState(() => loadShareAllowParent());
@@ -71,7 +84,9 @@ export function SettingsDialog({
   /** 正在录制键位的 actionId（null = 未录制） */
   const [recordingId, setRecordingId] = useState<string | null>(null);
   /** v0.8 分类导航当前分区 */
-  const [section, setSection] = useState<"appearance" | "keys" | "share" | "plugins">("appearance");
+  const [section, setSection] = useState<"appearance" | "keys" | "share" | "plugins" | "openers">("appearance");
+  /** v0.11 每个打开方式的「新增扩展名」输入草稿 */
+  const [extInput, setExtInput] = useState<Record<string, string>>({});
   /** 冲突提示（combo → 占用者 label） */
   const [conflict, setConflict] = useState<string | null>(null);
   /** 本地操作反馈（已绑定 / 已恢复） */
@@ -158,9 +173,10 @@ export function SettingsDialog({
 
   const groups = [...new Set(ACTIONS.map((a) => a.group))];
 
-  const sections: { id: "appearance" | "keys" | "share" | "plugins"; label: string; icon: React.ReactNode }[] = [
+  const sections: { id: "appearance" | "keys" | "share" | "plugins" | "openers"; label: string; icon: React.ReactNode }[] = [
     { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
     { id: "keys", label: "快捷键", icon: <Keyboard className="h-4 w-4" /> },
+    { id: "openers", label: "打开方式", icon: <ExternalLink className="h-4 w-4" /> },
     { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
     { id: "plugins", label: "插件", icon: <Puzzle className="h-4 w-4" /> },
   ];
@@ -406,6 +422,116 @@ export function SettingsDialog({
                     </div>
                   </div>
                 ))}
+              </>
+            )}
+
+            {section === "openers" && (
+              <>
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-xs font-semibold text-primary">打开方式</div>
+                  <button
+                    onClick={onAddOpener}
+                    className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    title="选择应用程序添加"
+                  >
+                    <Plus className="h-3 w-3" /> 添加
+                  </button>
+                </div>
+                <p className="mb-3 text-[11px] text-muted-foreground">
+                  每个打开方式只对已关联的扩展名生效（<span className="font-mono">*</span> 表示所有类型）。
+                  右键文件 → 打开方式 → 选择其他应用… 会自动关联该文件的扩展名。
+                </p>
+
+                {openers.length === 0 ? (
+                  <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                    还没有自定义打开方式。右键文件 → 打开方式 → 选择其他应用… 添加。
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {openers.map((o) => (
+                      <div key={o.id} className="rounded-md border px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="truncate text-xs font-medium">{o.name}</span>
+                            {!o.detected && (
+                              <span className="shrink-0 rounded-sm bg-destructive/10 px-1 py-0.5 text-[10px] text-destructive">
+                                未找到
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => onRemoveOpener(o.id)}
+                            className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                            title="删除此打开方式"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <div className="mt-0.5 truncate text-[10px] text-muted-foreground" title={o.exec ?? ""}>
+                          {o.exec}
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          {o.extensions.length === 0 ? (
+                            <span className="text-[10px] text-muted-foreground">
+                              未关联任何类型（不会出现在右键）
+                            </span>
+                          ) : (
+                            o.extensions.map((ext) => (
+                              <span
+                                key={ext}
+                                className="flex items-center gap-1 rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px]"
+                              >
+                                {ext}
+                                <button
+                                  onClick={() =>
+                                    onSetOpenerExtensions(
+                                      o.id,
+                                      o.extensions.filter((x) => x !== ext),
+                                    )
+                                  }
+                                  className="text-muted-foreground transition-colors hover:text-destructive"
+                                  title="移除该扩展名"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))
+                          )}
+                        </div>
+                        <form
+                          className="mt-1.5 flex items-center gap-1.5"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            const parts = (extInput[o.id] ?? "")
+                              .split(/[\s,，、;；]+/)
+                              .filter(Boolean);
+                            if (parts.length === 0) return;
+                            onSetOpenerExtensions(
+                              o.id,
+                              normalizeExts([...o.extensions, ...parts]),
+                            );
+                            setExtInput((s) => ({ ...s, [o.id]: "" }));
+                          }}
+                        >
+                          <input
+                            value={extInput[o.id] ?? ""}
+                            onChange={(e) =>
+                              setExtInput((s) => ({ ...s, [o.id]: e.target.value }))
+                            }
+                            placeholder="如 json, yaml（逗号/空格分隔，回车添加）"
+                            className="w-72 rounded border bg-background px-2 py-1 text-[11px]"
+                          />
+                          <button
+                            type="submit"
+                            className="shrink-0 rounded border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          >
+                            添加
+                          </button>
+                        </form>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
 

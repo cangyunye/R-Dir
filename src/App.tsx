@@ -12,6 +12,8 @@ import {
   cancelHttpDownload,
   openWith as apiOpenWith,
   addCustomOpener as apiAddCustomOpener,
+  removeCustomOpener as apiRemoveCustomOpener,
+  setOpenerExtensions as apiSetOpenerExtensions,
   listShells as apiListShells,
   openTerminal as apiOpenTerminal,
   type OpenerItem,
@@ -76,6 +78,7 @@ import { ConflictDialog } from "@/components/ConflictDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
 import type { MasterKeyStatus, SftpServerConfig, SftpServerView } from "@/lib/types";
 import { basename } from "@/lib/format";
+import { normalizeExts } from "@/lib/openers";
 import {
   collectPaneIds,
   firstPaneId,
@@ -492,7 +495,7 @@ useEffect(() => {
     [showError],
   );
   const handleAddCustomOpener = useCallback(
-    async (path?: string) => {
+    async (path?: string, ext?: string) => {
       try {
         const picked = await openDialog({
           title: "选择应用程序",
@@ -500,15 +503,21 @@ useEffect(() => {
           directory: false,
         });
         if (!picked || Array.isArray(picked)) return;
-        // 已注册过 → 直接用它打开，不重复添加
+        const wanted = ext ? normalizeExts([ext]) : [];
+        // 已注册过 → 补齐本次文件类型的关联，再用它打开
         const existing = openers.find((o) => o.exec === picked);
         if (existing) {
+          const merged = normalizeExts([...existing.extensions, ...wanted]);
+          if (merged.length !== existing.extensions.length) {
+            await apiSetOpenerExtensions(existing.id, merged);
+            refreshOpeners();
+          }
           if (path) void apiOpenWith(existing.id, path).catch((e) => showError(`打开失败：${e}`));
           return;
         }
         // 名称取可执行文件名（去掉 .app），无需再弹输入框（Tauri WKWebView 不支持 window.prompt）
         const name = basename(picked).replace(/\.app$/i, "");
-        const item = await apiAddCustomOpener(name, picked, []);
+        const item = await apiAddCustomOpener(name, picked, wanted);
         refreshOpeners();
         // 选定即用：直接用新注册的应用打开当前文件
         if (path) void apiOpenWith(item.id, path).catch((e) => showError(`打开失败：${e}`));
@@ -517,6 +526,34 @@ useEffect(() => {
       }
     },
     [openers, refreshOpeners, showError],
+  );
+
+  /** 设置面板：删除某个自定义打开方式 */
+  const handleRemoveCustomOpener = useCallback(
+    async (id: string) => {
+      const o = openers.find((x) => x.id === id);
+      if (!(await confirmDialog(`删除打开方式「${o?.name ?? id}」？`))) return;
+      try {
+        await apiRemoveCustomOpener(id);
+        refreshOpeners();
+      } catch (e) {
+        showError(`删除打开方式失败：${e}`);
+      }
+    },
+    [openers, refreshOpeners, showError],
+  );
+
+  /** 设置面板：覆盖设置某打开方式的关联扩展名 */
+  const handleSetOpenerExtensions = useCallback(
+    async (id: string, extensions: string[]) => {
+      try {
+        await apiSetOpenerExtensions(id, extensions);
+        refreshOpeners();
+      } catch (e) {
+        showError(`保存扩展名失败：${e}`);
+      }
+    },
+    [refreshOpeners, showError],
   );
 
   // 主题同步
@@ -2445,6 +2482,10 @@ useEffect(() => {
           saveUiFontFamily(id);
         }}
         fontFamilies={UI_FONT_FAMILIES}
+        openers={openers}
+        onAddOpener={() => void handleAddCustomOpener()}
+        onRemoveOpener={handleRemoveCustomOpener}
+        onSetOpenerExtensions={handleSetOpenerExtensions}
       />
 
       <ConnectDialog

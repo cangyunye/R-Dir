@@ -31,6 +31,10 @@ export const addCustomOpener = (name: string, exec: string, extensions: string[]
 export const removeCustomOpener = (id: string) =>
   invoke<void>("remove_custom_opener", { id });
 
+/** 覆盖设置某打开方式的关联扩展名 */
+export const setOpenerExtensions = (id: string, extensions: string[]) =>
+  invoke<void>("set_opener_extensions", { id, extensions });
+
 /** 列出可用终端 */
 export const listShells = () => invoke<ShellItem[]>("list_shells");
 

@@ -911,6 +911,7 @@ pub fn run() {
         opener::list_openers,
         opener::open_with,
         opener::add_custom_opener,
+        opener::set_opener_extensions,
         opener::remove_custom_opener,
         opener::list_shells,
         opener::open_terminal,

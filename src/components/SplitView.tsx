@@ -29,7 +29,7 @@ export interface PaneHandlers {
   onOpenWith: (toolId: string, path: string) => void;
   onOpenTerminal: (shellId: string, path: string) => void;
   /** v0.4 添加自定义打开方式（文件选择器 + 命名） */
-  onAddCustomOpener: () => Promise<void>;
+  onAddCustomOpener: (path?: string, ext?: string) => Promise<void>;
   onCopy: (paneId: number, paths: string[]) => void;
   onCut: (paneId: number, paths: string[]) => void;
   onDelete: (paneId: number, paths: string[]) => void;
