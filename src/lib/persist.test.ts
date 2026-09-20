@@ -18,6 +18,7 @@ import {
   uiFontZoom,
   UI_FONT_DEFAULT,
   UI_FONT_MIN,
+  autoUiFontSize,
   UI_FONT_MAX,
 } from "./persist";
 
@@ -89,8 +90,10 @@ describe("分享设置", () => {
 });
 
 describe("UI 字体", () => {
-  it("默认 15px", () => {
-    expect(loadUiFontSize()).toBe(UI_FONT_DEFAULT);
+  it("默认根据屏幕宽度自适应", () => {
+    const v = loadUiFontSize();
+    expect(v).toBeGreaterThanOrEqual(13);
+    expect(v).toBeLessThanOrEqual(16);
   });
   it("保存后读回", () => {
     saveUiFontSize(16);
@@ -103,9 +106,11 @@ describe("UI 字体", () => {
     saveUiFontSize(30);
     expect(loadUiFontSize()).toBe(UI_FONT_MAX);
   });
-  it("老用户 13px 自动迁移到 15px", () => {
+  it("老用户 13px 自动迁移到自适应大小", () => {
     localStorage.setItem("rfm.ui-font", "13");
-    expect(loadUiFontSize()).toBe(15);
+    const v = loadUiFontSize();
+    expect(v).toBeGreaterThanOrEqual(13);
+    expect(v).toBeLessThanOrEqual(16);
   });
   it("uiFontZoom 以 13 为基准", () => {
     expect(uiFontZoom(13)).toBe(1);
@@ -166,5 +171,25 @@ describe("字体族", () => {
   it("saveUiFontFamily 后 loadUiFontFamily 返回相同值", () => {
     saveUiFontFamily("pingfang");
     expect(loadUiFontFamily()).toBe("pingfang");
+  });
+});
+
+// ---- v0.8.1 自适应字体大小 ----
+describe("autoUiFontSize", () => {
+  it("小屏 (<1280) 返回 13", () => {
+    Object.defineProperty(window, "innerWidth", { value: 1024, configurable: true });
+    expect(autoUiFontSize()).toBe(13);
+  });
+  it("中屏 (1280-1600) 返回 14", () => {
+    Object.defineProperty(window, "innerWidth", { value: 1440, configurable: true });
+    expect(autoUiFontSize()).toBe(14);
+  });
+  it("大屏 (1600-2000) 返回 15", () => {
+    Object.defineProperty(window, "innerWidth", { value: 1920, configurable: true });
+    expect(autoUiFontSize()).toBe(15);
+  });
+  it("超大屏 (>2000) 返回 16", () => {
+    Object.defineProperty(window, "innerWidth", { value: 2560, configurable: true });
+    expect(autoUiFontSize()).toBe(16);
   });
 });

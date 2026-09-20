@@ -915,10 +915,6 @@ export function FileList({
                     </ContextMenuItem>
                   );
                 })}
-                <ContextMenuItem onSelect={() => openRenameTagDialog()}>
-                  <Settings2 className="mr-2 h-4 w-4" /> 重命名标签…
-                </ContextMenuItem>
-                <ContextMenuSeparator />
                 {/* 快捷访问（Finder 边栏式） */}
                 <ContextMenuItem onClick={() => onToggleQuick(entry.path)}>
                   <Star className="mr-2 h-4 w-4" />

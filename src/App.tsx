@@ -2151,7 +2151,7 @@ useEffect(() => {
               customQuick={customQuick}
               onOpenTagFile={openTagFile}
               onExitTag={exitTagViewForPane}
-              activeStyle={(localStorage.getItem("rdir.active-style") as "waterfall" | "lift") || "lift"}
+              activeStyle={activeTab && isSinglePane(activeTab.root) ? "none" : ((localStorage.getItem("rdir.active-style") as "waterfall" | "lift") || "lift")}
               handlers={handlers}
             />
           ) : null}

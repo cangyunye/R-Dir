@@ -88,7 +88,7 @@ function PaneView({
 }: {
   pane: PaneState;
   showHidden: boolean;
-  activeStyle: "waterfall" | "lift";
+  activeStyle: "waterfall" | "lift" | "none";
   showProperties: boolean;
   renaming: RenameState | null;
   isActive: boolean;
@@ -275,7 +275,7 @@ export function SplitView({
   customQuick: string[];
   onOpenTagFile: (path: string) => void;
   onExitTag: (paneId: number) => void;
-  activeStyle: "waterfall" | "lift";
+  activeStyle: "waterfall" | "lift" | "none";
   handlers: PaneHandlers;
 }) {
   if (node.type === "pane") {

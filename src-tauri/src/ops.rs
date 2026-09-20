@@ -62,7 +62,18 @@ pub fn rename_entry(path: &str, new_name: &str) -> Result<String, String> {
 /// 删除条目（进回收站）。
 pub fn delete_entries(paths: &[String]) -> Result<(), String> {
     let paths: Vec<&Path> = paths.iter().map(|s| Path::new(s)).collect();
-    trash::delete_all(&paths).map_err(|e| format!("删除失败：{}", e))?;
+    trash::delete_all(&paths).map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("拒绝访问") || msg.contains("Permission denied") || msg.contains("access") {
+            format!("删除失败：权限不足，请以管理员身份运行 R-Dir，或将文件拖到回收站后手动清空。
+详情：{}", msg)
+        } else if msg.contains("being used") || msg.contains("占用") {
+            format!("删除失败：文件正在被其他程序占用，请关闭后重试。
+详情：{}", msg)
+        } else {
+            format!("删除失败：{}", msg)
+        }
+    })?;
     Ok(())
 }
 
