@@ -3,7 +3,7 @@ import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import {
   listOpeners as apiListOpeners,
   listPlugins as apiListPlugins,
@@ -491,22 +491,33 @@ useEffect(() => {
     },
     [showError],
   );
-  const handleAddCustomOpener = useCallback(async () => {
-    try {
-      const picked = await openDialog({
-        title: "选择可执行文件",
-        multiple: false,
-        directory: false,
-      });
-      if (!picked || Array.isArray(picked)) return;
-      const name = window.prompt("为该程序输入显示名称：", "");
-      if (!name || !name.trim()) return;
-      await apiAddCustomOpener(name.trim(), picked, []);
-      refreshOpeners();
-    } catch (e) {
-      showError(`添加打开方式失败：${e}`);
-    }
-  }, [refreshOpeners, showError]);
+  const handleAddCustomOpener = useCallback(
+    async (path?: string) => {
+      try {
+        const picked = await openDialog({
+          title: "选择应用程序",
+          multiple: false,
+          directory: false,
+        });
+        if (!picked || Array.isArray(picked)) return;
+        // 已注册过 → 直接用它打开，不重复添加
+        const existing = openers.find((o) => o.exec === picked);
+        if (existing) {
+          if (path) void apiOpenWith(existing.id, path).catch((e) => showError(`打开失败：${e}`));
+          return;
+        }
+        // 名称取可执行文件名（去掉 .app），无需再弹输入框（Tauri WKWebView 不支持 window.prompt）
+        const name = basename(picked).replace(/\.app$/i, "");
+        const item = await apiAddCustomOpener(name, picked, []);
+        refreshOpeners();
+        // 选定即用：直接用新注册的应用打开当前文件
+        if (path) void apiOpenWith(item.id, path).catch((e) => showError(`打开失败：${e}`));
+      } catch (e) {
+        showError(`添加打开方式失败：${e}`);
+      }
+    },
+    [openers, refreshOpeners, showError],
+  );
 
   // 主题同步
   useEffect(() => {
@@ -1069,7 +1080,7 @@ useEffect(() => {
   /** 侧边栏右键"删除服务器配置"（连接不断开） */
   const handleSftpRemove = useCallback(
     async (sv: SftpServerView) => {
-      if (!window.confirm(`删除服务器配置「${sv.name}」？连接不会断开。`)) return;
+      if (!(await confirmDialog(`删除服务器配置「${sv.name}」？连接不会断开。`))) return;
       try {
         const list = await sftpRemoveServer(sv.id);
         syncSftpConnected(list);
@@ -1741,7 +1752,7 @@ useEffect(() => {
       showError("远程删除直接生效（服务器无回收站），请使用删除");
       return;
     }
-    if (!window.confirm(`永久删除 ${list.length} 项？此操作不可恢复。`)) return;
+    if (!(await confirmDialog(`永久删除 ${list.length} 项？此操作不可恢复。`))) return;
     try {
       await permanentDeleteEntries(list);
       setTabs((ts) =>
