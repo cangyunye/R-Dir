@@ -35,6 +35,10 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
       onAddOpener={onAddOpener}
       onRemoveOpener={onRemoveOpener}
       onSetOpenerExtensions={onSetOpenerExtensions}
+      appName="R-Dir"
+      appVersion="0.0.0-test"
+      onOpenRepo={() => {}}
+      onCheckUpdate={() => {}}
       {...over}
     />,
   );
@@ -87,5 +91,13 @@ describe("SettingsDialog 打开方式分区", () => {
   it("空列表显示引导文案", () => {
     setup({ openers: [] });
     expect(screen.getByText(/还没有自定义打开方式/)).toBeInTheDocument();
+  });
+});
+
+describe("SettingsDialog 关于分区", () => {
+  it("显示应用名与版本（随 tag 同步）", () => {
+    setup({ appName: "R-Dir", appVersion: "9.9.9" });
+    fireEvent.click(screen.getByText("关于"));
+    expect(screen.getByText("版本 v9.9.9 · Tauri 2 + React")).toBeInTheDocument();
   });
 });

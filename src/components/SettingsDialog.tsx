@@ -1,7 +1,10 @@
 ﻿import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
+  Download,
   ExternalLink,
+  Globe,
+  Info,
   Keyboard,
   Moon,
   Plus,
@@ -58,6 +61,10 @@ export function SettingsDialog({
   onAddOpener,
   onRemoveOpener,
   onSetOpenerExtensions,
+  appName,
+  appVersion,
+  onOpenRepo,
+  onCheckUpdate,
 }: {
   open: boolean;
   onClose: () => void;
@@ -78,6 +85,11 @@ export function SettingsDialog({
   onAddOpener: () => void;
   onRemoveOpener: (id: string) => void;
   onSetOpenerExtensions: (id: string, extensions: string[]) => void;
+  /** 应用名 / 版本（getVersion = tauri.conf.json 版本，随 tag 同步） */
+  appName: string;
+  appVersion: string;
+  onOpenRepo: () => void;
+  onCheckUpdate: () => void;
 }) {
   /** v0.7 分享设置 */
   const [shareAllowParent, setShareAllowParent] = useState(() => loadShareAllowParent());
@@ -85,7 +97,7 @@ export function SettingsDialog({
   /** 正在录制键位的 actionId（null = 未录制） */
   const [recordingId, setRecordingId] = useState<string | null>(null);
   /** v0.8 分类导航当前分区 */
-  const [section, setSection] = useState<"appearance" | "keys" | "share" | "plugins" | "openers">("appearance");
+  const [section, setSection] = useState<"appearance" | "keys" | "share" | "plugins" | "openers" | "about">("appearance");
   /** v0.11 每个打开方式的「新增扩展名」输入草稿 */
   const [extInput, setExtInput] = useState<Record<string, string>>({});
   /** 冲突提示（combo → 占用者 label） */
@@ -174,12 +186,13 @@ export function SettingsDialog({
 
   const groups = [...new Set(ACTIONS.map((a) => a.group))];
 
-  const sections: { id: "appearance" | "keys" | "share" | "plugins" | "openers"; label: string; icon: React.ReactNode }[] = [
+  const sections: { id: "appearance" | "keys" | "share" | "plugins" | "openers" | "about"; label: string; icon: React.ReactNode }[] = [
     { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
     { id: "keys", label: "快捷键", icon: <Keyboard className="h-4 w-4" /> },
     { id: "openers", label: "打开方式", icon: <ExternalLink className="h-4 w-4" /> },
     { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
     { id: "plugins", label: "插件", icon: <Puzzle className="h-4 w-4" /> },
+    { id: "about", label: "关于", icon: <Info className="h-4 w-4" /> },
   ];
 
   return (
@@ -661,6 +674,39 @@ export function SettingsDialog({
                 </div>
               </>
             )}
+
+            {section === "about" && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 rounded-md border px-3 py-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Info className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-foreground">{appName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      版本 v{appVersion || "—"} · Tauri 2 + React
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={onCheckUpdate}
+                    className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
+                  >
+                    <Download className="h-3.5 w-3.5" /> 检查更新
+                  </button>
+                  <button
+                    onClick={onOpenRepo}
+                    className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
+                  >
+                    <Globe className="h-3.5 w-3.5" /> GitHub 仓库
+                  </button>
+                </div>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  版本号取自应用元数据（tauri.conf.json），随发布 tag 同步。
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -668,7 +714,9 @@ export function SettingsDialog({
           <span className="flex items-center gap-1">
             <Check className="h-3 w-3" /> 配置自动保存在本机（localStorage）
           </span>
-          <span>{isMac ? "macOS" : "Windows"} 键位</span>
+          <span>
+            {appName} v{appVersion || "—"} · {isMac ? "macOS" : "Windows"}
+          </span>
         </div>
       </div>
     </div>

@@ -111,6 +111,29 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # 版本号以 tag 为准：v0.12.0 → 0.12.0 写入三处版本字段，
+      # 保证程序内「设置 → 关于」显示的版本与 tag / Release 资产完全一致（防止漏改）。
+      - name: Sync version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const v = process.env.GITHUB_REF_NAME.replace(/^v/, '');
+          const patchJson = (p, fn) => {
+            const o = JSON.parse(fs.readFileSync(p, 'utf8'));
+            fn(o);
+            fs.writeFileSync(p, JSON.stringify(o, null, 2) + '\n');
+          };
+          patchJson('package.json', (o) => (o.version = v));
+          patchJson('src-tauri/tauri.conf.json', (o) => (o.version = v));
+          const cargo = fs
+            .readFileSync('src-tauri/Cargo.toml', 'utf8')
+            .replace(/^version = ".*"/m, `version = "${v}"`);
+          fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+          console.log(`synced app version -> ${v}`);
+          NODE
+
       # releaseDraft: true —— 先建 Draft，三个平台全部成功后由 publish job 统一转正。
       # 否则第一个完成的 job 就把 release 发布成 Latest，用户会下到缺 Windows/ARM 资产的残缺版。
       - name: Build & release (tauri-action)

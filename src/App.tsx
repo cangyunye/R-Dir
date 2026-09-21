@@ -2335,6 +2335,10 @@ useEffect(() => {
         onAddOpener={() => void handleAddCustomOpener()}
         onRemoveOpener={handleRemoveCustomOpener}
         onSetOpenerExtensions={handleSetOpenerExtensions}
+        appName={appName}
+        appVersion={appVersion}
+        onOpenRepo={openRepo}
+        onCheckUpdate={() => void checkUpdate(false)}
       />
 
       <ConnectDialog
