@@ -38,17 +38,6 @@ export const setOpenerExtensions = (id: string, extensions: string[]) =>
 /** 列出可用终端 */
 export const listShells = () => invoke<ShellItem[]>("list_shells");
 
-export interface FileTypes {
-  groups: Record<string, string[]>;
-  defaultApps: Record<string, string>;
-}
-
-/** 读取文件类型目录（无配置时首次生成 + 系统默认应用探测） */
-export const getFileTypes = () => invoke<FileTypes>("get_filetypes");
-
-/** 刷新文件关联：重新探测系统默认打开应用并持久化 */
-export const refreshFileTypes = () => invoke<FileTypes>("refresh_filetypes");
-
 /** 在指定目录打开终端 */
 export const openTerminal = (shellId: string, path: string) =>
   invoke<void>("open_terminal", { shellId, path });

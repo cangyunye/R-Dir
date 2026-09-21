@@ -86,10 +86,10 @@ pub fn list_dir(path: &str) -> Result<Vec<FileEntry>, String> {
     let rd = std::fs::read_dir(p).map_err(|e| format!("无法读取目录 {}：{}", path, e))?;
     let mut entries: Vec<FileEntry> = rd
         .filter_map(|e| e.ok())
-        .filter(|e| {
+        .filter(|_e| {
             #[cfg(target_os = "windows")]
             {
-                !is_legacy_known_folder(&e.file_name().to_string_lossy())
+                !is_legacy_known_folder(&_e.file_name().to_string_lossy())
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -186,5 +186,85 @@ fn perm_string(md: &std::fs::Metadata) -> String {
         "r--".to_string()
     } else {
         "rw-".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("rdir-fsops-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn list_dir_puts_dirs_first_then_name_order() {
+        let base = tmp("list-order");
+        std::fs::create_dir_all(base.join("zdir")).unwrap();
+        std::fs::create_dir_all(base.join("adir")).unwrap();
+        std::fs::write(base.join("b.txt"), b"bb").unwrap();
+        std::fs::write(base.join("a.txt"), b"a").unwrap();
+
+        let got: Vec<String> = list_dir(&base.to_string_lossy())
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(got, vec!["adir", "zdir", "a.txt", "b.txt"]);
+    }
+
+    #[test]
+    fn list_dir_fills_metadata_fields() {
+        let base = tmp("list-meta");
+        std::fs::write(base.join("hello.TXT"), b"12345").unwrap();
+        let e = list_dir(&base.to_string_lossy())
+            .unwrap()
+            .into_iter()
+            .find(|e| e.name == "hello.TXT")
+            .expect("应列出 hello.TXT");
+
+        assert!(!e.is_dir);
+        assert!(!e.is_symlink);
+        assert_eq!(e.size, 5);
+        assert_eq!(e.extension, "txt", "扩展名应小写且不带点");
+        assert_eq!(e.path, base.join("hello.TXT").to_string_lossy());
+        assert!(e.modified.is_some());
+        assert!(!e.permissions.is_empty());
+    }
+
+    #[test]
+    fn list_dir_missing_path_errors_without_panic() {
+        let base = tmp("list-missing");
+        let ghost = base.join("nope");
+        assert!(list_dir(&ghost.to_string_lossy()).is_err());
+    }
+
+    #[test]
+    fn complete_path_matches_dirs_only_and_respects_cwd() {
+        let base = tmp("complete");
+        std::fs::create_dir_all(base.join("Documents")).unwrap();
+        std::fs::create_dir_all(base.join("Downloads")).unwrap();
+        std::fs::write(base.join("Doc.txt"), b"x").unwrap();
+        let cwd = base.to_string_lossy().to_string();
+
+        let hits = complete_path("Do", &cwd);
+        assert_eq!(hits.len(), 2, "只补全目录，Doc.txt 不应出现：{hits:?}");
+        assert!(hits[0].ends_with("Documents"));
+        assert!(hits[1].ends_with("Downloads"));
+
+        assert!(complete_path("nomatch", &cwd).is_empty());
+        assert_eq!(complete_path("Do", &cwd).len(), 2, "结果应稳定可重复");
+    }
+
+    #[test]
+    fn complete_path_caps_at_50_results() {
+        let base = tmp("complete-cap");
+        for i in 0..60 {
+            std::fs::create_dir_all(base.join(format!("d{i:02}"))).unwrap();
+        }
+        assert_eq!(complete_path("d", &base.to_string_lossy()).len(), 50);
     }
 }

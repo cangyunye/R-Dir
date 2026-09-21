@@ -3,7 +3,13 @@ import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open as openDialog, confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
+import { getName, getVersion } from "@tauri-apps/api/app";
+import {
+  open as openDialog,
+  confirm as confirmDialog,
+  ask as askDialog,
+  message as messageDialog,
+} from "@tauri-apps/plugin-dialog";
 import {
   listOpeners as apiListOpeners,
   listPlugins as apiListPlugins,
@@ -36,7 +42,8 @@ import type {
   TransferProgress,
   VolumeInfo,
 } from "@/lib/types";
-import { parseSftpAuthority, isSftpPath, isHttpPath, sftpUrl } from "@/lib/sftp-path";
+import { parseSftpAuthority, isSftpPath, isHttpPath } from "@/lib/sftp-path";
+import { useSftp } from "@/hooks/useSftp";
 import {
   copyEntries,
   copyEntriesPlan,
@@ -60,23 +67,17 @@ import {
   sftpDelete,
   sftpDownload,
   sftpDownloadTo,
-  sftpListServers,
-  sftpMasterKeyStatus,
   sftpMkdir,
   sftpRename,
-  sftpSaveServer,
-  sftpRemoveServer,
-  sftpDisconnect,
   sftpUpload,
   sessionLoad,
   sessionSave,
   statPath,
   compressItems,
 } from "@/lib/api";
-import { ConnectDialog, type SftpConnectInitial } from "@/components/ConnectDialog";
+import { ConnectDialog } from "@/components/ConnectDialog";
 import { ConflictDialog } from "@/components/ConflictDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
-import type { MasterKeyStatus, SftpServerConfig, SftpServerView } from "@/lib/types";
 import { basename } from "@/lib/format";
 import { normalizeExts } from "@/lib/openers";
 import {
@@ -90,6 +91,7 @@ import {
   setSplitRatio,
 } from "@/lib/paneTree";
 import { findAction, keyEventString } from "@/lib/keymap";
+import { fetchLatestRelease, REPO_URL } from "@/lib/update";
 import {
   loadCustomQuick,
   loadFileTags,
@@ -286,6 +288,9 @@ export default function App() {
   const [showProperties, setShowProperties] = useState(true);
   /** 设置 / 快捷键一览对话框 */
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 应用名 / 版本：Tauri 运行时识别（Windows 任务栏与应用内一致，均为 productName） */
+  const [appName, setAppName] = useState("R-Dir");
+  const [appVersion, setAppVersion] = useState("");
   /** v0.7 分享：创建弹窗（右键分享此目录） */
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [shareDir, setShareDir] = useState("");
@@ -332,27 +337,6 @@ export default function App() {
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
 
-  // ==================== SFTP 远程服务器（v0.2 插件） ====================
-  const [sftpServers, setSftpServers] = useState<SftpServerView[]>([]);
-  /** 已连接 id 集合（ref 同步，供 navigate 同步判断） */
-  const sftpConnectedRef = useRef<Set<string>>(new Set());
-  const [connectOpen, setConnectOpen] = useState(false);
-  const [connectInitial, setConnectInitial] = useState<SftpConnectInitial | null>(null);
-  /** master-key 状态：configured（曾设置）/ active（本会话已输入） */
-  const [masterKeyStatus, setMasterKeyStatus] = useState<MasterKeyStatus>({
-    configured: false,
-    active: false,
-  });
-  const [masterKeyOpen, setMasterKeyOpen] = useState(false);
-  /** 主密钥设置后待重连的服务器（来自连接框解密失败） */
-  const pendingConnectRef = useRef<SftpServerConfig | null>(null);
-  /** 会话恢复中挂起的 SFTP 连接（master-key 输入成功后重试） */
-  const pendingSftpRestoreRef = useRef<{ paneId: number; serverId: string; path: string }[]>([]);
-  /** 主密钥设置后待保存的服务器（来自连接成功但保存失败） */
-  const pendingSaveRef = useRef<SftpServerConfig | null>(null);
-  /** 地址栏输入带 path 的 sftp URL 时，记住目标远程路径，连接成功后直达 */
-  const pendingSftpPathRef = useRef<string | null>(null);
-
   // ==================== 传输/复制进度（本地 + SFTP） ====================
   const [transfer, setTransfer] = useState<TransferProgress | null>(null);
 
@@ -386,15 +370,6 @@ useEffect(() => {
       if (doneTimer) clearTimeout(doneTimer);
       un.then((f) => f());
     };
-  }, []);
-
-  const syncSftpConnected = useCallback((list: SftpServerView[]) => {
-    sftpConnectedRef.current = new Set(list.filter((s) => s.connected).map((s) => s.id));
-  }, []);
-
-  const openConnect = useCallback((initial?: SftpConnectInitial | null) => {
-    setConnectInitial(initial ?? null);
-    setConnectOpen(true);
   }, []);
 
   /** 解析 sftp://user@host:port 的 authority */
@@ -443,6 +418,70 @@ useEffect(() => {
     setNotice(msg);
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
     noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
+  }, []);
+
+  // 应用名 / 版本识别（getName = productName，Windows 任务栏与包元数据同源）
+  useEffect(() => {
+    void getName()
+      .then(setAppName)
+      .catch(() => {});
+    void getVersion()
+      .then(setAppVersion)
+      .catch(() => {});
+  }, []);
+
+  /** 打开 GitHub 仓库 */
+  const openRepo = useCallback(() => {
+    void openUrl(REPO_URL).catch((e) => showError(`打开仓库失败：${e}`));
+  }, [showError]);
+
+  /**
+   * 检查更新：GitHub Releases API 比对最新 tag。
+   * silent=true 用于启动后台静默检查（仅在有新版时提示，不弹对话框）。
+   */
+  const checkUpdate = useCallback(
+    async (silent = false) => {
+      const current = appVersion || "0.0.0";
+      try {
+        const info = await fetchLatestRelease(current);
+        if (!info) {
+          if (!silent) {
+            await messageDialog(`当前已是最新版本 v${current}`, { title: "检查更新" });
+          }
+          return;
+        }
+        if (silent) {
+          showError(`发现新版本 v${info.version}（帮助 → 检查更新）`);
+          return;
+        }
+        const go = await askDialog(
+          `发现新版本 v${info.version}（当前 v${current}），是否前往下载？`,
+          { title: "检查更新", kind: "info" },
+        );
+        if (go) void openUrl(info.url);
+      } catch (e) {
+        if (!silent) showError(`检查更新失败：${e}`);
+      }
+    },
+    [appVersion, showError],
+  );
+
+  // 启动后静默检查一次更新（3s 延迟，避免与首屏加载抢网络）
+  useEffect(() => {
+    if (!appVersion) return;
+    const t = window.setTimeout(() => void checkUpdate(true), 3000);
+    return () => window.clearTimeout(t);
+  }, [appVersion, checkUpdate]);
+
+  const patchPane = useCallback((paneId: number, patch: Partial<PaneState>) => {
+    setTabs((ts) =>
+      ts.map((t) => {
+        if (!(paneId in t.panes)) return t;
+        const panes = { ...t.panes, [paneId]: { ...t.panes[paneId], ...patch } };
+        const title = t.activePane === paneId ? panes[paneId].title : t.title;
+        return { ...t, panes, title };
+      }),
+    );
   }, []);
 
   // ── v0.4 打开方式 / 终端 ──
@@ -572,56 +611,7 @@ useEffect(() => {
     });
   }, []);
 
-  // 首次启动
-  useEffect(() => {
-    if (bootRef.current) return;
-    bootRef.current = true;
-    (async () => {
-      try {
-        const [home, vols, qa] = await Promise.all([
-          getHomeDir(),
-          getVolumes(),
-          getQuickAccess(),
-        ]);
-        setHomePath(home);
-        setVolumes(vols);
-        setQuickAccess(qa);
-        // 会话恢复（v0.3.0）：有保存的布局则恢复，否则默认家目录
-        const layout = await sessionLoad().catch(() => null);
-        if (layout && layout.tabs && layout.tabs.length > 0) {
-          await restoreSession(layout);
-        } else {
-          const tab = makeTab(home);
-          setTabs([tab]);
-          setActiveId(tab.id);
-        }
-      } catch (e) {
-        console.error("启动失败", e);
-      }
-    })();
-    // SFTP 服务器清单（v0.2）
-    sftpListServers()
-      .then((list) => {
-        syncSftpConnected(list);
-        setSftpServers(list);
-      })
-      .catch(() => {});
-    // master-key 状态（configured 曾设置 / active 本会话已输入）
-    sftpMasterKeyStatus()
-      .then(setMasterKeyStatus)
-      .catch(() => {});
-  }, [syncSftpConnected]);
 
-  const patchPane = useCallback((paneId: number, patch: Partial<PaneState>) => {
-    setTabs((ts) =>
-      ts.map((t) => {
-        if (!(paneId in t.panes)) return t;
-        const panes = { ...t.panes, [paneId]: { ...t.panes[paneId], ...patch } };
-        const title = t.activePane === paneId ? panes[paneId].title : t.title;
-        return { ...t, panes, title };
-      }),
-    );
-  }, []);
 
   const refreshPane = useCallback((paneId: number) => {
     setTabs((ts) =>
@@ -637,101 +627,6 @@ useEffect(() => {
   }, []);
 
   /** 会话恢复（v0.3.0）：重建标签集合 + 分屏树 + pane 路径；SFTP 并发重连（需 master-key） */
-  const restoreSession = useCallback(
-    async (layout: SessionLayout) => {
-      const remap = new Map<number, number>();
-      const restored: TabState[] = [];
-      const sftpPanes: { paneId: number; serverId: string; path: string }[] = [];
-      for (const st of layout.tabs) {
-        const panes: Record<number, PaneState> = {};
-        const tabId = nextTabId++;
-        for (const sp of st.panes) {
-          const p = makePane(sp.path);
-          if (typeof sp.zoom === "number" && sp.zoom >= 0.5 && sp.zoom <= 2) p.zoom = sp.zoom;
-          remap.set(sp.id, p.id);
-          if (sp.kind === "tag" && sp.tagId) p.tagId = sp.tagId;
-          if (sp.kind === "sftp" && sp.serverId) {
-            sftpPanes.push({ paneId: p.id, serverId: sp.serverId, path: sp.path });
-          }
-          panes[p.id] = p;
-        }
-        const root = remapNode(st.root as PaneNode, remap);
-        const activePane = remap.get(st.activePane) ?? firstPaneId(root);
-        restored.push({
-          id: tabId,
-          title: st.title || "",
-          customTitle: st.customTitle,
-          root,
-          activePane,
-          panes,
-        });
-      }
-      if (restored.length === 0) return;
-      setTabs(restored);
-      const idx = Math.min(Math.max(layout.activeTab, 0), restored.length - 1);
-      setActiveId(restored[idx].id);
-      // 显式加载所有窗格（listDir effect 只监听活动 pane，非活动窗格不会自动加载）
-      const loadPaneNow = async (paneId: number, path: string) => {
-        try {
-          const entries = await listDir(path);
-          patchPane(paneId, { entries, loading: false, error: null });
-        } catch (e) {
-          patchPane(paneId, { loading: false, error: String(e) });
-        }
-      };
-      const localPanes: { paneId: number; path: string }[] = [];
-      const firstActive = restored[idx]?.activePane;
-      for (const t of restored) {
-        for (const p of Object.values(t.panes)) {
-          if (p.path.startsWith("sftp://")) continue;
-          if (p.id === firstActive) continue; // 首屏：活动窗格由 listDir effect 加载
-          localPanes.push({ paneId: p.id, path: p.path });
-        }
-      }
-      // 其余窗格分批加载（每批 3 个），避免启动期并发渲染风暴导致闪屏/卡顿
-      const BATCH = 3;
-      (async () => {
-        for (let i = 0; i < localPanes.length; i += BATCH) {
-          const batch = localPanes.slice(i, i + BATCH);
-          await Promise.all(batch.map((lp) => loadPaneNow(lp.paneId, lp.path)));
-          if (i + BATCH < localPanes.length) {
-            await new Promise((r) => setTimeout(r, 30));
-          }
-        }
-      })();
-      // SFTP 并发恢复（后端回退已存配置 + master-key 解密）
-      await Promise.all(
-        sftpPanes.map(async (sp) => {
-          try {
-            await sftpConnect({
-              id: sp.serverId,
-              name: "",
-              host: "",
-              port: 22,
-              user: "",
-              root: null,
-              group: "",
-              auth: "password",
-            });
-            sftpConnectedRef.current.add(sp.serverId);
-            await loadPaneNow(sp.paneId, sp.path);
-            void syncSftpConnected(
-              sftpServers.map((s) => (s.id === sp.serverId ? { ...s, connected: true } : s)),
-            );
-          } catch (e) {
-            const msg = String(e);
-            if (msg.includes("NEED_MASTER_KEY")) {
-              pendingSftpRestoreRef.current.push(sp);
-              setMasterKeyOpen(true);
-            } else {
-              patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${msg}）` });
-            }
-          }
-        }),
-      );
-    },
-    [patchPane, syncSftpConnected, sftpServers],
-  );
 
   // 活动 pane 路径/刷新键变化时加载目录
   useEffect(() => {
@@ -818,6 +713,12 @@ useEffect(() => {
   );
 
   // 导航（作用于活动 pane）
+  // SFTP 与 navigate 互相引用（navigate 要读 sftp.connectedRef，sftp 连接成功后要 navigate），
+  // 用 ref 打破循环：navigateVia 稳定，navigate 定义完后再回填。
+  const navigateRef = useRef<(path: string) => void>(() => {});
+  const navigateVia = useCallback((path: string) => navigateRef.current(path), []);
+  const sftp = useSftp({ navigate: navigateVia, patchPane, listDir, showError });
+
   const navigate = useCallback(
     (path: string) => {
       if (!activePane) return;
@@ -825,7 +726,7 @@ useEffect(() => {
       // 重新输入同一路径只会走到"同路径刷新"而报错，不会弹连接框
       if (path.startsWith("sftp://")) {
         const au = parseSftpAuthority(path);
-        if (au && sftpConnectedRef.current.has(au.id)) {
+        if (au && sftp.connectedRef.current.has(au.id)) {
           // 已连接：同路径刷新，否则继续导航
           if (activePane.path === path) {
             refreshPane(activePane.id);
@@ -833,14 +734,15 @@ useEffect(() => {
           }
         } else if (au) {
           // 有 authority 但未连接：记住目标路径，弹连接框预填，连上后直达该路径
-          pendingSftpPathRef.current =
-            au.remotePath && au.remotePath !== "/" ? au.remotePath : null;
-          openConnect({ host: au.host, port: au.port, user: au.user });
+          sftp.rememberPendingPath(
+            au.remotePath && au.remotePath !== "/" ? au.remotePath : null,
+          );
+          sftp.openConnect({ host: au.host, port: au.port, user: au.user });
           return;
         } else {
           // 只有 "sftp://" 没有 host/user：弹空白连接框
-          pendingSftpPathRef.current = null;
-          openConnect({});
+          sftp.rememberPendingPath(null);
+          sftp.openConnect({});
           return;
         }
       } else if (activePane.path === path) {
@@ -861,8 +763,135 @@ useEffect(() => {
         error: null,
       });
     },
-    [activePane, patchPane, parseSftpAuthority, openConnect],
+    [activePane, patchPane, parseSftpAuthority, sftp],
   );
+  navigateRef.current = navigate;
+
+  const restoreSession = useCallback(
+    async (layout: SessionLayout) => {
+      const remap = new Map<number, number>();
+      const restored: TabState[] = [];
+      const sftpPanes: { paneId: number; serverId: string; path: string }[] = [];
+      for (const st of layout.tabs) {
+        const panes: Record<number, PaneState> = {};
+        const tabId = nextTabId++;
+        for (const sp of st.panes) {
+          const p = makePane(sp.path);
+          if (typeof sp.zoom === "number" && sp.zoom >= 0.5 && sp.zoom <= 2) p.zoom = sp.zoom;
+          remap.set(sp.id, p.id);
+          if (sp.kind === "tag" && sp.tagId) p.tagId = sp.tagId;
+          if (sp.kind === "sftp" && sp.serverId) {
+            sftpPanes.push({ paneId: p.id, serverId: sp.serverId, path: sp.path });
+          }
+          panes[p.id] = p;
+        }
+        const root = remapNode(st.root as PaneNode, remap);
+        const activePane = remap.get(st.activePane) ?? firstPaneId(root);
+        restored.push({
+          id: tabId,
+          title: st.title || "",
+          customTitle: st.customTitle,
+          root,
+          activePane,
+          panes,
+        });
+      }
+      if (restored.length === 0) return;
+      setTabs(restored);
+      const idx = Math.min(Math.max(layout.activeTab, 0), restored.length - 1);
+      setActiveId(restored[idx].id);
+      // 显式加载所有窗格（listDir effect 只监听活动 pane，非活动窗格不会自动加载）
+      const loadPaneNow = async (paneId: number, path: string) => {
+        try {
+          const entries = await listDir(path);
+          patchPane(paneId, { entries, loading: false, error: null });
+        } catch (e) {
+          patchPane(paneId, { loading: false, error: String(e) });
+        }
+      };
+      const localPanes: { paneId: number; path: string }[] = [];
+      const firstActive = restored[idx]?.activePane;
+      for (const t of restored) {
+        for (const p of Object.values(t.panes)) {
+          if (p.path.startsWith("sftp://")) continue;
+          if (p.id === firstActive) continue; // 首屏：活动窗格由 listDir effect 加载
+          localPanes.push({ paneId: p.id, path: p.path });
+        }
+      }
+      // 其余窗格分批加载（每批 3 个），避免启动期并发渲染风暴导致闪屏/卡顿
+      const BATCH = 3;
+      (async () => {
+        for (let i = 0; i < localPanes.length; i += BATCH) {
+          const batch = localPanes.slice(i, i + BATCH);
+          await Promise.all(batch.map((lp) => loadPaneNow(lp.paneId, lp.path)));
+          if (i + BATCH < localPanes.length) {
+            await new Promise((r) => setTimeout(r, 30));
+          }
+        }
+      })();
+      // SFTP 并发恢复（后端回退已存配置 + master-key 解密）
+      await Promise.all(
+        sftpPanes.map(async (sp) => {
+          try {
+            await sftpConnect({
+              id: sp.serverId,
+              name: "",
+              host: "",
+              port: 22,
+              user: "",
+              root: null,
+              group: "",
+              auth: "password",
+            });
+            sftp.connectedRef.current.add(sp.serverId);
+            await loadPaneNow(sp.paneId, sp.path);
+            void sftp.syncConnected(
+              sftp.servers.map((s) => (s.id === sp.serverId ? { ...s, connected: true } : s)),
+            );
+          } catch (e) {
+            const msg = String(e);
+            if (msg.includes("NEED_MASTER_KEY")) {
+              sftp.pendingRestoreRef.current.push(sp);
+              sftp.setMasterKeyOpen(true);
+            } else {
+              patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${msg}）` });
+            }
+          }
+        }),
+      );
+    },
+    [patchPane, sftp],
+  );
+
+  // 首次启动
+  useEffect(() => {
+    if (bootRef.current) return;
+    bootRef.current = true;
+    (async () => {
+      try {
+        const [home, vols, qa] = await Promise.all([
+          getHomeDir(),
+          getVolumes(),
+          getQuickAccess(),
+        ]);
+        setHomePath(home);
+        setVolumes(vols);
+        setQuickAccess(qa);
+        // 会话恢复（v0.3.0）：有保存的布局则恢复，否则默认家目录
+        const layout = await sessionLoad().catch(() => null);
+        if (layout && layout.tabs && layout.tabs.length > 0) {
+          await restoreSession(layout);
+        } else {
+          const tab = makeTab(home);
+          setTabs([tab]);
+          setActiveId(tab.id);
+        }
+      } catch (e) {
+        console.error("启动失败", e);
+      }
+    })();
+    sftp.refresh();
+  }, [sftp.refresh]);
 
   const goBack = useCallback(() => {
     if (!activePane || activePane.histIndex <= 0) return;
@@ -946,202 +975,6 @@ useEffect(() => {
       unlisten?.();
     };
   }, []);
-
-  /** 连接成功：保存清单 + 刷新状态 + 导航到服务器默认目录（root 或 home） */
-  const handleSftpConnected = useCallback(
-    async (config: SftpServerConfig, view?: SftpServerView) => {
-      let list: SftpServerView[] | null = null;
-      try {
-        list = await sftpSaveServer(config);
-      } catch (e) {
-        const msg = String(e);
-        if (msg.includes("NEED_MASTER_KEY")) {
-          // 勾选"记住密码"但未设置主密钥 → 挂起保存，弹主密钥框
-          pendingSaveRef.current = config;
-          setMasterKeyOpen(true);
-          return;
-        }
-        showError(`保存服务器失败：${e}`);
-      }
-      if (!list) list = await sftpListServers().catch(() => []);
-      syncSftpConnected(list);
-      setSftpServers(list);
-      const v = view ?? list.find((s) => s.id === config.id);
-      // 地址栏带 path 的 URL → 直达该路径；否则落到服务器默认目录（root/home）
-      const pendingPath = pendingSftpPathRef.current;
-      pendingSftpPathRef.current = null;
-      const remote = pendingPath ?? v?.defaultRemote ?? "/";
-      navigate(sftpUrl(config.user, config.host, config.port, remote));
-    },
-    [navigate, showError, syncSftpConnected],
-  );
-
-  /** 主密钥设置/验证成功后的统一处理：刷新状态 → 重试挂起的保存或连接 */
-  const handleMasterKeyDone = useCallback(
-    async (ok: boolean) => {
-      setMasterKeyOpen(false);
-      if (!ok) {
-        // 用户取消：放弃所有挂起的连接/保存/会话恢复，保持布局不连接、不刷新
-        pendingSaveRef.current = null;
-        pendingConnectRef.current = null;
-        pendingSftpPathRef.current = null;
-        const pending = pendingSftpRestoreRef.current;
-        pendingSftpRestoreRef.current = [];
-        for (const sp of pending) {
-          patchPane(sp.paneId, { loading: false, error: "SFTP 未连接（需要主密钥验证）" });
-        }
-        return;
-      }
-      try {
-        const st = await sftpMasterKeyStatus();
-        setMasterKeyStatus(st);
-      } catch {
-        /* 忽略 */
-      }
-      // 1) 挂起的保存（连接成功但保存密码需主密钥）
-      if (pendingSaveRef.current) {
-        const cfg = pendingSaveRef.current;
-        pendingSaveRef.current = null;
-        await handleSftpConnected(cfg);
-        return;
-      }
-      // 2) 挂起的连接（连接框解密已保存密码需主密钥）
-      if (pendingConnectRef.current) {
-        const cfg = pendingConnectRef.current;
-        pendingConnectRef.current = null;
-        setConnectOpen(false);
-        try {
-          await sftpConnect(cfg);
-          await handleSftpConnected(cfg);
-        } catch (e) {
-          showError(`连接失败：${e}`);
-        }
-      }
-      // 3) 挂起的会话恢复连接（主密钥验证后重试）
-      const pending = pendingSftpRestoreRef.current;
-      if (pending.length > 0) {
-        pendingSftpRestoreRef.current = [];
-        for (const sp of pending) {
-          try {
-            await sftpConnect({
-              id: sp.serverId,
-              name: "",
-              host: "",
-              port: 22,
-              user: "",
-              root: null,
-              group: "",
-              auth: "password",
-            });
-            sftpConnectedRef.current.add(sp.serverId);
-            const entries = await listDir(sp.path);
-            patchPane(sp.paneId, { entries, loading: false, error: null });
-          } catch (e) {
-            patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${e}）` });
-          }
-        }
-      }
-    },
-    [handleSftpConnected, showError, patchPane],
-  );
-
-  /** 连接框需要主密钥：记录挂起连接并弹出主密钥框 */
-  const requestMasterKey = useCallback((config: SftpServerConfig) => {
-    pendingConnectRef.current = config;
-    setMasterKeyOpen(true);
-  }, []);
-
-  /** 侧边栏点击服务器：已连接直达（默认目录）；已保存凭据 → 一键重连；否则弹连接框 */
-  const openSftpServer = useCallback(
-    (sv: SftpServerView) => {
-      if (sftpConnectedRef.current.has(sv.id)) {
-        navigate(sftpUrl(sv.user, sv.host, sv.port, sv.defaultRemote || "/"));
-        return;
-      }
-      if (sv.hasSecret) {
-        // 已保存密码/口令：后端从 servers.json 取密文（master-key 解密）直接重连
-        const cfg: SftpServerConfig = {
-          id: sv.id,
-          name: sv.name,
-          host: sv.host,
-          port: sv.port,
-          user: sv.user,
-          root: sv.root ?? null,
-          group: sv.group,
-          auth: sv.auth === "key" ? "publicKey" : "password",
-          ...(sv.auth === "key"
-            ? { keyPath: "", savePassphrase: true }
-            : { password: "", savePassword: true }),
-        };
-        void (async () => {
-          try {
-            const view = await sftpConnect(cfg);
-            await handleSftpConnected(cfg, view);
-          } catch (e) {
-            const msg = String(e);
-            if (msg.includes("NEED_MASTER_KEY")) {
-              // 主密钥未输入 → 挂起连接，弹主密钥框后自动重试
-              pendingConnectRef.current = cfg;
-              setMasterKeyOpen(true);
-              return;
-            }
-            // 重连失败（如凭据已失效）→ 回退弹连接框让用户输入
-            openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
-            showError(`重连失败：${e}`);
-          }
-        })();
-        return;
-      }
-      openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
-    },
-    [navigate, openConnect, showError, handleSftpConnected],
-  );
-
-  /** 侧边栏右键"编辑"：回填连接框（含 root/分组/认证方式） */
-  const handleSftpEdit = useCallback(
-    (sv: SftpServerView) => {
-      openConnect({
-        id: sv.id,
-        host: sv.host,
-        port: sv.port,
-        user: sv.user,
-        name: sv.name,
-        root: sv.root ?? "",
-        group: sv.group,
-        auth: sv.auth === "key" ? "publicKey" : "password",
-      });
-    },
-    [openConnect],
-  );
-
-  /** 侧边栏右键"删除服务器配置"（连接不断开） */
-  const handleSftpRemove = useCallback(
-    async (sv: SftpServerView) => {
-      if (!(await confirmDialog(`删除服务器配置「${sv.name}」？连接不会断开。`))) return;
-      try {
-        const list = await sftpRemoveServer(sv.id);
-        syncSftpConnected(list);
-        setSftpServers(list);
-      } catch (e) {
-        showError(`删除服务器失败：${e}`);
-      }
-    },
-    [showError, syncSftpConnected],
-  );
-
-  const handleSftpDisconnect = useCallback(
-    async (id: string) => {
-      try {
-        await sftpDisconnect(id);
-        const list = await sftpListServers();
-        syncSftpConnected(list);
-        setSftpServers(list);
-      } catch (e) {
-        showError(`断开失败：${e}`);
-      }
-    },
-    [showError, syncSftpConnected],
-  );
 
   const goUp = useCallback(async () => {
     if (!activePane) return;
@@ -1359,6 +1192,32 @@ useEffect(() => {
     [navigate, openSearchResult],
   );
 
+  /** 用系统关联程序打开文件（按扩展名 / 协议）；http 走浏览器，sftp 先下载到临时目录 */
+  const openFileExternal = useCallback(
+    (path: string) => {
+      if (path.startsWith("http://") || path.startsWith("https://")) {
+        openUrl(path).catch((e) => showError(`打开 URL 失败：${e}`));
+      } else if (path.startsWith("sftp://")) {
+        showError("正在下载远程文件…");
+        sftpDownload(path)
+          .then((local) => openPath(local))
+          .catch((e) => showError(`远程打开失败：${e}`));
+      } else {
+        openPath(path).catch((e) => showError(`打开失败：${e}`));
+      }
+    },
+    [showError],
+  );
+
+  /** 在激活窗格中定位条目：目录直接进入，文件跳转所在目录并选中（搜索结果右键/双击用） */
+  const revealPath = useCallback(
+    (path: string, isDir: boolean) => {
+      if (isDir) navigate(path);
+      else openSearchResult(parentPath(path), path);
+    },
+    [navigate, openSearchResult],
+  );
+
   const openEntry = useCallback(
     (paneId: number, entry: FileEntry) => {
       if (entry.is_dir) {
@@ -1381,21 +1240,10 @@ useEffect(() => {
           }),
         );
       } else {
-        if (entry.path.startsWith("http://") || entry.path.startsWith("https://")) {
-          // HTTP autoindex 文件：默认浏览器打开（只读浏览）
-          openUrl(entry.path).catch((e) => showError(`打开 URL 失败：${e}`));
-        } else if (entry.path.startsWith("sftp://")) {
-          // 远程文件：先下载到临时目录再打开
-          showError("正在下载远程文件…");
-          sftpDownload(entry.path)
-            .then((local) => openPath(local))
-            .catch((e) => showError(`远程打开失败：${e}`));
-        } else {
-          openPath(entry.path).catch((e) => showError(`打开失败：${e}`));
-        }
+        openFileExternal(entry.path);
       }
     },
-    [showError],
+    [openFileExternal],
   );
 
   const copyPath = useCallback((path: string) => {
@@ -2155,6 +2003,8 @@ useEffect(() => {
     onSelectRange: selectRange,
     onClearSelection: clearSelection,
     onOpen: openEntry,
+    onOpenFile: openFileExternal,
+    onRevealPath: revealPath,
     onMiddleOpen: (_paneId, path) => newTab(path),
     openers,
     shells,
@@ -2299,6 +2149,10 @@ useEffect(() => {
         dark={dark}
         onToggleTheme={toggleTheme}
         onOpenSettings={() => setSettingsOpen(true)}
+        appName={appName}
+        appVersion={appVersion}
+        onOpenRepo={openRepo}
+        onCheckUpdate={() => void checkUpdate(false)}
       />
 
       <TabBar
@@ -2375,11 +2229,11 @@ useEffect(() => {
           onRenameTag={renameTag}
           activeTagId={activePane?.tagId ?? null}
           onSelectTag={(tagId) => navigate(`tags://${tagId}`)}
-          sftpServers={plugins?.find((p) => p.id === "sftp")?.enabled === false ? [] : sftpServers}
-          onSftpOpen={openSftpServer}
-          onSftpDisconnect={handleSftpDisconnect}
-          onSftpEdit={handleSftpEdit}
-          onSftpRemove={handleSftpRemove}
+          sftpServers={plugins?.find((p) => p.id === "sftp")?.enabled === false ? [] : sftp.servers}
+          onSftpOpen={sftp.openServer}
+          onSftpDisconnect={sftp.disconnect}
+          onSftpEdit={sftp.editServer}
+          onSftpRemove={sftp.removeServer}
         />
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -2399,7 +2253,7 @@ useEffect(() => {
               customQuick={customQuick}
               onOpenTagFile={openTagFile}
               onExitTag={exitTagViewForPane}
-              activeStyle={activeTab && isSinglePane(activeTab.root) ? "none" : ((localStorage.getItem("rdir.active-style") as "waterfall" | "lift") || "lift")}
+              highlight={!(activeTab && isSinglePane(activeTab.root))}
               handlers={handlers}
             />
           ) : null}
@@ -2411,14 +2265,9 @@ useEffect(() => {
             dir={searchPane.path}
             cmd={searchCmd}
             onClose={closeSearchPanel}
-            onOpen={(e) => {
-              if (e.is_dir) {
-                navigate(e.path);
-              } else {
-                navigate(parentPath(e.path));
-              }
-            }}
-            onOpenContent={(dir, filePath) => openSearchResult(dir, filePath)}
+            onReveal={revealPath}
+            onOpenFile={openFileExternal}
+            onCopyPath={copyPath}
           />
         )}
       </div>
@@ -2489,27 +2338,20 @@ useEffect(() => {
       />
 
       <ConnectDialog
-        open={connectOpen}
-        initial={connectInitial}
-        masterKey={masterKeyStatus}
-        onNeedMasterKey={requestMasterKey}
-        onClose={() => {
-          setConnectOpen(false);
-          pendingSftpPathRef.current = null;
-        }}
-        onConnected={handleSftpConnected}
+        open={sftp.connectOpen}
+        initial={sftp.connectInitial}
+        masterKey={sftp.masterKeyStatus}
+        onNeedMasterKey={sftp.requestMasterKey}
+        onClose={sftp.closeConnect}
+        onConnected={sftp.handleConnected}
       />
 
       {/* 主密钥（master-key）：仅内存，用于加密保存的密码 */}
       <MasterKeyDialog
-        open={masterKeyOpen}
-        configured={masterKeyStatus.configured}
-        onClose={() => {
-          setMasterKeyOpen(false);
-          pendingConnectRef.current = null;
-          pendingSaveRef.current = null;
-        }}
-        onDone={(ok) => void handleMasterKeyDone(ok)}
+        open={sftp.masterKeyOpen}
+        configured={sftp.masterKeyStatus.configured}
+        onClose={sftp.closeMasterKey}
+        onDone={(ok) => void sftp.handleMasterKeyDone(ok)}
       />
 
       {/* 同名冲突裁决弹窗 */}

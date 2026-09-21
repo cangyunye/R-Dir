@@ -281,12 +281,26 @@ pub fn move_entries(paths: &[String], dest: &str, mut cb: ProgressCb) -> Result<
     Ok(moved)
 }
 
+/// 校验用户输入的名称是单一路径片段。
+/// 前端已过滤，这里是 IPC 边界的兜底：`Path::join` 遇到绝对路径会**替换**基路径，
+/// 遇到 `..` 会跳出目标目录，两者都必须挡住。
+fn check_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("名称不能为空".into());
+    }
+    if name == "." || name == ".." {
+        return Err(format!("名称不合法：{}", name));
+    }
+    if name.contains('/') || (cfg!(windows) && name.contains('\\')) {
+        return Err("名称不能包含路径分隔符".into());
+    }
+    Ok(())
+}
+
 /// 重命名条目，返回新路径。
 pub fn rename_entry(path: &str, new_name: &str) -> Result<String, String> {
     let p = Path::new(path);
-    if new_name.is_empty() {
-        return Err("名称不能为空".into());
-    }
+    check_name(new_name)?;
     let parent = p.parent().ok_or("无父目录")?;
     let target = parent.join(new_name);
     if target.exists() {
@@ -325,6 +339,7 @@ pub fn permanent_delete_entries(paths: &[String]) -> Result<(), String> {
 
 /// 新建文件夹，返回新路径。
 pub fn create_dir(parent: &str, name: &str) -> Result<String, String> {
+    check_name(name)?;
     let target = Path::new(parent).join(name);
     fs::create_dir(&target).map_err(|e| format!("新建文件夹失败：{}", e))?;
     Ok(target.to_string_lossy().to_string())
@@ -332,6 +347,7 @@ pub fn create_dir(parent: &str, name: &str) -> Result<String, String> {
 
 /// 新建空文件，返回新路径。
 pub fn create_file(parent: &str, name: &str) -> Result<String, String> {
+    check_name(name)?;
     let target = Path::new(parent).join(name);
     fs::write(&target, b"").map_err(|e| format!("新建文件失败：{}", e))?;
     Ok(target.to_string_lossy().to_string())
@@ -613,6 +629,77 @@ mod tests {
             &mut noop(),
         );
         assert!(r.is_err(), "改名撞已有文件应报错");
+    }
+
+    // ---- 单条目的新建 / 重命名 / 永久删除（此前完全无覆盖） ----
+
+    #[test]
+    fn create_dir_and_file_then_rename() {
+        let base = tmp("create-rename");
+        let p = base.to_string_lossy().to_string();
+
+        let dir = create_dir(&p, "新文件夹").unwrap();
+        assert!(Path::new(&dir).is_dir());
+        assert_eq!(Path::new(&dir).file_name().unwrap(), "新文件夹");
+
+        let file = create_file(&p, "空.txt").unwrap();
+        assert!(Path::new(&file).is_file());
+        assert_eq!(fs::metadata(&file).unwrap().len(), 0);
+
+        let renamed = rename_entry(&file, "改名后.txt").unwrap();
+        assert!(Path::new(&renamed).is_file());
+        assert!(!Path::new(&file).exists(), "旧路径应已不存在");
+    }
+
+    #[test]
+    fn rename_rejects_empty_and_taken_name() {
+        let base = tmp("rename-err");
+        let a = base.join("a.txt");
+        fs::write(&a, "x").unwrap();
+        fs::write(base.join("b.txt"), "y").unwrap();
+        let a = a.to_string_lossy().to_string();
+
+        assert!(rename_entry(&a, "").is_err(), "空名应报错");
+        assert!(rename_entry(&a, "b.txt").is_err(), "撞已有文件应报错");
+        assert!(Path::new(&a).exists(), "失败时不应动原文件");
+    }
+
+    /// IPC 边界兜底：绝对路径会被 Path::join 当成替换，`..` 会跳出目标目录
+    #[test]
+    fn name_cannot_escape_parent() {
+        let base = tmp("escape");
+        let p = base.to_string_lossy().to_string();
+
+        for bad in ["..", ".", "../evil", "/tmp/evil", "a/b"] {
+            assert!(create_dir(&p, bad).is_err(), "create_dir 应拒绝 {bad}");
+            assert!(create_file(&p, bad).is_err(), "create_file 应拒绝 {bad}");
+        }
+        let victim = base.join("victim.txt");
+        fs::write(&victim, "x").unwrap();
+        let victim = victim.to_string_lossy().to_string();
+        assert!(rename_entry(&victim, "../escaped.txt").is_err());
+        assert!(rename_entry(&victim, "/tmp/escaped.txt").is_err());
+        assert!(Path::new(&victim).exists(), "被拒后原文件应还在");
+        assert!(!base.parent().unwrap().join("escaped.txt").exists());
+    }
+
+    #[test]
+    fn permanent_delete_removes_dir_recursively() {
+        let base = tmp("perm-del");
+        let victim = base.join("victim");
+        fs::create_dir_all(victim.join("nested")).unwrap();
+        fs::write(victim.join("nested/x.txt"), "x").unwrap();
+
+        permanent_delete_entries(&[victim.to_string_lossy().to_string()]).unwrap();
+        assert!(!victim.exists(), "目录及其内容应被递归删除");
+        assert!(base.exists(), "父目录不应受影响");
+    }
+
+    #[test]
+    fn permanent_delete_missing_path_errors_without_panic() {
+        let base = tmp("perm-del-missing");
+        let ghost = base.join("nope").to_string_lossy().to_string();
+        assert!(permanent_delete_entries(&[ghost]).is_err());
     }
 }
 

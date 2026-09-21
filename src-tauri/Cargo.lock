@@ -3953,7 +3953,7 @@ dependencies = [
 
 [[package]]
 name = "rust-file-manager"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -3980,7 +3980,6 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-process",
  "tokio",
- "tokio-util",
  "trash",
  "ureq",
 ]

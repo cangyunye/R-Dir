@@ -1,12 +1,30 @@
-import { useMemo } from "react";
-import { FolderOpen, Tag, X } from "lucide-react";
-import { tagById, tagLabel, type FileTags, type TagNames } from "@/lib/persist";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Check,
+  Clipboard,
+  Crosshair,
+  FolderOpen,
+  Star,
+  Tag,
+  X,
+} from "lucide-react";
+import { tagById, tagLabel, TAG_DEFS, type FileTags, type TagNames } from "@/lib/persist";
 import { FileIcon } from "@/components/FileIcon";
+import { statPaths } from "@/lib/api";
+import { MenuGroup } from "@/components/MenuGroup";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 
 /**
  * 标签过滤视图（Finder 风格）：展示某个标签下的全部文件/文件夹，
  * 点击选中、双击跳转所在目录并定位，顶部横幅可关闭。
+ * 条目右键菜单：定位 / 打开 / 加标签 / 复制路径 / 快捷访问 / 移除此标签。
  */
 export function TagView({
   tagId,
@@ -14,6 +32,12 @@ export function TagView({
   tagNames,
   currentPath,
   onOpen,
+  onOpenFile,
+  onReveal,
+  onToggleTag,
+  onCopyPath,
+  onToggleQuick,
+  customQuick,
   onExit,
   isActive,
 }: {
@@ -22,6 +46,12 @@ export function TagView({
   tagNames: TagNames;
   currentPath: string;
   onOpen: (path: string) => void;
+  onOpenFile: (path: string) => void;
+  onReveal: (path: string, isDir: boolean) => void;
+  onToggleTag: (path: string, tagId: string) => void;
+  onCopyPath: (path: string) => void;
+  onToggleQuick: (path: string) => void;
+  customQuick: string[];
   onExit: () => void;
   isActive: boolean;
 }) {
@@ -34,6 +64,32 @@ export function TagView({
     [fileTags, tagId],
   );
 
+  // 条目类型（目录 / 文件）：标签可作用于文件夹，右键菜单据此显示"定位到文件夹"等
+  const [kinds, setKinds] = useState<Record<string, string>>({});
+  const [expandedMenu, setExpandedMenu] = useState<string | null>(null);
+  useEffect(() => {
+    if (files.length === 0) {
+      setKinds({});
+      return;
+    }
+    let cancelled = false;
+    statPaths(files)
+      .then((ks) => {
+        if (cancelled) return;
+        const map: Record<string, string> = {};
+        files.forEach((p, i) => {
+          map[p] = ks[i] ?? "file";
+        });
+        setKinds(map);
+      })
+      .catch(() => {
+        /* 探测失败按文件处理 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [files]);
+
   const nameOf = (p: string) => {
     const norm = p.replace(/\\/g, "/");
     return norm.slice(norm.lastIndexOf("/") + 1);
@@ -43,6 +99,11 @@ export function TagView({
     const n = nameOf(p);
     const i = n.lastIndexOf(".");
     return i > 0 ? n.slice(i + 1).toLowerCase() : "";
+  };
+
+  const isDirOf = (p: string) => {
+    const k = kinds[p];
+    return k === "dir" || k === "symlink";
   };
 
   return (
@@ -86,37 +147,106 @@ export function TagView({
             <span>在任意文件上右键 → 标签，即可添加</span>
           </div>
         ) : (
-          files.map((p) => (
-            <button
-              key={p}
-              onClick={() => onOpen(p)}
-              title={`${p}\n双击跳转所在目录（当前：${currentPath}）`}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
-            >
-              <FileIcon
-                entry={{
-                  name: nameOf(p),
-                  path: p,
-                  is_dir: false,
-                  is_symlink: false,
-                  size: 0,
-                  modified: null,
-                  created: null,
-                  permissions: "",
-                  extension: extOf(p),
+          files.map((p) => {
+            const isDir = isDirOf(p);
+            const entry = {
+              name: nameOf(p),
+              path: p,
+              is_dir: isDir,
+              is_symlink: kinds[p] === "symlink",
+              size: 0,
+              modified: null,
+              created: null,
+              permissions: "",
+              extension: extOf(p),
+            };
+            return (
+              <ContextMenu
+                key={p}
+                onOpenChange={(o) => {
+                  if (!o) setExpandedMenu(null);
                 }}
-                size={16}
-                className="shrink-0 text-muted-foreground"
-              />
-              <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-                {nameOf(p)}
-              </span>
-              <span className="min-w-0 max-w-[45%] truncate text-[10px] text-muted-foreground">
-                {p}
-              </span>
-              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-            </button>
-          ))
+              >
+                <ContextMenuTrigger asChild>
+                  <button
+                    data-tag-path={p}
+                    onClick={() => onOpen(p)}
+                    title={`${p}\n双击跳转所在目录（当前：${currentPath}）`}
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
+                  >
+                    <FileIcon
+                      entry={entry}
+                      size={16}
+                      className="shrink-0 text-muted-foreground"
+                    />
+                    <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                      {nameOf(p)}
+                    </span>
+                    <span className="min-w-0 max-w-[45%] truncate text-[10px] text-muted-foreground">
+                      {p}
+                    </span>
+                    <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+                  </button>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="min-w-48" collisionPadding={10}>
+                  <ContextMenuItem onClick={() => onOpen(p)}>
+                    <FolderOpen className="mr-2 h-4 w-4" /> 打开
+                  </ContextMenuItem>
+                  {!isDir && (
+                    <ContextMenuItem onClick={() => onOpenFile(p)}>
+                      <FolderOpen className="mr-2 h-4 w-4" /> 用默认应用打开
+                    </ContextMenuItem>
+                  )}
+                  <ContextMenuItem onClick={() => onReveal(p, isDir)}>
+                    <Crosshair className="mr-2 h-4 w-4" /> 定位到{isDir ? "文件夹" : "文件"}
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  {/* 标签（内联展开，避免 Radix Sub 在 WKWebView 下的点击丢失） */}
+                  <MenuGroup
+                    id="tagViewTags"
+                    label="标签"
+                    icon={<Tag className="mr-2 h-4 w-4" />}
+                    expanded={expandedMenu === "tagViewTags"}
+                    onToggle={(id) =>
+                      setExpandedMenu((cur) => (cur === id ? null : id))
+                    }
+                  >
+                    {TAG_DEFS.map((t) => {
+                      const checked = (fileTags[p] ?? []).includes(t.id);
+                      return (
+                        <ContextMenuItem
+                          key={t.id}
+                          onSelect={() => onToggleTag(p, t.id)}
+                        >
+                          <span
+                            className="mr-2 h-3 w-3 rounded-full"
+                            style={{ background: t.color }}
+                          />
+                          {tagLabel(t, tagNames)}
+                          {checked && <Check className="ml-auto h-3.5 w-3.5" />}
+                        </ContextMenuItem>
+                      );
+                    })}
+                  </MenuGroup>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onClick={() => onCopyPath(p)}>
+                    <Clipboard className="mr-2 h-4 w-4" /> 复制路径
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => onToggleQuick(p)}>
+                    <Star className="mr-2 h-4 w-4" />
+                    {customQuick.includes(p) ? "从快捷访问移除" : "添加到快捷访问"}
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    onSelect={() => onToggleTag(p, tagId)}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <Tag className="mr-2 h-4 w-4" /> 移除此标签
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
+            );
+          })
         )}
       </div>
     </div>

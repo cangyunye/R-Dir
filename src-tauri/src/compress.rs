@@ -39,7 +39,20 @@ fn unique_dest(p: &Path) -> PathBuf {
 /// 命名：单选 → `原名.<ext>`；多选 → `<当前目录名>.<ext>`；同名自动改名。
 /// 返回生成的文件完整路径。
 #[tauri::command]
-pub fn compress_items(
+pub async fn compress_items(
+    app: AppHandle,
+    paths: Vec<String>,
+    target_dir: String,
+    format: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        compress_items_blocking(app, paths, target_dir, format)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn compress_items_blocking(
     app: AppHandle,
     paths: Vec<String>,
     target_dir: String,

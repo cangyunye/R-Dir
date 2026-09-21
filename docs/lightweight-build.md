@@ -13,7 +13,9 @@
 | HTTP autoindex（nginx） | `http`（计划中） | ureq（rustls） | 解析 `autoindex on` 索引页、下载 |
 
 **现状说明**：`sftp` 与 `share` 已 feature 化（可裁剪）；`http_autoindex` 目前
-无条件编译（未做 feature 门控）。下方"裁掉 http"一节暂不可用，仅作未来规划。
+无条件编译（未做 feature 门控），但其依赖已收敛为 `ureq` + `tauri` 自带 async runtime
+（不再直接依赖 `tokio`），因此 `--no-default-features` 可以正常编译。
+下方"裁掉 http"一节暂不可用，仅作未来规划。
 
 ## 编译命令
 
@@ -66,6 +68,8 @@ python -c "d=open(r'target\release\R-Dir.exe','rb').read(); print(b'sftp_list_se
 
 ## 已知限制
 
-1. `http_autoindex` 尚未 feature 化（依赖 ureq 非 optional），未来需要时补 `http` feature。
+1. `http_autoindex` 尚未 feature 化（依赖 `ureq` 非 optional），未来需要时补 `http` feature。
 2. 裁剪版本前端未隐藏不可用入口（见上表提示）。
 3. `tokio` 由 sftp/share 共享，裁掉两者后 tokio 也会被剔除，体积收益最大。
+4. 四种组合（default / 无 / 仅 sftp / 仅 share）均已在本地 `cargo check` 验证可编译；
+   改动 feature 门控后请至少跑一遍这四种组合。

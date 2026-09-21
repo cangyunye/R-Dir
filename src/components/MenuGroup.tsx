@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
+import { ContextMenuItem } from "@/components/ui/context-menu";
 
 /**
  * 右键菜单二级「折叠组」：点组名在同级菜单内联展开子项。
@@ -46,6 +46,3 @@ export function MenuGroup({
     </>
   );
 }
-
-/** 折叠组子项的分隔线（供调用方在组内使用） */
-export { ContextMenuSeparator as MenuGroupSeparator };

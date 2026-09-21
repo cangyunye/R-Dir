@@ -38,6 +38,7 @@ import { Button } from "@/components/ui/button";
 import { TAG_DEFS, tagLabel, type FileTags, type TagNames } from "@/lib/persist";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { OpenerItem, ShellItem } from "@/lib/openerApi";
+import { ROW_HEIGHT, visibleRange } from "@/lib/virtual-scroll";
 import { TagDots } from "@/components/TagView";
 import { MenuGroup } from "@/components/MenuGroup";
 import { openersForEntry } from "@/lib/openers";
@@ -279,8 +280,7 @@ export function FileList({
   const lastClickRef = useRef<{ path: string; time: number } | null>(null);
   /** 键盘快速定位：输入缓冲 + 3 秒超时重置 */
   const listScrollRef = useRef<HTMLDivElement>(null);
-  /** v0.8.3 虚拟滚动：固定行高，只渲染可视区 +/- buffer 行 */
-  const ROW_HEIGHT = 26;
+  /** v0.8.3 虚拟滚动：固定行高，只渲染可视区 +/- buffer 行（行高见 lib/virtual-scroll） */
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(400); // 初始给个合理值，避免首帧只渲染前 6 行
   const onListScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -694,12 +694,7 @@ export function FileList({
         )}
         {/* v0.8.3 虚拟滚动：只渲染可视区 +/- buffer 行 */}
         {(() => {
-          const BUFFER = 6;
-          const total = sorted.length;
-          const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER);
-          const end = Math.min(total, Math.ceil((scrollTop + viewportH) / ROW_HEIGHT) + BUFFER);
-          const padTop = start * ROW_HEIGHT;
-          const padBottom = (total - end) * ROW_HEIGHT;
+          const { start, end, padTop, padBottom } = visibleRange(sorted.length, scrollTop, viewportH);
           return (
             <>
               {padTop > 0 && <div style={{ height: padTop }} />}

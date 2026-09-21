@@ -2,9 +2,7 @@
 //! 覆盖：列目录 / stat / 打开下载 / 新建 / 删除 / 重命名 / 上传。
 //! 报文格式：u32 length(不含自身) + u8 type + 内容，请求均带 u32 request-id。
 
-#![allow(dead_code)] // 完整协议常量/编解码函数，写操作场景会逐步用上
 
-use std::collections::HashMap;
 
 // 请求类型（v3）
 pub const INIT: u8 = 1;
@@ -20,23 +18,18 @@ pub const RMDIR: u8 = 15;
 pub const REALPATH: u8 = 16;
 pub const STAT: u8 = 17;
 pub const RENAME: u8 = 18;
-pub const FSTAT: u8 = 8;
 
 // 回复类型
 pub const VERSION: u8 = 2;
 pub const STATUS: u8 = 101;
-pub const HANDLE: u8 = 102;
 pub const DATA: u8 = 103;
 pub const NAME: u8 = 104;
-pub const ATTRS: u8 = 105;
 
 // 打开模式（OpenFlags，v3 常用子集）
 pub const FXF_READ: u32 = 0x1;
 pub const FXF_WRITE: u32 = 0x2;
-pub const FXF_APPEND: u32 = 0x4;
 pub const FXF_CREAT: u32 = 0x8;
 pub const FXF_TRUNC: u32 = 0x10;
-pub const FXF_EXCL: u32 = 0x20;
 
 // 属性 flags
 pub const ATTR_SIZE: u32 = 0x1;
@@ -46,7 +39,6 @@ pub const ATTR_ACMODTIME: u32 = 0x8;
 
 /// 错误码（STATUS 报文中的 error code）
 pub mod err {
-    pub const OK: u32 = 0;
     pub const EOF: u32 = 1;
     pub const NO_SUCH_FILE: u32 = 2;
     pub const PERMISSION_DENIED: u32 = 3;
@@ -84,9 +76,6 @@ pub struct SftpAttrs {
     pub is_symlink: bool,
     pub permissions: u32,
     pub mtime: Option<i64>,
-    pub atime: Option<i64>,
-    pub uid: Option<u32>,
-    pub gid: Option<u32>,
 }
 
 impl SftpAttrs {
@@ -164,9 +153,6 @@ impl<'a> Reader<'a> {
         self.pos += n;
         Ok(s)
     }
-    pub fn u8(&mut self) -> Result<u8, String> {
-        Ok(self.take(1)?[0])
-    }
     pub fn u32(&mut self) -> Result<u32, String> {
         Ok(u32::from_be_bytes(self.take(4)?.try_into().unwrap()))
     }
@@ -191,8 +177,9 @@ pub fn parse_attrs(r: &mut Reader) -> Result<SftpAttrs, String> {
         a.size = r.u64()?;
     }
     if flags & ATTR_UIDGID != 0 {
-        a.uid = Some(r.u32()?);
-        a.gid = Some(r.u32()?);
+        // 读掉但不保留（v3 报文里 u32 uid + u32 gid 必须消费，否则后续解析错位）
+        r.u32()?;
+        r.u32()?;
     }
     if flags & ATTR_PERMISSIONS != 0 {
         a.permissions = r.u32()?;
@@ -203,7 +190,7 @@ pub fn parse_attrs(r: &mut Reader) -> Result<SftpAttrs, String> {
         a.is_symlink = a.permissions & S_IFMT == S_IFLNK;
     }
     if flags & ATTR_ACMODTIME != 0 {
-        a.atime = Some(r.u32()? as i64);
+        r.u32()?; // atime 读掉不用
         a.mtime = Some(r.u32()? as i64);
     }
     Ok(a)
@@ -244,55 +231,7 @@ pub fn parse_version(data: &[u8]) -> Result<u32, String> {
     Ok(version)
 }
 
-/// 会话初始化请求：SSH_FXP_INIT
-pub fn init_request() -> Vec<u8> {
-    let mut b = Buf::new();
-    b.u8(INIT);
-    b.u32(3); // version
-    b.finalize()
-}
-
-/// 服务器端 VERSION 应答：SSH_FXP_VERSION
-pub fn version_reply(version: u32) -> Vec<u8> {
-    let mut b = Buf::new();
-    b.u8(VERSION);
-    b.u32(version);
-    b.finalize()
-}
-
-/// 发送方校验：普通请求包裹 request-id
-pub fn request(id: u32, type_: u8, payload: &dyn Fn(&mut Buf)) -> Vec<u8> {
-    let mut b = Buf::new();
-    b.u8(type_);
-    b.u32(id);
-    payload(&mut b);
-    b.finalize()
-}
-
-/// 解析收到的包：返回 (type, request_id, body)
-pub fn parse_packet(data: &[u8]) -> Result<(u8, u32, &[u8]), String> {
-    if data.len() < 5 {
-        return Err("SFTP 包过短".into());
-    }
-    let type_ = data[0];
-    let id = u32::from_be_bytes(data[1..5].try_into().unwrap());
-    Ok((type_, id, &data[5..]))
-}
-
 /// 权限位（用于 mkdir 默认 0755）
 pub const DEFAULT_DIR_PERM: u32 = 0o40755;
 pub const DEFAULT_FILE_PERM: u32 = 0o100644;
 
-/// 从服务器扩展名列表构建 map（当前仅记录，方便调试）
-pub fn collect_extensions(data: &[u8]) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    let mut r = Reader::new(data);
-    if let Ok(count) = r.u32() {
-        for _ in 0..count {
-            if let (Ok(k), Ok(v)) = (r.str(), r.str()) {
-                map.insert(k, v);
-            }
-        }
-    }
-    map
-}

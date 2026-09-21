@@ -29,6 +29,10 @@ export const parentDir = (path: string) => invoke<string>("parent_dir", { path }
 /** 条目类型探测：返回 "dir" / "file" / "symlink" */
 export const statPath = (path: string) => invoke<string>("stat_path", { path });
 
+/** 批量条目类型探测：返回等长 kind 列表（"dir"/"file"/"symlink"/"missing"） */
+export const statPaths = (paths: string[]) =>
+  invoke<string[]>("stat_paths", { paths });
+
 /** 复制条目到目标目录；返回实际创建路径列表（冲突自动改名，供撤销记录） */
 export const copyEntries = (paths: string[], dest: string) =>
   invoke<string[]>("copy_entries", { paths, dest });
@@ -157,9 +161,6 @@ export const sessionSave = (layout: SessionLayout) =>
 
 export const sessionLoad = () =>
   invoke<SessionLayout | null>("session_load");
-
-export const sessionClear = () =>
-  invoke<void>("session_clear");
 
 // ---- 窗口分享（v0.7） ----
 export const shareCreate = (

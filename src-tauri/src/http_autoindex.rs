@@ -76,8 +76,8 @@ pub fn list_http_dir(url: &str) -> Result<Vec<FileEntry>, String> {
     let is_html = ctype.contains("text/html") || ctype.is_empty();
 
     // 读取响应体（上限 4MB：目录索引页远小于此；超大响应判定为非目录，避免误读大文件/网页）
-    let mut reader = resp.into_reader();
     let mut body = Vec::new();
+    let reader = resp.into_reader();
     reader
         .take((MAX_INDEX_BODY + 1) as u64)
         .read_to_end(&mut body)
@@ -457,7 +457,7 @@ pub async fn http_download_to(
     let cancel = Arc::new(AtomicBool::new(false));
     download_cancels().lock().unwrap().insert(url.clone(), cancel.clone());
     let cleanup_url = url.clone();
-    let res = tokio::task::spawn_blocking(move || download_impl(&app, &local_dir, &url, &cancel))
+    let res = tauri::async_runtime::spawn_blocking(move || download_impl(&app, &local_dir, &url, &cancel))
         .await
         .map_err(|e| format!("下载任务失败：{e}"))?;
     download_cancels().lock().unwrap().remove(&cleanup_url);

@@ -10,6 +10,7 @@ import {
   loadShareAllowParent,
   loadUiFontFamily,
   saveUiFontFamily,
+  saveUiFontFamilyCustom,
   uiFontFamilyStack,
   UI_FONT_FAMILIES,
   saveShareAllowParent,
@@ -147,29 +148,14 @@ describe("字体族配置", () => {
     expect(UI_FONT_FAMILIES.map((f) => f.id)).toContain("msyahei");
     expect(UI_FONT_FAMILIES.map((f) => f.id)).toContain("custom");
   });
-});
 
-// ---- v0.8.1 字体族 ----
-describe("字体族", () => {
-  it("默认 Windows 返回 msyahei", () => {
-    // jsdom navigator.platform 是 Win32
-    const id = loadUiFontFamily();
-    expect(id).toBe("msyahei");
-  });
-
-  it("uiFontFamilyStack 返回对应 stack", () => {
-    expect(uiFontFamilyStack("msyahei")).toContain("Microsoft YaHei");
-    expect(uiFontFamilyStack("pingfang")).toContain("PingFang");
-    expect(uiFontFamilyStack("system")).toContain("system-ui");
-  });
-
-  it("uiFontFamilyStack 未知 id 返回 system", () => {
+  it("未知 id 回落到 system", () => {
     expect(uiFontFamilyStack("unknown")).toContain("system-ui");
   });
 
-  it("saveUiFontFamily 后 loadUiFontFamily 返回相同值", () => {
-    saveUiFontFamily("pingfang");
-    expect(loadUiFontFamily()).toBe("pingfang");
+  it("saveUiFontFamilyCustom 写入的字体名被 uiFontFamilyStack 读到", () => {
+    saveUiFontFamilyCustom("JetBrains Mono");
+    expect(uiFontFamilyStack("custom")).toContain("JetBrains Mono");
   });
 });
 

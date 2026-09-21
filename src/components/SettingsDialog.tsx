@@ -33,6 +33,7 @@ import {
   saveShareAllowParent,
   loadShareDefaultExpires,
   saveShareDefaultExpires,
+  saveUiFontFamilyCustom,
 } from "@/lib/persist";
 
 /**
@@ -311,7 +312,7 @@ export function SettingsDialog({
                           className="w-40 rounded border bg-background px-2 py-1 text-xs"
                           onBlur={(e) => {
                             if (e.target.value.trim()) {
-                              localStorage.setItem("rfm.ui-font-family-custom", e.target.value.trim());
+                              saveUiFontFamilyCustom(e.target.value.trim());
                               // 触发重渲染
                               onUiFontFamilyChange("custom");
                             }

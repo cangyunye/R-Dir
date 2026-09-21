@@ -10,7 +10,54 @@ permissions:
   contents: write
 
 jobs:
+  # 前置校验：v0.8.1 两次发布失败是因为 SplitView activeStyle 的 TS 类型错误
+  # 只在 CI 才被 pnpm build(tsc) 抓到。这里提前、低成本地拦住。
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+          run_install: false
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Frontend unit tests
+        run: pnpm test
+
+      - name: Install Playwright browser
+        run: pnpm exec playwright install chromium
+
+      - name: E2E tests
+        run: pnpm test:e2e
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Rust tests
+        run: cargo test
+        working-directory: src-tauri
+
   build:
+    needs: test
     strategy:
       fail-fast: false
       matrix:
@@ -22,6 +69,7 @@ jobs:
           - platform: windows-latest
             args: ""
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +111,8 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # releaseDraft: true —— 先建 Draft，三个平台全部成功后由 publish job 统一转正。
+      # 否则第一个完成的 job 就把 release 发布成 Latest，用户会下到缺 Windows/ARM 资产的残缺版。
       - name: Build & release (tauri-action)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -80,8 +130,25 @@ jobs:
             - 多选（Shift 范围 / ⌘·Ctrl 追加 / 矩形框选）与跨窗格拖拽（默认复制，Option/Alt 移动）
             - 分屏（VSCode 式拖拽分割条，左右 / 上下 / 四宫格）
             - 搜索：文件名（当前层 / fd 引擎递归检索）+ 内容搜索（VSCode 风格，默认当前层）
+            - 搜索结果右键定位 / 打开 / 复制相对与绝对路径；双击按扩展名用系统关联程序打开
+            - 标签视图右键菜单（加标签 + 文件夹操作），标签内文件夹/文件正确区分
             - 主题切换（右上角日 / 月）、右键空白菜单、快捷键系统（⌘,/F1 查看一览）
-          releaseDraft: false
+            - 帮助菜单：GitHub 仓库 + 基于 Releases 的更新检测
+          releaseDraft: true
           prerelease: false
           # 显式指定 features：default 解析在 CI 环境不稳定（v0.7.0/v0.7.1 曾缺失 sftp/http 模块）
           args: --features sftp,share ${{ matrix.args }}
+
+  # 三个平台都成功后才把 Draft 转正；任何平台失败则 release 永远停留在 Draft，用户看不到残缺版本
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false --latest --repo "${{ github.repository }}"

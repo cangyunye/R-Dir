@@ -6,6 +6,7 @@ import {
   FilePlus2,
   FolderOpen,
   FolderPlus,
+  Globe,
   Home,
   Info,
   LayoutPanelLeft,
@@ -27,6 +28,7 @@ import {
   CopyPlus,
   X,
   ArrowLeftRight,
+  Download,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -85,6 +87,13 @@ export interface MenuActions {
   dark: boolean;
   onToggleTheme: () => void;
   onOpenSettings: () => void;
+  /** 应用名 / 版本（Tauri getName / getVersion，Windows 任务栏与应用内显示一致） */
+  appName: string;
+  appVersion: string;
+  /** 打开 GitHub 仓库 */
+  onOpenRepo: () => void;
+  /** 检查更新（GitHub Releases） */
+  onCheckUpdate: () => void;
   /** 键位版本号：自定义键位变化时递增，仅用于触发菜单快捷键提示重渲染 */
   keymapVersion?: number;
 }
@@ -282,13 +291,19 @@ export function MenuBar(actions: MenuActions) {
       </MenuButton>
 
       <MenuButton label="帮助" {...openFor("帮助")}>
-        <DropdownMenuLabel>R-Dir</DropdownMenuLabel>
+        <DropdownMenuLabel>{actions.appName}</DropdownMenuLabel>
         <DropdownMenuItem onClick={actions.onOpenSettings}>
           <Settings className="mr-2 h-4 w-4" /> 设置（快捷键录制与主题）
           <Shortcut id="openSettings" />
         </DropdownMenuItem>
+        <DropdownMenuItem onClick={actions.onCheckUpdate}>
+          <Download className="mr-2 h-4 w-4" /> 检查更新…
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={actions.onOpenRepo}>
+          <Globe className="mr-2 h-4 w-4" /> GitHub 仓库
+        </DropdownMenuItem>
         <DropdownMenuItem disabled>
-          <Info className="mr-2 h-4 w-4" /> 版本 {pkg.version}（Tauri 2 + React）
+          <Info className="mr-2 h-4 w-4" /> 版本 {actions.appVersion || pkg.version}（Tauri 2 + React）
         </DropdownMenuItem>
       </MenuButton>
 
