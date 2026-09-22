@@ -14,6 +14,17 @@ xattr -cr /Applications/R-Dir.app
 
 或右键应用 →「打开」→ 确认即可正常使用。
 
+### Windows 安装 / 升级说明
+
+- 自 v0.12.2 起 Windows **只发布 NSIS 安装包** `R-Dir_x.y.z_x64-setup.exe`（不再发布 `.msi`）。
+- 若升级时弹出 **「Error launching installer」**：通常是此前用 `.msi` 安装过、现在用 `-setup.exe` 升级，NSIS 尝试卸载 MSI（需管理员权限）失败所致。请在「设置 → 应用 → 已安装的应用」中先手动卸载旧版 R-Dir，再运行新的 `-setup.exe`。
+- 从旧版（含 MSI）升级到 v0.12.2+ 只需手动卸载一次，之后 `-setup.exe` → `-setup.exe` 升级即可正常覆盖。
+
+## v0.12.2 更新
+
+- **修复 Windows 升级失败**：Windows 只发布 NSIS `-setup.exe`，避免 MSI 与 NSIS 混装导致的「Error launching installer」。
+- **Release 说明带变更日志**：发布时自动把 `CHANGELOG.md` 对应版本段落写入 Release notes。
+
 ## v0.12.1 更新
 
 - 设置对话框新增「关于」分区：显示应用名与版本（取自应用元数据 `tauri.conf.json`，随发布 tag 同步），并提供「检查更新 / GitHub 仓库」入口；底部同步显示 `R-Dir vX.Y.Z`。

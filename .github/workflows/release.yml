@@ -67,7 +67,9 @@ jobs:
           - platform: macos-latest
             args: "--target x86_64-apple-darwin"
           - platform: windows-latest
-            args: ""
+            # 只出 NSIS（-setup.exe）：Windows 上 MSI 与 NSIS 混装会导致升级时
+            # NSIS 去卸载 MSI（msiexec 需要提权）失败并弹「Error launching installer」。
+            args: "--bundles nsis"
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 60
     steps:
@@ -171,6 +173,39 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      # 把 CHANGELOG.md 里本版本的段落拼到 Release 说明顶部（保留 tauri-action 写入的通用功能清单）
+      - name: Prepend CHANGELOG to release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          VER="${TAG#v}"
+          awk -v ver="$VER" '
+            $0 ~ ("^## v" ver "([[:space:]]|$)") { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/changelog.md"
+          if [ ! -s "$RUNNER_TEMP/changelog.md" ]; then
+            echo "CHANGELOG.md 中无 v$VER 段落，保留默认 release notes"; exit 0
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/old.md"
+          if grep -qF "## $TAG" "$RUNNER_TEMP/old.md"; then
+            echo "release notes 已含 $TAG 变更，跳过（避免重复）"; exit 0
+          fi
+          {
+            echo "## $TAG 变更"
+            echo
+            cat "$RUNNER_TEMP/changelog.md"
+            echo
+            echo "---"
+            echo
+            cat "$RUNNER_TEMP/old.md"
+          } > "$RUNNER_TEMP/body.md"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/body.md"
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
