@@ -16,19 +16,9 @@ xattr -cr /Applications/R-Dir.app
 
 ### Windows 安装 / 升级说明
 
-- 自 v0.12.2 起 Windows **只发布 NSIS 安装包** `R-Dir_x.y.z_x64-setup.exe`（不再发布 `.msi`）。
+- Windows **只发布 NSIS 安装包** `R-Dir_x.y.z_x64-setup.exe`（不发布 `.msi`）。
 - 若升级时弹出 **「Error launching installer」**：通常是此前用 `.msi` 安装过、现在用 `-setup.exe` 升级，NSIS 尝试卸载 MSI（需管理员权限）失败所致。请在「设置 → 应用 → 已安装的应用」中先手动卸载旧版 R-Dir，再运行新的 `-setup.exe`。
-- 从旧版（含 MSI）升级到 v0.12.2+ 只需手动卸载一次，之后 `-setup.exe` → `-setup.exe` 升级即可正常覆盖。
-
-## v0.12.2 更新
-
-- **修复 Windows 升级失败**：Windows 只发布 NSIS `-setup.exe`，避免 MSI 与 NSIS 混装导致的「Error launching installer」。
-- **Release 说明带变更日志**：发布时自动把 `CHANGELOG.md` 对应版本段落写入 Release notes。
-
-## v0.12.1 更新
-
-- 设置对话框新增「关于」分区：显示应用名与版本（取自应用元数据 `tauri.conf.json`，随发布 tag 同步），并提供「检查更新 / GitHub 仓库」入口；底部同步显示 `R-Dir vX.Y.Z`。
-- 发布流程新增「版本以 tag 为准」步骤：打 tag 时自动把 `vX.Y.Z` 写入 `package.json / tauri.conf.json / Cargo.toml`，杜绝程序内版本与 tag 不一致。
+- 从旧版（含 MSI）升级只需手动卸载一次，之后 `-setup.exe` → `-setup.exe` 升级即可正常覆盖。
 
 ## v0.12.0 更新
 
@@ -36,7 +26,9 @@ xattr -cr /Applications/R-Dir.app
 - **标签视图右键菜单**：标签（虚拟文件夹）内的条目右键弹出应用内菜单（打开 / 用默认应用打开 / 定位 / 标签 / 复制路径 / 快捷访问 / 移除此标签），不再出现 WebView 默认右键菜单；新增批量类型探测，正确区分标签内的文件夹与文件。
 - **Windows 应用名识别**：窗口/网页标题统一为 `R-Dir`，补全 Windows 可执行文件版本元数据（publisher / 描述 / 版权），并在 Windows 启动时显式设置 AppUserModelID，使任务栏正确分组与显示应用名。
 - **应用内更新**：帮助菜单新增「检查更新…」「GitHub 仓库」；基于 GitHub Releases API 比对最新版本，有新版时引导前往下载页；启动后静默检查一次。
-- **内部重构**：移除未使用的 shadcn 组件与死代码，抽取 `useSftp`，测试基建补齐（vitest 224 + Playwright E2E 35 + Rust 47）。
+- **设置内显示版本**：设置对话框新增「关于」分区，显示应用名与版本（取自应用元数据，随发布 tag 同步），底部状态栏显示 `R-Dir vX.Y.Z`。
+- **发布流程**：打 tag 时自动把 `vX.Y.Z` 写入 `package.json / tauri.conf.json / Cargo.toml`（版本与 tag 一致）；Release 说明自动带上 `CHANGELOG.md` 对应版本段落；**Windows 只发布 NSIS**，避免 MSI 与 NSIS 混装导致的升级报错。
+- **内部重构**：移除未使用的 shadcn 组件与死代码，抽取 `useSftp`，测试基建补齐（vitest + Playwright E2E + Rust）。
 
 ## v0.1.0 功能速览
 
