@@ -42,7 +42,7 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
       {...over}
     />,
   );
-  fireEvent.click(screen.getByText("打开方式"));
+  fireEvent.click(screen.getByRole("button", { name: "打开方式" }));
   return { onRemoveOpener, onSetOpenerExtensions, onAddOpener };
 }
 
@@ -97,7 +97,7 @@ describe("SettingsDialog 打开方式分区", () => {
 describe("SettingsDialog 关于分区", () => {
   it("显示应用名与版本（随 tag 同步）", () => {
     setup({ appName: "R-Dir", appVersion: "9.9.9" });
-    fireEvent.click(screen.getByText("关于"));
+    fireEvent.click(screen.getByRole("button", { name: "关于" }));
     expect(screen.getByText("版本 v9.9.9 · Tauri 2 + React")).toBeInTheDocument();
   });
 });

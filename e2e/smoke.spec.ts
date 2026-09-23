@@ -206,3 +206,27 @@ test.describe("8. 快捷键不崩溃（全量冒烟）", () => {
     });
   }
 });
+
+test.describe("9. 设置对话框滑动分区", () => {
+  test("S1 左栏为锚点跳转，对话框高度不随分区变化", async ({ page }) => {
+    await page.getByRole("button", { name: "帮助" }).click();
+    await page.getByText("设置（快捷键录制与主题）").click();
+    await expect(page.getByText("配置自动保存在本机")).toBeVisible();
+
+    const dialog = page.locator(".fixed.inset-0 > div").first();
+    const scroller = dialog.locator(".overflow-y-auto").last();
+    const height0 = (await dialog.boundingBox())!.height;
+
+    // 点「快捷键」→ 滚动到该分区，且分区标题不被顶边裁掉
+    await page.getByRole("button", { name: "快捷键", exact: true }).click();
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    const scrollerTop = (await scroller.boundingBox())!.y;
+    const keysTop = (await scroller.locator(":scope > div").nth(1).boundingBox())!.y;
+    expect(keysTop).toBeGreaterThanOrEqual(scrollerTop);
+
+    // 点「关于」→ 继续向下滚动；对话框高度保持恒定（不再随分区跳动）
+    await page.getByRole("button", { name: "关于", exact: true }).click();
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(500);
+    expect((await dialog.boundingBox())!.height).toBe(height0);
+  });
+});

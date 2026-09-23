@@ -120,13 +120,20 @@ export async function installTauriMock(page: Page): Promise<void> {
           return "missing";
         });
       },
-      list_plugins: () => [
-        { id: "sftp", name: "SFTP 远程文件", description: "", enabled: true, builtin: true },
-        { id: "http", name: "HTTP 索引", description: "", enabled: true, builtin: true },
-        { id: "share", name: "窗口分享", description: "", enabled: true, builtin: true },
-        { id: "opener", name: "打开方式", description: "", enabled: true, builtin: true },
-        { id: "terminal", name: "终端", description: "", enabled: true, builtin: true },
-      ],
+      list_plugins: () =>
+        [
+          { id: "sftp", name: "SFTP 远程文件", description: "", protocols: ["sftp"], operations: ["list", "read"] },
+          { id: "http", name: "HTTP 索引", description: "", protocols: ["http", "https"], operations: ["list"] },
+          { id: "share", name: "窗口分享", description: "", protocols: ["share"], operations: ["serve"] },
+          { id: "opener", name: "打开方式", description: "", protocols: [], operations: ["open_with"] },
+          { id: "terminal", name: "终端", description: "", protocols: [], operations: ["open_terminal"] },
+        ].map((p) => ({
+          ...p,
+          version: "0.12.0",
+          source: "builtin",
+          enabled: true,
+          configurable: false,
+        })),
       list_openers: () => [],
       list_shells: () => [],
       // ---- SFTP：一台"已保存密码"的服务器 + 一台需要手输的服务器 ----

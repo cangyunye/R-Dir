@@ -39,6 +39,18 @@ import {
   saveUiFontFamilyCustom,
 } from "@/lib/persist";
 
+/** 设置分区标识（左栏导航 + 右栏锚点共用） */
+type SectionId = "appearance" | "keys" | "openers" | "share" | "plugins" | "about";
+
+const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
+  { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
+  { id: "keys", label: "快捷键", icon: <Keyboard className="h-4 w-4" /> },
+  { id: "openers", label: "打开方式", icon: <ExternalLink className="h-4 w-4" /> },
+  { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
+  { id: "plugins", label: "插件", icon: <Puzzle className="h-4 w-4" /> },
+  { id: "about", label: "关于", icon: <Info className="h-4 w-4" /> },
+];
+
 /**
  * 设置对话框（M5 P2）
  * - 外观：浅色 / 深色主题（持久化到 localStorage）
@@ -96,8 +108,11 @@ export function SettingsDialog({
   const [shareExpiresHours, setShareExpiresHours] = useState<number | null>(() => loadShareDefaultExpires());
   /** 正在录制键位的 actionId（null = 未录制） */
   const [recordingId, setRecordingId] = useState<string | null>(null);
-  /** v0.8 分类导航当前分区 */
-  const [section, setSection] = useState<"appearance" | "keys" | "share" | "plugins" | "openers" | "about">("appearance");
+  /** v0.8 分类导航当前分区（由滚动位置反推，用于左栏高亮） */
+  const [section, setSection] = useState<SectionId>("appearance");
+  /** 右栏滚动容器 + 各分区锚点（左栏点击 → 滚动定位） */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sectionRefs = useRef<Partial<Record<SectionId, HTMLDivElement | null>>>({});
   /** v0.11 每个打开方式的「新增扩展名」输入草稿 */
   const [extInput, setExtInput] = useState<Record<string, string>>({});
   /** 冲突提示（combo → 占用者 label） */
@@ -110,6 +125,25 @@ export function SettingsDialog({
     setTip(msg);
     if (tipTimer.current) window.clearTimeout(tipTimer.current);
     tipTimer.current = window.setTimeout(() => setTip(null), 2500);
+  }, []);
+
+  /** 点击左栏 → 平滑滚动到对应分区 */
+  const scrollToSection = useCallback((id: SectionId) => {
+    setSection(id);
+    sectionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  /** 右栏滚动 → 反推当前分区，同步左栏高亮 */
+  const handleScroll = useCallback(() => {
+    const c = scrollRef.current;
+    if (!c) return;
+    const cTop = c.getBoundingClientRect().top;
+    let current: SectionId = SECTIONS[0].id;
+    for (const s of SECTIONS) {
+      const el = sectionRefs.current[s.id];
+      if (el && el.getBoundingClientRect().top - cTop <= 24) current = s.id;
+    }
+    setSection((prev) => (prev === current ? prev : current));
   }, []);
 
   useEffect(() => {
@@ -186,15 +220,6 @@ export function SettingsDialog({
 
   const groups = [...new Set(ACTIONS.map((a) => a.group))];
 
-  const sections: { id: "appearance" | "keys" | "share" | "plugins" | "openers" | "about"; label: string; icon: React.ReactNode }[] = [
-    { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
-    { id: "keys", label: "快捷键", icon: <Keyboard className="h-4 w-4" /> },
-    { id: "openers", label: "打开方式", icon: <ExternalLink className="h-4 w-4" /> },
-    { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
-    { id: "plugins", label: "插件", icon: <Puzzle className="h-4 w-4" /> },
-    { id: "about", label: "关于", icon: <Info className="h-4 w-4" /> },
-  ];
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -202,7 +227,7 @@ export function SettingsDialog({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex max-h-[82vh] w-[680px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl">
+      <div className="flex h-[min(600px,85vh)] w-[720px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-4 py-2.5">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <Keyboard className="h-4 w-4" /> 设置
@@ -218,11 +243,11 @@ export function SettingsDialog({
 
         <div className="flex min-h-0 flex-1">
           {/* 左侧分类导航 */}
-          <nav className="flex w-36 shrink-0 flex-col gap-0.5 border-r p-2">
-            {sections.map((sec) => (
+          <nav className="flex w-36 shrink-0 flex-col gap-0.5 overflow-y-auto border-r p-2">
+            {SECTIONS.map((sec) => (
               <button
                 key={sec.id}
-                onClick={() => setSection(sec.id)}
+                onClick={() => scrollToSection(sec.id)}
                 className={cn(
                   "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors",
                   section === sec.id
@@ -237,9 +262,15 @@ export function SettingsDialog({
           </nav>
 
           {/* 右侧内容区 */}
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-            {section === "appearance" && (
-              <>
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="min-h-0 flex-1 overflow-y-auto px-4 py-3"
+          >
+            <div
+              ref={(el) => { sectionRefs.current.appearance = el; }}
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
                 {/* 外观：主题 */}
                 <div className="mb-4">
                   <div className="mb-1.5 text-xs font-semibold text-primary">主题</div>
@@ -335,11 +366,12 @@ export function SettingsDialog({
                     </div>
                   </div>
                 </div>
-              </>
-            )}
+            </div>
 
-            {section === "keys" && (
-              <>
+            <div
+              ref={(el) => { sectionRefs.current.keys = el; }}
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-xs font-semibold text-primary">快捷键</div>
                   <button
@@ -436,11 +468,12 @@ export function SettingsDialog({
                     </div>
                   </div>
                 ))}
-              </>
-            )}
+            </div>
 
-            {section === "openers" && (
-              <>
+            <div
+              ref={(el) => { sectionRefs.current.openers = el; }}
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-xs font-semibold text-primary">打开方式</div>
                   <button
@@ -546,11 +579,12 @@ export function SettingsDialog({
                     ))}
                   </div>
                 )}
-              </>
-            )}
+            </div>
 
-            {section === "share" && (
-              <>
+            <div
+              ref={(el) => { sectionRefs.current.share = el; }}
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
                 <div className="mb-4">
                   <div className="mb-1.5 text-xs font-semibold text-primary">分享</div>
                   <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
@@ -594,11 +628,12 @@ export function SettingsDialog({
                     </p>
                   </div>
                 </div>
-              </>
-            )}
+            </div>
 
-            {section === "plugins" && (
-              <>
+            <div
+              ref={(el) => { sectionRefs.current.plugins = el; }}
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
                 <div className="mb-4">
                   <div className="mb-1.5 text-xs font-semibold text-primary">插件</div>
                   <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
@@ -672,10 +707,12 @@ export function SettingsDialog({
                     )}
                   </div>
                 </div>
-              </>
-            )}
+            </div>
 
-            {section === "about" && (
+            <div
+              ref={(el) => { sectionRefs.current.about = el; }}
+              className="scroll-mt-3"
+            >
               <div className="space-y-3">
                 <div className="flex items-center gap-3 rounded-md border px-3 py-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -706,7 +743,7 @@ export function SettingsDialog({
                   版本号取自应用元数据（tauri.conf.json），随发布 tag 同步。
                 </p>
               </div>
-            )}
+            </div>
           </div>
         </div>
 
