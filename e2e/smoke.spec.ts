@@ -230,3 +230,28 @@ test.describe("9. 设置对话框滑动分区", () => {
     expect((await dialog.boundingBox())!.height).toBe(height0);
   });
 });
+
+test.describe("10. 右键菜单不溢出窗口（界面缩放回归）", () => {
+  test("大字体 + 矮窗口下，右键底部条目菜单仍收在窗口内", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("rfm.ui-font", "18");
+      localStorage.setItem("rfm.ui-font-migrated-v080", "1");
+    });
+    await page.setViewportSize({ width: 1000, height: 560 });
+    await page.reload();
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+
+    // 右键最后一行（靠近窗口底部）
+    await page.locator("[data-path]").last().click({ button: "right" });
+    const menu = page.locator('[data-slot="context-menu-content"]');
+    await expect(menu).toBeVisible();
+
+    const box = await menu.boundingBox();
+    const vh = page.viewportSize()!.height;
+    // eslint-disable-next-line no-console
+    console.log("menu box:", JSON.stringify(box), "viewportH:", vh);
+    expect(box).not.toBeNull();
+    expect(box!.y, "菜单顶边不应在窗口上方").toBeGreaterThanOrEqual(-1);
+    expect(box!.y + box!.height, "菜单底边不应超出窗口").toBeLessThanOrEqual(vh + 1);
+  });
+});
