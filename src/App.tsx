@@ -120,13 +120,8 @@ import {
 } from "@/lib/persist";
 import { shareStopByDir, shareList } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Trash2, Bird, ListTree } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Trash2, Bird } from "lucide-react";
+import { PaneListMenu } from "@/components/PaneListMenu";
 import { MenuBar } from "@/components/MenuBar";
 
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
@@ -2225,37 +2220,7 @@ useEffect(() => {
         searchOpen={searchOpen}
         onToggleSearch={toggleSearchPanel}
         focusTick={addressFocusTick}
-        trailing={
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                title="已连接的路径（窗格列表）"
-              >
-                <ListTree className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="max-h-72 w-80 overflow-y-auto">
-              {paneList.map((p) => (
-                <DropdownMenuItem
-                  key={`${p.tabId}:${p.paneId}`}
-                  onClick={() => activatePane(p.tabId, p.paneId)}
-                  className="flex items-center gap-2"
-                >
-                  <span className="w-3 shrink-0 text-center font-mono text-primary">
-                    {p.active ? "*" : ""}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-xs">{p.title}</span>
-                  <span className="max-w-44 truncate text-[10px] text-muted-foreground">
-                    {p.path}
-                  </span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        }
+        trailing={<PaneListMenu panes={paneList} onActivate={activatePane} />}
       />
 
       <div className="flex min-h-0 flex-1">

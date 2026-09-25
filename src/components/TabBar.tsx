@@ -33,11 +33,47 @@ export function TabBar({
   /** 正在内联重命名的标签 id */
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
+  /** 右键标签菜单（v0.15）：绝对定位在标签栏容器内，避免 portal + 根 zoom 导致溢出窗口 */
+  const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<{ idx: number; left: number; top: number } | null>(null);
 
   const endDrag = () => {
     dragRef.current = null;
     setDragging(false);
   };
+
+  /** 在标签下方打开右键菜单（坐标用 offsetLeft/Top，与绝对定位同一坐标系，zoom 安全） */
+  const openTabMenu = (e: React.MouseEvent, idx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = e.currentTarget as HTMLElement;
+    const c = containerRef.current;
+    if (!c) return;
+    const MENU_W = 168;
+    const left = Math.max(0, Math.min(el.offsetLeft, c.clientWidth - MENU_W));
+    setMenu({ idx, left, top: el.offsetTop + el.offsetHeight });
+  };
+
+  // 菜单打开时：点击外部 / Esc / 窗口尺寸变化 → 关闭
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    const onResize = () => setMenu(null);
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [menu]);
 
   /** 新建标签：pointerup + click 双通道触发 + 300ms 去重
    *  （WKWebView / WebView2 个别版本 click 事件合成不可靠） */
@@ -86,7 +122,10 @@ export function TabBar({
   };
 
   return (
-    <div className="flex items-end gap-0.5 border-b bg-muted/20 px-1.5 pt-1 select-none">
+    <div
+      ref={containerRef}
+      className="relative flex items-end gap-0.5 border-b bg-muted/20 px-1.5 pt-1 select-none"
+    >
       {tabs.map((tab, idx) => (
         <div
           key={tab.id}
@@ -95,6 +134,7 @@ export function TabBar({
           data-tab-idx={idx}
           onClick={() => onSelect(tab.id)}
           onDoubleClick={() => startRename(tab)}
+          onContextMenu={(e) => openTabMenu(e, idx)}
           onAuxClick={(e) => {
             // 鼠标中键关闭标签页（阻止默认自动滚动）
             if (e.button === 1) {
@@ -172,6 +212,50 @@ export function TabBar({
       >
         <Plus className="h-4 w-4" />
       </Button>
+
+      {/* 右键标签菜单（v0.15）：关闭 / 重命名 / 移动到最右边 */}
+      {menu && (
+        <div
+          ref={menuRef}
+          className="absolute z-50 min-w-[168px] rounded-md border bg-popover p-1 text-sm shadow-md"
+          style={{ left: menu.left, top: menu.top }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button
+            type="button"
+            disabled={tabs.length <= 1}
+            onClick={() => {
+              onClose(tabs[menu.idx].id);
+              setMenu(null);
+            }}
+            className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+          >
+            关闭标签
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              startRename(tabs[menu.idx]);
+              setMenu(null);
+            }}
+            className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
+          >
+            重命名
+          </button>
+          <button
+            type="button"
+            disabled={menu.idx === tabs.length - 1}
+            onClick={() => {
+              onReorder(menu.idx, tabs.length - 1);
+              setMenu(null);
+            }}
+            className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+          >
+            移动到最右边
+          </button>
+        </div>
+      )}
     </div>
   );
 }
