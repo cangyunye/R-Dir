@@ -19,6 +19,12 @@ import {
   UI_FONT_DEFAULT,
   UI_FONT_MIN,
   UI_FONT_MAX,
+  loadShowExtensions,
+  saveShowExtensions,
+  mergeDiskPrefs,
+  loadPrefsFromDisk,
+  saveCustomQuick,
+  loadCustomQuick,
 } from "./persist";
 
 beforeEach(() => {
@@ -166,5 +172,55 @@ describe("字体族", () => {
   it("saveUiFontFamily 后 loadUiFontFamily 返回相同值", () => {
     saveUiFontFamily("pingfang");
     expect(loadUiFontFamily()).toBe("pingfang");
+  });
+});
+
+// ---- v0.14 显示文件扩展名 ----
+describe("显示文件扩展名开关", () => {
+  it("默认显示", () => {
+    expect(loadShowExtensions()).toBe(true);
+  });
+  it("保存 false 后读回 false", () => {
+    saveShowExtensions(false);
+    expect(loadShowExtensions()).toBe(false);
+  });
+  it("保存 true 后读回 true", () => {
+    saveShowExtensions(false);
+    saveShowExtensions(true);
+    expect(loadShowExtensions()).toBe(true);
+  });
+});
+
+// ---- v0.14 磁盘偏好合并 ----
+describe("mergeDiskPrefs（磁盘备份恢复）", () => {
+  it("磁盘缺失键回落本地，磁盘存在键覆盖", () => {
+    saveTagNames({ red: "本地名" });
+    mergeDiskPrefs({ tagNames: { red: "磁盘名", blue: "新名" } });
+    const n = loadTagNames();
+    expect(n.red).toBe("磁盘名");
+    expect(n.blue).toBe("新名");
+  });
+  it("空磁盘快照不覆盖本地", () => {
+    saveTagNames({ red: "重要" });
+    mergeDiskPrefs({});
+    expect(loadTagNames()).toEqual({ red: "重要" });
+  });
+  it("fileTags 按路径合并", () => {
+    saveFileTags({ "/a.txt": ["red"] });
+    mergeDiskPrefs({ fileTags: { "/a.txt": ["red", "blue"], "/b.txt": ["green"] } });
+    const t = loadFileTags();
+    expect(t["/a.txt"]).toEqual(["red", "blue"]);
+    expect(t["/b.txt"]).toEqual(["green"]);
+  });
+  it("customQuick 并集去重", () => {
+    saveCustomQuick(["/home/u/x", "/home/u/y"]);
+    mergeDiskPrefs({ customQuick: ["/home/u/y", "/home/u/z"] });
+    expect(loadCustomQuick()).toEqual(["/home/u/x", "/home/u/y", "/home/u/z"]);
+  });
+});
+
+describe("loadPrefsFromDisk（非 Tauri 环境）", () => {
+  it("invoke 不可用时返回 null（不抛错）", async () => {
+    await expect(loadPrefsFromDisk()).resolves.toBeNull();
   });
 });

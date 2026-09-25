@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatSize, formatTime, basename } from "./format";
+import { formatSize, formatTime, basename, hideExtension } from "./format";
 
 describe("formatSize（lsd 风格）", () => {
   it("0 字节", () => {
@@ -50,5 +50,23 @@ describe("basename", () => {
   });
   it("无分隔符返回原串", () => {
     expect(basename("file.txt")).toBe("file.txt");
+  });
+});
+
+describe("hideExtension（v0.14 隐藏扩展名）", () => {
+  it("目录保留原名", () => {
+    expect(hideExtension("my.folder", true)).toBe("my.folder");
+  });
+  it("普通文件去扩展名", () => {
+    expect(hideExtension("report.docx", false)).toBe("report");
+  });
+  it("无扩展名文件保留", () => {
+    expect(hideExtension("LICENSE", false)).toBe("LICENSE");
+  });
+  it("隐藏文件（.gitignore）保留", () => {
+    expect(hideExtension(".gitignore", false)).toBe(".gitignore");
+  });
+  it("复合扩展名只去最后一节", () => {
+    expect(hideExtension("backup.tar.gz", false)).toBe("backup.tar");
   });
 });

@@ -1,7 +1,69 @@
 ﻿/**
  * M5 配置持久化：文件标签（Finder 风格）+ 自定义快捷访问
  * 均存 localStorage，结构简单、可安全忽略失败。
+ *
+ * v0.14：标签相关配置（重命名名、文件标签、快捷访问）额外写盘到 prefs.json，
+ * 作为 WebView localStorage 的可靠备份——避免本地存储被清理后配置丢失。
+ * 写盘尽力而为（失败静默），测试环境（jsdom 无 Tauri）不影响。
  */
+
+import { invoke } from "@tauri-apps/api/core";
+
+/** 磁盘偏好快照：与 prefs.json 字段对齐（v0.14） */
+export interface PrefsDisk {
+  tagNames?: TagNames;
+  fileTags?: FileTags;
+  customQuick?: string[];
+}
+
+/** 当前 localStorage 中的标签配置快照 */
+function prefsSnapshot(): PrefsDisk {
+  return {
+    tagNames: loadTagNames(),
+    fileTags: loadFileTags(),
+    customQuick: loadCustomQuick(),
+  };
+}
+
+let prefsWriteChain: Promise<void> = Promise.resolve();
+
+/** 将当前标签配置写盘（串行队列，避免并发写坏文件；失败静默） */
+export function flushPrefsToDisk(): void {
+  const snap = prefsSnapshot();
+  prefsWriteChain = prefsWriteChain
+    .catch(() => undefined)
+    .then(() => invoke("prefs_save", { value: snap }).then(() => undefined).catch(() => undefined));
+}
+
+/** 从磁盘读取偏好；非 Tauri 环境或读取失败返回 null */
+export async function loadPrefsFromDisk(): Promise<PrefsDisk | null> {
+  try {
+    const v = await invoke<PrefsDisk | null>("prefs_load");
+    if (!v || typeof v !== "object") return null;
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 把磁盘快照合并回 localStorage（磁盘优先、缺失键回落本地），
+ * 随后调用 loadXxx 即可取到合并后的完整值。
+ */
+export function mergeDiskPrefs(disk: PrefsDisk): void {
+  if (disk.tagNames && Object.keys(disk.tagNames).length > 0) {
+    localStorage.setItem(TAG_NAMES_KEY, JSON.stringify({ ...loadTagNames(), ...disk.tagNames }));
+  }
+  if (disk.fileTags && Object.keys(disk.fileTags).length > 0) {
+    localStorage.setItem(TAGS_KEY, JSON.stringify({ ...loadFileTags(), ...disk.fileTags }));
+  }
+  if (disk.customQuick && disk.customQuick.length > 0) {
+    localStorage.setItem(
+      QUICK_KEY,
+      JSON.stringify([...new Set([...loadCustomQuick(), ...disk.customQuick])]),
+    );
+  }
+}
 
 /** 预设标签（参照 macOS Finder 彩色标签） */
 export interface TagDef {
@@ -44,6 +106,7 @@ export function saveTagNames(names: TagNames): void {
   } catch {
     /* ignore */
   }
+  flushPrefsToDisk();
 }
 
 /** 标签显示名：优先用户自定义，回落预设 */
@@ -73,6 +136,7 @@ export function saveFileTags(t: FileTags): void {
   } catch {
     /* ignore */
   }
+  flushPrefsToDisk();
 }
 
 /** 用户自定义快捷访问路径列表（追加在内置快捷访问下方） */
@@ -93,6 +157,7 @@ export function saveCustomQuick(q: CustomQuick): void {
   } catch {
     /* ignore */
   }
+  flushPrefsToDisk();
 }
 
 /** 路径的父目录（纯字符串处理，供标签跳转使用） */
@@ -242,6 +307,25 @@ export function uiFontFamilyStack(id: string): string {
 export function saveUiFontFamilyCustom(name: string): void {
   try {
     localStorage.setItem("rfm.ui-font-family-custom", name);
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---- v0.14 显示文件扩展名（默认显示；关闭后文件列表隐藏扩展名） ----
+const SHOW_EXTENSIONS_KEY = "rfm.show-extensions";
+
+export function loadShowExtensions(): boolean {
+  try {
+    return localStorage.getItem(SHOW_EXTENSIONS_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function saveShowExtensions(v: boolean): void {
+  try {
+    localStorage.setItem(SHOW_EXTENSIONS_KEY, v ? "1" : "0");
   } catch {
     /* ignore */
   }

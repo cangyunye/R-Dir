@@ -97,6 +97,11 @@ import {
   saveUiFontFamily,
   uiFontFamilyStack,
   UI_FONT_FAMILIES,
+  loadShowExtensions,
+  saveShowExtensions,
+  loadPrefsFromDisk,
+  mergeDiskPrefs,
+  flushPrefsToDisk,
   type FileTags,
   type TagNames,
 } from "@/lib/persist";
@@ -245,6 +250,14 @@ export default function App() {
     name: string;
   } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** v0.14 复制/剪切成功后的中央提示（约 1 秒内消失） */
+  const [clipboardTip, setClipboardTip] = useState<{ text: string; tick: number } | null>(null);
+  const clipboardTipTimer = useRef<number | null>(null);
+  const flashClipboardTip = useCallback((text: string) => {
+    setClipboardTip({ text, tick: Date.now() });
+    if (clipboardTipTimer.current) window.clearTimeout(clipboardTipTimer.current);
+    clipboardTipTimer.current = window.setTimeout(() => setClipboardTip(null), 900);
+  }, []);
   /** 拖拽悬停目标窗格（自实现 DnD） */
   const [dragOver, setDragOver] = useState<{
     targetPaneId: number;
@@ -493,6 +506,17 @@ useEffect(() => {
           const tab = makeTab(home);
           setTabs([tab]);
           setActiveId(tab.id);
+        }
+        // v0.14：从磁盘恢复标签配置（localStorage 被清空时的可靠备份）
+        const disk = await loadPrefsFromDisk();
+        if (disk) {
+          mergeDiskPrefs(disk);
+          setTagNames(loadTagNames());
+          setFileTags(loadFileTags());
+          setCustomQuick(loadCustomQuick());
+        } else {
+          // 磁盘尚无备份：把本地现有配置回写一份
+          flushPrefsToDisk();
         }
       } catch (e) {
         console.error("启动失败", e);
@@ -1273,8 +1297,9 @@ useEffect(() => {
       const list = paths ?? activePane?.selection ?? [];
       if (p === undefined || list.length === 0) return;
       setClipboard({ op: "copy", paths: list });
+      flashClipboardTip("已复制");
     },
-    [activePane],
+    [activePane, flashClipboardTip],
   );
 
   const doCut = useCallback(
@@ -1283,8 +1308,9 @@ useEffect(() => {
       const list = paths ?? activePane?.selection ?? [];
       if (p === undefined || list.length === 0) return;
       setClipboard({ op: "cut", paths: list });
+      flashClipboardTip("已剪切");
     },
-    [activePane],
+    [activePane, flashClipboardTip],
   );
 
   /** 删除文件夹确认弹窗 */
@@ -1306,6 +1332,15 @@ useEffect(() => {
   }, []);
   /** 自定义快捷访问（持久化） */
   const [customQuick, setCustomQuick] = useState<string[]>(() => loadCustomQuick());
+  /** v0.14 显示文件扩展名（默认显示，持久化） */
+  const [showExtensions, setShowExtensions] = useState<boolean>(() => loadShowExtensions());
+  const toggleExtensions = useCallback(() => {
+    setShowExtensions((v) => {
+      const nv = !v;
+      saveShowExtensions(nv);
+      return nv;
+    });
+  }, []);
 
   const toggleTag = useCallback((path: string, tagId: string) => {
     setFileTags((prev) => {
@@ -1994,6 +2029,14 @@ useEffect(() => {
         .reduce((s, e) => s + e.size, 0)
     : 0;
 
+  /** 地址栏显示路径（v0.14）：单选文件时直接显示其完整路径；否则当前目录 */
+  const addressPath = (() => {
+    if (!activePane) return "";
+    if (activePane.selection.length === 1) return activePane.selection[0];
+    const m = activePane.path.match(VIRTUAL_TAG_RE);
+    return m ? tagTitle(m[1], tagNames) : activePane.path;
+  })();
+
   return (
     <>
     {splashVisible && (
@@ -2047,6 +2090,8 @@ useEffect(() => {
         onHome={() => homePath && navigate(homePath)}
         onRefresh={refresh}
         onToggleHidden={() => setShowHidden((v) => !v)}
+        showExtensions={showExtensions}
+        onToggleExtensions={toggleExtensions}
         onToggleSearch={() => setSearchOpen((v) => !v)}
         onCopy={() => doCopy()}
         onCut={() => doCut()}
@@ -2103,9 +2148,7 @@ useEffect(() => {
         onForward={goForward}
         onUp={goUp}
         onRefresh={refresh}
-        path={activePane?.path.match(VIRTUAL_TAG_RE)
-          ? tagTitle(activePane.path.match(VIRTUAL_TAG_RE)![1], tagNames)
-          : (activePane?.path ?? "")}
+        path={addressPath}
         cwd={activePane?.path ?? homePath}
         onNavigate={navigate}
         searchOpen={searchOpen}
@@ -2141,6 +2184,7 @@ useEffect(() => {
               panes={activeTab.panes}
               activePaneId={activeTab.activePane}
               showHidden={showHidden}
+              showExtensions={showExtensions}
               showProperties={showProperties}
               canPaste={!!clipboard && !!activePane}
               renaming={renaming}
@@ -2286,6 +2330,18 @@ useEffect(() => {
                 删除
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* v0.14 复制/剪切成功提示：窗内居中，约 1 秒消失 */}
+      {clipboardTip && (
+        <div
+          key={clipboardTip.tick}
+          className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center"
+        >
+          <div className="rounded-lg border border-primary/25 bg-background/90 px-5 py-2.5 text-sm font-medium text-foreground shadow-xl backdrop-blur-sm">
+            {clipboardTip.text}
           </div>
         </div>
       )}

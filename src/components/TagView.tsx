@@ -3,6 +3,7 @@ import { FolderOpen, Tag, X } from "lucide-react";
 import { tagById, tagLabel, type FileTags, type TagNames } from "@/lib/persist";
 import { FileIcon } from "@/components/FileIcon";
 import { cn } from "@/lib/utils";
+import { hideExtension } from "@/lib/format";
 
 /**
  * 标签过滤视图（Finder 风格）：展示某个标签下的全部文件/文件夹，
@@ -13,6 +14,7 @@ export function TagView({
   fileTags,
   tagNames,
   currentPath,
+  showExtensions,
   onOpen,
   onExit,
   isActive,
@@ -21,6 +23,8 @@ export function TagView({
   fileTags: FileTags;
   tagNames: TagNames;
   currentPath: string;
+  /** v0.14 显示文件扩展名 */
+  showExtensions: boolean;
   onOpen: (path: string) => void;
   onExit: () => void;
   isActive: boolean;
@@ -109,7 +113,7 @@ export function TagView({
                 className="shrink-0 text-muted-foreground"
               />
               <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-                {nameOf(p)}
+                {showExtensions ? nameOf(p) : hideExtension(nameOf(p), false)}
               </span>
               <span className="min-w-0 max-w-[45%] truncate text-[10px] text-muted-foreground">
                 {p}

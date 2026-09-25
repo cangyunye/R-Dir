@@ -72,6 +72,7 @@ export interface PaneHandlers {
 function PaneView({
   pane,
   showHidden,
+  showExtensions,
   showProperties,
   renaming,
   isActive,
@@ -88,6 +89,7 @@ function PaneView({
 }: {
   pane: PaneState;
   showHidden: boolean;
+  showExtensions: boolean;
   activeStyle: "waterfall" | "lift";
   showProperties: boolean;
   renaming: RenameState | null;
@@ -118,6 +120,7 @@ function PaneView({
           fileTags={fileTags}
           tagNames={tagNames}
           currentPath={pane.path}
+          showExtensions={showExtensions}
           onOpen={onOpenTagFile}
           onExit={() => onExitTag(pane.id)}
           isActive={isActive}
@@ -164,9 +167,10 @@ function PaneView({
         customQuick={customQuick}
         onToggleTag={h.onToggleTag}
         onToggleQuick={h.onToggleQuick}
-        dragTarget={dragOver?.targetPaneId === pane.id}
+dragTarget={dragOver?.targetPaneId === pane.id}
         dragOp={dragOver?.targetPaneId === pane.id ? dragOver.op : "copy"}
         showHidden={showHidden}
+        showExtensions={showExtensions}
         renaming={renaming}
         onRenameCommit={h.onRenameCommit}
         onRenameCancel={h.onRenameCancel}
@@ -248,6 +252,7 @@ export function SplitView({
   panes,
   activePaneId,
   showHidden,
+  showExtensions,
   showProperties,
   canPaste,
   renaming,
@@ -265,6 +270,7 @@ export function SplitView({
   panes: Record<number, PaneState>;
   activePaneId: number;
   showHidden: boolean;
+  showExtensions: boolean;
   showProperties: boolean;
   canPaste: boolean;
   renaming: RenameState | null;
@@ -285,6 +291,7 @@ export function SplitView({
       <PaneView
         pane={pane}
         showHidden={showHidden}
+        showExtensions={showExtensions}
         showProperties={showProperties}
         renaming={renaming}
         isActive={pane.id === activePaneId}
@@ -313,6 +320,7 @@ export function SplitView({
           panes={panes}
           activePaneId={activePaneId}
           showHidden={showHidden}
+          showExtensions={showExtensions}
           showProperties={showProperties}
           canPaste={canPaste}
           renaming={renaming}
@@ -342,6 +350,7 @@ export function SplitView({
           panes={panes}
           activePaneId={activePaneId}
           showHidden={showHidden}
+          showExtensions={showExtensions}
           showProperties={showProperties}
           canPaste={canPaste}
           renaming={renaming}

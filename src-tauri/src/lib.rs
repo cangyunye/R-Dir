@@ -490,6 +490,48 @@ async fn session_clear(app: tauri::AppHandle) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+// ==================== 偏好持久化（v0.14：标签配置可靠落盘） ====================
+
+/// prefs.json 存标签重命名/文件标签/快捷访问，与 session.json 同级；
+/// 作为 WebView localStorage 的可靠备份（避免本地存储被清空导致配置丢失）。
+fn prefs_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    Ok(dir.join("prefs.json"))
+}
+
+/// 读取偏好文件；不存在时返回空对象
+#[tauri::command]
+async fn prefs_load(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = prefs_path(&app)?;
+        if !path.exists() {
+            return Ok(serde_json::Value::Object(serde_json::Map::new()));
+        }
+        let raw = std::fs::read_to_string(&path).map_err(|e| format!("读取配置失败：{e}"))?;
+        serde_json::from_str(&raw).map_err(|e| format!("解析配置失败：{e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 保存偏好文件（原子写：先写临时文件再改名）
+#[tauri::command]
+async fn prefs_save(app: tauri::AppHandle, value: serde_json::Value) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = prefs_path(&app)?;
+        let json = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json).map_err(|e| format!("写入配置失败：{e}"))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("保存配置失败：{e}"))?;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 下载远程文件到临时目录，返回本地路径（供打开）
 #[cfg(feature = "sftp")]
 #[tauri::command]
@@ -834,6 +876,9 @@ pub fn run() {
         session_save,
         session_load,
         session_clear,
+        // 偏好持久化（v0.14）
+        prefs_load,
+        prefs_save,
         // 插件注册表（v0.5）
         list_plugins,
         set_plugin_enabled,

@@ -30,3 +30,15 @@ export function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? path;
 }
+
+/**
+ * 隐藏扩展名后的显示名（v0.14）：目录保留原名；
+ * 隐藏文件（.gitignore、.env 等）末尾无扩展名可隐 → 保留原名；
+ * 复合扩展名（.tar.gz）只去最后一节。
+ */
+export function hideExtension(name: string, isDir: boolean): string {
+  if (isDir) return name;
+  const i = name.lastIndexOf(".");
+  if (i <= 0) return name;
+  return name.slice(0, i);
+}

@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
-import { formatSize, formatTime } from "@/lib/format";
+import { formatSize, formatTime, hideExtension } from "@/lib/format";
 import { FileIcon } from "@/components/FileIcon";
 import {
   ContextMenu,
@@ -146,6 +146,7 @@ export function FileList({
   dragTarget,
   dragOp,
   showHidden,
+  showExtensions,
   renaming,
   onRenameCommit,
   onRenameCancel,
@@ -210,6 +211,8 @@ export function FileList({
   dragTarget: boolean;
   dragOp: "copy" | "move";
   showHidden: boolean;
+  /** v0.14 显示文件扩展名（false 时列表隐藏扩展名） */
+  showExtensions: boolean;
   renaming: RenameState | null;
   onRenameCommit: (path: string, name: string) => void;
   onRenameCancel: () => void;
@@ -785,7 +788,7 @@ export function FileList({
                         )}
                         title={entry.name}
                       >
-                        {entry.name}
+                        {showExtensions ? entry.name : hideExtension(entry.name, entry.is_dir)}
                       </span>
                     )}
                   </div>

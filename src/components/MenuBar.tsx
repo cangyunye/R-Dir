@@ -55,6 +55,9 @@ export interface MenuActions {
   onToggleSearch: () => void;
   showHidden: boolean;
   searchOpen: boolean;
+  /** v0.14 显示文件扩展名开关 */
+  onToggleExtensions: () => void;
+  showExtensions: boolean;
   // 文件操作
   onCopy: () => void;
   onCut: () => void;
@@ -227,6 +230,12 @@ export function MenuBar(actions: MenuActions) {
           显示隐藏文件
           <Shortcut id="toggleHidden" />
         </DropdownMenuItem>
+        <DropdownMenuItem onClick={actions.onToggleExtensions}>
+          <Check
+            className={actions.showExtensions ? "mr-2 h-4 w-4" : "mr-2 h-4 w-4 opacity-0"}
+          />
+          显示文件扩展名
+        </DropdownMenuItem>
         <DropdownMenuItem onClick={actions.onToggleSearch}>
           <Search className="mr-2 h-4 w-4" /> 切换搜索面板
           <Shortcut id="focusSearch" />
@@ -287,7 +296,7 @@ export function MenuBar(actions: MenuActions) {
           <Shortcut id="openSettings" />
         </DropdownMenuItem>
         <DropdownMenuItem disabled>
-          <Info className="mr-2 h-4 w-4" /> 版本 0.8.1（Tauri 2 + React）
+          <Info className="mr-2 h-4 w-4" /> 版本 0.14.0（Tauri 2 + React）
         </DropdownMenuItem>
       </MenuButton>
 
