@@ -4,6 +4,7 @@ import {
   isHttpPath,
   parseSftpAuthority,
   joinRemote,
+  sftpUrl,
 } from "./sftp-path";
 
 describe("路径协议判定", () => {
@@ -57,6 +58,27 @@ describe("joinRemote（回归：不能把 sftp:// 前缀拼进去）", () => {
     expect(result.startsWith("/")).toBe(true);
     expect(result.startsWith("sftp://")).toBe(false);
     expect(result).not.toContain("@");
+  });
+});
+
+// ---- 回归：地址栏带 path 的 sftp URL，连接后要能直达该路径 ----
+describe("sftpUrl（构造带远程路径的 sftp 虚拟路径）", () => {
+  it("绝对远程路径原样拼接", () => {
+    expect(sftpUrl("kali", "192.168.31.100", 22, "/home/kali")).toBe(
+      "sftp://kali@192.168.31.100:22/home/kali",
+    );
+  });
+  it("根路径 /", () => {
+    expect(sftpUrl("u", "h", 2222, "/")).toBe("sftp://u@h:2222/");
+  });
+  it("相对/空路径补成绝对路径", () => {
+    expect(sftpUrl("u", "h", 22, "home")).toBe("sftp://u@h:22/home");
+    expect(sftpUrl("u", "h", 22, "")).toBe("sftp://u@h:22/");
+  });
+  it("与 parseSftpAuthority 往返：path 不丢失、id 稳定", () => {
+    const a = parseSftpAuthority(sftpUrl("kali", "h", 22, "/var/www"));
+    expect(a!.remotePath).toBe("/var/www");
+    expect(a!.id).toBe("kali@h:22");
   });
 });
 

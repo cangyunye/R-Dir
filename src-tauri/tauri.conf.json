@@ -28,6 +28,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "cangyunye",
+    "shortDescription": "R-Dir 跨平台文件管理器",
+    "longDescription": "基于 Tauri 2 + Rust + React 的跨平台文件管理器（macOS / Windows）",
+    "copyright": "Copyright © 2026 cangyunye",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

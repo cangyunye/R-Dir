@@ -16,6 +16,10 @@ export interface PaneHandlers {
   onSelectRange: (paneId: number, paths: string[]) => void;
   onClearSelection: (paneId: number) => void;
   onOpen: (paneId: number, entry: FileEntry) => void;
+  /** 用系统关联程序打开文件（搜索结果 / 标签视图双击） */
+  onOpenFile: (path: string) => void;
+  /** 在激活窗格中定位条目：目录进入，文件跳转所在目录并选中 */
+  onRevealPath: (path: string, isDir: boolean) => void;
   /** 鼠标中键点击目录：在新建标签页中打开该目录 */
   onMiddleOpen: (paneId: number, path: string) => void;
   /** v0.4 打开方式：用指定工具打开路径 */
@@ -29,7 +33,7 @@ export interface PaneHandlers {
   onOpenWith: (toolId: string, path: string) => void;
   onOpenTerminal: (shellId: string, path: string) => void;
   /** v0.4 添加自定义打开方式（文件选择器 + 命名） */
-  onAddCustomOpener: () => Promise<void>;
+  onAddCustomOpener: (path?: string, ext?: string) => Promise<void>;
   onCopy: (paneId: number, paths: string[]) => void;
   onCut: (paneId: number, paths: string[]) => void;
   onDelete: (paneId: number, paths: string[]) => void;
@@ -84,13 +88,15 @@ function PaneView({
   customQuick,
   onOpenTagFile,
   onExitTag,
-  activeStyle,
+  highlight,
   handlers,
 }: {
   pane: PaneState;
   showHidden: boolean;
+  /** v0.14 显示文件扩展名 */
   showExtensions: boolean;
-  activeStyle: "waterfall" | "lift";
+  /** 多窗格时给活动窗格加立体感描边（单窗格不需要） */
+  highlight: boolean;
   showProperties: boolean;
   renaming: RenameState | null;
   isActive: boolean;
@@ -107,8 +113,7 @@ function PaneView({
   const h = handlers;
   const showingTag = pane.tagId ?? null;
   return (
-    <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", isActive && activeStyle === "waterfall" && "shadow-[inset_0_2px_0_0_hsl(var(--primary)/0.3)]", isActive && activeStyle === "lift" && "ring-1 ring-primary/50 shadow-[0_8px_24px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.1)] -translate-y-[1px]")}>
-      {isActive && activeStyle === "waterfall" && <div className="pointer-events-none absolute left-0 right-0 top-0 z-20 h-12 bg-gradient-to-b from-sky-400/25 via-sky-400/8 to-transparent" />}
+    <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", isActive && highlight && "ring-1 ring-primary/50 shadow-[0_8px_24px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.1)] -translate-y-[1px]")}>
       {pane.loading && (
         <div className="absolute inset-x-0 top-0 z-10 flex h-6 items-center justify-center gap-2 bg-background/80 text-xs text-muted-foreground backdrop-blur-sm">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在加载…
@@ -122,6 +127,12 @@ function PaneView({
           currentPath={pane.path}
           showExtensions={showExtensions}
           onOpen={onOpenTagFile}
+          onOpenFile={h.onOpenFile}
+          onReveal={h.onRevealPath}
+          onToggleTag={h.onToggleTag}
+          onCopyPath={h.onCopyPath}
+          onToggleQuick={h.onToggleQuick}
+          customQuick={customQuick}
           onExit={() => onExitTag(pane.id)}
           isActive={isActive}
         />
@@ -263,7 +274,7 @@ export function SplitView({
   customQuick,
   onOpenTagFile,
   onExitTag,
-  activeStyle,
+  highlight,
   handlers,
 }: {
   node: PaneNode;
@@ -281,7 +292,7 @@ export function SplitView({
   customQuick: string[];
   onOpenTagFile: (path: string) => void;
   onExitTag: (paneId: number) => void;
-  activeStyle: "waterfall" | "lift";
+  highlight: boolean;
   handlers: PaneHandlers;
 }) {
   if (node.type === "pane") {
@@ -303,7 +314,7 @@ export function SplitView({
         customQuick={customQuick}
         onOpenTagFile={onOpenTagFile}
         onExitTag={onExitTag}
-        activeStyle={activeStyle}
+        highlight={highlight}
         handlers={handlers}
       />
     );
@@ -331,7 +342,7 @@ export function SplitView({
           customQuick={customQuick}
           onOpenTagFile={onOpenTagFile}
           onExitTag={onExitTag}
-          activeStyle={activeStyle}
+          highlight={highlight}
           handlers={handlers}
         />
       </div>
@@ -361,7 +372,7 @@ export function SplitView({
           customQuick={customQuick}
           onOpenTagFile={onOpenTagFile}
           onExitTag={onExitTag}
-          activeStyle={activeStyle}
+          highlight={highlight}
           handlers={handlers}
         />
       </div>

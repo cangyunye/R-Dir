@@ -31,19 +31,12 @@ export const addCustomOpener = (name: string, exec: string, extensions: string[]
 export const removeCustomOpener = (id: string) =>
   invoke<void>("remove_custom_opener", { id });
 
+/** 覆盖设置某打开方式的关联扩展名 */
+export const setOpenerExtensions = (id: string, extensions: string[]) =>
+  invoke<void>("set_opener_extensions", { id, extensions });
+
 /** 列出可用终端 */
 export const listShells = () => invoke<ShellItem[]>("list_shells");
-
-export interface FileTypes {
-  groups: Record<string, string[]>;
-  defaultApps: Record<string, string>;
-}
-
-/** 读取文件类型目录（无配置时首次生成 + 系统默认应用探测） */
-export const getFileTypes = () => invoke<FileTypes>("get_filetypes");
-
-/** 刷新文件关联：重新探测系统默认打开应用并持久化 */
-export const refreshFileTypes = () => invoke<FileTypes>("refresh_filetypes");
 
 /** 在指定目录打开终端 */
 export const openTerminal = (shellId: string, path: string) =>

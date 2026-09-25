@@ -1,12 +1,18 @@
 ﻿import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
+  Download,
+  ExternalLink,
+  Globe,
+  Info,
   Keyboard,
   Moon,
+  Plus,
   Puzzle,
   RotateCcw,
   Share2,
   Sun,
+  Trash2,
   Type,
   X,
 } from "lucide-react";
@@ -23,13 +29,27 @@ import {
   setUserBinding,
 } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
-import type { PluginInfo } from "@/lib/openerApi";
+import type { OpenerItem, PluginInfo } from "@/lib/openerApi";
+import { normalizeExts } from "@/lib/openers";
 import {
   loadShareAllowParent,
   saveShareAllowParent,
   loadShareDefaultExpires,
   saveShareDefaultExpires,
+  saveUiFontFamilyCustom,
 } from "@/lib/persist";
+
+/** 设置分区标识（左栏导航 + 右栏锚点共用） */
+type SectionId = "appearance" | "keys" | "openers" | "share" | "plugins" | "about";
+
+const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
+  { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
+  { id: "keys", label: "快捷键", icon: <Keyboard className="h-4 w-4" /> },
+  { id: "openers", label: "打开方式", icon: <ExternalLink className="h-4 w-4" /> },
+  { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
+  { id: "plugins", label: "插件", icon: <Puzzle className="h-4 w-4" /> },
+  { id: "about", label: "关于", icon: <Info className="h-4 w-4" /> },
+];
 
 /**
  * 设置对话框（M5 P2）
@@ -49,6 +69,14 @@ export function SettingsDialog({
   uiFontFamily,
   onUiFontFamilyChange,
   fontFamilies,
+  openers,
+  onAddOpener,
+  onRemoveOpener,
+  onSetOpenerExtensions,
+  appName,
+  appVersion,
+  onOpenRepo,
+  onCheckUpdate,
 }: {
   open: boolean;
   onClose: () => void;
@@ -64,14 +92,29 @@ export function SettingsDialog({
   uiFontFamily: string;
   onUiFontFamilyChange: (id: string) => void;
   fontFamilies: { id: string; label: string }[];
+  /** v0.11 打开方式（扩展名关联管理） */
+  openers: OpenerItem[];
+  onAddOpener: () => void;
+  onRemoveOpener: (id: string) => void;
+  onSetOpenerExtensions: (id: string, extensions: string[]) => void;
+  /** 应用名 / 版本（getVersion = tauri.conf.json 版本，随 tag 同步） */
+  appName: string;
+  appVersion: string;
+  onOpenRepo: () => void;
+  onCheckUpdate: () => void;
 }) {
   /** v0.7 分享设置 */
   const [shareAllowParent, setShareAllowParent] = useState(() => loadShareAllowParent());
   const [shareExpiresHours, setShareExpiresHours] = useState<number | null>(() => loadShareDefaultExpires());
   /** 正在录制键位的 actionId（null = 未录制） */
   const [recordingId, setRecordingId] = useState<string | null>(null);
-  /** v0.8 分类导航当前分区 */
-  const [section, setSection] = useState<"appearance" | "keys" | "share" | "plugins">("appearance");
+  /** v0.8 分类导航当前分区（由滚动位置反推，用于左栏高亮） */
+  const [section, setSection] = useState<SectionId>("appearance");
+  /** 右栏滚动容器 + 各分区锚点（左栏点击 → 滚动定位） */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sectionRefs = useRef<Partial<Record<SectionId, HTMLDivElement | null>>>({});
+  /** v0.11 每个打开方式的「新增扩展名」输入草稿 */
+  const [extInput, setExtInput] = useState<Record<string, string>>({});
   /** 冲突提示（combo → 占用者 label） */
   const [conflict, setConflict] = useState<string | null>(null);
   /** 本地操作反馈（已绑定 / 已恢复） */
@@ -82,6 +125,25 @@ export function SettingsDialog({
     setTip(msg);
     if (tipTimer.current) window.clearTimeout(tipTimer.current);
     tipTimer.current = window.setTimeout(() => setTip(null), 2500);
+  }, []);
+
+  /** 点击左栏 → 平滑滚动到对应分区 */
+  const scrollToSection = useCallback((id: SectionId) => {
+    setSection(id);
+    sectionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  /** 右栏滚动 → 反推当前分区，同步左栏高亮 */
+  const handleScroll = useCallback(() => {
+    const c = scrollRef.current;
+    if (!c) return;
+    const cTop = c.getBoundingClientRect().top;
+    let current: SectionId = SECTIONS[0].id;
+    for (const s of SECTIONS) {
+      const el = sectionRefs.current[s.id];
+      if (el && el.getBoundingClientRect().top - cTop <= 24) current = s.id;
+    }
+    setSection((prev) => (prev === current ? prev : current));
   }, []);
 
   useEffect(() => {
@@ -158,13 +220,6 @@ export function SettingsDialog({
 
   const groups = [...new Set(ACTIONS.map((a) => a.group))];
 
-  const sections: { id: "appearance" | "keys" | "share" | "plugins"; label: string; icon: React.ReactNode }[] = [
-    { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
-    { id: "keys", label: "快捷键", icon: <Keyboard className="h-4 w-4" /> },
-    { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
-    { id: "plugins", label: "插件", icon: <Puzzle className="h-4 w-4" /> },
-  ];
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -172,7 +227,7 @@ export function SettingsDialog({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex max-h-[82vh] w-[680px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl">
+      <div className="flex h-[min(600px,85vh)] w-[720px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-4 py-2.5">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <Keyboard className="h-4 w-4" /> 设置
@@ -188,11 +243,11 @@ export function SettingsDialog({
 
         <div className="flex min-h-0 flex-1">
           {/* 左侧分类导航 */}
-          <nav className="flex w-36 shrink-0 flex-col gap-0.5 border-r p-2">
-            {sections.map((sec) => (
+          <nav className="flex w-36 shrink-0 flex-col gap-0.5 overflow-y-auto border-r p-2">
+            {SECTIONS.map((sec) => (
               <button
                 key={sec.id}
-                onClick={() => setSection(sec.id)}
+                onClick={() => scrollToSection(sec.id)}
                 className={cn(
                   "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors",
                   section === sec.id
@@ -207,9 +262,15 @@ export function SettingsDialog({
           </nav>
 
           {/* 右侧内容区 */}
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-            {section === "appearance" && (
-              <>
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="min-h-0 flex-1 overflow-y-auto px-4 py-3"
+          >
+            <div
+              ref={(el) => { sectionRefs.current.appearance = el; }}
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
                 {/* 外观：主题 */}
                 <div className="mb-4">
                   <div className="mb-1.5 text-xs font-semibold text-primary">主题</div>
@@ -295,7 +356,7 @@ export function SettingsDialog({
                           className="w-40 rounded border bg-background px-2 py-1 text-xs"
                           onBlur={(e) => {
                             if (e.target.value.trim()) {
-                              localStorage.setItem("rfm.ui-font-family-custom", e.target.value.trim());
+                              saveUiFontFamilyCustom(e.target.value.trim());
                               // 触发重渲染
                               onUiFontFamilyChange("custom");
                             }
@@ -305,11 +366,12 @@ export function SettingsDialog({
                     </div>
                   </div>
                 </div>
-              </>
-            )}
+            </div>
 
-            {section === "keys" && (
-              <>
+            <div
+              ref={(el) => { sectionRefs.current.keys = el; }}
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-xs font-semibold text-primary">快捷键</div>
                   <button
@@ -406,11 +468,123 @@ export function SettingsDialog({
                     </div>
                   </div>
                 ))}
-              </>
-            )}
+            </div>
 
-            {section === "share" && (
-              <>
+            <div
+              ref={(el) => { sectionRefs.current.openers = el; }}
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-xs font-semibold text-primary">打开方式</div>
+                  <button
+                    onClick={onAddOpener}
+                    className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    title="选择应用程序添加"
+                  >
+                    <Plus className="h-3 w-3" /> 添加
+                  </button>
+                </div>
+                <p className="mb-3 text-[11px] text-muted-foreground">
+                  每个打开方式只对已关联的扩展名生效（<span className="font-mono">*</span> 表示所有类型）。
+                  右键文件 → 打开方式 → 选择其他应用… 会自动关联该文件的扩展名。
+                </p>
+
+                {openers.length === 0 ? (
+                  <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                    还没有自定义打开方式。右键文件 → 打开方式 → 选择其他应用… 添加。
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {openers.map((o) => (
+                      <div key={o.id} className="rounded-md border px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="truncate text-xs font-medium">{o.name}</span>
+                            {!o.detected && (
+                              <span className="shrink-0 rounded-sm bg-destructive/10 px-1 py-0.5 text-[10px] text-destructive">
+                                未找到
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => onRemoveOpener(o.id)}
+                            className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                            title="删除此打开方式"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <div className="mt-0.5 truncate text-[10px] text-muted-foreground" title={o.exec ?? ""}>
+                          {o.exec}
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          {o.extensions.length === 0 ? (
+                            <span className="text-[10px] text-muted-foreground">
+                              未关联任何类型（不会出现在右键）
+                            </span>
+                          ) : (
+                            o.extensions.map((ext) => (
+                              <span
+                                key={ext}
+                                className="flex items-center gap-1 rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px]"
+                              >
+                                {ext}
+                                <button
+                                  onClick={() =>
+                                    onSetOpenerExtensions(
+                                      o.id,
+                                      o.extensions.filter((x) => x !== ext),
+                                    )
+                                  }
+                                  className="text-muted-foreground transition-colors hover:text-destructive"
+                                  title="移除该扩展名"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))
+                          )}
+                        </div>
+                        <form
+                          className="mt-1.5 flex items-center gap-1.5"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            const parts = (extInput[o.id] ?? "")
+                              .split(/[\s,，、;；]+/)
+                              .filter(Boolean);
+                            if (parts.length === 0) return;
+                            onSetOpenerExtensions(
+                              o.id,
+                              normalizeExts([...o.extensions, ...parts]),
+                            );
+                            setExtInput((s) => ({ ...s, [o.id]: "" }));
+                          }}
+                        >
+                          <input
+                            value={extInput[o.id] ?? ""}
+                            onChange={(e) =>
+                              setExtInput((s) => ({ ...s, [o.id]: e.target.value }))
+                            }
+                            placeholder="如 json, yaml（逗号/空格分隔，回车添加）"
+                            className="w-72 rounded border bg-background px-2 py-1 text-[11px]"
+                          />
+                          <button
+                            type="submit"
+                            className="shrink-0 rounded border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          >
+                            添加
+                          </button>
+                        </form>
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </div>
+
+            <div
+              ref={(el) => { sectionRefs.current.share = el; }}
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
                 <div className="mb-4">
                   <div className="mb-1.5 text-xs font-semibold text-primary">分享</div>
                   <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
@@ -454,11 +628,12 @@ export function SettingsDialog({
                     </p>
                   </div>
                 </div>
-              </>
-            )}
+            </div>
 
-            {section === "plugins" && (
-              <>
+            <div
+              ref={(el) => { sectionRefs.current.plugins = el; }}
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
                 <div className="mb-4">
                   <div className="mb-1.5 text-xs font-semibold text-primary">插件</div>
                   <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
@@ -532,8 +707,43 @@ export function SettingsDialog({
                     )}
                   </div>
                 </div>
-              </>
-            )}
+            </div>
+
+            <div
+              ref={(el) => { sectionRefs.current.about = el; }}
+              className="scroll-mt-3"
+            >
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 rounded-md border px-3 py-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Info className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-foreground">{appName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      版本 v{appVersion || "—"} · Tauri 2 + React
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={onCheckUpdate}
+                    className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
+                  >
+                    <Download className="h-3.5 w-3.5" /> 检查更新
+                  </button>
+                  <button
+                    onClick={onOpenRepo}
+                    className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
+                  >
+                    <Globe className="h-3.5 w-3.5" /> GitHub 仓库
+                  </button>
+                </div>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  版本号取自应用元数据（tauri.conf.json），随发布 tag 同步。
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -541,7 +751,9 @@ export function SettingsDialog({
           <span className="flex items-center gap-1">
             <Check className="h-3 w-3" /> 配置自动保存在本机（localStorage）
           </span>
-          <span>{isMac ? "macOS" : "Windows"} 键位</span>
+          <span>
+            {appName} v{appVersion || "—"} · {isMac ? "macOS" : "Windows"}
+          </span>
         </div>
       </div>
     </div>

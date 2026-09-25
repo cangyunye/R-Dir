@@ -13,12 +13,14 @@ import {
   Pencil,
   RefreshCw,
   Scissors,
-  Settings2,
   Share2,
   Star,
   Trash2,
   Plus,
   FileArchive,
+  ExternalLink,
+  TerminalSquare,
+  Tag as TagIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
@@ -36,7 +38,10 @@ import { Button } from "@/components/ui/button";
 import { TAG_DEFS, tagLabel, type FileTags, type TagNames } from "@/lib/persist";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { OpenerItem, ShellItem } from "@/lib/openerApi";
+import { ROW_HEIGHT, visibleRange } from "@/lib/virtual-scroll";
 import { TagDots } from "@/components/TagView";
+import { MenuGroup } from "@/components/MenuGroup";
+import { openersForEntry } from "@/lib/openers";
 
 const COLUMNS: { key: SortKey | null; label: string; width: string }[] = [
   { key: "name", label: "名称", width: "minmax(0, 1fr)" },
@@ -57,10 +62,6 @@ function extLabel(entry: FileEntry): string {
  * 存在大量寻址盲区（如 Edge 实际安装名为 Microsoft Edge.app），误报“未安装”，
  * 故 v0.4 起移除所有内置探测展示，右键“打开”即系统默认方式（可靠），
  * 其余工具由用户自行注册。 */
-function openersForEntry(openers: OpenerItem[]): OpenerItem[] {
-  return openers.filter((o) => o.kind === "custom");
-}
-
 /** 行内重命名输入框 */
 function RenameInput({
   initial,
@@ -207,7 +208,7 @@ export function FileList({
   shells: ShellItem[];
   onOpenWith: (toolId: string, path: string) => void;
   onOpenTerminal: (shellId: string, path: string) => void;
-  onAddCustomOpener: () => Promise<void>;
+  onAddCustomOpener: (path?: string, ext?: string) => Promise<void>;
   dragTarget: boolean;
   dragOp: "copy" | "move";
   showHidden: boolean;
@@ -282,8 +283,7 @@ export function FileList({
   const lastClickRef = useRef<{ path: string; time: number } | null>(null);
   /** 键盘快速定位：输入缓冲 + 3 秒超时重置 */
   const listScrollRef = useRef<HTMLDivElement>(null);
-  /** v0.8.3 虚拟滚动：固定行高，只渲染可视区 +/- buffer 行 */
-  const ROW_HEIGHT = 26;
+  /** v0.8.3 虚拟滚动：固定行高，只渲染可视区 +/- buffer 行（行高见 lib/virtual-scroll） */
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(400); // 初始给个合理值，避免首帧只渲染前 6 行
   const onListScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -304,11 +304,6 @@ export function FileList({
   const [renameTagOpen, setRenameTagOpen] = useState(false);
   const [renameTagId, setRenameTagId] = useState<string>("red");
   const [renameTagInput, setRenameTagInput] = useState("");
-  const openRenameTagDialog = () => {
-    setRenameTagId("red");
-    setRenameTagInput(tagLabel(TAG_DEFS[0], tagNames));
-    setRenameTagOpen(true);
-  };
   const submitRenameTag = () => {
     const label = renameTagInput.trim();
     if (!label) return;
@@ -319,9 +314,12 @@ export function FileList({
   const typeAheadTimer = useRef<number | null>(null);
   const [typeAhead, setTypeAhead] = useState("");
   const [typeAheadFading, setTypeAheadFading] = useState(false);
+  /** v0.10 右键菜单二级折叠组当前展开项（null = 全收起） */
+  const [expandedMenu, setExpandedMenu] = useState<string | null>(null);
+  const toggleMenuGroup = (id: string) =>
+    setExpandedMenu((cur) => (cur === id ? null : id));
   /** v0.8 缩放百分比提示（Ctrl+滚轮后显示，1.2s 淡出） */
-  const [zoomTip, setZoomTip] = useState<number | null>(null);
-  const zoomTipTimer = useRef<number | null>(null);
+  const [zoomTip, setZoomTip] = useState<number | null>(null);  const zoomTipTimer = useRef<number | null>(null);
   const showZoomTip = (z: number) => {
     setZoomTip(z);
     if (zoomTipTimer.current) window.clearTimeout(zoomTipTimer.current);
@@ -371,10 +369,11 @@ export function FileList({
     onDragOverChange,
     onClearSelection,
     onSelectRange,
+    onSelect,
     selection,
     paneId,
   });
-  propsRef.current = { onDropPaths, onDragOverChange, onClearSelection, onSelectRange, selection, paneId };
+  propsRef.current = { onDropPaths, onDragOverChange, onClearSelection, onSelectRange, onSelect, selection, paneId };
 
   const cleanupDrag = () => {
     window.removeEventListener("mousemove", onWinMouseMove);
@@ -500,15 +499,19 @@ export function FileList({
     if (e.button !== 0) return;
     e.stopPropagation();
     const fromSelected = propsRef.current.selection.includes(entry.path);
+    const additive = e.metaKey || e.ctrlKey;
     if (fromSelected) {
       // 从已选中项按下 → 文件拖拽（复制/移动）
       dragCandRef.current = { x: e.clientX, y: e.clientY, paths: targetsFor(entry) };
     } else {
+      // 立即选中（无修饰键）：按下即高亮，避免"松开才选中"的延迟感；
+      // 随后若拖动框选，会由框选结果覆盖；修饰键/Shift 交给 click 处理，避免双触发
+      if (!additive && !e.shiftKey) propsRef.current.onSelect(entry, false);
       // 从未选中项按下 → 框选起点（Windows 资源管理器语义）
       rubberRef.current = {
         x0: e.clientX,
         y0: e.clientY,
-        additive: e.metaKey || e.ctrlKey || e.shiftKey,
+        additive: additive || e.shiftKey,
         fromRow: true,
       };
     }
@@ -633,7 +636,12 @@ export function FileList({
         </div>
       )}
       {/* 空白处右键：新建 / 粘贴 / 全选等（行上右键由行内菜单接管） */}
-      <ContextMenu modal={false}>
+      <ContextMenu
+        modal={false}
+        onOpenChange={(o) => {
+          if (!o) setExpandedMenu(null);
+        }}
+      >
         <ContextMenuTrigger asChild>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {/* 表头 */}
@@ -689,12 +697,7 @@ export function FileList({
         )}
         {/* v0.8.3 虚拟滚动：只渲染可视区 +/- buffer 行 */}
         {(() => {
-          const BUFFER = 6;
-          const total = sorted.length;
-          const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER);
-          const end = Math.min(total, Math.ceil((scrollTop + viewportH) / ROW_HEIGHT) + BUFFER);
-          const padTop = start * ROW_HEIGHT;
-          const padBottom = (total - end) * ROW_HEIGHT;
+          const { start, end, padTop, padBottom } = visibleRange(sorted.length, scrollTop, viewportH);
           return (
             <>
               {padTop > 0 && <div style={{ height: padTop }} />}
@@ -704,12 +707,28 @@ export function FileList({
           const isRenaming = renaming?.path === entry.path;
           const targets = selection.includes(entry.path) ? selection : [entry.path];
           return (
-            <ContextMenu key={entry.path}>
+            <ContextMenu
+              key={entry.path}
+              onOpenChange={(o) => {
+                if (!o) setExpandedMenu(null);
+              }}
+            >
               <ContextMenuTrigger asChild>
                 <div
                   role="row"
                   tabIndex={0}
                   data-path={entry.path}
+                  draggable="true"
+                  onDragStart={(e) => {
+                    // 跨应用拖出：把文件路径传给 OS
+                    // 选中文本为空时拖当前项，否则拖选中项
+                    const paths = selection.includes(entry.path) ? selection : [entry.path];
+                    // text/uri-list: file:///abs/path
+                    const uriList = paths.map(p => 'file://' + p.replace(/\\/g, '/')).join('\r\n');
+                    e.dataTransfer.setData('text/uri-list', uriList);
+                    e.dataTransfer.setData('text/plain', paths.join('\n'));
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
                   onMouseDown={(e) => startRowPress(e, entry)}
                   onClick={(e) => {
                     // 框选刚结束，抑制随后的 click，避免单行选择覆盖框选结果
@@ -761,7 +780,7 @@ export function FileList({
                     }
                   }}
                   className={cn(
-                    "grid cursor-default items-center border-b text-[13px] transition-colors",
+                    "grid cursor-default items-center border-b text-[13px]",
                     selected ? "bg-primary/10" : "hover:bg-muted/40",
                     isPrimary && "ring-1 ring-inset ring-primary/40",
                   )}
@@ -809,13 +828,15 @@ export function FileList({
                   <FolderInput className="mr-2 h-4 w-4" /> 打开
                 </ContextMenuItem>
                 {!entry.is_dir && pluginOpener && (
-                  <>
-                    <ContextMenuSeparator />
-                    <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      打开方式
-                    </div>
+                  <MenuGroup
+                    id="openWith"
+                    label="打开方式"
+                    icon={<ExternalLink className="mr-2 h-4 w-4" />}
+                    expanded={expandedMenu === "openWith"}
+                    onToggle={toggleMenuGroup}
+                  >
                     {(() => {
-                      const customs = openersForEntry(openers);
+                      const customs = openersForEntry(openers, entry.extension);
                       return customs.length === 0 ? (
                         <ContextMenuItem disabled>
                           未注册打开方式，可点击下方“选择其他应用…”添加
@@ -829,17 +850,20 @@ export function FileList({
                         ))
                       );
                     })()}
-                    <ContextMenuItem onClick={() => void onAddCustomOpener()}>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => void onAddCustomOpener(entry.path, entry.extension)}>
                       <Plus className="mr-2 h-4 w-4" /> 选择其他应用…
                     </ContextMenuItem>
-                  </>
+                  </MenuGroup>
                 )}
                 {entry.is_dir && pluginTerminal && (
-                  <>
-                    <ContextMenuSeparator />
-                    <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      在此处打开终端
-                    </div>
+                  <MenuGroup
+                    id="terminal"
+                    label="在此处打开终端"
+                    icon={<TerminalSquare className="mr-2 h-4 w-4" />}
+                    expanded={expandedMenu === "terminal"}
+                    onToggle={toggleMenuGroup}
+                  >
                     {shells.map((sh) => (
                       <ContextMenuItem
                         key={sh.id}
@@ -852,7 +876,7 @@ export function FileList({
                         )}
                       </ContextMenuItem>
                     ))}
-                  </>
+                  </MenuGroup>
                 )}
                 {entry.is_dir && (
                   <>
@@ -863,19 +887,24 @@ export function FileList({
                   </>
                 )}
                 <ContextMenuSeparator />
-                {/* v0.8 压缩为（仅打包；平铺避免 WKWebView 子菜单失效） */}
-                <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                  压缩为
-                </div>
-                <ContextMenuItem onClick={() => onCompress(targets, "zip")}>
-                  <FileArchive className="mr-2 h-4 w-4" /> zip
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => onCompress(targets, "tar")}>
-                  <FileArchive className="mr-2 h-4 w-4" /> tar（仅打包）
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => onCompress(targets, "tgz")}>
-                  <FileArchive className="mr-2 h-4 w-4" /> tgz（tar + gzip）
-                </ContextMenuItem>
+                {/* v0.10 压缩为（折叠组，内联展开） */}
+                <MenuGroup
+                  id="compress"
+                  label="压缩为"
+                  icon={<FileArchive className="mr-2 h-4 w-4" />}
+                  expanded={expandedMenu === "compress"}
+                  onToggle={toggleMenuGroup}
+                >
+                  <ContextMenuItem onClick={() => onCompress(targets, "zip")}>
+                    <FileArchive className="mr-2 h-4 w-4" /> zip
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => onCompress(targets, "tar")}>
+                    <FileArchive className="mr-2 h-4 w-4" /> tar（仅打包）
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => onCompress(targets, "tgz")}>
+                    <FileArchive className="mr-2 h-4 w-4" /> tgz（tar + gzip）
+                  </ContextMenuItem>
+                </MenuGroup>
                 <ContextMenuSeparator />
                 <ContextMenuItem onClick={() => onCopy(targets)}>
                   <Copy className="mr-2 h-4 w-4" /> 复制
@@ -897,31 +926,31 @@ export function FileList({
                   <Clipboard className="mr-2 h-4 w-4" /> 复制路径
                 </ContextMenuItem>
                 <ContextMenuSeparator />
-                {/* 标签（Finder 风格，直接平铺避免 WKWebView 子菜单点击失效） */}
-                <ContextMenuSeparator />
-                <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                  标签
-                </div>
-                {TAG_DEFS.map((t) => {
-                  const checked = (fileTags[entry.path] ?? []).includes(t.id);
-                  return (
-                    <ContextMenuItem
-                      key={t.id}
-                      onSelect={() => onToggleTag(entry.path, t.id)}
-                    >
-                      <span
-                        className="mr-2 h-3 w-3 rounded-full"
-                        style={{ background: t.color }}
-                      />
-                      {tagLabel(t, tagNames)}
-                      {checked && <Check className="ml-auto h-3.5 w-3.5" />}
-                    </ContextMenuItem>
-                  );
-                })}
-                <ContextMenuItem onSelect={() => openRenameTagDialog()}>
-                  <Settings2 className="mr-2 h-4 w-4" /> 重命名标签…
-                </ContextMenuItem>
-                <ContextMenuSeparator />
+                {/* 标签（Finder 风格，折叠组内联展开） */}
+                <MenuGroup
+                  id="tags"
+                  label="标签"
+                  icon={<TagIcon className="mr-2 h-4 w-4" />}
+                  expanded={expandedMenu === "tags"}
+                  onToggle={toggleMenuGroup}
+                >
+                  {TAG_DEFS.map((t) => {
+                    const checked = (fileTags[entry.path] ?? []).includes(t.id);
+                    return (
+                      <ContextMenuItem
+                        key={t.id}
+                        onSelect={() => onToggleTag(entry.path, t.id)}
+                      >
+                        <span
+                          className="mr-2 h-3 w-3 rounded-full"
+                          style={{ background: t.color }}
+                        />
+                        {tagLabel(t, tagNames)}
+                        {checked && <Check className="ml-auto h-3.5 w-3.5" />}
+                      </ContextMenuItem>
+                    );
+                  })}
+                </MenuGroup>
                 {/* 快捷访问（Finder 边栏式） */}
                 <ContextMenuItem onClick={() => onToggleQuick(entry.path)}>
                   <Star className="mr-2 h-4 w-4" />
@@ -971,21 +1000,26 @@ export function FileList({
         <ContextMenuContent className="min-w-48" collisionPadding={10} style={{ maxHeight: "calc(100vh - 20px)", overflowY: "auto" }}>
           {pluginTerminal && (
             <>
-              <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                在此处打开终端
-              </div>
-              {shells.map((sh) => (
-                <ContextMenuItem
-                  key={sh.id}
-                  disabled={!sh.detected}
-                  onClick={() => onOpenTerminal(sh.id, currentDir)}
-                >
-                  <span className="flex-1">{sh.name}</span>
-                  {!sh.detected && (
-                    <span className="text-[10px] text-muted-foreground">未安装</span>
-                  )}
-                </ContextMenuItem>
-              ))}
+              <MenuGroup
+                id="terminalEmpty"
+                label="在此处打开终端"
+                icon={<TerminalSquare className="mr-2 h-4 w-4" />}
+                expanded={expandedMenu === "terminalEmpty"}
+                onToggle={toggleMenuGroup}
+              >
+                {shells.map((sh) => (
+                  <ContextMenuItem
+                    key={sh.id}
+                    disabled={!sh.detected}
+                    onClick={() => onOpenTerminal(sh.id, currentDir)}
+                  >
+                    <span className="flex-1">{sh.name}</span>
+                    {!sh.detected && (
+                      <span className="text-[10px] text-muted-foreground">未安装</span>
+                    )}
+                  </ContextMenuItem>
+                ))}
+              </MenuGroup>
               <ContextMenuSeparator />
             </>
           )}

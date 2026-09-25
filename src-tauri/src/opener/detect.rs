@@ -39,11 +39,15 @@ pub fn find_win_cli(cmd: &str) -> Option<String> {
     None
 }
 
-/// 终端清单（v0.6.2 精简）：mac = zsh / iTerm2；win = PowerShell(默认) / cmd / nushell
-/// 说明：fish 已移除；macOS 不再列 Terminal.app 直开（zsh 即经 Terminal 执行）
+/// 终端清单（v0.10）：mac = Terminal / zsh / iTerm2；win = PowerShell(默认) / cmd / nushell
+/// 说明：fish 已移除；Terminal.app 置顶（最常用，open -a 直接以目录为起始目录开窗）
 pub fn shell_items() -> Vec<ShellItem> {
     if is_mac() {
+        let terminal_app =
+            std::path::Path::new("/System/Applications/Utilities/Terminal.app").exists()
+                || std::path::Path::new("/Applications/Utilities/Terminal.app").exists();
         vec![
+            shell("terminal", "Terminal", terminal_app),
             shell("zsh", "zsh", find_cli("zsh").is_some()),
             shell("iterm", "iTerm2", std::path::Path::new("/Applications/iTerm.app").exists()),
         ]

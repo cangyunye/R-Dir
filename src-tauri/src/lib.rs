@@ -1,3 +1,4 @@
+mod clipboard;
 mod compress;
 mod find;
 mod fs_ops;
@@ -10,7 +11,6 @@ mod volumes;
 mod sftp;
 
 mod opener;
-mod filetypes;
 mod plugins;
 mod http_autoindex;
 #[cfg(feature = "share")]
@@ -63,11 +63,13 @@ async fn list_dir(
             return Err("HTTP autoindex 插件已禁用（设置 → 插件中可重新启用）".into());
         }
         let url = path;
-        return tokio::task::spawn_blocking(move || http_autoindex::list_http_dir(&url))
+        return tauri::async_runtime::spawn_blocking(move || http_autoindex::list_http_dir(&url))
             .await
             .map_err(|e| format!("HTTP 请求任务失败：{e}"))?;
     }
-    fs_ops::list_dir(&path)
+    tauri::async_runtime::spawn_blocking(move || fs_ops::list_dir(&path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 条目类型探测：返回 "dir" / "file" / "symlink"（标签/远程虚拟目录双击跳转用）。
@@ -88,19 +90,43 @@ async fn stat_path(
         #[cfg(not(feature = "sftp"))]
         return Err("SFTP 插件未编译".into());
     }
-    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
-    if meta.is_dir() {
-        Ok("dir".to_string())
-    } else if meta.file_type().is_symlink() {
-        Ok("symlink".to_string())
-    } else {
-        Ok("file".to_string())
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        if meta.is_dir() {
+            Ok("dir".to_string())
+        } else if meta.file_type().is_symlink() {
+            Ok("symlink".to_string())
+        } else {
+            Ok("file".to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 批量条目类型探测：返回与输入等长的 kind 列表（"dir"/"file"/"symlink"/"missing"）。
+/// 标签视图等批量场景一次 IPC 完成，避免逐条 stat_path 往返。
+#[tauri::command]
+async fn stat_paths(paths: Vec<String>) -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        paths
+            .into_iter()
+            .map(|p| match std::fs::metadata(&p) {
+                Ok(m) if m.is_dir() => "dir".to_string(),
+                Ok(m) if m.file_type().is_symlink() => "symlink".to_string(),
+                Ok(_) => "file".to_string(),
+                Err(_) => "missing".to_string(),
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 // ==================== 插件注册表命令（v0.5） ====================
 
-/// 校验插件启用状态（返回 Err 时插件已禁用）
+/// 校验插件启用状态（返回 Err 时插件已禁用）。仅 SFTP 命令使用。
+#[cfg(feature = "sftp")]
 fn ensure_plugin(state: &AppState, id: &str) -> Result<(), String> {
     if plugins::plugin_enabled(&state.plugins, id) {
         Ok(())
@@ -476,20 +502,6 @@ async fn session_load(app: tauri::AppHandle) -> Result<Option<SessionLayout>, St
     .map_err(|e| e.to_string())?
 }
 
-/// 清除已保存的会话
-#[tauri::command]
-async fn session_clear(app: tauri::AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let path = session_path(&app)?;
-        if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| format!("清除会话失败：{e}"))?;
-        }
-        Ok::<(), String>(())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 // ==================== 偏好持久化（v0.14：标签配置可靠落盘） ====================
 
 /// prefs.json 存标签重命名/文件标签/快捷访问，与 session.json 同级；
@@ -686,90 +698,198 @@ fn parent_dir(path: String) -> Result<String, String> {
 
 /// 复制条目到目标目录，返回实际创建路径（供撤销记录）。
 #[tauri::command]
-fn copy_entries(app: tauri::AppHandle, paths: Vec<String>, dest: String) -> Result<Vec<String>, String> {
-    let n = paths.len();
-    let mut done_files = 0usize;
-    let created = ops::copy_entries(&paths, &dest, &mut |file_done, file_total| {
-        let mut p = progress::TransferProgress::start("copy", "复制中…", n);
-        p.done_files = done_files;
-        p.file_done = file_done;
-        p.file_total = file_total;
-        progress::emit(&app, &p);
-    })?;
-    done_files = n;
-    progress::emit(
-        &app,
-        &progress::TransferProgress {
-            phase: "copy".into(),
-            label: "复制完成".into(),
-            done_files,
-            total_files: n,
-            file_done: 0,
-            file_total: 0,
-            done: true,
-            id: None,
-        },
-    );
-    Ok(created)
+async fn copy_entries(app: tauri::AppHandle, paths: Vec<String>, dest: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let n = paths.len();
+        let mut done_files = 0usize;
+        let created = ops::copy_entries(&paths, &dest, &mut |file_done, file_total| {
+            let mut p = progress::TransferProgress::start("copy", "复制中…", n);
+            p.done_files = done_files;
+            p.file_done = file_done;
+            p.file_total = file_total;
+            progress::emit(&app, &p);
+        })?;
+        done_files = n;
+        progress::emit(
+            &app,
+            &progress::TransferProgress {
+                phase: "copy".into(),
+                label: "复制完成".into(),
+                done_files,
+                total_files: n,
+                file_done: 0,
+                file_total: 0,
+                done: true,
+                id: None,
+            },
+        );
+        Ok(created)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 移动条目到目标目录，返回 (源, 目标) 路径对（供撤销记录）。
 #[tauri::command]
-fn move_entries(app: tauri::AppHandle, paths: Vec<String>, dest: String) -> Result<Vec<(String, String)>, String> {
-    let n = paths.len();
-    let mut done_files = 0usize;
-    let moved = ops::move_entries(&paths, &dest, &mut |file_done, file_total| {
-        let mut p = progress::TransferProgress::start("move", "移动中…", n);
-        p.done_files = done_files;
-        p.file_done = file_done;
-        p.file_total = file_total;
-        progress::emit(&app, &p);
-    })?;
-    done_files = n;
-    progress::emit(
-        &app,
-        &progress::TransferProgress {
-            phase: "move".into(),
-            label: "移动完成".into(),
-            done_files,
-            total_files: n,
-            file_done: 0,
-            file_total: 0,
-            done: true,
-            id: None,
-        },
-    );
-    Ok(moved)
+async fn move_entries(app: tauri::AppHandle, paths: Vec<String>, dest: String) -> Result<Vec<(String, String)>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let n = paths.len();
+        let mut done_files = 0usize;
+        let moved = ops::move_entries(&paths, &dest, &mut |file_done, file_total| {
+            let mut p = progress::TransferProgress::start("move", "移动中…", n);
+            p.done_files = done_files;
+            p.file_done = file_done;
+            p.file_total = file_total;
+            progress::emit(&app, &p);
+        })?;
+        done_files = n;
+        progress::emit(
+            &app,
+            &progress::TransferProgress {
+                phase: "move".into(),
+                label: "移动完成".into(),
+                done_files,
+                total_files: n,
+                file_done: 0,
+                file_total: 0,
+                done: true,
+                id: None,
+            },
+        );
+        Ok(moved)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 扫描复制/移动前需用户裁决的同名冲突（同名目录可合并，不返回冲突）。
+#[tauri::command]
+async fn scan_conflicts(paths: Vec<String>, dest: String) -> Result<Vec<ops::Conflict>, String> {
+    tauri::async_runtime::spawn_blocking(move || ops::scan_conflicts(&paths, &dest))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 按冲突裁决表复制，返回实际创建路径（供撤销记录）。
+#[tauri::command]
+async fn copy_entries_plan(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    dest: String,
+    resolutions: std::collections::HashMap<String, ops::Resolution>,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let n = paths.len();
+        let created = ops::copy_entries_plan(&paths, &dest, &resolutions, &mut |file_done, file_total| {
+            let mut p = progress::TransferProgress::start("copy", "复制中…", n);
+            p.file_done = file_done;
+            p.file_total = file_total;
+            progress::emit(&app, &p);
+        })?;
+        progress::emit(
+            &app,
+            &progress::TransferProgress {
+                phase: "copy".into(),
+                label: "复制完成".into(),
+                done_files: n,
+                total_files: n,
+                file_done: 0,
+                file_total: 0,
+                done: true,
+                id: None,
+            },
+        );
+        Ok(created)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 按冲突裁决表移动，返回 (源, 目标) 路径对（供撤销反向移动）。
+#[tauri::command]
+async fn move_entries_plan(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    dest: String,
+    resolutions: std::collections::HashMap<String, ops::Resolution>,
+) -> Result<Vec<(String, String)>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let n = paths.len();
+        let moved = ops::move_entries_plan(&paths, &dest, &resolutions, &mut |file_done, file_total| {
+            let mut p = progress::TransferProgress::start("move", "移动中…", n);
+            p.file_done = file_done;
+            p.file_total = file_total;
+            progress::emit(&app, &p);
+        })?;
+        progress::emit(
+            &app,
+            &progress::TransferProgress {
+                phase: "move".into(),
+                label: "移动完成".into(),
+                done_files: n,
+                total_files: n,
+                file_done: 0,
+                file_total: 0,
+                done: true,
+                id: None,
+            },
+        );
+        Ok(moved)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 把文件列表写入系统剪贴板（跨应用复制）。
+#[tauri::command]
+fn clipboard_write_files(paths: Vec<String>) -> Result<(), String> {
+    clipboard::write_file_list(&paths)
+}
+
+/// 从系统剪贴板读取文件列表（跨应用粘贴）。
+#[tauri::command]
+fn clipboard_read_files() -> Result<Vec<String>, String> {
+    clipboard::read_file_list()
 }
 
 /// 重命名条目，返回新路径。
 #[tauri::command]
-fn rename_entry(path: String, new_name: String) -> Result<String, String> {
-    ops::rename_entry(&path, &new_name)
+async fn rename_entry(path: String, new_name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || ops::rename_entry(&path, &new_name))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 删除条目（进回收站）。
 #[tauri::command]
-fn delete_entries(paths: Vec<String>) -> Result<(), String> {
-    ops::delete_entries(&paths)
+async fn delete_entries(paths: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || ops::delete_entries(&paths))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 永久删除条目（绕过回收站）。
 #[tauri::command]
-fn permanent_delete_entries(paths: Vec<String>) -> Result<(), String> {
-    ops::permanent_delete_entries(&paths)
+async fn permanent_delete_entries(paths: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || ops::permanent_delete_entries(&paths))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 新建文件夹。
 #[tauri::command]
-fn create_dir(parent: String, name: String) -> Result<String, String> {
-    ops::create_dir(&parent, &name)
+async fn create_dir(parent: String, name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || ops::create_dir(&parent, &name))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 新建空文件。
 #[tauri::command]
-fn create_file(parent: String, name: String) -> Result<String, String> {
-    ops::create_file(&parent, &name)
+async fn create_file(parent: String, name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || ops::create_file(&parent, &name))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 内容搜索（VSCode 风格，字面量关键词；默认仅当前层）。
@@ -802,6 +922,25 @@ async fn find_files(
     .map_err(|e| e.to_string())?
 }
 
+/// Windows：显式设置进程 AppUserModelID，让任务栏把 R-Dir 当作独立应用
+/// （正确分组 / 固定到任务栏 / 通知显示应用名，而非挂到 WebView2 或通用宿主名下）。
+#[cfg(target_os = "windows")]
+fn set_app_user_model_id(id: &str) {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SetCurrentProcessExplicitAppUserModelID(app_id: *const u16) -> i32;
+    }
+    let wide: Vec<u16> = std::ffi::OsStr::new(id)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // 失败（旧系统 / 无 shell32）不影响功能，忽略返回值
+    unsafe {
+        let _ = SetCurrentProcessExplicitAppUserModelID(wide.as_ptr());
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default().manage(AppState::default());
@@ -810,6 +949,8 @@ pub fn run() {
         builder = builder.manage(share::ShareState::default());
     }
     builder = builder.setup(|app| {
+            #[cfg(target_os = "windows")]
+            set_app_user_model_id("com.rfm.app");
             let state = app.state::<AppState>();
             plugins::init(app.handle(), &state.plugins);
             Ok(())
@@ -825,8 +966,14 @@ pub fn run() {
         get_home_dir,
         parent_dir,
         stat_path,
+        stat_paths,
         copy_entries,
         move_entries,
+        scan_conflicts,
+        copy_entries_plan,
+        move_entries_plan,
+        clipboard_write_files,
+        clipboard_read_files,
         rename_entry,
         delete_entries,
         permanent_delete_entries,
@@ -844,6 +991,7 @@ pub fn run() {
         sftp_master_key_status,
         #[cfg(feature = "sftp")]
         sftp_set_master_key,
+        #[cfg(feature = "sftp")]
         sftp_reset_master_key,
         #[cfg(feature = "sftp")]
         sftp_connect,
@@ -867,15 +1015,13 @@ pub fn run() {
         opener::list_openers,
         opener::open_with,
         opener::add_custom_opener,
+        opener::set_opener_extensions,
         opener::remove_custom_opener,
         opener::list_shells,
         opener::open_terminal,
-        filetypes::get_filetypes,
-        filetypes::refresh_filetypes,
         // 会话保存 / 恢复
         session_save,
         session_load,
-        session_clear,
         // 偏好持久化（v0.14）
         prefs_load,
         prefs_save,
@@ -904,12 +1050,12 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
+        .run(|_app_handle, event| {
             // v0.7：应用退出时停止所有分享服务
             if let tauri::RunEvent::Exit = event {
                 #[cfg(feature = "share")]
                 {
-                    if let Some(share_state) = app_handle.try_state::<share::ShareState>() {
+                    if let Some(share_state) = _app_handle.try_state::<share::ShareState>() {
                         share::shutdown_all(&share_state.manager);
                     }
                 }

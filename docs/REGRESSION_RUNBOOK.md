@@ -334,19 +334,31 @@
 
 ---
 
-## 自动化用例（Playwright 首批）
+## 自动化用例（Playwright，`pnpm test:e2e`）
+
+实际落地在 `e2e/smoke.spec.ts` + `e2e/tauri-mock.ts`。Tauri IPC 用
+`addInitScript` 注入的桩替代，配固定虚拟文件系统 `/mock/home`
+（Documents/ Projects/ Notes.txt/ photo.png/ link-to-docs）。
+首次运行需 `pnpm exec playwright install chromium`。
 
 | 用例 | 对应场景 | 自动化方式 |
 |---|---|---|
-| boot-loads-default-dir | W1/W3 | 启动应用，等文件列表非空 |
-| font-size-15 | W4 | 检查 computed font-size |
-| backspace-navigates-up | N1 | 进入子目录按 Backspace，断言地址栏 |
-| f5-does-not-reset | N7 | 进入子目录按 F5，断言仍在子目录 |
-| virtual-scroll-renders-15 | L1 | 打开大目录，数可见行数 |
-| rect-select | L3 | 鼠标拖拽矩形，断言选中数 |
-| right-click-rename | L7 | 右键→重命名，断言输入框出现 |
-| sftp-password-connect | S1 | 填密码连接，断言文件列表 |
-| nginx-autoindex | H1 | 输入 URL，断言目录列出 |
+| W1 默认打开家目录并列出内容 | W1/W3 | 断言地址栏 = /mock/home + 5 行 data-path |
+| W2 目录排在文件前面 | L1 | 断言行序：目录在前、文件在后 |
+| W6 菜单栏包含 文件/编辑/查看 | W6 | 断言菜单栏文本 |
+| N1 双击目录进入下一级 | N1 | 断言地址栏与子目录内容 |
+| N2 返回上一级 | N1 | 平台键位（mac ⌘↑ / win Alt↑），断言地址栏回退 |
+| N7 F5 刷新后列表仍在 | N7 | 断言刷新后条目仍可见 |
+| L1 单击选中一行 | L1 | 断言行获得选中样式 |
+| L2 全选 | L2 | 断言 5 行全部选中 |
+| T1 新开标签页 | T1 | 断言标签数 1 → 2 |
+| C1 右键文件出现操作项 | L7 | 断言菜单含 打开/重命名/删除 |
+| C2 Escape 关闭右键菜单 | L7 | 断言菜单消失 |
+| S1 打开搜索面板 | SE1 | 断言搜索输入框出现 |
+| 全量快捷键冒烟 ×17 | — | 按键后断言数据仍在、可继续操作 |
+
+**仍需人工**（真 Tauri 窗口或外部服务）：真窗口无黑窗、上千文件虚拟滚动、
+矩形框选、SFTP 真连接/上传、nginx autoindex、拖拽与进度条视觉。
 
 ---
 

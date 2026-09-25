@@ -10,7 +10,54 @@ permissions:
   contents: write
 
 jobs:
+  # 前置校验：v0.8.1 两次发布失败是因为 SplitView activeStyle 的 TS 类型错误
+  # 只在 CI 才被 pnpm build(tsc) 抓到。这里提前、低成本地拦住。
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+          run_install: false
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Frontend unit tests
+        run: pnpm test
+
+      - name: Install Playwright browser
+        run: pnpm exec playwright install chromium
+
+      - name: E2E tests
+        run: pnpm test:e2e
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Rust tests
+        run: cargo test
+        working-directory: src-tauri
+
   build:
+    needs: test
     strategy:
       fail-fast: false
       matrix:
@@ -20,8 +67,11 @@ jobs:
           - platform: macos-latest
             args: "--target x86_64-apple-darwin"
           - platform: windows-latest
-            args: ""
+            # 只出 NSIS（-setup.exe）：Windows 上 MSI 与 NSIS 混装会导致升级时
+            # NSIS 去卸载 MSI（msiexec 需要提权）失败并弹「Error launching installer」。
+            args: "--bundles nsis"
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +113,31 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # 版本号以 tag 为准：v0.12.0 → 0.12.0 写入三处版本字段，
+      # 保证程序内「设置 → 关于」显示的版本与 tag / Release 资产完全一致（防止漏改）。
+      - name: Sync version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const v = process.env.GITHUB_REF_NAME.replace(/^v/, '');
+          const patchJson = (p, fn) => {
+            const o = JSON.parse(fs.readFileSync(p, 'utf8'));
+            fn(o);
+            fs.writeFileSync(p, JSON.stringify(o, null, 2) + '\n');
+          };
+          patchJson('package.json', (o) => (o.version = v));
+          patchJson('src-tauri/tauri.conf.json', (o) => (o.version = v));
+          const cargo = fs
+            .readFileSync('src-tauri/Cargo.toml', 'utf8')
+            .replace(/^version = ".*"/m, `version = "${v}"`);
+          fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+          console.log(`synced app version -> ${v}`);
+          NODE
+
+      # releaseDraft: true —— 先建 Draft，三个平台全部成功后由 publish job 统一转正。
+      # 否则第一个完成的 job 就把 release 发布成 Latest，用户会下到缺 Windows/ARM 资产的残缺版。
       - name: Build & release (tauri-action)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -80,8 +155,58 @@ jobs:
             - 多选（Shift 范围 / ⌘·Ctrl 追加 / 矩形框选）与跨窗格拖拽（默认复制，Option/Alt 移动）
             - 分屏（VSCode 式拖拽分割条，左右 / 上下 / 四宫格）
             - 搜索：文件名（当前层 / fd 引擎递归检索）+ 内容搜索（VSCode 风格，默认当前层）
+            - 搜索结果右键定位 / 打开 / 复制相对与绝对路径；双击按扩展名用系统关联程序打开
+            - 标签视图右键菜单（加标签 + 文件夹操作），标签内文件夹/文件正确区分
             - 主题切换（右上角日 / 月）、右键空白菜单、快捷键系统（⌘,/F1 查看一览）
-          releaseDraft: false
+            - 帮助菜单：GitHub 仓库 + 基于 Releases 的更新检测
+          releaseDraft: true
           prerelease: false
           # 显式指定 features：default 解析在 CI 环境不稳定（v0.7.0/v0.7.1 曾缺失 sftp/http 模块）
           args: --features sftp,share ${{ matrix.args }}
+
+  # 三个平台都成功后才把 Draft 转正；任何平台失败则 release 永远停留在 Draft，用户看不到残缺版本
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # 把 CHANGELOG.md 里本版本的段落拼到 Release 说明顶部（保留 tauri-action 写入的通用功能清单）
+      - name: Prepend CHANGELOG to release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          VER="${TAG#v}"
+          awk -v ver="$VER" '
+            $0 ~ ("^## v" ver "([[:space:]]|$)") { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/changelog.md"
+          if [ ! -s "$RUNNER_TEMP/changelog.md" ]; then
+            echo "CHANGELOG.md 中无 v$VER 段落，保留默认 release notes"; exit 0
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/old.md"
+          if grep -qF "## $TAG" "$RUNNER_TEMP/old.md"; then
+            echo "release notes 已含 $TAG 变更，跳过（避免重复）"; exit 0
+          fi
+          {
+            echo "## $TAG 变更"
+            echo
+            cat "$RUNNER_TEMP/changelog.md"
+            echo
+            echo "---"
+            echo
+            cat "$RUNNER_TEMP/old.md"
+          } > "$RUNNER_TEMP/body.md"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/body.md"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false --latest --repo "${{ github.repository }}"

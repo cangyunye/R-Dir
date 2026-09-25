@@ -23,7 +23,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["test"] }
+tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
@@ -33,10 +33,7 @@ dirs = "5"
 trash = "5"
 regex = "1"
 ignore = "0.4"
-# v0.8 压缩（zip / tar / tgz，仅打包，纯 Rust）
-zip = "1"
-tar = "0.4"
-flate2 = "1"
+# v0.9 压缩改为调用系统命令（ditto / powershell / tar / zip），不再依赖 Rust crate
 # HTTP autoindex 插件：轻量同步 HTTP 客户端（rustls，无系统依赖）
 ureq = { version = "2", default-features = false, features = ["rustls", "gzip"] }
 # SFTP 远程文件系统插件（内置、可编译期拔出）：去掉 sftp feature 即不编译任何远程代码
@@ -48,7 +45,6 @@ axum = { version = "0.8", optional = true, features = ["ws", "http1"] }
 # 分享链接展示用局域网地址探测
 local-ip-address = { version = "0.6", optional = true }
 # 流式文件下载（ReaderStream）
-tokio-util = { version = "0.7", optional = true, features = ["io"] }
 futures-util = { version = "0.3", optional = true }
 tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
 # 密码加密存储（master-key，AES-256-GCM；密钥仅存内存）
@@ -57,11 +53,20 @@ sha2 = { version = "0.10", optional = true }
 base64 = { version = "0.22", optional = true }
 rand = { version = "0.8", optional = true }
 
+# 系统剪贴板文件格式（跨应用复制粘贴文件）：平台特定，仅编译对应平台
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+clipboard-win = "5"
+
 [features]
 default = ["sftp", "share"]
 sftp = ["dep:russh", "dep:russh-keys", "dep:tokio", "dep:aes-gcm", "dep:sha2", "dep:base64", "dep:rand"]
 # v0.7 窗口分享（内置插件）：去掉 share 即不编译分享服务
-share = ["dep:axum", "dep:tokio", "dep:local-ip-address", "dep:tokio-util", "dep:futures-util"]
+share = ["dep:axum", "dep:tokio", "dep:local-ip-address", "dep:futures-util"]
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

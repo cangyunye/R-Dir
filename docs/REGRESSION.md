@@ -147,11 +147,26 @@
 
 ## 5. 自动化测试现状
 
-### 5.1 已自动化（`pnpm test`，1.6 秒）
-- `src/lib/sftp-path.test.ts`：SFTP URL 解析、joinRemote 路径拼接
-- `src/lib/virtual-scroll.test.ts`：虚拟滚动可视范围计算
+### 5.1 已自动化
 
-### 5.2 Playwright E2E（计划，见下节）
+**前端单测** `pnpm test`（Vitest，12 个文件 / 218 用例，约 9 秒）：
+`lib/format`、`lib/keymap`（含 50 个 action 的键位派发表）、`lib/openers`、
+`lib/paneTree`、`lib/persist`、`lib/sftp-path`、`lib/transfer`、`lib/virtual-scroll`，
+以及 `components/` 下的 `ConflictDialog`、`MenuGroup`、`SettingsDialog`、`TabBar`。
+
+**Rust 单测** `cargo test`（47 用例，另有 9 个 `#[ignore]` 集成用例需本地 sshd / nginx）：
+`ops`（copy/move 冲突裁决、新建/重命名/永久删除、名称逃逸防护）、
+`fs_ops`（list_dir 排序与元数据、complete_path）、`share::http`（路径穿越、Range）、
+`http_autoindex`（nginx/JSON 索引解析）、`search`、`find`、`compress`、`opener`、`lib`（master-key）。
+
+**E2E** `pnpm test:e2e`（Playwright，29 用例）：
+`e2e/tauri-mock.ts` 用 `addInitScript` 注入 `__TAURI_INTERNALS__` 桩 +
+固定虚拟文件系统 `/mock/home`，因此用例断言的是**真实列表内容与交互结果**
+（进入目录、返回上级、选中、全选、新建标签、右键菜单、搜索面板），
+而不是"body 可见"这种恒过断言。
+首次运行需 `pnpm exec playwright install chromium`。
+
+### 5.2 Playwright E2E 现状（原计划见下节，已按下方方案落地）
 
 ---
 
@@ -189,19 +204,26 @@
 - 压缩进度条
 - macOS 全部用例（mac 机器暂不自动跑）
 
-### 6.5 实施步骤（确认后执行）
-1. `pnpm add -D @playwright/test`
-2. 新建 `e2e/` 目录，写 `playwright.config.ts`
-3. 写 E1-E10 用例
-4. CI 加 `e2e` job（windows-latest，起 WSL sshd + nginx）
-5. 本地 `pnpm e2e` 跑通后，合入主分支
+### 6.5 实施现状
+
+已落地的部分（与上面设想不同，实测更简单且可跑）：
+1. `@playwright/test` 已装，`e2e/smoke.spec.ts` 29 条用例通过。
+2. Tauri IPC 不驱动真 WebView，而是用 `e2e/tauri-mock.ts` 在浏览器里注入
+   `__TAURI_INTERNALS__` 桩 —— 不依赖 WSL sshd / nginx，macOS 本地即可跑。
+3. CI 已在 `.github/workflows/release.yml` 的 `test` job 里跑
+   `tsc --noEmit` + `pnpm test` + `pnpm test:e2e` + `cargo test`，
+   三者全绿才进入三平台构建；构建产物先落 Draft，全部成功后才转正发布。
+
+仍未落地：E1（真窗口无黑窗）、E6（上千文件虚拟滚动）、E8/E9（SFTP 真连接）、
+E10（真 nginx）—— 这些需要真 Tauri 窗口或外部服务，仍走人工回归。
 
 ---
 
 ## 7. 发版检查单
 
 发版前必须全部 ✅：
-- [ ] `pnpm test` 通过（13 个单测）
+- [ ] `pnpm test` 通过（218 个前端单测）
+- [ ] `pnpm test:e2e` 通过（29 个 Playwright 用例）
 - [ ] `cargo test` 通过（Rust 单测）
 - [ ] 本 REGRESSION.md 第 1 节（基础功能）全部手测通过
 - [ ] 改动涉及插件时，第 3 节对应插件回归通过

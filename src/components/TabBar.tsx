@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export interface TabItem {
   id: number;
@@ -15,6 +16,7 @@ export function TabBar({
   onClose,
   onNew,
   onReorder,
+  onRename,
 }: {
   tabs: TabItem[];
   activeId: number;
@@ -22,14 +24,19 @@ export function TabBar({
   onClose: (id: number) => void;
   onNew: () => void;
   onReorder: (from: number, to: number) => void;
+  /** 双击标签重命名：空串表示恢复自动标题 */
+  onRename: (id: number, title: string) => void;
 }) {
-  /** 正在拖拽的标签索引（激活后） */
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const dragStartRef = useRef<{ idx: number; x: number } | null>(null);
+  /** 是否处于按住状态（true 才挂载全局 move/up 监听，避免之前只写 ref 不触发重渲染导致拖不动） */
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{ idx: number; x: number } | null>(null);
+  /** 正在内联重命名的标签 id */
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
 
   const endDrag = () => {
-    dragStartRef.current = null;
-    setDragIdx(null);
+    dragRef.current = null;
+    setDragging(false);
   };
 
   /** 新建标签：pointerup + click 双通道触发 + 300ms 去重
@@ -43,20 +50,19 @@ export function TabBar({
   };
 
   useEffect(() => {
-    if (dragStartRef.current === null) return;
+    if (!dragging) return;
     const onMove = (e: MouseEvent) => {
-      const start = dragStartRef.current;
+      const start = dragRef.current;
       if (!start) return;
-      // 未激活时需超过阈值才开始拖拽
-      if (dragIdx === null && Math.abs(e.clientX - start.x) < 5) return;
+      // 未超过阈值不算拖拽
+      if (Math.abs(e.clientX - start.x) < 5) return;
       const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const tabEl = el?.closest?.("[data-tab-idx]") as HTMLElement | null;
       if (!tabEl) return;
       const idx = Number(tabEl.dataset.tabIdx);
       if (!Number.isNaN(idx) && idx !== start.idx) {
         onReorder(start.idx, idx);
-        dragStartRef.current = { idx, x: e.clientX };
-        setDragIdx(idx);
+        dragRef.current = { idx, x: e.clientX };
       }
     };
     const onUp = () => endDrag();
@@ -66,8 +72,18 @@ export function TabBar({
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dragIdx, onReorder]);
+  }, [dragging, onReorder]);
+
+  const startRename = (tab: TabItem) => {
+    setDraft(tab.title);
+    setEditingId(tab.id);
+  };
+
+  const commitRename = () => {
+    if (editingId === null) return;
+    onRename(editingId, draft.trim());
+    setEditingId(null);
+  };
 
   return (
     <div className="flex items-end gap-0.5 border-b bg-muted/20 px-1.5 pt-1 select-none">
@@ -78,6 +94,7 @@ export function TabBar({
           tabIndex={0}
           data-tab-idx={idx}
           onClick={() => onSelect(tab.id)}
+          onDoubleClick={() => startRename(tab)}
           onAuxClick={(e) => {
             // 鼠标中键关闭标签页（阻止默认自动滚动）
             if (e.button === 1) {
@@ -90,18 +107,38 @@ export function TabBar({
           }}
           onMouseDown={(e) => {
             if (e.button !== 0) return;
-            dragStartRef.current = { idx, x: e.clientX };
+            dragRef.current = { idx, x: e.clientX };
+            setDragging(true);
           }}
           className={cn(
-            "group flex h-7 max-w-52 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-xs transition-colors",
+            "group flex h-7 max-w-52 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-xs",
             tab.id === activeId
               ? "border-border bg-background text-foreground"
               : "border-transparent text-muted-foreground hover:bg-muted/50",
-            dragIdx === idx && "opacity-60 ring-1 ring-inset ring-primary/50",
+            dragging && dragRef.current?.idx === idx && "opacity-60 ring-1 ring-inset ring-primary/50",
           )}
-          title={tab.title}
+          title={editingId === tab.id ? undefined : tab.title}
         >
-          <span className="truncate">{tab.title || "新建标签"}</span>
+          {editingId === tab.id ? (
+            <Input
+              value={draft}
+              autoFocus
+              onChange={(e) => setDraft(e.target.value)}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") commitRename();
+                else if (e.key === "Escape") setEditingId(null);
+              }}
+              className="h-5 w-28 px-1 text-xs"
+              placeholder="标签名"
+            />
+          ) : (
+            <span className="truncate">{tab.title || "新建标签"}</span>
+          )}
           <span
             role="button"
             tabIndex={0}
@@ -109,6 +146,7 @@ export function TabBar({
               e.stopPropagation();
               onClose(tab.id);
             }}
+            onDoubleClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.stopPropagation();

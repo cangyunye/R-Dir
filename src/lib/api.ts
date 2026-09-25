@@ -29,6 +29,10 @@ export const parentDir = (path: string) => invoke<string>("parent_dir", { path }
 /** 条目类型探测：返回 "dir" / "file" / "symlink" */
 export const statPath = (path: string) => invoke<string>("stat_path", { path });
 
+/** 批量条目类型探测：返回等长 kind 列表（"dir"/"file"/"symlink"/"missing"） */
+export const statPaths = (paths: string[]) =>
+  invoke<string[]>("stat_paths", { paths });
+
 /** 复制条目到目标目录；返回实际创建路径列表（冲突自动改名，供撤销记录） */
 export const copyEntries = (paths: string[], dest: string) =>
   invoke<string[]>("copy_entries", { paths, dest });
@@ -36,6 +40,32 @@ export const copyEntries = (paths: string[], dest: string) =>
 /** 移动条目到目标目录；返回 (源, 目标) 路径对（供撤销反向移动） */
 export const moveEntries = (paths: string[], dest: string) =>
   invoke<[string, string][]>("move_entries", { paths, dest });
+
+/** 扫描复制/移动前需用户裁决的同名冲突（同名目录可合并，不返回冲突） */
+export const scanConflicts = (paths: string[], dest: string) =>
+  invoke<import("./types").TransferConflict[]>("scan_conflicts", { paths, dest });
+
+/** 按冲突裁决表复制，返回实际创建路径（供撤销记录） */
+export const copyEntriesPlan = (
+  paths: string[],
+  dest: string,
+  resolutions: import("./types").ResolutionPlan,
+) => invoke<string[]>("copy_entries_plan", { paths, dest, resolutions });
+
+/** 按冲突裁决表移动，返回 (源, 目标) 路径对（供撤销反向移动） */
+export const moveEntriesPlan = (
+  paths: string[],
+  dest: string,
+  resolutions: import("./types").ResolutionPlan,
+) => invoke<[string, string][]>("move_entries_plan", { paths, dest, resolutions });
+
+/** 把文件列表写入系统剪贴板（跨应用复制，best-effort） */
+export const clipboardWriteFiles = (paths: string[]) =>
+  invoke<void>("clipboard_write_files", { paths });
+
+/** 从系统剪贴板读取文件列表（跨应用粘贴，无文件时返回空数组） */
+export const clipboardReadFiles = () =>
+  invoke<string[]>("clipboard_read_files");
 
 export const renameEntry = (path: string, newName: string) =>
   invoke<string>("rename_entry", { path, newName });
@@ -131,9 +161,6 @@ export const sessionSave = (layout: SessionLayout) =>
 
 export const sessionLoad = () =>
   invoke<SessionLayout | null>("session_load");
-
-export const sessionClear = () =>
-  invoke<void>("session_clear");
 
 // ---- 窗口分享（v0.7） ----
 export const shareCreate = (

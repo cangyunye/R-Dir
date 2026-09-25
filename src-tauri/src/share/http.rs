@@ -230,10 +230,18 @@ fn render_index(root: &Path, rel: &str, allow_parent: bool, token: &str) -> Resu
                     chrono_like(d)
                 })
                 .unwrap_or_default();
+            let ext = std::path::Path::new(&name)
+                .extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            let viewable = matches!(ext.as_str(), "txt"|"md"|"json"|"log"|"csv"|"html"|"htm"|"xml"|"yml"|"yaml"|"toml"|"ini"|"conf"|"sh"|"py"|"js"|"ts"|"css"|"sql"|"go"|"rs"|"c"|"h"|"cpp"|"hpp"|"java"|"vue"|"tsx"|"jsx"|"env"|"gitignore"|"dockerfile"|"makefile");
+            let view_limit = 2 * 1024 * 1024u64; // 2MB
+            let link = if viewable && size <= view_limit {
+                format!("/{}/view?path={}", token, url_encode(&rel_child))
+            } else {
+                format!("/{}/dl?path={}", token, url_encode(&rel_child))
+            };
             rows.push_str(&format!(
-                "<tr><td><a class=\"f\" href=\"/{}/dl?path={}\">📄 {}</a></td><td>{}</td><td>{}</td></tr>\n",
-                token,
-                url_encode(&rel_child),
+                "<tr><td><a class=\"f\" href=\"{}\">📄 {}</a></td><td>{}</td><td>{}</td></tr>\n",
+                link,
                 escape_html(&name),
                 fmt_size(size),
                 modified
@@ -326,7 +334,9 @@ pub async fn serve(
 fn build_router(mgr: Arc<ShareManager>) -> axum::Router<()> {
     Router::new()
         .route("/{token}", axum::routing::get(index))
+        .route("/{token}/", axum::routing::get(index))
         .route("/{token}/dl", axum::routing::get(download))
+        .route("/{token}/view", axum::routing::get(view))
         .with_state(mgr)
 }
 
@@ -457,6 +467,57 @@ async fn download(
     resp
 }
 
+/// 文本文件预览（inline，不下载）
+async fn view(
+    State(mgr): State<Arc<ShareManager>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    AxPath(token): AxPath<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let ip = addr.ip().to_string();
+    let ctx = match auth_session(&mgr, &token, &ip, &ua_of(&headers)) {
+        Ok(c) => c,
+        Err(e) => return err_response(e),
+    };
+    let rel = q.get("path").cloned().unwrap_or_default();
+    let file_path = match resolve_path(&ctx.root, &rel, ctx.allow_parent) {
+        Ok(p) => p,
+        Err(e) => return err_response((StatusCode::FORBIDDEN, e)),
+    };
+    let meta = match tokio::fs::metadata(&file_path).await {
+        Ok(m) => m,
+        Err(_) => return err_response((StatusCode::NOT_FOUND, "文件不存在".into())),
+    };
+    if !meta.is_file() {
+        return err_response((StatusCode::BAD_REQUEST, "仅支持文件预览".into()));
+    }
+    // 限制预览大小 2MB，避免内存爆炸
+    if meta.len() > 2 * 1024 * 1024 {
+        return err_response((StatusCode::PAYLOAD_TOO_LARGE, "文件过大，无法预览（>2MB）".into()));
+    }
+    let bytes = match tokio::fs::read(&file_path).await {
+        Ok(b) => b,
+        Err(_) => return err_response((StatusCode::INTERNAL_SERVER_ERROR, "读取失败".into())),
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let fname = file_path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let html = format!(
+        r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>预览：{fname}</title>
+<style>body{{font-family:-apple-system,sans-serif;margin:24px;color:#1e293b;background:#f8fafc}}
+a{{text-decoration:none;color:#2563eb}} .head{{margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #e2e8f0}}
+pre{{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px;overflow:auto;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-all}}</style></head><body>
+<div class="head"><h2>📄 {fname}</h2><p><a href="javascript:history.back()">← 返回目录</a></p></div>
+<pre>{content}</pre></body></html>"#,
+        fname = escape_html(&fname),
+        content = escape_html(&text),
+    );
+    Html(html).into_response()
+}
+
 /// 解析 Range 头 → (start, end)。total=0 时忽略 Range。
 fn parse_range(range: Option<&str>, total: u64) -> Result<(u64, u64), String> {
     if total == 0 {
@@ -557,6 +618,69 @@ mod tests {
         assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
         let t2 = m.gen_token();
         assert_ne!(t, t2);
+    }
+
+    #[test]
+    fn viewable_extensions_detection() {
+        // 文本文件应该走 view，二进制走 dl
+        let viewable_ext = ["txt", "md", "json", "log", "csv", "py", "rs", "sh", "html"];
+        let non_viewable_ext = ["exe", "bin", "zip", "png", "jpg", "mp4", "pdf"];
+        // 这里只验证逻辑分支——实际 viewable 判断在 render_index 内联
+        // 用一个简单的 helper 验证扩展名分类
+        fn is_viewable(ext: &str) -> bool {
+            matches!(ext.to_lowercase().as_str(),
+                "txt"|"md"|"json"|"log"|"csv"|"html"|"htm"|"xml"|"yml"|"yaml"|
+                "toml"|"ini"|"conf"|"sh"|"py"|"js"|"ts"|"css"|"sql"|"go"|"rs"|
+                "c"|"h"|"cpp"|"hpp"|"java"|"vue"|"tsx"|"jsx"|"env"|"gitignore"|
+                "dockerfile"|"makefile")
+        }
+        for e in viewable_ext {
+            assert!(is_viewable(e), "{e} should be viewable");
+        }
+        for e in non_viewable_ext {
+            assert!(!is_viewable(e), "{e} should not be viewable");
+        }
+    }
+
+    #[test]
+    fn render_index_large_text_uses_download() {
+        // 超过 2MB 的文本文件应该走 /dl 而非 /view
+        let tmp = std::env::temp_dir().join(format!("rdir-share-big-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        // 造一个 2.1MB 的 txt
+        let big_content = "a".repeat(2_100_000);
+        std::fs::write(tmp.join("big.txt"), &big_content).unwrap();
+        // 小 txt
+        std::fs::write(tmp.join("small.txt"), "small").unwrap();
+
+        let html = render_index(&tmp, "", false, "tok").unwrap();
+        // 大 txt 走 dl
+        assert!(html.contains("/dl?path=big.txt"), "big.txt should use /dl");
+        assert!(!html.contains("/view?path=big.txt"), "big.txt should not use /view");
+        // 小 txt 走 view
+        assert!(html.contains("/view?path=small.txt"), "small.txt should use /view");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn render_index_produces_view_link_for_text() {
+        // 验证 render_index 对 .txt 文件生成 /view 链接而非 /dl
+        let tmp = std::env::temp_dir().join(format!("rdir-share-render-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("readme.txt"), "hello").unwrap();
+        std::fs::write(tmp.join("video.mp4"), b"\x00\x01").unwrap();
+        std::fs::create_dir(tmp.join("subdir")).unwrap();
+
+        let html = render_index(&tmp, "", false, "testtoken123").unwrap();
+        // txt 应该走 view
+        assert!(html.contains("/view?path=readme.txt"), "txt should use /view link");
+        // mp4 应该走 dl
+        assert!(html.contains("/dl?path=video.mp4"), "mp4 should use /dl link");
+        // 子目录应该走 index（带尾斜杠）
+        assert!(html.contains("/testtoken123/?path=subdir"), "subdir should use index route");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]

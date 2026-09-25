@@ -88,25 +88,36 @@ fn save_config(app: &tauri::AppHandle, cfg: &OpenersConfig) -> Result<(), String
     Ok(())
 }
 
+/// 归一化扩展名列表：去空白、去前导点、小写、去重（保留顺序）
+pub fn normalize_exts(exts: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for e in exts {
+        let n = e.trim().trim_start_matches('.').to_lowercase();
+        if !n.is_empty() && !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// CustomOpener → 前端条目（detected 实时判断）
+fn to_item(c: &CustomOpener) -> OpenerItem {
+    OpenerItem {
+        id: c.id.clone(),
+        name: c.name.clone(),
+        kind: "custom".into(),
+        detected: std::path::Path::new(&c.exec).exists(),
+        exec: Some(c.exec.clone()),
+        cli: false,
+        extensions: c.extensions.clone(),
+    }
+}
+
 /// 列出现有打开方式（内置探测 + Agent + 用户自定义）
 #[tauri::command]
 pub fn list_openers(app: tauri::AppHandle) -> Vec<OpenerItem> {
     // v0.6.3 起只返回用户自定义注册的打开方式，不再探测系统内置工具
-    let mut items = Vec::new();
-    let cfg = load_config(&app);
-    for c in &cfg.custom {
-        let exists = std::path::Path::new(&c.exec).exists();
-        items.push(OpenerItem {
-            id: c.id.clone(),
-            name: c.name.clone(),
-            kind: "custom".into(),
-            detected: exists,
-            exec: Some(c.exec.clone()),
-            cli: false,
-            extensions: c.extensions.clone(),
-        });
-    }
-    items
+    load_config(&app).custom.iter().map(to_item).collect()
 }
 
 /// 用指定工具打开路径（参数数组，零注入）
@@ -128,6 +139,7 @@ pub fn open_with(
 }
 
 /// 添加自定义打开方式（仅接受"可执行文件路径"，不接受命令字符串）
+/// 同一可执行文件重复添加时合并扩展名（不报错、不重复建项）。
 #[tauri::command]
 pub fn add_custom_opener(
     app: tauri::AppHandle,
@@ -143,30 +155,45 @@ pub fn add_custom_opener(
     if exec.is_empty() || !std::path::Path::new(&exec).exists() {
         return Err("可执行文件不存在，请重新选择".into());
     }
+    let extensions = normalize_exts(&extensions);
     let mut cfg = load_config(&app);
-    if cfg.custom.iter().any(|c| c.exec == exec) {
-        return Err("该程序已存在，无需重复添加".into());
+    // 已注册同 exec → 合并扩展名
+    if let Some(c) = cfg.custom.iter_mut().find(|c| c.exec == exec) {
+        for e in extensions {
+            if !c.extensions.contains(&e) {
+                c.extensions.push(e);
+            }
+        }
+        let item = to_item(c);
+        save_config(&app, &cfg)?;
+        return Ok(item);
     }
     let item = CustomOpener {
-        id: format!(
-            "custom:{}",
-            uuid_v4()
-        ),
+        id: format!("custom:{}", uuid_v4()),
         name,
         exec,
         extensions,
     };
     cfg.custom.push(item.clone());
     save_config(&app, &cfg)?;
-    Ok(OpenerItem {
-        id: item.id,
-        name: item.name,
-        kind: "custom".into(),
-        detected: true,
-        exec: Some(item.exec),
-        cli: false,
-        extensions: item.extensions,
-    })
+    Ok(to_item(&item))
+}
+
+/// 覆盖设置某个打开方式的关联扩展名（设置面板增删扩展后保存）
+#[tauri::command]
+pub fn set_opener_extensions(
+    app: tauri::AppHandle,
+    id: String,
+    extensions: Vec<String>,
+) -> Result<(), String> {
+    let mut cfg = load_config(&app);
+    let c = cfg
+        .custom
+        .iter_mut()
+        .find(|c| c.id == id)
+        .ok_or_else(|| format!("未找到打开方式：{id}"))?;
+    c.extensions = normalize_exts(&extensions);
+    save_config(&app, &cfg)
 }
 
 /// 删除自定义打开方式
@@ -204,4 +231,33 @@ fn uuid_v4() -> String {
         .unwrap_or(0);
     let rand = std::process::id() as u128 ^ now;
     format!("{now:016x}{rand:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_exts;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn normalize_lowercases_strips_dot_and_trims() {
+        assert_eq!(normalize_exts(&v(&[" .JSON ", "Yaml"])), v(&["json", "yaml"]));
+    }
+
+    #[test]
+    fn normalize_dedups_keeping_order() {
+        assert_eq!(normalize_exts(&v(&["json", ".JSON", "json", "yaml"])), v(&["json", "yaml"]));
+    }
+
+    #[test]
+    fn normalize_drops_empty_and_blank() {
+        assert_eq!(normalize_exts(&v(&["", "  ", ".", "txt"])), v(&["txt"]));
+    }
+
+    #[test]
+    fn normalize_keeps_star() {
+        assert_eq!(normalize_exts(&v(&["*"])), v(&["*"]));
+    }
 }

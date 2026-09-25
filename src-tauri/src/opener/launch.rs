@@ -74,17 +74,18 @@ fn win_terminal(shell_id: &str, dir: &str) -> Result<(), String> {
         // Windows Terminal：-d 设置起始目录
         "wt" => {
             let wt = detect::find_win_cli("wt").ok_or("未找到 Windows Terminal")?;
+            // wt 是 GUI 启动器，保持原行为（隐藏自身控制台不影响其窗口）
             launch(&Command::new(wt).arg("-d").arg(dir), None)
         }
         // PowerShell：-NoExit + 工作目录由 OS 设置（零转义）
         "powershell" => {
             let ps = detect::find_win_cli("powershell").unwrap_or_else(|| "powershell.exe".into());
-            launch(&Command::new(ps).arg("-NoExit"), Some(dir))
+            launch_in_console(&Command::new(ps).arg("-NoExit"), Some(dir))
         }
         // cmd：/k 保持窗口，工作目录由 OS 设置
         "cmd" => {
             let cmd = detect::find_win_cli("cmd").unwrap_or_else(|| "cmd.exe".into());
-            launch(&Command::new(cmd).arg("/k"), Some(dir))
+            launch_in_console(&Command::new(cmd).arg("/k"), Some(dir))
         }
         // fish / nushell：优先 Windows Terminal 承载；无 wt 时用 cmd /k 承载
         id @ ("fish" | "nu") => {
@@ -93,7 +94,7 @@ fn win_terminal(shell_id: &str, dir: &str) -> Result<(), String> {
                 launch(&Command::new(wt).arg("-d").arg(dir).arg(shell), None)
             } else if let Some(sh) = detect::find_win_cli(shell) {
                 let cmd = detect::find_win_cli("cmd").unwrap_or_else(|| "cmd.exe".into());
-                launch(&Command::new(cmd).arg("/k").arg(&sh), Some(dir))
+                launch_in_console(&Command::new(cmd).arg("/k").arg(&sh), Some(dir))
             } else {
                 Err(format!("未找到 {shell}"))
             }
@@ -113,6 +114,15 @@ fn parent_of(path: &str) -> Option<&str> {
 
 /// 启动子进程（异步分离，不阻塞 UI，不持有句柄）
 fn launch(cmd: &Command, cwd: Option<&str>) -> Result<(), String> {
+    launch_ex(cmd, cwd, false)
+}
+
+/// 启动终端：Windows 上必须新开控制台，否则 powershell/cmd 的控制台窗口会被一起隐藏
+fn launch_in_console(cmd: &Command, cwd: Option<&str>) -> Result<(), String> {
+    launch_ex(cmd, cwd, true)
+}
+
+fn launch_ex(cmd: &Command, cwd: Option<&str>, new_console: bool) -> Result<(), String> {
     let mut c = Command::new(cmd.get_program());
     c.args(cmd.get_args());
     if let Some(d) = cwd {
@@ -120,11 +130,14 @@ fn launch(cmd: &Command, cwd: Option<&str>) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        // Windows 上避免弹出控制台窗口（GUI 子进程）
         use std::os::windows::process::CommandExt;
+        // GUI 子进程隐藏控制台（CREATE_NO_WINDOW）；终端子进程新开控制台（CREATE_NEW_CONSOLE）
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        c.creation_flags(CREATE_NO_WINDOW);
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        c.creation_flags(if new_console { CREATE_NEW_CONSOLE } else { CREATE_NO_WINDOW });
     }
+    #[cfg(not(target_os = "windows"))]
+    let _ = new_console;
     match c.spawn() {
         Ok(_) => Ok(()),
         Err(e) => Err(format!("启动失败：{e}")),

@@ -1,15 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CaseSensitive,
+  Clipboard,
+  Crosshair,
+  ExternalLink,
   FileSearch,
   FolderSearch,
   Loader2,
   SearchX,
+  X,
   Zap,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { FileIcon } from "@/components/FileIcon";
 import { findFiles, searchContent } from "@/lib/api";
 import type { FileEntry, FindEntry, SearchMatch } from "@/lib/types";
@@ -54,22 +65,91 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 
+/** 一条搜索结果：单击选中、双击打开（文件走系统关联程序，目录进入）、右键定位/打开/复制路径 */
+function ResultRow({
+  path,
+  relPath,
+  isDir,
+  selected,
+  onActivate,
+  onReveal,
+  onOpenFile,
+  onCopyPath,
+  children,
+}: {
+  path: string;
+  relPath: string;
+  isDir: boolean;
+  selected: boolean;
+  onActivate: () => void;
+  onReveal: (path: string, isDir: boolean) => void;
+  onOpenFile: (path: string) => void;
+  onCopyPath: (path: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <button
+          type="button"
+          data-search-path={path}
+          onClick={onActivate}
+          onDoubleClick={() => (isDir ? onReveal(path, true) : onOpenFile(path))}
+          className={cn(
+            "w-full text-left hover:bg-accent/60",
+            selected && "bg-primary/10",
+          )}
+          title={path}
+        >
+          {children}
+        </button>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="min-w-48">
+        <ContextMenuItem onClick={() => onReveal(path, isDir)}>
+          <Crosshair className="mr-2 h-4 w-4" /> 定位到{isDir ? "文件夹" : "文件"}
+        </ContextMenuItem>
+        {!isDir && (
+          <ContextMenuItem onClick={() => onOpenFile(path)}>
+            <ExternalLink className="mr-2 h-4 w-4" /> 打开（默认应用）
+          </ContextMenuItem>
+        )}
+        <ContextMenuSeparator />
+        <ContextMenuItem onClick={() => onCopyPath(path)}>
+          <Clipboard className="mr-2 h-4 w-4" /> 复制绝对路径
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => onCopyPath(relPath)}>
+          <Clipboard className="mr-2 h-4 w-4" /> 复制相对路径
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
 export function SearchPanel({
   entries,
   dir,
   cmd,
-  onOpen,
-  onOpenContent,
+  onReveal,
+  onOpenFile,
+  onCopyPath,
+  onClose,
 }: {
   entries: FileEntry[];
   dir: string;
   /** 外部命令（Ctrl+F / Ctrl+Shift+F）：切换 tab 并聚焦输入框 */
   cmd: { tab: "name" | "content"; tick: number } | null;
-  onOpen: (entry: FileEntry) => void;
-  onOpenContent: (dir: string, filePath: string) => void;
+  /** 在激活窗格中定位：目录进入，文件跳转所在目录并选中 */
+  onReveal: (path: string, isDir: boolean) => void;
+  /** 用系统关联程序打开文件（按扩展名） */
+  onOpenFile: (path: string) => void;
+  /** 复制路径文本（绝对 / 相对） */
+  onCopyPath: (path: string) => void;
+  /** 关闭搜索面板（右上角 ×） */
+  onClose: () => void;
 }) {
   const [mode, setMode] = useState("name");
   const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
 
@@ -176,6 +256,24 @@ export function SearchPanel({
 
   return (
     <div className="flex w-64 shrink-0 flex-col border-l bg-muted/15">
+      {/* 标题 + 关闭（冻结的搜索目标目录随面板展示） */}
+      <div className="flex items-center gap-1 px-2 pt-2">
+        <span className="shrink-0 text-[11px] font-medium text-muted-foreground">搜索</span>
+        <span
+          className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground/70"
+          title={dir}
+        >
+          {dir}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          title="关闭搜索面板"
+          className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
       <Tabs value={mode} onValueChange={setMode} className="flex min-h-0 flex-1 flex-col">
         <div className="p-2 pb-0">
           <TabsList className="grid w-full grid-cols-2">
@@ -293,17 +391,22 @@ export function SearchPanel({
                       extension: extensionOf(e.path),
                     };
                     return (
-                      <button
+                      <ResultRow
                         key={e.path}
-                        onClick={() =>
-                          e.is_dir ? onOpen(fe) : onOpenContent(dir, e.path)
-                        }
-                        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-accent/60"
-                        title={e.path}
+                        path={e.path}
+                        relPath={e.rel_path}
+                        isDir={e.is_dir}
+                        selected={selected === e.path}
+                        onActivate={() => setSelected(e.path)}
+                        onReveal={onReveal}
+                        onOpenFile={onOpenFile}
+                        onCopyPath={onCopyPath}
                       >
-                        <FileIcon entry={fe} size={14} className="shrink-0" />
-                        <span className="truncate">{e.rel_path}</span>
-                      </button>
+                        <span className="flex w-full items-center gap-2 px-2.5 py-1.5 text-xs">
+                          <FileIcon entry={fe} size={14} className="shrink-0" />
+                          <span className="truncate">{e.rel_path}</span>
+                        </span>
+                      </ResultRow>
                     );
                   })}
                   {fdResults.length >= 500 && (
@@ -321,15 +424,22 @@ export function SearchPanel({
             ) : (
               <div className="pb-6">
                 {results.map((e) => (
-                  <button
+                  <ResultRow
                     key={e.path}
-                    onClick={() => onOpen(e)}
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-accent/60"
-                    title={e.path}
+                    path={e.path}
+                    relPath={e.name}
+                    isDir={e.is_dir}
+                    selected={selected === e.path}
+                    onActivate={() => setSelected(e.path)}
+                    onReveal={onReveal}
+                    onOpenFile={onOpenFile}
+                    onCopyPath={onCopyPath}
                   >
-                    <FileIcon entry={e} size={14} className="shrink-0" />
-                    <span className="truncate">{e.name}</span>
-                  </button>
+                    <span className="flex w-full items-center gap-2 px-2.5 py-1.5 text-xs">
+                      <FileIcon entry={e} size={14} className="shrink-0" />
+                      <span className="truncate">{e.name}</span>
+                    </span>
+                  </ResultRow>
                 ))}
               </div>
             )}
@@ -383,23 +493,30 @@ export function SearchPanel({
                     extension: extensionOf(m.path),
                   };
                   return (
-                    <button
+                    <ResultRow
                       key={`${m.path}:${m.line_number}`}
-                      onClick={() => onOpenContent(dir, m.path)}
-                      className="block w-full px-2.5 py-1.5 text-left hover:bg-accent/60"
-                      title={m.path}
+                      path={m.path}
+                      relPath={m.rel_path}
+                      isDir={false}
+                      selected={selected === m.path}
+                      onActivate={() => setSelected(m.path)}
+                      onReveal={onReveal}
+                      onOpenFile={onOpenFile}
+                      onCopyPath={onCopyPath}
                     >
-                      <div className="flex items-center gap-1.5 text-xs">
-                        <FileIcon entry={fe} size={13} className="shrink-0" />
-                        <span className="truncate font-medium">{m.rel_path}</span>
-                        <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                          L{m.line_number}
+                      <span className="block w-full px-2.5 py-1.5">
+                        <span className="flex items-center gap-1.5 text-xs">
+                          <FileIcon entry={fe} size={13} className="shrink-0" />
+                          <span className="truncate font-medium">{m.rel_path}</span>
+                          <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                            L{m.line_number}
+                          </span>
                         </span>
-                      </div>
-                      <div className="mt-0.5 line-clamp-2 whitespace-pre-wrap break-all font-mono text-[11px] text-muted-foreground">
-                        <Highlight text={m.line} query={cQuery.trim()} />
-                      </div>
-                    </button>
+                        <span className="mt-0.5 line-clamp-2 block whitespace-pre-wrap break-all font-mono text-[11px] text-muted-foreground">
+                          <Highlight text={m.line} query={cQuery.trim()} />
+                        </span>
+                      </span>
+                    </ResultRow>
                   );
                 })}
                 {cResults.length >= 300 && (
