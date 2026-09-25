@@ -79,3 +79,10 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Radix ScrollArea 内部包裹层默认 `display: table`，会按内容 max-content 撑宽；
+   侧栏里右对齐的计数（如标签数量）会因此被挤出可视区、被窗格遮住。
+   改为 block 把内容约束到视口宽度，配合 truncate + min-w-0 正常省略。 */
+[data-slot="scroll-area-viewport"] > div {
+  display: block !important;
+}

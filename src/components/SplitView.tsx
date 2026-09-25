@@ -113,7 +113,7 @@ function PaneView({
   const h = handlers;
   const showingTag = pane.tagId ?? null;
   return (
-    <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", isActive && highlight && "ring-1 ring-primary/50 shadow-[0_8px_24px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.1)] -translate-y-[1px]")}>
+    <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background transition-shadow", isActive && highlight && "ring-1 ring-foreground/10 shadow-[0_4px_18px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_18px_rgba(0,0,0,0.5)] -translate-y-[1px]")}>
       {pane.loading && (
         <div className="absolute inset-x-0 top-0 z-10 flex h-6 items-center justify-center gap-2 bg-background/80 text-xs text-muted-foreground backdrop-blur-sm">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在加载…

@@ -210,7 +210,7 @@ export function Sidebar({
                 )}
               >
                 <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="truncate">{label}</span>
+                <span className="min-w-0 truncate">{label}</span>
               </button>
             );
           })}
@@ -236,7 +236,7 @@ export function Sidebar({
                       )}
                     >
                       <Star className="h-4 w-4 shrink-0 text-amber-500/90" />
-                      <span className="truncate">{name}</span>
+                      <span className="min-w-0 truncate">{name}</span>
                     </button>
                     <button
                       onClick={() => onRemoveQuick(p)}
@@ -283,9 +283,9 @@ export function Sidebar({
                   className="h-3 w-3 shrink-0 rounded-full"
                   style={{ background: t.color }}
                 />
-                <span className="flex-1 truncate">{tagLabel(t, tagNames)}</span>
+                <span className="min-w-0 flex-1 truncate">{tagLabel(t, tagNames)}</span>
                 {count > 0 && (
-                  <span className="tabular-nums text-[10px] text-muted-foreground">
+                  <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">
                     {count}
                   </span>
                 )}
@@ -311,8 +311,8 @@ export function Sidebar({
                   : "text-foreground hover:bg-accent/50",
               )}
             >
-              <HardDrive className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="truncate">{vol.name}</span>
+                <HardDrive className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 truncate">{vol.name}</span>
             </button>
           ))}
           {volumes.length === 0 && (
@@ -333,7 +333,7 @@ export function Sidebar({
           {groupedServers.map(([group, servers]) => (
             <div key={group} className="mb-0.5">
               <div className="flex items-center gap-1 px-2 pt-0.5 pb-0.5 text-[10px] font-medium text-muted-foreground/80">
-                <span className="truncate">{group || "默认"}</span>
+                <span className="min-w-0 truncate">{group || "默认"}</span>
                 <span className="tabular-nums text-[9px] text-muted-foreground/60">
                   {servers.length}
                 </span>
@@ -365,7 +365,7 @@ export function Sidebar({
                         sv.connected ? "bg-emerald-500" : "bg-muted-foreground/40",
                       )}
                     />
-                    <span className="truncate">{sv.name}</span>
+                    <span className="min-w-0 truncate">{sv.name}</span>
                   </button>
                   {sv.connected && (
                     <button
