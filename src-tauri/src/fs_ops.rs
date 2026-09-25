@@ -106,6 +106,43 @@ pub fn list_dir(path: &str) -> Result<Vec<FileEntry>, String> {
     Ok(entries)
 }
 
+/// 读取单个路径的元信息（「属性」统计当前目录/单条路径用）。
+pub fn stat_entry(path: &str) -> Result<FileEntry, String> {
+    let p = Path::new(path);
+    let meta = std::fs::metadata(p).map_err(|e| format!("无法读取 {}：{}", path, e))?;
+    let is_dir = meta.is_dir();
+    let name = p
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| path.trim_end_matches(['/', '\\']).to_string());
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64);
+    let created = meta
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64);
+    let extension = p
+        .extension()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    Ok(FileEntry {
+        name,
+        path: path.to_string(),
+        is_dir,
+        is_symlink: meta.file_type().is_symlink(),
+        size: if is_dir { 0 } else { meta.len() },
+        modified,
+        created,
+        permissions: perm_string(&meta),
+        extension,
+    })
+}
+
 /// 目录路径补全：输入前缀（支持 "~"），返回匹配的目录完整路径，最多 50 个。
 /// 相对路径以 cwd 为基准。
 pub fn complete_path(input: &str, cwd: &str) -> Vec<String> {
@@ -266,5 +303,22 @@ mod tests {
             std::fs::create_dir_all(base.join(format!("d{i:02}"))).unwrap();
         }
         assert_eq!(complete_path("d", &base.to_string_lossy()).len(), 50);
+    }
+
+    #[test]
+    fn stat_entry_reports_dir_and_file() {
+        let base = tmp("stat-entry");
+        std::fs::write(base.join("a.txt"), b"hello").unwrap();
+
+        let de = stat_entry(&base.to_string_lossy()).unwrap();
+        assert!(de.is_dir, "目录");
+        assert_eq!(de.size, 0);
+        assert!(!de.permissions.is_empty());
+
+        let fe = stat_entry(&base.join("a.txt").to_string_lossy()).unwrap();
+        assert!(!fe.is_dir);
+        assert_eq!(fe.size, 5);
+        assert_eq!(fe.name, "a.txt");
+        assert_eq!(fe.extension, "txt");
     }
 }

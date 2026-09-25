@@ -173,6 +173,10 @@ export const cancelSize = (id: string) =>
 export const diffDirs = (left: string, right: string, level: number) =>
   invoke<import("./types").DiffEntry[]>("diff_dirs", { left, right, level });
 
+/** 读取单个路径的元信息（「属性」统计当前目录用） */
+export const statEntry = (path: string) =>
+  invoke<FileEntry>("stat_entry", { path });
+
 // ---- 窗口分享（v0.7） ----
 export const shareCreate = (
   dir: string,

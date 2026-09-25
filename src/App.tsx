@@ -73,6 +73,7 @@ import {
   sessionLoad,
   sessionSave,
   statPath,
+  statEntry,
   compressItems,
 } from "@/lib/api";
 import { ConnectDialog } from "@/components/ConnectDialog";
@@ -2110,6 +2111,12 @@ useEffect(() => {
     onForward: goForward,
     onCompress: (paneId, paths, fmt) => void doCompress(paneId, paths, fmt),
     onProperties: (list) => setPropertiesEntries(list),
+    onPropertiesDir: (dir) => {
+      // 空白处右键：统计当前目录本身（不受地址栏选中路径影响）
+      void statEntry(dir)
+        .then((e) => setPropertiesEntries([e]))
+        .catch((err) => showError(String(err)));
+    },
   };
 
   const selectedSize = activePane

@@ -255,3 +255,45 @@ test.describe("10. 右键菜单不溢出窗口（界面缩放回归）", () => {
     expect(box!.y + box!.height, "菜单底边不应超出窗口").toBeLessThanOrEqual(vh + 1);
   });
 });
+
+test.describe("11. 空白处「属性（当前目录）」（v0.17.1）", () => {
+  test("选中文件使地址栏显示文件路径时，右键空白处属性仍统计当前目录", async ({ page }) => {
+    // 单击文件 → 地址栏显示该文件完整路径（v0.14 行为）
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    await expect(page.locator("#rdir-addr-input")).toHaveValue(`${HOME}/Notes.txt`);
+
+    // 右键列表空白处
+    const body = page.locator("[data-filelist-body]");
+    const box = (await body.boundingBox())!;
+    await body.click({ button: "right", position: { x: 120, y: box.height - 14 } });
+
+    const menu = page.locator('[data-slot="context-menu-content"]');
+    await expect(menu).toBeVisible();
+    await expect(menu).toContainText("属性（当前目录）");
+    await menu.getByText("属性（当前目录）").click();
+
+    // 属性弹窗统计的是当前目录 HOME，而不是被选中的 Notes.txt
+    const dlg = page.locator("[data-properties-dialog]");
+    await expect(dlg).toBeVisible();
+    await expect(dlg).toContainText("文件夹");
+    await expect(dlg).not.toContainText("Notes.txt");
+  });
+});
+
+test.describe("12. 标签名磁盘恢复（localStorage 被清空时）", () => {
+  test("从 prefs.json 恢复自定义标签名「工程」", async ({ page }) => {
+    // 模拟 localStorage 丢失（换 origin / 被清理），且磁盘 prefs.json 有自定义名
+    await page.addInitScript(() => {
+      localStorage.clear();
+      (window as unknown as { __RDIR_PREFS__?: unknown }).__RDIR_PREFS__ = {
+        tagNames: { red: "工程" },
+        fileTags: {},
+        customQuick: [],
+      };
+    });
+    await page.reload();
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+    // 侧栏标签应显示磁盘里保存的自定义名，而不是预设「红色」
+    await expect(page.getByText("工程", { exact: true }).first()).toBeVisible();
+  });
+});

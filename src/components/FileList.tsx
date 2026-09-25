@@ -160,6 +160,7 @@ export function FileList({
   onForward,
   onCompress,
   onProperties,
+  onPropertiesDir,
 }: {
   paneId: number;
   entries: FileEntry[];
@@ -231,6 +232,8 @@ export function FileList({
   onCompress: (paths: string[], format: "zip" | "tar" | "tgz") => void;
   /** v0.16 右键「属性」：对选中条目显示属性（目录递归统计大小） */
   onProperties: (entries: FileEntry[]) => void;
+  /** v0.17 空白处右键「属性（当前目录）」：统计 currentDir，与选中项无关 */
+  onPropertiesDir: (dir: string) => void;
 }) {
   const sorted = useMemo(() => {
     const visible = showHidden
@@ -681,6 +684,7 @@ export function FileList({
       {/* 行 */}
       <div
         ref={listScrollRef}
+        data-filelist-body=""
         tabIndex={0}
         className="min-h-0 flex-1 overflow-y-auto pb-8 outline-none select-none"
         onMouseDown={startRubber}
@@ -1063,6 +1067,11 @@ export function FileList({
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onRefresh}>
             <RefreshCw className="mr-2 h-4 w-4" /> 刷新
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          {/* 空白处右键：统计「当前目录」属性（与地址栏显示的选中路径无关） */}
+          <ContextMenuItem onClick={() => onPropertiesDir(currentDir)}>
+            <Info className="mr-2 h-4 w-4" /> 属性（当前目录）
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>

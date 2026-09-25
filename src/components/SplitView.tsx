@@ -73,6 +73,8 @@ export interface PaneHandlers {
   onCompress: (paneId: number, paths: string[], format: "zip" | "tar" | "tgz") => void;
   /** v0.16 右键「属性」 */
   onProperties: (entries: FileEntry[]) => void;
+  /** v0.17 空白处右键「属性（当前目录）」 */
+  onPropertiesDir: (dir: string) => void;
 }
 
 function PaneView({
@@ -195,6 +197,7 @@ dragTarget={dragOver?.targetPaneId === pane.id}
         onForward={h.onForward}
         onCompress={(paths, fmt) => h.onCompress(pane.id, paths, fmt)}
         onProperties={h.onProperties}
+        onPropertiesDir={h.onPropertiesDir}
       />
       )}
       {showProperties && <PropertiesBar entries={pane.entries} selection={pane.selection} />}

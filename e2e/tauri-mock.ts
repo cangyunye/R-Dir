@@ -183,6 +183,39 @@ export async function installTauriMock(page: Page): Promise<void> {
           };
         });
       },
+      // ---- 单路径元信息（v0.17 空白处「属性（当前目录）」） ----
+      stat_entry: (a) => {
+        const p = String(a.path);
+        const name = p.split("/").filter(Boolean).pop() ?? p;
+        const isDir = !!FS[p];
+        let size = 0;
+        let ext = "";
+        if (!isDir) {
+          for (const dir of Object.keys(FS)) {
+            const f = FS[dir].find((x) => `${dir}/${x.name}` === p);
+            if (f) {
+              size = f.size ?? 0;
+              ext = f.name.split(".").pop() ?? "";
+              break;
+            }
+          }
+        }
+        return {
+          name,
+          path: p,
+          is_dir: isDir,
+          is_symlink: false,
+          size,
+          modified: NOW,
+          created: NOW,
+          permissions: isDir ? "drwxr-xr-x" : "-rw-r--r--",
+          extension: isDir ? "" : ext,
+        };
+      },
+      // ---- 偏好持久化（v0.14）：默认空，测试可用 window.__RDIR_PREFS__ 注入 ----
+      prefs_load: () =>
+        (window as unknown as { __RDIR_PREFS__?: unknown }).__RDIR_PREFS__ ?? {},
+      prefs_save: () => null,
       list_plugins: () =>
         [
           { id: "sftp", name: "SFTP 远程文件", description: "", protocols: ["sftp"], operations: ["list", "read"] },

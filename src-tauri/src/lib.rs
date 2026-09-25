@@ -456,6 +456,9 @@ pub struct SessionPane {
 pub struct SessionTab {
     pub id: u32,
     pub title: String,
+    /// 用户自定义标签页名（右键「重命名」）；缺省时前端回落自动标题
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_title: Option<String>,
     pub active_pane: u32,
     pub root: serde_json::Value,
     pub panes: Vec<SessionPane>,
@@ -595,6 +598,12 @@ async fn diff_dirs(left: String, right: String, level: u8) -> Result<Vec<diff::D
     tauri::async_runtime::spawn_blocking(move || diff::diff_dirs(&left, &right, level))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// 读取单个路径的元信息（「属性」统计当前目录用）。
+#[tauri::command]
+fn stat_entry(path: String) -> Result<fs_ops::FileEntry, String> {
+    fs_ops::stat_entry(&path)
 }
 
 /// 下载远程文件到临时目录，返回本地路径（供打开）
@@ -1083,6 +1092,7 @@ pub fn run() {
         cancel_size,
         // 目录差异比对（v0.17）
         diff_dirs,
+        stat_entry,
         // 插件注册表（v0.5）
         list_plugins,
         set_plugin_enabled,
@@ -1324,5 +1334,41 @@ mod sftp_tests {
         let _ = std::fs::remove_file(&local);
         let _ = std::fs::remove_file(&local2);
         println!("remote_write_ops OK（{dir} 已清理）");
+    }
+}
+
+/// 会话快照序列化测试：自定义标签页名必须随 session.json 往返（回归 v0.17.2）
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    #[test]
+    fn session_tab_custom_title_roundtrip() {
+        let tab = SessionTab {
+            id: 1,
+            title: "git".into(),
+            custom_title: Some("我的标签".into()),
+            active_pane: 1,
+            root: serde_json::json!({ "type": "pane", "paneId": 1 }),
+            panes: vec![],
+        };
+        let json = serde_json::to_string(&tab).unwrap();
+        assert!(json.contains("customTitle"), "序列化应含 customTitle：{json}");
+        let back: SessionTab = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.custom_title.as_deref(), Some("我的标签"));
+    }
+
+    #[test]
+    fn session_tab_without_custom_title_omits_field() {
+        let tab = SessionTab {
+            id: 1,
+            title: "git".into(),
+            custom_title: None,
+            active_pane: 1,
+            root: serde_json::json!({}),
+            panes: vec![],
+        };
+        let json = serde_json::to_string(&tab).unwrap();
+        assert!(!json.contains("customTitle"), "无自定义名时不应输出字段：{json}");
     }
 }
