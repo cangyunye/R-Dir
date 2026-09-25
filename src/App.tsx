@@ -123,6 +123,7 @@ import { Button } from "@/components/ui/button";
 import { Trash2, Bird } from "lucide-react";
 import { PaneListMenu } from "@/components/PaneListMenu";
 import { PropertiesDialog } from "@/components/PropertiesDialog";
+import { DiffDialog } from "@/components/DiffDialog";
 import { MenuBar } from "@/components/MenuBar";
 
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
@@ -431,6 +432,22 @@ useEffect(() => {
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
     noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
   }, []);
+
+  /** v0.17 打开差异比对：需活动标签正好两个本地窗格（各指向一个目录） */
+  const openDiff = useCallback(() => {
+    if (!activeTab) return;
+    const local = collectPaneIds(activeTab.root)
+      .map((id) => activeTab.panes[id])
+      .filter(
+        (p): p is NonNullable<typeof p> =>
+          !!p && !p.path.startsWith("sftp://") && !p.path.startsWith("http") && !p.tagId,
+      );
+    if (local.length !== 2) {
+      showError("差异比对需要正好两个本地窗格（请先左右分屏，并各打开一个目录）");
+      return;
+    }
+    setDiffTarget({ left: local[0].path, right: local[1].path });
+  }, [activeTab, showError]);
 
   // 应用名 / 版本识别（getName = productName，Windows 任务栏与包元数据同源）
   useEffect(() => {
@@ -1351,6 +1368,9 @@ useEffect(() => {
   /** v0.16 属性弹窗：右键「属性」选中的条目（目录递归统计大小） */
   const [propertiesEntries, setPropertiesEntries] = useState<FileEntry[] | null>(null);
 
+  /** v0.17 差异比对窗口：左右两个本地目录 */
+  const [diffTarget, setDiffTarget] = useState<{ left: string; right: string } | null>(null);
+
   /** 文件标签（path → tagId[]，持久化） */
   const [fileTags, setFileTags] = useState<FileTags>(() => loadFileTags());
   // 自定义标签名（v0.6.4 右键重命名）
@@ -2192,6 +2212,7 @@ useEffect(() => {
         onClosePane={closePane}
         canClosePane={!!activeTab && !isSinglePane(activeTab.root)}
         onFocusNextPane={focusNextPane}
+        onOpenDiff={openDiff}
         showHidden={showHidden}
         searchOpen={searchOpen}
         dark={dark}
@@ -2420,6 +2441,20 @@ useEffect(() => {
           key={propertiesEntries.map((e) => e.path).join("|")}
           entries={propertiesEntries}
           onClose={() => setPropertiesEntries(null)}
+        />
+      )}
+
+      {/* v0.17 差异比对窗口 */}
+      {diffTarget && (
+        <DiffDialog
+          leftDir={diffTarget.left}
+          rightDir={diffTarget.right}
+          onClose={() => setDiffTarget(null)}
+          onSynced={() => {
+            if (activeTab) {
+              for (const p of Object.values(activeTab.panes)) refreshPane(p.id);
+            }
+          }}
         />
       )}
 

@@ -439,7 +439,8 @@ mod tests {
         .unwrap();
         // 目录本身不冲突；只报内部同名文件
         assert_eq!(conflicts.len(), 1, "应只报 1 条冲突: {conflicts:?}");
-        assert_eq!(conflicts[0].dest, dst.join("x.txt").to_string_lossy());
+        // 用 PathBuf 比较：scan_conflicts 以 "/" 拼接，Windows 下与 join 的 "\\" 不同
+        assert_eq!(std::path::PathBuf::from(&conflicts[0].dest), dst.join("x.txt"));
         assert_eq!(conflicts[0].dest_kind, "file");
         assert_eq!(conflicts[0].suggest, "x_1.txt");
     }

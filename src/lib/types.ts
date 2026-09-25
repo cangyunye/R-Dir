@@ -223,6 +223,28 @@ export interface SizeProgress extends SizeStat {
   done: boolean;
 }
 
+// ---- v0.17 目录差异比对 ----
+export type DiffLevel = 1 | 2 | 3;
+
+export interface DiffSide {
+  path: string;
+  size: number;
+  modified: number | null;
+  is_dir: boolean;
+}
+
+export type DiffStatus = "left-only" | "right-only" | "same" | "different";
+
+export interface DiffEntry {
+  name: string;
+  is_dir: boolean;
+  left: DiffSide | null;
+  right: DiffSide | null;
+  status: DiffStatus;
+  /** 差异原因：size | content | mtime */
+  reason?: string;
+}
+
 // ---- v0.7 窗口分享 ----
 export interface ShareConnLog {
   ip: string;

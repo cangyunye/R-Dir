@@ -28,6 +28,7 @@ import {
   CopyPlus,
   X,
   ArrowLeftRight,
+  GitCompare,
   Download,
 } from "lucide-react";
 import {
@@ -86,6 +87,8 @@ export interface MenuActions {
   onClosePane: () => void;
   canClosePane: boolean;
   onFocusNextPane: () => void;
+  // 工具
+  onOpenDiff: () => void;
   // 视图 / 全局
   dark: boolean;
   onToggleTheme: () => void;
@@ -296,6 +299,12 @@ export function MenuBar(actions: MenuActions) {
         <DropdownMenuItem onClick={actions.onFocusNextPane}>
           <ArrowLeftRight className="mr-2 h-4 w-4" /> 聚焦下一窗格
           <Shortcut id="focusNextPane" />
+        </DropdownMenuItem>
+      </MenuButton>
+
+      <MenuButton label="工具" {...openFor("工具")}>
+        <DropdownMenuItem onClick={actions.onOpenDiff}>
+          <GitCompare className="mr-2 h-4 w-4" /> 差异比对（左右窗格）…
         </DropdownMenuItem>
       </MenuButton>
 

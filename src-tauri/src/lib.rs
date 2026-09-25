@@ -1,5 +1,6 @@
 mod clipboard;
 mod compress;
+mod diff;
 mod find;
 mod fs_ops;
 mod ops;
@@ -586,6 +587,16 @@ fn cancel_size(state: tauri::State<'_, AppState>, id: String) {
     }
 }
 
+// ==================== 目录差异比对（v0.17） ====================
+
+/// 比对两个目录（顶层）：level 1 名称 / 2 大小 / 3 hash+时间戳。
+#[tauri::command]
+async fn diff_dirs(left: String, right: String, level: u8) -> Result<Vec<diff::DiffEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || diff::diff_dirs(&left, &right, level))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// 下载远程文件到临时目录，返回本地路径（供打开）
 #[cfg(feature = "sftp")]
 #[tauri::command]
@@ -1070,6 +1081,8 @@ pub fn run() {
         // 目录大小统计（v0.16）
         compute_size,
         cancel_size,
+        // 目录差异比对（v0.17）
+        diff_dirs,
         // 插件注册表（v0.5）
         list_plugins,
         set_plugin_enabled,

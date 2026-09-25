@@ -169,6 +169,10 @@ export const computeSize = (id: string, paths: string[]) =>
 export const cancelSize = (id: string) =>
   invoke<void>("cancel_size", { id });
 
+// ---- 目录差异比对（v0.17） ----
+export const diffDirs = (left: string, right: string, level: number) =>
+  invoke<import("./types").DiffEntry[]>("diff_dirs", { left, right, level });
+
 // ---- 窗口分享（v0.7） ----
 export const shareCreate = (
   dir: string,

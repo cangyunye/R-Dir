@@ -154,6 +154,35 @@ export async function installTauriMock(page: Page): Promise<void> {
         return { bytes, files, dirs };
       },
       cancel_size: () => null,
+      // ---- 目录差异比对（v0.17）：按虚拟 FS 顶层比对（一层/二层） ----
+      diff_dirs: (a) => {
+        const level = Number(a.level ?? 1);
+        const left = String(a.left ?? "");
+        const right = String(a.right ?? "");
+        const l = FS[left] ?? [];
+        const r = FS[right] ?? [];
+        const names = [...new Set([...l.map((f) => f.name), ...r.map((f) => f.name)])];
+        const sideOf = (dir: string, f?: Fake) =>
+          f
+            ? { path: `${dir}/${f.name}`, size: f.dir ? 0 : (f.size ?? 0), modified: NOW, is_dir: !!f.dir }
+            : null;
+        return names.map((name) => {
+          const le = l.find((f) => f.name === name);
+          const re = r.find((f) => f.name === name);
+          if (le && !re) return { name, is_dir: !!le.dir, left: sideOf(left, le), right: null, status: "left-only" };
+          if (!le && re) return { name, is_dir: !!re.dir, left: null, right: sideOf(right, re), status: "right-only" };
+          const isDir = !!le?.dir || !!re?.dir;
+          const sizeDiff = !isDir && level >= 2 && (le?.size ?? 0) !== (re?.size ?? 0);
+          return {
+            name,
+            is_dir: isDir,
+            left: sideOf(left, le),
+            right: sideOf(right, re),
+            status: sizeDiff ? "different" : "same",
+            ...(sizeDiff ? { reason: "size" } : {}),
+          };
+        });
+      },
       list_plugins: () =>
         [
           { id: "sftp", name: "SFTP 远程文件", description: "", protocols: ["sftp"], operations: ["list", "read"] },
