@@ -122,6 +122,7 @@ import { shareStopByDir, shareList } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Trash2, Bird } from "lucide-react";
 import { PaneListMenu } from "@/components/PaneListMenu";
+import { PropertiesDialog } from "@/components/PropertiesDialog";
 import { MenuBar } from "@/components/MenuBar";
 
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
@@ -327,7 +328,10 @@ export default function App() {
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   // 界面字体：13px=100%，根元素 zoom 整体缩放（与窗口级 Ctrl+滚轮缩放相乘叠加）
   useEffect(() => {
-    document.documentElement.style.zoom = String(uiFontZoom(uiFontSize));
+    const z = uiFontZoom(uiFontSize);
+    document.documentElement.style.zoom = String(z);
+    // 供 portal（右键菜单）做 zoom 反向补偿，修正 Floating UI 定位偏移
+    document.documentElement.style.setProperty("--rdir-zoom", String(z));
     document.documentElement.style.fontFamily = uiFontFamilyStack(uiFontFamily);
   }, [uiFontSize, uiFontFamily]);
   // v0.8.5 开屏飞鸟：mount 后 600ms 开始淡出，1000ms 后完全卸载
@@ -1344,6 +1348,9 @@ useEffect(() => {
     paths: string[];
   } | null>(null);
 
+  /** v0.16 属性弹窗：右键「属性」选中的条目（目录递归统计大小） */
+  const [propertiesEntries, setPropertiesEntries] = useState<FileEntry[] | null>(null);
+
   /** 文件标签（path → tagId[]，持久化） */
   const [fileTags, setFileTags] = useState<FileTags>(() => loadFileTags());
   // 自定义标签名（v0.6.4 右键重命名）
@@ -2082,6 +2089,7 @@ useEffect(() => {
     onBack: goBack,
     onForward: goForward,
     onCompress: (paneId, paths, fmt) => void doCompress(paneId, paths, fmt),
+    onProperties: (list) => setPropertiesEntries(list),
   };
 
   const selectedSize = activePane
@@ -2404,6 +2412,15 @@ useEffect(() => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* v0.16 属性弹窗：目录递归统计大小 + 滚动数字 */}
+      {propertiesEntries && (
+        <PropertiesDialog
+          key={propertiesEntries.map((e) => e.path).join("|")}
+          entries={propertiesEntries}
+          onClose={() => setPropertiesEntries(null)}
+        />
       )}
 
       {/* v0.14 复制/剪切成功提示：窗内居中，约 1 秒消失 */}

@@ -86,3 +86,16 @@
 [data-slot="scroll-area-viewport"] > div {
   display: block !important;
 }
+
+/* 根元素 CSS `zoom`（界面字体缩放）会让 Radix/Floating UI 的 portal 定位整体按
+   zoom 倍率偏移（视口未缩放、内容被缩放），右键菜单因此溢出窗口底部。
+   处理：popper 包裹层反向缩放回 1，使 Floating UI 坐标与视口一致；菜单内容再
+   缩放回 zoom 以保持视觉大小；可用高度按 zoom 折算以正确限制高度。
+   仅作用于右键菜单（`:has`），不影响菜单栏下拉等其它 popper。 */
+[data-radix-popper-content-wrapper]:has(> [data-slot="context-menu-content"]) {
+  zoom: calc(1 / var(--rdir-zoom, 1));
+}
+[data-slot="context-menu-content"] {
+  zoom: var(--rdir-zoom, 1);
+  max-height: calc(var(--radix-popper-available-height, 100vh) / var(--rdir-zoom, 1));
+}

@@ -5,6 +5,7 @@ mod fs_ops;
 mod ops;
 mod progress;
 mod search;
+mod sizestat;
 mod volumes;
 
 #[cfg(feature = "sftp")]
@@ -34,6 +35,10 @@ pub struct AppState {
     pub master_key: tokio::sync::Mutex<Option<Vec<u8>>>,
     /// 插件注册表启用状态（v0.5，plugins.json 持久化）
     pub plugins: plugins::PluginState,
+    /// 目录大小统计的取消标记（id → flag，右键「属性」用）
+    pub size_cancels: std::sync::Mutex<
+        std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    >,
     /// 窗口分享管理器（v0.7，feature = "share"）
     #[cfg(feature = "share")]
     pub share: share::ShareState,
@@ -544,6 +549,43 @@ async fn prefs_save(app: tauri::AppHandle, value: serde_json::Value) -> Result<(
     .map_err(|e| e.to_string())?
 }
 
+// ==================== 目录大小统计（v0.16：右键「属性」） ====================
+
+/// 递归统计路径集合的大小/文件数/目录数，进度走 "size-progress" 事件。
+#[tauri::command]
+async fn compute_size(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+    paths: Vec<String>,
+) -> Result<sizestat::SizeStat, String> {
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state
+        .size_cancels
+        .lock()
+        .unwrap()
+        .insert(id.clone(), flag.clone());
+    let id_for_task = id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Emitter;
+        sizestat::compute(&id_for_task, &paths, &flag, |p| {
+            let _ = app.emit("size-progress", p);
+        })
+    })
+    .await
+    .map_err(|e| e.to_string());
+    state.size_cancels.lock().unwrap().remove(&id);
+    result
+}
+
+/// 取消进行中的大小统计（关闭属性弹窗时调用）。
+#[tauri::command]
+fn cancel_size(state: tauri::State<'_, AppState>, id: String) {
+    if let Some(flag) = state.size_cancels.lock().unwrap().get(&id) {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// 下载远程文件到临时目录，返回本地路径（供打开）
 #[cfg(feature = "sftp")]
 #[tauri::command]
@@ -1025,6 +1067,9 @@ pub fn run() {
         // 偏好持久化（v0.14）
         prefs_load,
         prefs_save,
+        // 目录大小统计（v0.16）
+        compute_size,
+        cancel_size,
         // 插件注册表（v0.5）
         list_plugins,
         set_plugin_enabled,

@@ -162,6 +162,13 @@ export const sessionSave = (layout: SessionLayout) =>
 export const sessionLoad = () =>
   invoke<SessionLayout | null>("session_load");
 
+// ---- 目录大小统计（v0.16 右键「属性」） ----
+export const computeSize = (id: string, paths: string[]) =>
+  invoke<import("./types").SizeStat>("compute_size", { id, paths });
+
+export const cancelSize = (id: string) =>
+  invoke<void>("cancel_size", { id });
+
 // ---- 窗口分享（v0.7） ----
 export const shareCreate = (
   dir: string,

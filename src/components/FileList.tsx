@@ -21,6 +21,7 @@ import {
   ExternalLink,
   TerminalSquare,
   Tag as TagIcon,
+  Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
@@ -158,6 +159,7 @@ export function FileList({
   onBack,
   onForward,
   onCompress,
+  onProperties,
 }: {
   paneId: number;
   entries: FileEntry[];
@@ -227,6 +229,8 @@ export function FileList({
   onForward: () => void;
   /** v0.8 压缩为 zip / tar / tgz（仅打包） */
   onCompress: (paths: string[], format: "zip" | "tar" | "tgz") => void;
+  /** v0.16 右键「属性」：对选中条目显示属性（目录递归统计大小） */
+  onProperties: (entries: FileEntry[]) => void;
 }) {
   const sorted = useMemo(() => {
     const visible = showHidden
@@ -823,7 +827,7 @@ export function FileList({
                   </div>
                 </div>
               </ContextMenuTrigger>
-              <ContextMenuContent className="min-w-48" collisionPadding={10} style={{ maxHeight: "calc(100vh - 20px)", overflowY: "auto" }}>
+              <ContextMenuContent className="min-w-48" collisionPadding={10}>
                 <ContextMenuItem onClick={() => onOpen(entry)}>
                   <FolderInput className="mr-2 h-4 w-4" /> 打开
                 </ContextMenuItem>
@@ -959,6 +963,18 @@ export function FileList({
                 <ContextMenuItem onClick={onRefresh}>
                   <RefreshCw className="mr-2 h-4 w-4" /> 刷新
                 </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onClick={() =>
+                    onProperties(
+                      targets
+                        .map((p) => entries.find((x) => x.path === p))
+                        .filter((e): e is FileEntry => !!e),
+                    )
+                  }
+                >
+                  <Info className="mr-2 h-4 w-4" /> 属性
+                </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>
           );
@@ -997,7 +1013,7 @@ export function FileList({
       </div>
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent className="min-w-48" collisionPadding={10} style={{ maxHeight: "calc(100vh - 20px)", overflowY: "auto" }}>
+        <ContextMenuContent className="min-w-48" collisionPadding={10}>
           {pluginTerminal && (
             <>
               <MenuGroup

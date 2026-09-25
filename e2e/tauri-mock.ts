@@ -120,6 +120,40 @@ export async function installTauriMock(page: Page): Promise<void> {
           return "missing";
         });
       },
+      // ---- 目录大小统计（v0.16 右键「属性」）：按虚拟 FS 递归统计 ----
+      compute_size: (a) => {
+        const paths = (a.paths as string[]) ?? [];
+        const roots = new Set(paths);
+        let bytes = 0;
+        let files = 0;
+        let dirs = 0;
+        const entryAt = (p: string): Fake | undefined => {
+          for (const dir of Object.keys(FS)) {
+            const f = FS[dir].find((x) => `${dir}/${x.name}` === p);
+            if (f) return f;
+          }
+          return undefined;
+        };
+        const stack: string[] = [...paths];
+        while (stack.length) {
+          const p = stack.pop()!;
+          if (FS[p]) {
+            if (!roots.has(p)) dirs += 1;
+            for (const f of FS[p]) stack.push(`${p}/${f.name}`);
+          } else {
+            const f = entryAt(p);
+            if (f?.dir) {
+              if (!roots.has(p)) dirs += 1;
+              for (const c of FS[p] ?? []) stack.push(`${p}/${c.name}`);
+            } else {
+              files += 1;
+              bytes += f?.size ?? 0;
+            }
+          }
+        }
+        return { bytes, files, dirs };
+      },
+      cancel_size: () => null,
       list_plugins: () =>
         [
           { id: "sftp", name: "SFTP 远程文件", description: "", protocols: ["sftp"], operations: ["list", "read"] },

@@ -210,6 +210,19 @@ export interface MasterKeyStatus {
   active: boolean;
 }
 
+/** 目录/文件递归大小统计结果（v0.16 右键「属性」） */
+export interface SizeStat {
+  bytes: number;
+  files: number;
+  dirs: number;
+}
+
+/** 大小统计增量进度事件载荷 */
+export interface SizeProgress extends SizeStat {
+  id: string;
+  done: boolean;
+}
+
 // ---- v0.7 窗口分享 ----
 export interface ShareConnLog {
   ip: string;
