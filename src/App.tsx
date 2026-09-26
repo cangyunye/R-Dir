@@ -2601,7 +2601,12 @@ useEffect(() => {
         `}</style>
       </div>
     )}
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+    <div
+      className="flex flex-col overflow-hidden bg-background text-foreground"
+      // 根元素带 CSS zoom（界面字体缩放）时，100vh 会被放大成 100vh×zoom 导致整页
+      // 溢出滚动、状态栏被顶出视口；高度按 zoom 折算后视觉上恰好占满一屏（v0.18.3）
+      style={{ height: "calc(100vh / var(--rdir-zoom, 1))" }}
+    >
       <MenuBar
         keymapVersion={keymapVer}
         onNewTab={newTab}

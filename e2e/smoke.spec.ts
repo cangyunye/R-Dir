@@ -385,3 +385,28 @@ test.describe("13. 同步比对（v0.18 同步浏览 + 实时面板）", () => {
     await expect(page.locator(`[data-path="${syncB}/common"]`)).toBeVisible();
   });
 });
+
+test.describe("14. 整页不滚动（界面缩放回归，v0.18.3）", () => {
+  test("大字体（根 zoom>1）下整页无滚动条，状态栏在视口内", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("rfm.ui-font", "18");
+      localStorage.setItem("rfm.ui-font-migrated-v080", "1");
+    });
+    await page.reload();
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+
+    const m = await page.evaluate(() => ({
+      scrollH: document.documentElement.scrollHeight,
+      clientH: document.documentElement.clientHeight,
+    }));
+    expect(m.scrollH, "根 zoom>1 时布局不得超出视口（否则整页出现滚动条）").toBeLessThanOrEqual(
+      m.clientH + 1,
+    );
+
+    // 状态栏（含同步比对/分享按钮）无需滚动即可见：底边在视口内
+    const sb = (await page.locator("[data-statusbar]").boundingBox())!;
+    expect(sb.y + sb.height, "状态栏应完整落在视口内").toBeLessThanOrEqual(
+      page.viewportSize()!.height + 1,
+    );
+  });
+});

@@ -50,7 +50,7 @@ export function StatusBar({
       ? Math.min(100, Math.round((transfer.fileDone / transfer.fileTotal) * 100))
       : 0;
   return (
-    <div className="relative shrink-0">
+    <div data-statusbar="" className="relative shrink-0">
       {transfer && !transfer.done && (
         <div className="absolute inset-x-0 top-0 h-0.5 bg-muted">
           <div
