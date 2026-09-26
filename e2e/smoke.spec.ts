@@ -39,11 +39,16 @@ test.describe("1. 启动", () => {
     expect(lastDir).toBeLessThan(firstFile);
   });
 
-  test("W6 菜单栏包含 文件/编辑/查看", async ({ page }) => {
-    const bar = page.locator("[data-keymap-version]");
-    await expect(bar).toContainText("文件");
-    await expect(bar).toContainText("编辑");
-    await expect(bar).toContainText("查看");
+  test("W6 应用菜单含 文件/编辑/查看 分组，Ctrl+K 打开命令面板", async ({ page }) => {
+    // v0.20 撤常驻菜单条：功能入口收进右上 ⋮ 应用菜单 + 命令面板
+    await page.getByTitle("应用菜单").click();
+    const menu = page.getByRole("menu");
+    await expect(menu).toContainText("文件");
+    await expect(menu).toContainText("编辑");
+    await expect(menu).toContainText("查看");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Control+k");
+    await expect(page.getByPlaceholder(/搜索命令/)).toBeVisible();
   });
 });
 
@@ -209,8 +214,7 @@ test.describe("8. 快捷键不崩溃（全量冒烟）", () => {
 
 test.describe("9. 设置对话框滑动分区", () => {
   test("S1 左栏为锚点跳转，对话框高度不随分区变化", async ({ page }) => {
-    await page.getByRole("button", { name: "帮助" }).click();
-    await page.getByText("设置（快捷键录制与主题）").click();
+    await page.getByTitle("设置（快捷键录制）").click();
     await expect(page.getByText("配置自动保存在本机")).toBeVisible();
 
     const dialog = page.locator(".fixed.inset-0 > div").first();
@@ -304,8 +308,8 @@ test.describe("13. 同步比对（v0.18 同步浏览 + 实时面板）", () => {
 
   /** 分出左右两个窗格，左→syncA、右→syncB，开启同步比对面板 */
   async function openSyncPair(page: import("@playwright/test").Page) {
-    await page.getByRole("button", { name: "窗格", exact: true }).click();
-    await page.getByText("左右分屏").click();
+    await page.getByTitle("应用菜单").click();
+    await page.getByRole("menuitem", { name: "左右分屏" }).click();
     await expect(page.locator(`[data-path="${HOME}/Documents"]`)).toHaveCount(2);
 
     // 左窗格 → syncA

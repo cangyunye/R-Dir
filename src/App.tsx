@@ -105,7 +105,7 @@ import {
   resetRatios,
   setSplitRatio,
 } from "@/lib/paneTree";
-import { findAction, keyEventString } from "@/lib/keymap";
+import { ACTIONS, bindingOf, findAction, keyEventString } from "@/lib/keymap";
 import { fetchLatestRelease, REPO_URL } from "@/lib/update";
 import {
   loadCustomQuick,
@@ -145,7 +145,8 @@ import { TextDiffDialog, type TextDiffSource } from "@/components/TextDiffDialog
 import { ComparePickDialog, type ComparePickPane } from "@/components/ComparePickDialog";
 import { GitDiffDialog } from "@/components/GitDiffDialog";
 import { SyncDiffModal } from "@/components/SyncDiffPanel";
-import { MenuBar } from "@/components/MenuBar";
+import { AppMenu } from "@/components/AppMenu";
+import { CommandPalette, type CommandItem } from "@/components/CommandPalette";
 
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
 const VIRTUAL_TAG_RE = /^tags:\/\/([a-z0-9_-]+)$/;
@@ -348,6 +349,8 @@ export default function App() {
   const [splashFading, setSplashFading] = useState(false);
   /** 退出询问：拦截窗口关闭，询问是否保存会话布局（v0.3.0） */
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  /** v0.20 命令面板（Ctrl+K / Ctrl+Shift+P） */
+  const [paletteOpen, setPaletteOpen] = useState(false);
   // 界面字体：13px=100%，根元素 zoom 整体缩放（与窗口级 Ctrl+滚轮缩放相乘叠加）
   useEffect(() => {
     const z = uiFontZoom(uiFontSize);
@@ -2523,12 +2526,46 @@ useEffect(() => {
     openHelp: () => setSettingsOpen(true),
     toggleSyncResults: () => {
       if (!syncLinkRef.current) {
-        showError("未开启同步比对（菜单「工具 → 同步比对（左右窗格）」可开启）");
+        showError("未开启同步比对（命令面板或右上 ⋮ 菜单 → 工具 可开启）");
         return;
       }
       setSyncResultsOpen((v) => !v);
     },
+    // v0.20 命令面板 + 无默认键位的应用命令（面板 / ⋮ 菜单共用此分发表）
+    commandPalette: () => setPaletteOpen((v) => !v),
+    quit: () => void handleExitWithSave(),
+    openDiff: () => openDiff(),
+    openSyncDiff: () => toggleSyncDiff(),
+    openGitDiff: () => setGitDiffOpen(true),
+    toggleExtensions: () => toggleExtensions(),
+    checkUpdate: () => void checkUpdate(false),
+    openRepo: () => openRepo(),
   };
+
+  /** 命令面板条目 = ACTIONS 注册表（键位提示跟随自定义键位）+ 无键位的应用命令 */
+  const paletteItems: CommandItem[] = useMemo(
+    () => [
+      ...ACTIONS.map((a) => ({
+        id: a.id,
+        label: a.label,
+        group: a.group,
+        binding: bindingOf(a),
+      })),
+      { id: "openDiff", label: "差异比对（左右窗格）…", group: "工具" },
+      {
+        id: "openSyncDiff",
+        label: syncLink ? "断开同步比对" : "同步比对（左右窗格）",
+        group: "工具",
+      },
+      { id: "openGitDiff", label: "打开 Git Diff…", group: "工具" },
+      { id: "toggleExtensions", label: "显示 / 隐藏文件扩展名", group: "视图 / 全局" },
+      { id: "checkUpdate", label: "检查更新…", group: "帮助" },
+      { id: "openRepo", label: "打开 GitHub 仓库", group: "帮助" },
+      { id: "quit", label: "保存会话并退出", group: "文件" },
+    ],
+    // keymapVer：bindingOf 读模块级自定义键位（非响应式），键位变化后重算
+    [syncLink, keymapVer],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -2543,6 +2580,11 @@ useEffect(() => {
         if (combo === "f5" || combo === "mod+r") {
           e.preventDefault();
           actionsRef.current.refresh?.();
+        }
+        // 命令面板开关在输入框内也放行（地址栏/搜索框中 Ctrl+K 直达）
+        if (combo === "mod+k" || combo === "mod+shift+p") {
+          e.preventDefault();
+          actionsRef.current.commandPalette?.();
         }
         return;
       }
@@ -2709,65 +2751,6 @@ useEffect(() => {
       // 溢出滚动、状态栏被顶出视口；高度按 zoom 折算后视觉上恰好占满一屏（v0.18.3）
       style={{ height: "calc(100vh / var(--rdir-zoom, 1))" }}
     >
-      <MenuBar
-        keymapVersion={keymapVer}
-        onNewTab={newTab}
-        onCloseTab={() => activeTab && closeTab(activeTab.id)}
-        onQuit={() => exit(0).catch(() => window.close())}
-        onBack={goBack}
-        onForward={goForward}
-        onUp={goUp}
-        onHome={() => homePath && navigate(homePath)}
-        onRefresh={refresh}
-        onToggleHidden={() => setShowHidden((v) => !v)}
-        showExtensions={showExtensions}
-        onToggleExtensions={toggleExtensions}
-        onToggleSearch={toggleSearchPanel}
-        onCopy={() => doCopy()}
-        onCut={() => doCut()}
-        onPaste={() => void doPaste()}
-        canPaste={!!activePane}
-        onRename={() => {
-          if (activePane?.selection.length === 1) {
-            const e = activePane.entries.find((x) => x.path === activePane.selection[0]);
-            if (e) startRename(activePane.id, e);
-          }
-        }}
-        canRename={(activePane?.selection.length ?? 0) === 1}
-        onDelete={() => void doDelete()}
-        canDelete={(activePane?.selection.length ?? 0) > 0}
-        onNewFolder={() => activePane && void createAndRename(activePane.id, "dir")}
-        onNewFile={() => activePane && void createAndRename(activePane.id, "file")}
-        onCopyPath={() => {
-          if (activePane?.selection[0]) copyPath(activePane.selection[0]);
-        }}
-        onUndo={() => void undo()}
-        canUndo={undoStack.length > 0}
-        onRedo={() => void redo()}
-        canRedo={redoStack.length > 0}
-        onDuplicate={() => void doDuplicate()}
-        canDuplicate={(activePane?.selection.length ?? 0) > 0}
-        onToggleProperties={() => setShowProperties((v) => !v)}
-        onSplitRow={() => splitPane("row")}
-        onSplitCol={() => splitPane("col")}
-        onClosePane={closePane}
-        canClosePane={!!activeTab && !isSinglePane(activeTab.root)}
-        onFocusNextPane={focusNextPane}
-        onOpenDiff={openDiff}
-        onOpenGitDiff={() => setGitDiffOpen(true)}
-        onOpenSyncDiff={toggleSyncDiff}
-        syncDiffActive={!!syncLink}
-        showHidden={showHidden}
-        searchOpen={searchOpen}
-        dark={dark}
-        onToggleTheme={toggleTheme}
-        onOpenSettings={() => setSettingsOpen(true)}
-        appName={appName}
-        appVersion={appVersion}
-        onOpenRepo={openRepo}
-        onCheckUpdate={() => void checkUpdate(false)}
-      />
-
       <TabBar
         tabs={tabs.map((t) => ({ id: t.id, title: t.customTitle ?? t.title }))}
         activeId={activeId}
@@ -2776,6 +2759,66 @@ useEffect(() => {
         onNew={newTab}
         onReorder={reorderTab}
         onRename={renameTab}
+        trailing={
+          <AppMenu
+            keymapVersion={keymapVer}
+            onOpenPalette={() => setPaletteOpen(true)}
+            onNewTab={newTab}
+            onCloseTab={() => activeTab && closeTab(activeTab.id)}
+            onQuit={() => void handleExitWithSave()}
+            onNewFolder={() => activePane && void createAndRename(activePane.id, "dir")}
+            onNewFile={() => activePane && void createAndRename(activePane.id, "file")}
+            onUndo={() => void undo()}
+            canUndo={undoStack.length > 0}
+            onRedo={() => void redo()}
+            canRedo={redoStack.length > 0}
+            onCopy={() => doCopy()}
+            onCut={() => doCut()}
+            onPaste={() => void doPaste()}
+            canPaste={!!activePane}
+            onDuplicate={() => void doDuplicate()}
+            canDuplicate={(activePane?.selection.length ?? 0) > 0}
+            onRename={() => {
+              if (activePane?.selection.length === 1) {
+                const e = activePane.entries.find((x) => x.path === activePane.selection[0]);
+                if (e) startRename(activePane.id, e);
+              }
+            }}
+            canRename={(activePane?.selection.length ?? 0) === 1}
+            onDelete={() => void doDelete()}
+            canDelete={(activePane?.selection.length ?? 0) > 0}
+            onCopyPath={() => {
+              if (activePane?.selection[0]) copyPath(activePane.selection[0]);
+            }}
+            onToggleProperties={() => setShowProperties((v) => !v)}
+            onToggleHidden={() => setShowHidden((v) => !v)}
+            showHidden={showHidden}
+            onToggleExtensions={toggleExtensions}
+            showExtensions={showExtensions}
+            onToggleSearch={toggleSearchPanel}
+            onRefresh={refresh}
+            onBack={goBack}
+            onForward={goForward}
+            onUp={goUp}
+            onHome={() => homePath && navigate(homePath)}
+            onSplitRow={() => splitPane("row")}
+            onSplitCol={() => splitPane("col")}
+            onClosePane={closePane}
+            canClosePane={!!activeTab && !isSinglePane(activeTab.root)}
+            onFocusNextPane={focusNextPane}
+            onOpenDiff={openDiff}
+            onOpenSyncDiff={toggleSyncDiff}
+            syncDiffActive={!!syncLink}
+            onOpenGitDiff={() => setGitDiffOpen(true)}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onCheckUpdate={() => void checkUpdate(false)}
+            onOpenRepo={openRepo}
+            appName={appName}
+            appVersion={appVersion}
+            dark={dark}
+            onToggleTheme={toggleTheme}
+          />
+        }
       />
 
       <Toolbar
@@ -2978,6 +3021,14 @@ useEffect(() => {
         appVersion={appVersion}
         onOpenRepo={openRepo}
         onCheckUpdate={() => void checkUpdate(false)}
+      />
+
+      {/* v0.20 命令面板：动作经 actionsRef 分发，与快捷键语义一致 */}
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        items={paletteItems}
+        onRun={(id) => actionsRef.current[id]?.()}
       />
 
       <ConnectDialog

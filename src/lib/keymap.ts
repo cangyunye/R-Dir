@@ -74,6 +74,7 @@ export const ACTIONS: KeyAction[] = [
   A({ id: "openSettings", label: "打开设置（快捷键一览）", group: "视图 / 全局", win: "mod+,", mac: "mod+," }),
   A({ id: "openHelp", label: "帮助 / 快捷键一览", group: "视图 / 全局", win: "f1", mac: "f1" }),
   A({ id: "toggleSyncResults", label: "同步比对结果（开关）", group: "视图 / 全局", win: "mod+shift+x", mac: "mod+shift+x" }),
+  A({ id: "commandPalette", label: "命令面板", group: "视图 / 全局", win: "mod+k / mod+shift+p", mac: "mod+k / mod+shift+p" }),
 ];
 
 export const isMac =

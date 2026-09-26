@@ -17,6 +17,7 @@ export function TabBar({
   onNew,
   onReorder,
   onRename,
+  trailing,
 }: {
   tabs: TabItem[];
   activeId: number;
@@ -26,6 +27,8 @@ export function TabBar({
   onReorder: (from: number, to: number) => void;
   /** 双击标签重命名：空串表示恢复自动标题 */
   onRename: (id: number, title: string) => void;
+  /** 右上角插槽（设置 / 主题 / 应用菜单），与「新建标签」按钮同行 */
+  trailing?: React.ReactNode;
 }) {
   /** 是否处于按住状态（true 才挂载全局 move/up 监听，避免之前只写 ref 不触发重渲染导致拖不动） */
   const [dragging, setDragging] = useState(false);
@@ -212,6 +215,13 @@ export function TabBar({
       >
         <Plus className="h-4 w-4" />
       </Button>
+
+      {/* 右上角常驻区（设置 / 主题 / 应用菜单），多标签挤压时不收缩 */}
+      {trailing && (
+        <div className="mb-0.5 ml-auto flex h-7 shrink-0 items-center gap-0.5">
+          {trailing}
+        </div>
+      )}
 
       {/* 右键标签菜单（v0.15）：关闭 / 重命名 / 移动到最右边 */}
       {menu && (
