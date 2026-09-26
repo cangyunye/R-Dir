@@ -241,7 +241,7 @@ fn split_ext(name: &str) -> (String, String) {
     }
 }
 
-/// 复制条目（目录递归）到目标目录，冲突时自动追加 " (2)"。
+/// 复制条目（目录递归）到目标目录，同名**覆盖**（目录整体替换、类型冲突亦覆盖）。
 /// 返回每个条目的实际创建路径（供撤销栈记录）。
 pub fn copy_entries(paths: &[String], dest: &str, mut cb: ProgressCb) -> Result<Vec<String>, String> {
     let dest = Path::new(dest);
@@ -355,9 +355,13 @@ pub fn create_file(parent: &str, name: &str) -> Result<String, String> {
 
 fn copy_recursive(src: &Path, dst: &Path, cb: &mut dyn FnMut(u64, u64)) -> std::io::Result<()> {
     if src.is_dir() {
-        // 覆盖语义：目标目录已存在时先删除（含内容），再复制
+        // 覆盖语义：目标已存在时先删除再复制；目标若是文件也一并清除（类型冲突同步用）
         if dst.exists() {
-            std::fs::remove_dir_all(dst)?;
+            if dst.is_dir() {
+                std::fs::remove_dir_all(dst)?;
+            } else {
+                std::fs::remove_file(dst)?;
+            }
         }
         fs::create_dir_all(dst)?;
         for entry in fs::read_dir(src)? {
@@ -365,6 +369,10 @@ fn copy_recursive(src: &Path, dst: &Path, cb: &mut dyn FnMut(u64, u64)) -> std::
             copy_recursive(&e.path(), &dst.join(e.file_name()), cb)?;
         }
     } else {
+        // 文件覆盖目录（类型冲突同步用）
+        if dst.exists() && dst.is_dir() {
+            std::fs::remove_dir_all(dst)?;
+        }
         copy_file_progress(src, dst, cb)?;
     }
     Ok(())

@@ -62,6 +62,7 @@ import {
   parentDir,
   permanentDeleteEntries,
   renameEntry,
+  resolvePath,
   sftpConnect,
   sftpCreateFile,
   sftpDelete,
@@ -79,7 +80,7 @@ import {
 import { ConnectDialog } from "@/components/ConnectDialog";
 import { ConflictDialog } from "@/components/ConflictDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
-import { basename } from "@/lib/format";
+import { basename, isAbsolutePath } from "@/lib/format";
 import { normalizeExts } from "@/lib/openers";
 import {
   collectPaneIds,
@@ -434,7 +435,8 @@ useEffect(() => {
     noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
   }, []);
 
-  /** v0.17 打开差异比对：需活动标签正好两个本地窗格（各指向一个目录） */
+  /** v0.17 打开差异比对：需活动标签正好两个本地窗格（各指向一个目录）。
+   *  目前仅支持本地 ↔ 本地；SFTP/HTTP 窗格不参与（故本地 ↔ SFTP 无法比对）。 */
   const openDiff = useCallback(() => {
     if (!activeTab) return;
     const local = collectPaneIds(activeTab.root)
@@ -444,10 +446,16 @@ useEffect(() => {
           !!p && !p.path.startsWith("sftp://") && !p.path.startsWith("http") && !p.tagId,
       );
     if (local.length !== 2) {
-      showError("差异比对需要正好两个本地窗格（请先左右分屏，并各打开一个目录）");
+      showError("差异比对需要正好两个本地窗格（暂不支持本地 ↔ SFTP/HTTP 比对）");
       return;
     }
-    setDiffTarget({ left: local[0].path, right: local[1].path });
+    setDiffTarget({
+      tabId: activeTab.id,
+      left: local[0].path,
+      right: local[1].path,
+      leftPane: local[0].id,
+      rightPane: local[1].id,
+    });
   }, [activeTab, showError]);
 
   // 应用名 / 版本识别（getName = productName，Windows 任务栏与包元数据同源）
@@ -750,8 +758,23 @@ useEffect(() => {
   const sftp = useSftp({ navigate: navigateVia, patchPane, listDir, showError });
 
   const navigate = useCallback(
-    (path: string) => {
+    async (path: string) => {
       if (!activePane) return;
+      // v0.18：地址栏支持 "~"（主目录）与相对路径，统一解析为绝对路径后再导航。
+      // 仅对本地原始输入生效；sftp/http/标签路径原样交给各自分支。
+      if (
+        !path.startsWith("sftp://") &&
+        !path.startsWith("http://") &&
+        !path.startsWith("https://") &&
+        !VIRTUAL_TAG_RE.test(path) &&
+        (path.startsWith("~") || !isAbsolutePath(path))
+      ) {
+        try {
+          path = await resolvePath(path, activePane.path);
+        } catch {
+          // 解析失败则按原样尝试，由加载逻辑给出错误
+        }
+      }
       // SFTP：连接状态必须先判断——否则会话重启后未连接时，
       // 重新输入同一路径只会走到"同路径刷新"而报错，不会弹连接框
       if (path.startsWith("sftp://")) {
@@ -1370,7 +1393,52 @@ useEffect(() => {
   const [propertiesEntries, setPropertiesEntries] = useState<FileEntry[] | null>(null);
 
   /** v0.17 差异比对窗口：左右两个本地目录 */
-  const [diffTarget, setDiffTarget] = useState<{ left: string; right: string } | null>(null);
+  const [diffTarget, setDiffTarget] = useState<{
+    tabId: number;
+    left: string;
+    right: string;
+    leftPane: number;
+    rightPane: number;
+  } | null>(null);
+
+  /** v0.18 差异窗口双击定位：在对应窗格进入父目录并选中该条目 */
+  const locateFromDiff = useCallback(
+    (side: "left" | "right", path: string, isDir: boolean) => {
+      if (!diffTarget) return;
+      const tabId = diffTarget.tabId;
+      const paneId = side === "left" ? diffTarget.leftPane : diffTarget.rightPane;
+      const dir = isDir ? path : parentPath(path);
+      setActiveId(tabId);
+      setTabs((ts) =>
+        ts.map((t) => {
+          if (t.id !== tabId) return t;
+          const pane = t.panes[paneId];
+          if (!pane) return t;
+          const sameDir = pane.path === dir;
+          const history = sameDir
+            ? pane.history
+            : [...pane.history.slice(0, pane.histIndex + 1), dir];
+          const updated = {
+            ...pane,
+            path: dir,
+            title: basename(dir),
+            history,
+            histIndex: history.length - 1,
+            selection: isDir ? [] : [path],
+            ...(sameDir ? {} : { entries: [], loading: true }),
+          };
+          const title = t.activePane === paneId ? updated.title : t.title;
+          return {
+            ...t,
+            activePane: paneId,
+            panes: { ...t.panes, [paneId]: updated },
+            title,
+          };
+        }),
+      );
+    },
+    [diffTarget],
+  );
 
   /** 文件标签（path → tagId[]，持久化） */
   const [fileTags, setFileTags] = useState<FileTags>(() => loadFileTags());
@@ -2117,6 +2185,7 @@ useEffect(() => {
         .then((e) => setPropertiesEntries([e]))
         .catch((err) => showError(String(err)));
     },
+    onDiff: openDiff,
   };
 
   const selectedSize = activePane
@@ -2457,10 +2526,10 @@ useEffect(() => {
           leftDir={diffTarget.left}
           rightDir={diffTarget.right}
           onClose={() => setDiffTarget(null)}
+          onLocate={locateFromDiff}
           onSynced={() => {
-            if (activeTab) {
-              for (const p of Object.values(activeTab.panes)) refreshPane(p.id);
-            }
+            refreshPane(diffTarget.leftPane);
+            refreshPane(diffTarget.rightPane);
           }}
         />
       )}

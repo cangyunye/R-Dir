@@ -17,6 +17,10 @@ export const listDir = (path: string) =>
 export const completePath = (input: string, cwd: string) =>
   invoke<string[]>("complete_path", { input, cwd });
 
+/** 解析地址栏输入为绝对路径：展开 "~"（主目录）与相对路径（v0.18） */
+export const resolvePath = (input: string, cwd: string) =>
+  invoke<string>("resolve_path", { input, cwd });
+
 export const getVolumes = () => invoke<VolumeInfo[]>("get_volumes");
 
 export const getQuickAccess = () =>
@@ -169,9 +173,26 @@ export const computeSize = (id: string, paths: string[]) =>
 export const cancelSize = (id: string) =>
   invoke<void>("cancel_size", { id });
 
-// ---- 目录差异比对（v0.17） ----
-export const diffDirs = (left: string, right: string, level: number) =>
-  invoke<import("./types").DiffEntry[]>("diff_dirs", { left, right, level });
+// ---- 目录差异比对（v0.17 / v0.18 进度与取消） ----
+export const diffDirs = (
+  id: string,
+  left: string,
+  right: string,
+  level: number,
+  caseSensitive: boolean,
+  mtimeToleranceMs: number,
+) =>
+  invoke<import("./types").DiffOutcome>("diff_dirs", {
+    id,
+    left,
+    right,
+    level,
+    caseSensitive,
+    mtimeToleranceMs,
+  });
+
+/** 取消进行中的差异比对 */
+export const cancelDiff = (id: string) => invoke<void>("cancel_diff", { id });
 
 /** 读取单个路径的元信息（「属性」统计当前目录用） */
 export const statEntry = (path: string) =>

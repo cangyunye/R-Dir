@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatSize, formatTime, basename, hideExtension } from "./format";
+import { formatSize, formatTime, basename, hideExtension, isAbsolutePath } from "./format";
 
 describe("formatSize（lsd 风格）", () => {
   it("0 字节", () => {
@@ -50,6 +50,24 @@ describe("basename", () => {
   });
   it("无分隔符返回原串", () => {
     expect(basename("file.txt")).toBe("file.txt");
+  });
+});
+
+describe("isAbsolutePath（v0.18 地址栏路径判定）", () => {
+  it("Unix 绝对路径", () => {
+    expect(isAbsolutePath("/home/kali")).toBe(true);
+  });
+  it("Windows 盘符路径", () => {
+    expect(isAbsolutePath("C:\\Users\\admin")).toBe(true);
+    expect(isAbsolutePath("C:/Users/admin")).toBe(true);
+  });
+  it("UNC 路径", () => {
+    expect(isAbsolutePath("\\\\server\\share")).toBe(true);
+  });
+  it("相对路径与 ~ 不是绝对路径", () => {
+    expect(isAbsolutePath("Documents")).toBe(false);
+    expect(isAbsolutePath("./a/b")).toBe(false);
+    expect(isAbsolutePath("~/.config/opencode/")).toBe(false);
   });
 });
 

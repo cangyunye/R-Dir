@@ -31,6 +31,15 @@ export function basename(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+/** 是否绝对路径：Unix `/`、Windows `C:\` / `C:/`、UNC `\\server` 或 `//server`。 */
+export function isAbsolutePath(path: string): boolean {
+  return (
+    path.startsWith("/") ||
+    path.startsWith("\\\\") ||
+    /^[a-zA-Z]:[\\/]/.test(path)
+  );
+}
+
 /**
  * 隐藏扩展名后的显示名（v0.14）：目录保留原名；
  * 隐藏文件（.gitignore、.env 等）末尾无扩展名可隐 → 保留原名；

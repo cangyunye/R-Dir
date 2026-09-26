@@ -4,13 +4,19 @@ import { DiffDialog } from "./DiffDialog";
 import type { DiffEntry } from "@/lib/types";
 
 const diffDirs = vi.fn();
+const cancelDiff = vi.fn();
 const copyEntries = vi.fn();
 const deleteEntries = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   diffDirs: (...a: unknown[]) => diffDirs(...a),
+  cancelDiff: (...a: unknown[]) => cancelDiff(...a),
   copyEntries: (...a: unknown[]) => copyEntries(...a),
   deleteEntries: (...a: unknown[]) => deleteEntries(...a),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async () => () => undefined),
 }));
 
 const side = (p: string, size: number) => ({ path: p, size, modified: 1, is_dir: false });
@@ -33,40 +39,79 @@ const sample: DiffEntry[] = [
     right: side("/R/d.txt", 50),
     status: "same",
   },
+  {
+    name: "e",
+    is_dir: false,
+    left: side("/L/e", 1),
+    right: { path: "/R/e", size: 0, modified: 1, is_dir: true },
+    status: "different",
+    reason: "type",
+  },
 ];
 
 beforeEach(() => {
-  diffDirs.mockReset().mockResolvedValue(sample);
+  diffDirs.mockReset().mockResolvedValue({ entries: sample, cancelled: false });
+  cancelDiff.mockReset().mockResolvedValue(undefined);
   copyEntries.mockReset().mockResolvedValue([]);
   deleteEntries.mockReset().mockResolvedValue(undefined);
 });
 
-describe("DiffDialog（v0.17 差异比对）", () => {
-  it("渲染差异条目与状态标签，默认一层", async () => {
+describe("DiffDialog（v0.18 差异比对）", () => {
+  it("默认一层比对并渲染状态标签", async () => {
     render(<DiffDialog leftDir="/L" rightDir="/R" onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText("a.txt")).toBeTruthy());
     expect(screen.getByText("仅左侧")).toBeTruthy();
     expect(screen.getByText("仅右侧")).toBeTruthy();
     expect(screen.getByText("不同·大小")).toBeTruthy();
-    expect(diffDirs).toHaveBeenCalledWith("/L", "/R", 1);
+    expect(screen.getByText("不同·类型")).toBeTruthy();
+    expect(diffDirs).toHaveBeenCalledWith(
+      expect.any(String),
+      "/L",
+      "/R",
+      1,
+      expect.any(Boolean),
+      expect.any(Number),
+    );
   });
 
   it("切换到三层会以 level=3 重新比对", async () => {
     render(<DiffDialog leftDir="/L" rightDir="/R" onClose={() => {}} />);
     await waitFor(() => expect(diffDirs).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByText("三层·内容"));
-    await waitFor(() => expect(diffDirs).toHaveBeenCalledWith("/L", "/R", 3));
+    await waitFor(() =>
+      expect(diffDirs).toHaveBeenLastCalledWith(
+        expect.any(String),
+        "/L",
+        "/R",
+        3,
+        expect.any(Boolean),
+        expect.any(Number),
+      ),
+    );
   });
 
-  it("向右同步：left-only 覆盖复制到右，right-only 删除右侧", async () => {
+  it("「只看差异」隐藏相同项", async () => {
+    render(<DiffDialog leftDir="/L" rightDir="/R" onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText("d.txt")).toBeTruthy());
+    fireEvent.click(screen.getByText("只看差异"));
+    expect(screen.queryByText("d.txt")).toBeNull();
+    expect(screen.getByText("a.txt")).toBeTruthy();
+  });
+
+  it("向右同步需二次确认后才执行", async () => {
     render(<DiffDialog leftDir="/L" rightDir="/R" onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText("a.txt")).toBeTruthy());
     fireEvent.click(screen.getByText("全选差异"));
     fireEvent.click(screen.getByRole("button", { name: /向右同步/ }));
+    // 先弹确认，不立即执行
+    expect(screen.getByText(/确认向右同步/)).toBeTruthy();
+    expect(copyEntries).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认同步" }));
     await waitFor(() => expect(copyEntries).toHaveBeenCalledWith(["/L/a.txt"], "/R"));
     await waitFor(() => expect(deleteEntries).toHaveBeenCalledWith(["/R/b.txt"]));
-    // different 项以左侧为源覆盖到右
     expect(copyEntries).toHaveBeenCalledWith(["/L/c.txt"], "/R");
+    expect(copyEntries).toHaveBeenCalledWith(["/L/e"], "/R");
     // same 项不参与同步
     expect(copyEntries).not.toHaveBeenCalledWith(["/L/d.txt"], "/R");
   });
@@ -76,6 +121,7 @@ describe("DiffDialog（v0.17 差异比对）", () => {
     await waitFor(() => expect(screen.getByText("a.txt")).toBeTruthy());
     fireEvent.click(screen.getByText("全选差异"));
     fireEvent.click(screen.getByRole("button", { name: /向左同步/ }));
+    fireEvent.click(screen.getByRole("button", { name: "确认同步" }));
     await waitFor(() => expect(copyEntries).toHaveBeenCalledWith(["/R/b.txt"], "/L"));
     await waitFor(() => expect(deleteEntries).toHaveBeenCalledWith(["/L/a.txt"]));
   });

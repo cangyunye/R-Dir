@@ -143,34 +143,83 @@ pub fn stat_entry(path: &str) -> Result<FileEntry, String> {
     })
 }
 
-/// 目录路径补全：输入前缀（支持 "~"），返回匹配的目录完整路径，最多 50 个。
-/// 相对路径以 cwd 为基准。
-pub fn complete_path(input: &str, cwd: &str) -> Vec<String> {
-    let expanded = if input == "~" {
+/// 展开 "~" / "~/"（含 Windows 的 "~\\"）为当前用户主目录；其余原样返回。
+pub fn expand_tilde(input: &str) -> PathBuf {
+    if input == "~" {
         dirs::home_dir().unwrap_or_default()
-    } else if let Some(rest) = input.strip_prefix("~/") {
+    } else if let Some(rest) = input.strip_prefix("~/").or_else(|| input.strip_prefix("~\\")) {
         dirs::home_dir()
             .map(|h| h.join(rest))
             .unwrap_or_else(|| PathBuf::from(input))
     } else {
         PathBuf::from(input)
+    }
+}
+
+/// 词法归一化路径中的 "." 与 ".."（不访问文件系统，目标不存在也可用）。
+fn normalize_lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // 仅弹掉末尾的普通目录段，避免越过根 / 盘符前缀
+                let can_pop = matches!(out.components().next_back(), Some(Component::Normal(_)));
+                if can_pop {
+                    out.pop();
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        out
+    }
+}
+
+/// 把地址栏输入解析为绝对路径（v0.18）：
+/// - 展开 "~" 为主目录；
+/// - 相对路径以 cwd 为基准；
+/// - 词法归一化 "." / ".."（不要求目标存在）。
+pub fn resolve_path(input: &str, cwd: &str) -> String {
+    let expanded = expand_tilde(input.trim());
+    let joined = if expanded.is_absolute() || cwd.trim().is_empty() {
+        expanded
+    } else {
+        PathBuf::from(cwd).join(expanded)
+    };
+    normalize_lexical(&joined).to_string_lossy().to_string()
+}
+
+/// 目录路径补全：输入前缀（支持 "~"），返回匹配的目录完整路径，最多 50 个。
+/// 相对路径以 cwd 为基准；输入以分隔符结尾（或恰为 "~"）时列举该目录内容。
+pub fn complete_path(input: &str, cwd: &str) -> Vec<String> {
+    let expanded = expand_tilde(input);
+    // 先绝对化，保证相对路径（含 "a/b" 这类多级相对路径）以 cwd 为基准
+    let target = if expanded.is_absolute() || cwd.trim().is_empty() {
+        expanded
+    } else {
+        PathBuf::from(cwd).join(expanded)
     };
 
-    let (base, prefix) = match expanded.parent() {
-        Some(parent) => (
-            parent.to_path_buf(),
-            expanded
-                .file_name()
-                .map(|s| s.to_string_lossy().to_lowercase())
-                .unwrap_or_default(),
-        ),
-        None => (expanded.clone(), String::new()),
-    };
-    // 相对路径（如 "Doc"）parent 为空，回退到 cwd
-    let base = if base.as_os_str().is_empty() || base == Path::new(".") {
-        PathBuf::from(cwd)
+    // 以分隔符结尾（含 "~"）→ 列举该目录内容；否则按最后一段做前缀匹配
+    let ends_with_sep = input.ends_with('/') || input.ends_with('\\') || input == "~";
+    let (base, prefix) = if ends_with_sep {
+        (target.clone(), String::new())
     } else {
-        base
+        match target.parent() {
+            Some(parent) => (
+                parent.to_path_buf(),
+                target
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_lowercase())
+                    .unwrap_or_default(),
+            ),
+            None => (target.clone(), String::new()),
+        }
     };
 
     let mut results = Vec::new();
@@ -294,6 +343,67 @@ mod tests {
 
         assert!(complete_path("nomatch", &cwd).is_empty());
         assert_eq!(complete_path("Do", &cwd).len(), 2, "结果应稳定可重复");
+    }
+
+    #[test]
+    fn complete_path_lists_children_when_trailing_separator() {
+        let base = tmp("complete-trailing");
+        std::fs::create_dir_all(base.join("child_a")).unwrap();
+        std::fs::create_dir_all(base.join("child_b")).unwrap();
+        let input = format!("{}/", base.to_string_lossy());
+
+        let hits = complete_path(&input, &base.to_string_lossy());
+        assert!(
+            hits.iter().any(|p| p.ends_with("child_a")),
+            "以分隔符结尾应列举目录内容：{hits:?}"
+        );
+        assert!(hits.iter().any(|p| p.ends_with("child_b")), "{hits:?}");
+    }
+
+    #[test]
+    fn complete_path_expands_tilde() {
+        let home = dirs::home_dir().unwrap();
+        let hits = complete_path("~", &home.to_string_lossy());
+        // 返回项均为绝对路径，且都位于主目录下
+        assert!(
+            hits.iter().all(|p| Path::new(p).is_absolute()),
+            "补全结果应为绝对路径：{hits:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_path_expands_tilde_and_relative() {
+        let home = dirs::home_dir().unwrap();
+        let resolved = resolve_path("~/.config/opencode/", "/tmp");
+        assert_eq!(
+            Path::new(&resolved),
+            home.join(".config").join("opencode"),
+            "~ 应展开为主目录"
+        );
+
+        let cwd = tmp("resolve-cwd");
+        let rel = resolve_path("a/b", &cwd.to_string_lossy());
+        assert_eq!(
+            Path::new(&rel),
+            cwd.join("a").join("b"),
+            "相对路径应以 cwd 为基准"
+        );
+
+        #[cfg(unix)]
+        assert_eq!(resolve_path("/usr/local", "/tmp"), "/usr/local", "绝对路径保持原样");
+        #[cfg(windows)]
+        assert_eq!(
+            resolve_path("C:\\Windows", "C:\\tmp"),
+            "C:\\Windows",
+            "绝对路径保持原样"
+        );
+    }
+
+    #[test]
+    fn resolve_path_normalizes_dot_segments() {
+        let cwd = tmp("resolve-dot");
+        let got = resolve_path("a/../b/./c", &cwd.to_string_lossy());
+        assert_eq!(Path::new(&got), cwd.join("b").join("c"));
     }
 
     #[test]

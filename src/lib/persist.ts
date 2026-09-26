@@ -348,3 +348,69 @@ export function saveShowExtensions(v: boolean): void {
     /* ignore */
   }
 }
+
+// ---- v0.18 差异比对偏好（层级 / 大小写 / mtime 容差） ----
+const DIFF_LEVEL_KEY = "rfm.diff-level";
+const DIFF_CASE_KEY = "rfm.diff-case-sensitive";
+const DIFF_MTIME_KEY = "rfm.diff-mtime-tolerance";
+
+/** 默认名称匹配是否区分大小写：Windows / macOS 文件系统不敏感。 */
+export function defaultCaseSensitive(): boolean {
+  try {
+    return !/windows|mac/i.test(navigator.userAgent);
+  } catch {
+    return true;
+  }
+}
+
+export function loadDiffLevel(): 1 | 2 | 3 {
+  try {
+    const n = Number(localStorage.getItem(DIFF_LEVEL_KEY));
+    return n === 2 || n === 3 ? n : 1;
+  } catch {
+    return 1;
+  }
+}
+
+export function saveDiffLevel(level: 1 | 2 | 3): void {
+  try {
+    localStorage.setItem(DIFF_LEVEL_KEY, String(level));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadDiffCaseSensitive(): boolean {
+  try {
+    const raw = localStorage.getItem(DIFF_CASE_KEY);
+    return raw === null ? defaultCaseSensitive() : raw === "1";
+  } catch {
+    return defaultCaseSensitive();
+  }
+}
+
+export function saveDiffCaseSensitive(v: boolean): void {
+  try {
+    localStorage.setItem(DIFF_CASE_KEY, v ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 三层 mtime 容差（秒）；默认 2s。 */
+export function loadDiffMtimeTolerance(): number {
+  try {
+    const n = Number(localStorage.getItem(DIFF_MTIME_KEY));
+    return Number.isFinite(n) && n >= 0 ? n : 2;
+  } catch {
+    return 2;
+  }
+}
+
+export function saveDiffMtimeTolerance(seconds: number): void {
+  try {
+    localStorage.setItem(DIFF_MTIME_KEY, String(seconds));
+  } catch {
+    /* ignore */
+  }
+}

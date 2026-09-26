@@ -40,6 +40,10 @@ pub struct AppState {
     pub size_cancels: std::sync::Mutex<
         std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>,
     >,
+    /// 差异比对的取消标记（id → flag，v0.18 差异比对窗口用）
+    pub diff_cancels: std::sync::Mutex<
+        std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    >,
     /// 窗口分享管理器（v0.7，feature = "share"）
     #[cfg(feature = "share")]
     pub share: share::ShareState,
@@ -593,11 +597,47 @@ fn cancel_size(state: tauri::State<'_, AppState>, id: String) {
 // ==================== 目录差异比对（v0.17） ====================
 
 /// 比对两个目录（顶层）：level 1 名称 / 2 大小 / 3 hash+时间戳。
+/// 进度走 "diff-progress" 事件；可通过 `cancel_diff(id)` 中途停止。
 #[tauri::command]
-async fn diff_dirs(left: String, right: String, level: u8) -> Result<Vec<diff::DiffEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || diff::diff_dirs(&left, &right, level))
-        .await
-        .map_err(|e| e.to_string())?
+async fn diff_dirs(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+    left: String,
+    right: String,
+    level: u8,
+    case_sensitive: bool,
+    mtime_tolerance_ms: i64,
+) -> Result<diff::DiffOutcome, String> {
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state
+        .diff_cancels
+        .lock()
+        .unwrap()
+        .insert(id.clone(), flag.clone());
+    let id_for_task = id.clone();
+    let opts = diff::DiffOptions {
+        level,
+        case_sensitive,
+        mtime_tolerance_ms,
+    };
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Emitter;
+        diff::compare(&id_for_task, &left, &right, &opts, &flag, |p| {
+            let _ = app.emit("diff-progress", p);
+        })
+    })
+    .await;
+    state.diff_cancels.lock().unwrap().remove(&id);
+    joined.map_err(|e| e.to_string())?
+}
+
+/// 取消进行中的差异比对（点「停止」或关闭窗口时调用）。
+#[tauri::command]
+fn cancel_diff(state: tauri::State<'_, AppState>, id: String) {
+    if let Some(flag) = state.diff_cancels.lock().unwrap().get(&id) {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// 读取单个路径的元信息（「属性」统计当前目录用）。
@@ -721,6 +761,12 @@ async fn sftp_rename(
 #[tauri::command]
 fn complete_path(input: String, cwd: String) -> Vec<String> {
     fs_ops::complete_path(&input, &cwd)
+}
+
+/// 地址栏输入解析：展开 "~"（主目录）与相对路径为绝对路径（v0.18）。
+#[tauri::command]
+fn resolve_path(input: String, cwd: String) -> String {
+    fs_ops::resolve_path(&input, &cwd)
 }
 
 /// 枚举磁盘/卷。
@@ -1023,6 +1069,7 @@ pub fn run() {
     builder = builder.invoke_handler(tauri::generate_handler![
         list_dir,
         complete_path,
+        resolve_path,
         get_volumes,
         get_quick_access,
         get_home_dir,
@@ -1090,8 +1137,9 @@ pub fn run() {
         // 目录大小统计（v0.16）
         compute_size,
         cancel_size,
-        // 目录差异比对（v0.17）
+        // 目录差异比对（v0.17 / v0.18 进度与取消）
         diff_dirs,
+        cancel_diff,
         stat_entry,
         // 插件注册表（v0.5）
         list_plugins,

@@ -223,7 +223,7 @@ export interface SizeProgress extends SizeStat {
   done: boolean;
 }
 
-// ---- v0.17 目录差异比对 ----
+// ---- v0.17 目录差异比对（v0.18 增强进度/取消/类型冲突） ----
 export type DiffLevel = 1 | 2 | 3;
 
 export interface DiffSide {
@@ -241,8 +241,34 @@ export interface DiffEntry {
   left: DiffSide | null;
   right: DiffSide | null;
   status: DiffStatus;
-  /** 差异原因：size | content | mtime */
+  /** 差异原因：size | content | mtime | type */
   reason?: string;
+}
+
+/** 比对选项（与后端 DiffOptions 对齐） */
+export interface DiffOptions {
+  level: DiffLevel;
+  /** 名称匹配是否区分大小写（Windows/macOS 不敏感） */
+  caseSensitive: boolean;
+  /** 三层 mtime 容差（毫秒） */
+  mtimeToleranceMs: number;
+}
+
+/** 比对增量进度（对应后端 DiffProgress） */
+export interface DiffProgress {
+  id: string;
+  phase: "compare" | "hash";
+  done: number;
+  total: number;
+  current: string;
+  doneAll: boolean;
+  cancelled: boolean;
+}
+
+/** 比对结果（cancelled=true 时 entries 不完整） */
+export interface DiffOutcome {
+  entries: DiffEntry[];
+  cancelled: boolean;
 }
 
 // ---- v0.7 窗口分享 ----

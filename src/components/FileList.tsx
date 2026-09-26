@@ -22,6 +22,7 @@ import {
   TerminalSquare,
   Tag as TagIcon,
   Info,
+  ArrowLeftRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
@@ -161,6 +162,7 @@ export function FileList({
   onCompress,
   onProperties,
   onPropertiesDir,
+  onDiff,
 }: {
   paneId: number;
   entries: FileEntry[];
@@ -234,6 +236,8 @@ export function FileList({
   onProperties: (entries: FileEntry[]) => void;
   /** v0.17 空白处右键「属性（当前目录）」：统计 currentDir，与选中项无关 */
   onPropertiesDir: (dir: string) => void;
+  /** v0.18 空白处右键「与另一窗格差异比对…」 */
+  onDiff: () => void;
 }) {
   const sorted = useMemo(() => {
     const visible = showHidden
@@ -1063,6 +1067,11 @@ export function FileList({
           <ContextMenuSeparator />
           <ContextMenuItem onClick={() => onShareDir(currentDir)}>
             <Share2 className="mr-2 h-4 w-4" /> 分享此目录…
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          {/* v0.18 与另一窗格差异比对（需活动标签正好两个本地窗格） */}
+          <ContextMenuItem onClick={onDiff}>
+            <ArrowLeftRight className="mr-2 h-4 w-4" /> 与另一窗格差异比对…
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onRefresh}>

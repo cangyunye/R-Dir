@@ -75,6 +75,8 @@ export interface PaneHandlers {
   onProperties: (entries: FileEntry[]) => void;
   /** v0.17 空白处右键「属性（当前目录）」 */
   onPropertiesDir: (dir: string) => void;
+  /** v0.18 空白处右键「与另一窗格差异比对…」 */
+  onDiff: () => void;
 }
 
 function PaneView({
@@ -198,6 +200,7 @@ dragTarget={dragOver?.targetPaneId === pane.id}
         onCompress={(paths, fmt) => h.onCompress(pane.id, paths, fmt)}
         onProperties={h.onProperties}
         onPropertiesDir={h.onPropertiesDir}
+        onDiff={h.onDiff}
       />
       )}
       {showProperties && <PropertiesBar entries={pane.entries} selection={pane.selection} />}
