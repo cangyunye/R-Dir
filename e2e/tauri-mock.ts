@@ -26,7 +26,24 @@ export async function installTauriMock(page: Page): Promise<void> {
         { name: "photo.png", size: 204800 },
         { name: "link-to-docs", dir: true, symlink: true },
       ],
-      [`${HOME}/Documents`]: [{ name: "readme.md", size: 42 }],
+      [`${HOME}/Documents`]: [
+        { name: "readme.md", size: 42 },
+        // v0.18 同步比对夹具：syncA/syncB 结构对齐，B 侧少 missing/onlyA.txt
+        { name: "syncA", dir: true },
+        { name: "syncB", dir: true },
+      ],
+      [`${HOME}/Documents/syncA`]: [
+        { name: "common", dir: true },
+        { name: "missing", dir: true },
+        { name: "onlyA.txt", size: 11 },
+      ],
+      [`${HOME}/Documents/syncA/common`]: [
+        { name: "same.txt", size: 5 },
+        { name: "a-only.txt", size: 7 },
+      ],
+      [`${HOME}/Documents/syncA/missing`]: [{ name: "x.txt", size: 1 }],
+      [`${HOME}/Documents/syncB`]: [{ name: "common", dir: true }],
+      [`${HOME}/Documents/syncB/common`]: [{ name: "same.txt", size: 5 }],
       [`${HOME}/Projects`]: [{ name: "app.ts", size: 900 }],
       "sftp://u@127.0.0.1:22/remote": [
         { name: "deploy.sh", size: 512 },
@@ -93,9 +110,16 @@ export async function installTauriMock(page: Page): Promise<void> {
         { key: "downloads", path: `${HOME}/Documents` },
       ],
       session_load: () => null,
-      list_dir: (a) => (FS[String(a.path)] ?? []).map((f) => entry(String(a.path), f)),
+      // 未知路径报错（与真实后端一致）：同步浏览的镜像探测依赖"列目录失败 = 对侧无此目录"
+      list_dir: (a) => {
+        const p = String(a.path);
+        const items = FS[p];
+        if (!items) throw new Error(`ENOENT: ${p}`);
+        return items.map((f) => entry(p, f));
+      },
       parent_dir: (a) => parentOf(String(a.path)),
-      complete_path: (a) => String(a.path),
+      // 返回数组（真实后端为补全列表；空数组 = 不弹补全下拉）
+      complete_path: () => [],
       stat_path: (a) => {
         const p = String(a.path);
         for (const dir of Object.keys(FS)) {
@@ -186,6 +210,25 @@ export async function installTauriMock(page: Page): Promise<void> {
         return { entries, cancelled: false };
       },
       cancel_diff: () => null,
+      // ---- v0.18 同步浏览「在对侧新建并进入」：本地 / SFTP 新建目录（写虚拟 FS） ----
+      create_dir: (a) => {
+        const parent = String(a.parent);
+        const name = String(a.name);
+        FS[parent] = FS[parent] ?? [];
+        if (!FS[parent].some((f) => f.name === name)) FS[parent].push({ name, dir: true });
+        const created = `${parent}/${name}`;
+        FS[created] = FS[created] ?? [];
+        return created;
+      },
+      sftp_mkdir: (a) => {
+        const dir = String(a.dir);
+        const name = String(a.name);
+        FS[dir] = FS[dir] ?? [];
+        if (!FS[dir].some((f) => f.name === name)) FS[dir].push({ name, dir: true });
+        const created = `${dir}/${name}`;
+        FS[created] = FS[created] ?? [];
+        return created;
+      },
       // ---- 单路径元信息（v0.17 空白处「属性（当前目录）」） ----
       stat_entry: (a) => {
         const p = String(a.path);

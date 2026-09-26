@@ -8,6 +8,7 @@ import { PropertiesBar } from "@/components/PropertiesBar";
 import { TagView } from "@/components/TagView";
 import type { TagNames } from "@/lib/persist";
 import type { FileEntry, SortKey } from "@/lib/types";
+import type { DiffMarkMap, LinkSide } from "@/lib/sync-link";
 import type { OpenerItem, ShellItem } from "@/lib/openerApi";
 
 export interface PaneHandlers {
@@ -77,6 +78,8 @@ export interface PaneHandlers {
   onPropertiesDir: (dir: string) => void;
   /** v0.18 空白处右键「与另一窗格差异比对…」 */
   onDiff: () => void;
+  /** v0.18 空白处右键「同步比对（左右窗格）」：开启/断开链接 */
+  onSyncDiff: () => void;
 }
 
 function PaneView({
@@ -95,6 +98,8 @@ function PaneView({
   onOpenTagFile,
   onExitTag,
   highlight,
+  diffMarks,
+  linkBadge,
   handlers,
 }: {
   pane: PaneState;
@@ -114,6 +119,9 @@ function PaneView({
   customQuick: string[];
   onOpenTagFile: (path: string) => void;
   onExitTag: (paneId: number) => void;
+  /** v0.18 同步比对标注入（窗格不在比对层时为 undefined） */
+  diffMarks?: DiffMarkMap;
+  linkBadge?: LinkSide;
   handlers: PaneHandlers;
 }) {
   const h = handlers;
@@ -201,6 +209,9 @@ dragTarget={dragOver?.targetPaneId === pane.id}
         onProperties={h.onProperties}
         onPropertiesDir={h.onPropertiesDir}
         onDiff={h.onDiff}
+        onSyncDiff={h.onSyncDiff}
+        diffMarks={diffMarks}
+        linkBadge={linkBadge}
       />
       )}
       {showProperties && <PropertiesBar entries={pane.entries} selection={pane.selection} />}
@@ -284,6 +295,8 @@ export function SplitView({
   onOpenTagFile,
   onExitTag,
   highlight,
+  diffMarksByPane,
+  linkBadgeByPane,
   handlers,
 }: {
   node: PaneNode;
@@ -302,6 +315,9 @@ export function SplitView({
   onOpenTagFile: (path: string) => void;
   onExitTag: (paneId: number) => void;
   highlight: boolean;
+  /** v0.18 同步比对：窗格 → 行内标注 / 表头链接方位标识 */
+  diffMarksByPane?: Record<number, DiffMarkMap>;
+  linkBadgeByPane?: Record<number, LinkSide>;
   handlers: PaneHandlers;
 }) {
   if (node.type === "pane") {
@@ -324,6 +340,8 @@ export function SplitView({
         onOpenTagFile={onOpenTagFile}
         onExitTag={onExitTag}
         highlight={highlight}
+        diffMarks={diffMarksByPane?.[node.paneId]}
+        linkBadge={linkBadgeByPane?.[node.paneId]}
         handlers={handlers}
       />
     );
@@ -352,6 +370,8 @@ export function SplitView({
           onOpenTagFile={onOpenTagFile}
           onExitTag={onExitTag}
           highlight={highlight}
+          diffMarksByPane={diffMarksByPane}
+          linkBadgeByPane={linkBadgeByPane}
           handlers={handlers}
         />
       </div>
@@ -382,6 +402,8 @@ export function SplitView({
           onOpenTagFile={onOpenTagFile}
           onExitTag={onExitTag}
           highlight={highlight}
+          diffMarksByPane={diffMarksByPane}
+          linkBadgeByPane={linkBadgeByPane}
           handlers={handlers}
         />
       </div>

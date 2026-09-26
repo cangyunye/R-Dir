@@ -29,6 +29,8 @@ import {
   X,
   ArrowLeftRight,
   GitCompare,
+  Link2,
+  Link2Off,
   Download,
 } from "lucide-react";
 import {
@@ -89,6 +91,9 @@ export interface MenuActions {
   onFocusNextPane: () => void;
   // 工具
   onOpenDiff: () => void;
+  /** v0.18 同步比对（底部实时面板）：开启/断开链接 */
+  onOpenSyncDiff: () => void;
+  syncDiffActive: boolean;
   // 视图 / 全局
   dark: boolean;
   onToggleTheme: () => void;
@@ -305,6 +310,18 @@ export function MenuBar(actions: MenuActions) {
       <MenuButton label="工具" {...openFor("工具")}>
         <DropdownMenuItem onClick={actions.onOpenDiff}>
           <GitCompare className="mr-2 h-4 w-4" /> 差异比对（左右窗格）…
+        </DropdownMenuItem>
+        {/* v0.18 同步比对：底部实时面板，开启即同步浏览 */}
+        <DropdownMenuItem onClick={actions.onOpenSyncDiff}>
+          {actions.syncDiffActive ? (
+            <>
+              <Link2Off className="mr-2 h-4 w-4" /> 断开同步比对
+            </>
+          ) : (
+            <>
+              <Link2 className="mr-2 h-4 w-4" /> 同步比对（左右窗格）
+            </>
+          )}
         </DropdownMenuItem>
       </MenuButton>
 

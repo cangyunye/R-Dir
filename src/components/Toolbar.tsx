@@ -5,6 +5,7 @@ import {
   ChevronRight,
   CornerUpLeft,
   Folder,
+  Link2,
   RefreshCw,
   Search,
 } from "lucide-react";
@@ -25,6 +26,9 @@ export function Toolbar({
   onNavigate,
   searchOpen,
   onToggleSearch,
+  /** v0.18 同步比对（底部实时面板）激活状态与切换 */
+  syncDiffActive,
+  onToggleSyncDiff,
   focusTick,
   trailing,
 }: {
@@ -39,6 +43,8 @@ export function Toolbar({
   onNavigate: (path: string) => void;
   searchOpen: boolean;
   onToggleSearch: () => void;
+  syncDiffActive: boolean;
+  onToggleSyncDiff: () => void;
   /** 快捷键聚焦信号（Ctrl+L / ⌘+L） */
   focusTick: number;
   /** 搜索按钮右侧的插槽（如「已连接窗格」下拉） */
@@ -239,6 +245,16 @@ export function Toolbar({
           </div>
         )}
       </form>
+
+      <Button
+        variant="ghost"
+        size="icon"
+        className={cn("h-7 w-7", syncDiffActive && "bg-accent text-accent-foreground")}
+        onClick={onToggleSyncDiff}
+        title={syncDiffActive ? "断开同步比对" : "同步比对（左右窗格）"}
+      >
+        <Link2 className="h-4 w-4" />
+      </Button>
 
       <Button
         variant="ghost"

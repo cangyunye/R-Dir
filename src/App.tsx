@@ -28,6 +28,7 @@ import {
 } from "@/lib/openerApi";
 import type {
   ClipboardState,
+  DiffEntry,
   FileEntry,
   PaneNode,
   PaneState,
@@ -43,13 +44,25 @@ import type {
   VolumeInfo,
 } from "@/lib/types";
 import { parseSftpAuthority, isSftpPath, isHttpPath } from "@/lib/sftp-path";
+import { backendCaps, backendKind, maxDiffLevelFor, pathScheme } from "@/lib/backends";
+import {
+  computeAlignment,
+  marksFromOutcome,
+  mirrorPath,
+  relOf,
+  type DiffMarkMap,
+  type LinkSide,
+  type SyncLink,
+} from "@/lib/sync-link";
 import { useSftp } from "@/hooks/useSftp";
 import {
+  cancelDiff,
   copyEntries,
   copyEntriesPlan,
   createDir,
   createFile,
   deleteEntries,
+  diffDirs,
   getHomeDir,
   getQuickAccess,
   getVolumes,
@@ -114,6 +127,8 @@ import {
   UI_FONT_FAMILIES,
   loadShowExtensions,
   saveShowExtensions,
+  loadDiffCaseSensitive,
+  loadDiffMtimeTolerance,
   loadPrefsFromDisk,
   mergeDiskPrefs,
   flushPrefsToDisk,
@@ -126,6 +141,7 @@ import { Trash2, Bird } from "lucide-react";
 import { PaneListMenu } from "@/components/PaneListMenu";
 import { PropertiesDialog } from "@/components/PropertiesDialog";
 import { DiffDialog } from "@/components/DiffDialog";
+import { SyncDiffPanel } from "@/components/SyncDiffPanel";
 import { MenuBar } from "@/components/MenuBar";
 
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
@@ -1401,6 +1417,333 @@ useEffect(() => {
     rightPane: number;
   } | null>(null);
 
+  // ==================== v0.18 同步浏览 + 实时比对面板 ====================
+
+  /** 链接状态（不随会话保存，D8）：开启即记录两侧锚点，随导航实时重算比对 */
+  const [syncLink, setSyncLink] = useState<SyncLink | null>(null);
+  const syncLinkRef = useRef<SyncLink | null>(null);
+  syncLinkRef.current = syncLink;
+  /** 实时比对运行状态（seq 丢弃过期响应） */
+  const [syncRun, setSyncRun] = useState<{
+    status: "running" | "done" | "cancelled" | "error";
+    entries: DiffEntry[] | null;
+    error?: string;
+  } | null>(null);
+  const syncSeqRef = useRef(0);
+  const syncDiffIdRef = useRef<string | null>(null);
+
+  /** v0.18 开启/断开同步比对：要求活动标签恰好两个路径窗格（排除 http 与标签视图） */
+  const toggleSyncDiff = useCallback(() => {
+    if (syncLinkRef.current) {
+      setSyncLink(null);
+      return;
+    }
+    if (!activeTab) return;
+    const panes = collectPaneIds(activeTab.root)
+      .map((id) => activeTab.panes[id])
+      .filter((p): p is NonNullable<typeof p> => !!p && !p.tagId && !isHttpPath(p.path));
+    if (panes.length !== 2) {
+      showError("同步比对需要当前标签恰好两个路径窗格");
+      return;
+    }
+    setSyncLink({
+      tabId: activeTab.id,
+      leftPaneId: panes[0].id,
+      rightPaneId: panes[1].id,
+      leftRoot: panes[0].path,
+      rightRoot: panes[1].path,
+    });
+  }, [activeTab, showError]);
+
+  /** 链接的两个窗格与其对齐状态（窗格被关闭时为 null，由下方 effect 断链） */
+  const syncPanes = (() => {
+    if (!syncLink) return null;
+    const tab = tabs.find((t) => t.id === syncLink.tabId);
+    const lp = tab?.panes[syncLink.leftPaneId];
+    const rp = tab?.panes[syncLink.rightPaneId];
+    if (!tab || !lp || !rp) return null;
+    return { tab, lp, rp, alignment: computeAlignment(syncLink, lp.path, rp.path) };
+  })();
+
+  /** 任一链接窗格不存在（关窗格/关标签）→ 自动断链 */
+  useEffect(() => {
+    if (!syncLink) return;
+    const exists = (pid: number) => tabs.some((t) => pid in t.panes);
+    if (!exists(syncLink.leftPaneId) || !exists(syncLink.rightPaneId)) {
+      setSyncLink(null);
+    }
+  }, [tabs, syncLink]);
+  /** 断链时取消在途比对并清空面板状态 */
+  useEffect(() => {
+    if (syncLink) return;
+    const id = syncDiffIdRef.current;
+    if (id) {
+      syncDiffIdRef.current = null;
+      void cancelDiff(id).catch(() => {});
+    }
+    setSyncRun(null);
+  }, [syncLink]);
+
+  /** 镜像跟随（方案 A1）：监听链接窗格路径变化（覆盖地址栏/侧栏/前进后退/双击定位等一切导航入口）。
+   *  一侧变化 → 探测对侧同名相对目录：成功则跟随（推对侧历史）；失败则未对齐（对侧原地，D3）。 */
+  const mirrorPrevRef = useRef<{
+    link: SyncLink | null;
+    left: string | null;
+    right: string | null;
+  }>({ link: null, left: null, right: null });
+  useEffect(() => {
+    const link = syncLink;
+    const tab = link ? tabs.find((t) => t.id === link.tabId) : undefined;
+    const lp = link ? tab?.panes[link.leftPaneId] : undefined;
+    const rp = link ? tab?.panes[link.rightPaneId] : undefined;
+    const st = mirrorPrevRef.current;
+    if (!link || !lp || !rp) {
+      mirrorPrevRef.current = { link, left: lp?.path ?? null, right: rp?.path ?? null };
+      return;
+    }
+    if (st.link !== link) {
+      // 链接建立/交换/改锚点：仅重置基线，不触发跟随
+      mirrorPrevRef.current = { link, left: lp.path, right: rp.path };
+      return;
+    }
+    const leftMoved = st.left !== null && lp.path !== st.left;
+    const rightMoved = st.right !== null && rp.path !== st.right;
+    mirrorPrevRef.current = { link, left: lp.path, right: rp.path };
+    if (leftMoved === rightMoved) return;
+    const side: LinkSide = leftMoved ? "left" : "right";
+    const movedPath = leftMoved ? lp.path : rp.path;
+    const rel = relOf(link, side, movedPath);
+    if (rel === null) return; // 一侧越出锚点子树：不镜像，面板横幅提示
+    const otherSide: LinkSide = side === "left" ? "right" : "left";
+    const candidate = mirrorPath(link, otherSide, rel);
+    const otherPath = otherSide === "left" ? lp.path : rp.path;
+    if (candidate === otherPath) return; // 已对齐（镜像回声自检，防自激）
+    void listDir(candidate)
+      .then((entries) => {
+        const cur = syncLinkRef.current;
+        if (
+          !cur ||
+          cur.leftRoot !== link.leftRoot ||
+          cur.rightRoot !== link.rightRoot ||
+          cur.leftPaneId !== link.leftPaneId ||
+          cur.rightPaneId !== link.rightPaneId
+        ) {
+          return;
+        }
+        const otherId = otherSide === "left" ? link.leftPaneId : link.rightPaneId;
+        setTabs((ts) =>
+          ts.map((t) => {
+            if (!(otherId in t.panes)) return t;
+            const pane = t.panes[otherId];
+            const same = pane.path === candidate;
+            const history = same
+              ? pane.history
+              : [...pane.history.slice(0, pane.histIndex + 1), candidate];
+            const updated = {
+              ...pane,
+              path: candidate,
+              title: basename(candidate),
+              history,
+              histIndex: history.length - 1,
+              selection: [],
+              entries,
+              loading: false,
+              error: null,
+            };
+            const title = t.activePane === otherId ? updated.title : t.title;
+            return { ...t, panes: { ...t.panes, [otherId]: updated }, title };
+          }),
+        );
+      })
+      .catch(() => {
+        // 对侧无同名目录：未对齐，对侧停在原地（D3），面板回退共同层
+      });
+  }, [tabs, syncLink]);
+
+  /** 实时比对管线：任一链接窗格 path/refreshKey 变化 → 防抖 120ms → 取消在途 → 重算（D2 关键：
+   *  边浏览边比对，比对只针对当前对齐层/共同层，层级按两侧后端能力钳制） */
+  useEffect(() => {
+    if (!syncPanes) return;
+    const { leftDir, rightDir } = syncPanes.alignment;
+    const level = maxDiffLevelFor(leftDir, rightDir);
+    const caseSensitive = loadDiffCaseSensitive();
+    const mtimeToleranceMs = loadDiffMtimeTolerance() * 1000;
+    let disposed = false;
+    const timer = window.setTimeout(() => {
+      if (disposed) return;
+      const prevId = syncDiffIdRef.current;
+      if (prevId) void cancelDiff(prevId).catch(() => {});
+      const seq = ++syncSeqRef.current;
+      const id = `syncdiff-${Date.now()}-${seq}`;
+      syncDiffIdRef.current = id;
+      setSyncRun({ status: "running", entries: null });
+      diffDirs(id, leftDir, rightDir, level, caseSensitive, mtimeToleranceMs)
+        .then((outcome) => {
+          if (disposed || seq !== syncSeqRef.current) return;
+          setSyncRun(
+            outcome.cancelled
+              ? { status: "cancelled", entries: outcome.entries }
+              : { status: "done", entries: outcome.entries },
+          );
+        })
+        .catch((e) => {
+          if (disposed || seq !== syncSeqRef.current) return;
+          setSyncRun({ status: "error", entries: null, error: String(e) });
+        });
+    }, 120);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    syncLink,
+    syncPanes?.lp.path,
+    syncPanes?.lp.refreshKey,
+    syncPanes?.rp.path,
+    syncPanes?.rp.refreshKey,
+  ]);
+
+  /** 程序化导航任意窗格（面板按钮用）：加载条目 + 推历史 + 激活 */
+  const gotoPane = useCallback(
+    async (paneId: number, path: string) => {
+      let entries: FileEntry[];
+      try {
+        entries = await listDir(path);
+      } catch (e) {
+        showError(`无法进入 ${path}：${String(e)}`);
+        return;
+      }
+      setTabs((ts) =>
+        ts.map((t) => {
+          if (!(paneId in t.panes)) return t;
+          const pane = t.panes[paneId];
+          const same = pane.path === path;
+          const history = same
+            ? pane.history
+            : [...pane.history.slice(0, pane.histIndex + 1), path];
+          const updated = {
+            ...pane,
+            path,
+            title: basename(path),
+            history,
+            histIndex: history.length - 1,
+            selection: [],
+            entries,
+            loading: false,
+            error: null,
+          };
+          const title = t.activePane === paneId ? updated.title : t.title;
+          return { ...t, activePane: paneId, panes: { ...t.panes, [paneId]: updated }, title };
+        }),
+      );
+    },
+    [showError],
+  );
+
+  /** [重新对齐]：两侧各跳回链接锚点 */
+  const realignSync = useCallback(() => {
+    const link = syncLinkRef.current;
+    if (!link) return;
+    void gotoPane(link.leftPaneId, link.leftRoot).then(() =>
+      gotoPane(link.rightPaneId, link.rightRoot),
+    );
+  }, [gotoPane]);
+
+  /** [交换左右]：交换链接的左右方位后重算 */
+  const swapSyncSides = useCallback(() => {
+    const link = syncLinkRef.current;
+    if (!link) return;
+    setSyncLink({
+      tabId: link.tabId,
+      leftPaneId: link.rightPaneId,
+      rightPaneId: link.leftPaneId,
+      leftRoot: link.rightRoot,
+      rightRoot: link.leftRoot,
+    });
+  }, []);
+
+  /** [返回对齐]：wanderer 跳到对侧当前位置在其根下的镜像 */
+  const returnToAlignment = useCallback(() => {
+    const link = syncLinkRef.current;
+    if (!link) return;
+    const tab = tabsRef.current.find((t) => t.id === link.tabId);
+    if (!tab) return;
+    const lp = tab.panes[link.leftPaneId];
+    const rp = tab.panes[link.rightPaneId];
+    if (!lp || !rp) return;
+    const a = computeAlignment(link, lp.path, rp.path);
+    if (a.state !== "diverged" || !a.missingSide) return;
+    const wSide = a.missingSide;
+    const oSide: LinkSide = wSide === "left" ? "right" : "left";
+    const oPath = oSide === "left" ? lp.path : rp.path;
+    const rel = relOf(link, oSide, oPath);
+    if (rel === null) return;
+    const wPaneId = wSide === "left" ? link.leftPaneId : link.rightPaneId;
+    void gotoPane(wPaneId, mirrorPath(link, wSide, rel));
+  }, [gotoPane]);
+
+  /** [在对侧新建并进入]：在缺失侧逐级创建目录后进入（本特性唯一的远程写入点，D6） */
+  const createMissingAndEnter = useCallback(async () => {
+    const link = syncLinkRef.current;
+    if (!link) return;
+    const tab = tabsRef.current.find((t) => t.id === link.tabId);
+    if (!tab) return;
+    const lp = tab.panes[link.leftPaneId];
+    const rp = tab.panes[link.rightPaneId];
+    if (!lp || !rp) return;
+    const a = computeAlignment(link, lp.path, rp.path);
+    if (a.state !== "diverged" || !a.missing || !a.missingSide) return;
+    const wSide = a.missingSide; // wanderer：该目录已存在的一侧
+    const oSide: LinkSide = wSide === "left" ? "right" : "left";
+    const fullRel = a.layer ? `${a.layer}/${a.missing}` : a.missing;
+    const target = mirrorPath(link, oSide, fullRel);
+    if (!backendCaps(backendKind(target)).canMkdir) {
+      showError("该后端不支持创建目录");
+      return;
+    }
+    // 共同层在对侧已存在，只需逐级创建缺失段
+    let parent = mirrorPath(link, oSide, a.layer);
+    try {
+      for (const seg of a.missing.split("/")) {
+        const created = isSftpPath(parent)
+          ? await sftpMkdir(parent, seg)
+          : await createDir(parent, seg);
+        parent = created || pathScheme(target).join(parent, seg);
+      }
+    } catch (e) {
+      showError(`在对侧创建目录失败：${String(e)}`);
+      return;
+    }
+    await gotoPane(oSide === "left" ? link.leftPaneId : link.rightPaneId, target);
+  }, [showError, gotoPane]);
+
+  /** 行内标注：仅当窗格正处比对层时传入（未对齐时 wanderer 更深层不标） */
+  const syncMarks: Record<number, DiffMarkMap> = (() => {
+    if (!syncLink || !syncPanes || !syncRun || syncRun.status !== "done" || !syncRun.entries) {
+      return {};
+    }
+    const marks = marksFromOutcome(syncRun.entries);
+    const out: Record<number, DiffMarkMap> = {};
+    if (syncPanes.lp.path === syncPanes.alignment.leftDir) out[syncLink.leftPaneId] = marks;
+    if (syncPanes.rp.path === syncPanes.alignment.rightDir) out[syncLink.rightPaneId] = marks;
+    return out;
+  })();
+  /** 表头链接标识：链接窗格的方位 */
+  const syncBadges: Record<number, LinkSide> = syncLink
+    ? { [syncLink.leftPaneId]: "left", [syncLink.rightPaneId]: "right" }
+    : {};
+  /** 「在对侧新建并进入」是否可用：对侧后端 canMkdir */
+  const canCreateMissing = (() => {
+    if (!syncPanes || syncPanes.alignment.state !== "diverged") return false;
+    const a = syncPanes.alignment;
+    if (!a.missing || !a.missingSide) return false;
+    const oSide: LinkSide = a.missingSide === "left" ? "right" : "left";
+    const fullRel = a.layer ? `${a.layer}/${a.missing}` : a.missing;
+    const target = syncLink ? mirrorPath(syncLink, oSide, fullRel) : "";
+    return backendCaps(backendKind(target)).canMkdir;
+  })();
+
   /** v0.18 差异窗口双击定位：在对应窗格进入父目录并选中该条目 */
   const locateFromDiff = useCallback(
     (side: "left" | "right", path: string, isDir: boolean) => {
@@ -2186,6 +2529,7 @@ useEffect(() => {
         .catch((err) => showError(String(err)));
     },
     onDiff: openDiff,
+    onSyncDiff: toggleSyncDiff,
   };
 
   const selectedSize = activePane
@@ -2289,6 +2633,8 @@ useEffect(() => {
         canClosePane={!!activeTab && !isSinglePane(activeTab.root)}
         onFocusNextPane={focusNextPane}
         onOpenDiff={openDiff}
+        onOpenSyncDiff={toggleSyncDiff}
+        syncDiffActive={!!syncLink}
         showHidden={showHidden}
         searchOpen={searchOpen}
         dark={dark}
@@ -2324,6 +2670,8 @@ useEffect(() => {
         onNavigate={navigate}
         searchOpen={searchOpen}
         onToggleSearch={toggleSearchPanel}
+        syncDiffActive={!!syncLink}
+        onToggleSyncDiff={toggleSyncDiff}
         focusTick={addressFocusTick}
         trailing={<PaneListMenu panes={paneList} onActivate={activatePane} />}
       />
@@ -2368,6 +2716,8 @@ useEffect(() => {
               onOpenTagFile={openTagFile}
               onExitTag={exitTagViewForPane}
               highlight={!(activeTab && isSinglePane(activeTab.root))}
+              diffMarksByPane={syncMarks}
+              linkBadgeByPane={syncBadges}
               handlers={handlers}
             />
           ) : null}
@@ -2385,6 +2735,25 @@ useEffect(() => {
           />
         )}
       </div>
+
+      {/* v0.18 同步比对面板：底部横条，跨全宽，关闭 = 断开链接 */}
+      {syncLink && syncPanes && (
+        <SyncDiffPanel
+          link={syncLink}
+          leftPath={syncPanes.lp.path}
+          rightPath={syncPanes.rp.path}
+          alignment={syncPanes.alignment}
+          status={syncRun?.status ?? "running"}
+          entries={syncRun?.entries ?? null}
+          error={syncRun?.error ?? null}
+          canCreateMissing={canCreateMissing}
+          onRealign={realignSync}
+          onSwap={swapSyncSides}
+          onCreateMissing={() => void createMissingAndEnter()}
+          onReturnAlign={returnToAlignment}
+          onUnlink={() => setSyncLink(null)}
+        />
+      )}
 
       <StatusBar
         path={activePane?.path ?? ""}

@@ -145,6 +145,7 @@ fn fnv1a_file(path: &Path, cancel: &AtomicBool) -> HashOutcome {
 }
 
 /// 比对两个目录的顶层条目，支持进度回调与取消。
+/// 本地专用入口：内部列目录后转交 [`compare_entries`]。
 pub fn compare<F: FnMut(&DiffProgress)>(
     id: &str,
     left: &str,
@@ -155,17 +156,31 @@ pub fn compare<F: FnMut(&DiffProgress)>(
 ) -> Result<DiffOutcome, String> {
     let l = crate::fs_ops::list_dir(left)?;
     let r = crate::fs_ops::list_dir(right)?;
+    compare_entries(id, l, r, opts, cancel, emit)
+}
 
+/// 纯比对核心（v0.18 同步比对抽象点）：输入两侧条目集合，不感知任何后端协议。
+/// 本地与 SFTP 的条目都是 `fs_ops::FileEntry`，未来其他后端（S3/网盘）同样只喂这个结构。
+/// 注意：level >= 3 时 hash 阶段按 `entry.path` 走 `std::fs` 读取，仅对本地条目有意义；
+/// 含远程侧时调用方必须先把 level 钳制到 2 以内（见 lib.rs 的能力表）。
+pub fn compare_entries<F: FnMut(&DiffProgress)>(
+    id: &str,
+    left: Vec<FileEntry>,
+    right: Vec<FileEntry>,
+    opts: &DiffOptions,
+    cancel: &AtomicBool,
+    mut emit: F,
+) -> Result<DiffOutcome, String> {
     // 名称 → (展示名, 左侧, 右侧)。大小写不敏感时以 lower(key) 归并同名条目。
     let mut map: HashMap<String, (String, Option<FileEntry>, Option<FileEntry>)> = HashMap::new();
-    for e in l {
+    for e in left {
         let name = e.name.clone();
         let key = name_key(&name, opts.case_sensitive);
         map.entry(key)
             .or_insert_with(|| (name.clone(), None, None))
             .1 = Some(e);
     }
-    for e in r {
+    for e in right {
         let name = e.name.clone();
         let key = name_key(&name, opts.case_sensitive);
         let slot = map.entry(key).or_insert_with(|| (name.clone(), None, None));
@@ -545,5 +560,76 @@ mod tests {
         assert!(last_done, "最后应推送 doneAll");
         assert_eq!(last_phase, "compare");
         let _ = fs::remove_dir_all(&base);
+    }
+
+    // ---- v0.18 compare_entries 纯函数（不经过文件系统，直接喂 FileEntry）----
+
+    fn fe(name: &str, is_dir: bool, size: u64) -> FileEntry {
+        FileEntry {
+            name: name.into(),
+            path: format!("/fake/{name}"),
+            is_dir,
+            is_symlink: false,
+            size,
+            modified: Some(1_000),
+            created: None,
+            permissions: String::new(),
+            extension: String::new(),
+        }
+    }
+
+    fn run_entries(l: Vec<FileEntry>, r: Vec<FileEntry>, level: u8) -> Vec<DiffEntry> {
+        let cancel = AtomicBool::new(false);
+        let opts = DiffOptions {
+            level,
+            ..Default::default()
+        };
+        compare_entries("t", l, r, &opts, &cancel, |_| {})
+            .unwrap()
+            .entries
+    }
+
+    #[test]
+    fn entries_only_sides_reported() {
+        let d = run_entries(vec![fe("a.txt", false, 1)], vec![fe("b.txt", false, 2)], 1);
+        assert_eq!(d.iter().find(|e| e.name == "a.txt").unwrap().status, "left-only");
+        assert_eq!(d.iter().find(|e| e.name == "b.txt").unwrap().status, "right-only");
+    }
+
+    #[test]
+    fn entries_type_conflict() {
+        let d = run_entries(vec![fe("item", true, 0)], vec![fe("item", false, 4)], 2);
+        let e = d.iter().find(|x| x.name == "item").unwrap();
+        assert_eq!(e.status, "different");
+        assert_eq!(e.reason.as_deref(), Some("type"));
+    }
+
+    #[test]
+    fn entries_level2_same_size_is_same_without_hash() {
+        // 同名同大小但路径不存在于本地：层 2 不进入 hash 阶段（hash 仅层 3，且调用方
+        // 须保证两侧本地），因此不会因读不到 /fake/... 而误判为内容差异
+        let d = run_entries(vec![fe("f.bin", false, 10)], vec![fe("f.bin", false, 10)], 2);
+        assert_eq!(d.iter().find(|x| x.name == "f.bin").unwrap().status, "same");
+    }
+
+    #[test]
+    fn entries_case_insensitive_merge() {
+        let cancel = AtomicBool::new(false);
+        let opts = DiffOptions {
+            level: 1,
+            case_sensitive: false,
+            ..Default::default()
+        };
+        let out = compare_entries(
+            "t",
+            vec![fe("Readme.md", false, 5)],
+            vec![fe("readme.md", false, 5)],
+            &opts,
+            &cancel,
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(out.entries.len(), 1);
+        assert_eq!(out.entries[0].status, "same");
     }
 }

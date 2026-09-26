@@ -297,3 +297,73 @@ test.describe("12. 标签名磁盘恢复（localStorage 被清空时）", () => 
     await expect(page.getByText("工程", { exact: true }).first()).toBeVisible();
   });
 });
+
+test.describe("13. 同步比对（v0.18 同步浏览 + 实时面板）", () => {
+  const syncA = `${HOME}/Documents/syncA`;
+  const syncB = `${HOME}/Documents/syncB`;
+
+  /** 分出左右两个窗格，左→syncA、右→syncB，开启同步比对面板 */
+  async function openSyncPair(page: import("@playwright/test").Page) {
+    await page.getByRole("button", { name: "窗格", exact: true }).click();
+    await page.getByText("左右分屏").click();
+    await expect(page.locator(`[data-path="${HOME}/Documents"]`)).toHaveCount(2);
+
+    // 左窗格 → syncA
+    await page.locator(`[data-path="${HOME}/Documents"]`).first().click();
+    await page.locator("#rdir-addr-input").fill(syncA);
+    await page.locator("#rdir-addr-input").press("Enter");
+    await expect(page.locator(`[data-path="${syncA}/onlyA.txt"]`)).toBeVisible();
+
+    // 右窗格 → syncB（此时只剩右窗格还列着 Documents）
+    await page.locator(`[data-path="${HOME}/Documents"]`).first().click();
+    await page.locator("#rdir-addr-input").fill(syncB);
+    await page.locator("#rdir-addr-input").press("Enter");
+    await expect(page.locator(`[data-path="${syncB}/common"]`)).toBeVisible();
+
+    // 开启同步比对（工具栏链接按钮）
+    await page.locator('button[title^="同步比对"]').click();
+    await expect(page.locator("[data-sync-diff-panel]")).toBeVisible();
+  }
+
+  test("X1 开启即比对：面板出现、标注显示、对侧子目录自动跟随", async ({ page }) => {
+    await openSyncPair(page);
+    await expect(page.getByText("已对齐")).toBeVisible();
+    // syncA 独有条目在左窗格标「仅左侧」色条
+    await expect(page.locator('[data-diff-mark="left-only"]').first()).toBeVisible();
+
+    // 左窗格进入 common → 右窗格自动跟随
+    await page.locator(`[data-path="${syncA}/common"]`).dblclick();
+    await expect(page.locator(`[data-path="${syncB}/common/same.txt"]`)).toBeVisible();
+    // 面板实时重算为该层比对（syncA/common 独有 a-only.txt）
+    await expect(page.locator("[data-sync-diff-panel]")).toContainText("a-only.txt");
+  });
+
+  test("X2 对侧无同名目录：横幅 + 在对侧新建并进入后恢复对齐", async ({ page }) => {
+    await openSyncPair(page);
+    // 左窗格进入右窗格不存在的 missing/
+    await page.locator(`[data-path="${syncA}/missing"]`).dblclick();
+    await expect(page.locator(`[data-path="${syncA}/missing/x.txt"]`)).toBeVisible();
+    // 对侧停在原地，面板提示未对齐
+    await expect(page.locator(`[data-path="${syncB}/common"]`)).toBeVisible();
+    await expect(page.locator("[data-sync-diff-panel]")).toContainText("两侧不同层");
+    await expect(page.getByText("未对齐").first()).toBeVisible();
+
+    // 在对侧新建并进入 → 恢复对齐（新目录为空，x.txt 回到面板里标「仅左侧」）
+    await page.getByText("在对侧新建并进入").click();
+    await expect(page.locator("#rdir-addr-input")).toHaveValue(`${syncB}/missing`);
+    await expect(page.getByText("已对齐")).toBeVisible();
+    await expect(page.locator("[data-sync-diff-panel]")).toContainText("x.txt");
+    await expect(page.locator("[data-sync-diff-panel]")).toContainText("仅左侧");
+  });
+
+  test("X3 断开链接：面板关闭、行首标注清除", async ({ page }) => {
+    await openSyncPair(page);
+    await expect(page.locator('[data-diff-mark="left-only"]').first()).toBeVisible();
+    await page.locator('button[title="断开链接并关闭面板"]').click();
+    await expect(page.locator("[data-sync-diff-panel]")).toHaveCount(0);
+    await expect(page.locator("[data-diff-mark]")).toHaveCount(0);
+    // 两侧窗格仍在原位置
+    await expect(page.locator(`[data-path="${syncA}/onlyA.txt"]`)).toBeVisible();
+    await expect(page.locator(`[data-path="${syncB}/common"]`)).toBeVisible();
+  });
+});

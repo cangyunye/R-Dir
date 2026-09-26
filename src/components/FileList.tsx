@@ -23,10 +23,13 @@ import {
   Tag as TagIcon,
   Info,
   ArrowLeftRight,
+  Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
 import { formatSize, formatTime, hideExtension } from "@/lib/format";
+import type { LinkSide } from "@/lib/sync-link";
+import { markColor, markTooltip } from "@/components/SyncDiffPanel";
 import { FileIcon } from "@/components/FileIcon";
 import {
   ContextMenu,
@@ -41,6 +44,7 @@ import { TAG_DEFS, tagLabel, type FileTags, type TagNames } from "@/lib/persist"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { OpenerItem, ShellItem } from "@/lib/openerApi";
 import { ROW_HEIGHT, visibleRange } from "@/lib/virtual-scroll";
+import type { DiffMarkMap } from "@/lib/sync-link";
 import { TagDots } from "@/components/TagView";
 import { MenuGroup } from "@/components/MenuGroup";
 import { openersForEntry } from "@/lib/openers";
@@ -163,6 +167,9 @@ export function FileList({
   onProperties,
   onPropertiesDir,
   onDiff,
+  onSyncDiff,
+  diffMarks,
+  linkBadge,
 }: {
   paneId: number;
   entries: FileEntry[];
@@ -238,6 +245,12 @@ export function FileList({
   onPropertiesDir: (dir: string) => void;
   /** v0.18 空白处右键「与另一窗格差异比对…」 */
   onDiff: () => void;
+  /** v0.18 空白处右键「同步比对（左右窗格）」：开启/断开链接 */
+  onSyncDiff: () => void;
+  /** v0.18 同步比对行内标注（name → 判定）；仅链接且窗格正处比对层时传入 */
+  diffMarks?: DiffMarkMap;
+  /** v0.18 同步比对链接标识：该窗格的方位（undefined = 未链接） */
+  linkBadge?: LinkSide;
 }) {
   const sorted = useMemo(() => {
     const visible = showHidden
@@ -671,6 +684,19 @@ export function FileList({
             disabled={col.key === null}
           >
             {col.label}
+            {/* v0.18 同步比对链接标识：名称列尾显示方位点 */}
+            {col.key === "name" && linkBadge && (
+              <span className="ml-1 inline-flex items-center gap-0.5" title="此窗格已加入同步比对">
+                <Link2 className="h-3 w-3" />
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{
+                    background:
+                      linkBadge === "left" ? "var(--sync-mark-left, #f59e0b)" : "var(--sync-mark-right, #0ea5e9)",
+                  }}
+                />
+              </span>
+            )}
             {col.key &&
               (sortKey === col.key ? (
                 sortDir === "asc" ? (
@@ -717,6 +743,7 @@ export function FileList({
           const selected = selection.includes(entry.path);
           const isPrimary = primary === entry.path;
           const isRenaming = renaming?.path === entry.path;
+          const mark = diffMarks?.[entry.name];
           const targets = selection.includes(entry.path) ? selection : [entry.path];
           return (
             <ContextMenu
@@ -801,7 +828,15 @@ export function FileList({
                     height: ROW_HEIGHT,
                   }}
                 >
-                  <div className="flex min-w-0 items-center gap-2 px-2 py-1">
+                  <div className="relative flex min-w-0 items-center gap-2 px-2 py-1">
+                    {mark && (
+                      <span
+                        data-diff-mark={mark.status}
+                        className="absolute inset-y-0 left-0 w-[3px]"
+                        style={{ background: markColor(mark) }}
+                        title={markTooltip(mark)}
+                      />
+                    )}
                     <FileIcon entry={entry} size={16} className="shrink-0" />
                     <TagDots path={entry.path} fileTags={fileTags} />
                     {isRenaming ? (
@@ -1072,6 +1107,11 @@ export function FileList({
           {/* v0.18 与另一窗格差异比对（需活动标签正好两个本地窗格） */}
           <ContextMenuItem onClick={onDiff}>
             <ArrowLeftRight className="mr-2 h-4 w-4" /> 与另一窗格差异比对…
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          {/* v0.18 同步比对（左右窗格）：开启/断开底部实时比对面板 */}
+          <ContextMenuItem onClick={onSyncDiff}>
+            <Link2 className="mr-2 h-4 w-4" /> 同步比对（左右窗格）
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onRefresh}>

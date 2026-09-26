@@ -49,12 +49,52 @@ pub struct AppState {
     pub share: share::ShareState,
 }
 
-/// 列出目录内容（目录优先、名称排序）。
-/// 本地路径走 fs_ops；sftp:// 前缀路由到 SFTP 插件。
-#[tauri::command]
-async fn list_dir(
-    state: tauri::State<'_, AppState>,
-    path: String,
+// ==================== 后端能力抽象（v0.18 同步比对） ====================
+
+/// 后端分类（按路径前缀）。新后端（S3/网盘等）接入点：
+/// ① 增加分类臂 ② 在 [`BackendKind::caps`] 注册能力 ③ 在 [`list_side`] 提供 list 分支。
+/// 比对内核（diff::compare_entries）与同步浏览/面板 UI 对后端无感知。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackendKind {
+    Local,
+    Sftp,
+    Http,
+}
+
+/// 后端能力声明
+#[derive(Clone, Copy, Debug)]
+struct BackendCaps {
+    /// 参与比对的最大层级：1 名称 / 2 +大小 / 3 +hash（hash 需本地文件读取，仅 Local 为 3）
+    max_diff_level: u8,
+    /// 是否支持创建目录（同步浏览「在对侧新建并进入」按钮的门控）
+    can_mkdir: bool,
+}
+
+impl BackendKind {
+    fn classify(path: &str) -> Self {
+        if path.starts_with("sftp://") {
+            BackendKind::Sftp
+        } else if path.starts_with("http://") || path.starts_with("https://") {
+            BackendKind::Http
+        } else {
+            BackendKind::Local
+        }
+    }
+
+    fn caps(self) -> BackendCaps {
+        match self {
+            BackendKind::Local => BackendCaps { max_diff_level: 3, can_mkdir: true },
+            BackendKind::Sftp => BackendCaps { max_diff_level: 2, can_mkdir: true },
+            BackendKind::Http => BackendCaps { max_diff_level: 1, can_mkdir: false },
+        }
+    }
+}
+
+/// 列目录的统一后端调度：`list_dir` 命令与 `diff_dirs` 共用，
+/// 「哪些后端能列目录」只有这一个权威答案。
+async fn list_side(
+    state: &tauri::State<'_, AppState>,
+    path: &str,
 ) -> Result<Vec<FileEntry>, String> {
     if path.starts_with("sftp://") {
         if !plugins::plugin_enabled(&state.plugins, "sftp") {
@@ -63,7 +103,7 @@ async fn list_dir(
         #[cfg(feature = "sftp")]
         {
             let pool = state.sftp_pool.lock().await;
-            return sftp::list_dir(&pool, &path).await;
+            return sftp::list_dir(&pool, path).await;
         }
         #[cfg(not(feature = "sftp"))]
         return Err("SFTP 插件未编译（该构建已拔出远程功能）".into());
@@ -72,14 +112,25 @@ async fn list_dir(
         if !plugins::plugin_enabled(&state.plugins, "http") {
             return Err("HTTP autoindex 插件已禁用（设置 → 插件中可重新启用）".into());
         }
-        let url = path;
+        let url = path.to_string();
         return tauri::async_runtime::spawn_blocking(move || http_autoindex::list_http_dir(&url))
             .await
             .map_err(|e| format!("HTTP 请求任务失败：{e}"))?;
     }
-    tauri::async_runtime::spawn_blocking(move || fs_ops::list_dir(&path))
+    let p = path.to_string();
+    tauri::async_runtime::spawn_blocking(move || fs_ops::list_dir(&p))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// 列出目录内容（目录优先、名称排序）。
+/// 本地路径走 fs_ops；sftp:// 前缀路由到 SFTP 插件。
+#[tauri::command]
+async fn list_dir(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<Vec<FileEntry>, String> {
+    list_side(&state, &path).await
 }
 
 /// 条目类型探测：返回 "dir" / "file" / "symlink"（标签/远程虚拟目录双击跳转用）。
@@ -597,6 +648,8 @@ fn cancel_size(state: tauri::State<'_, AppState>, id: String) {
 // ==================== 目录差异比对（v0.17） ====================
 
 /// 比对两个目录（顶层）：level 1 名称 / 2 大小 / 3 hash+时间戳。
+/// v0.18：左右路径按 [`BackendKind`] 能力钳制层级——任一侧非本地时 level ≤ 2 且不进 hash
+/// 阶段（远程无内容读取通道）；条目统一经 [`list_side`] 获取，本地/SFTP 两侧可任意组合。
 /// 进度走 "diff-progress" 事件；可通过 `cancel_diff(id)` 中途停止。
 #[tauri::command]
 async fn diff_dirs(
@@ -616,14 +669,22 @@ async fn diff_dirs(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_for_task = id.clone();
+    // 能力钳制：面板/模态窗请求的层级不得超过两侧后端的能力上限
+    let level = level
+        .min(BackendKind::classify(&left).caps().max_diff_level)
+        .min(BackendKind::classify(&right).caps().max_diff_level)
+        .max(1);
     let opts = diff::DiffOptions {
         level,
         case_sensitive,
         mtime_tolerance_ms,
     };
+    // 两侧串行列目录（同主机的 SFTP 会话本就由 pool 互斥）
+    let l = list_side(&state, &left).await?;
+    let r = list_side(&state, &right).await?;
     let joined = tauri::async_runtime::spawn_blocking(move || {
         use tauri::Emitter;
-        diff::compare(&id_for_task, &left, &right, &opts, &flag, |p| {
+        diff::compare_entries(&id_for_task, l, r, &opts, &flag, |p| {
             let _ = app.emit("diff-progress", p);
         })
     })
@@ -1418,5 +1479,44 @@ mod session_tests {
         };
         let json = serde_json::to_string(&tab).unwrap();
         assert!(!json.contains("customTitle"), "无自定义名时不应输出字段：{json}");
+    }
+}
+
+/// 后端能力抽象测试（v0.18 同步比对：SFTP 一/二层，未来 S3/网盘按能力表接入）
+#[cfg(test)]
+mod backend_tests {
+    use super::*;
+
+    #[test]
+    fn classify_by_prefix() {
+        assert_eq!(BackendKind::classify(r"F:\data"), BackendKind::Local);
+        assert_eq!(BackendKind::classify("/home/u"), BackendKind::Local);
+        assert_eq!(BackendKind::classify("sftp://u@h:22/remote"), BackendKind::Sftp);
+        assert_eq!(BackendKind::classify("http://x/"), BackendKind::Http);
+        assert_eq!(BackendKind::classify("https://x/"), BackendKind::Http);
+    }
+
+    #[test]
+    fn caps_table() {
+        assert_eq!(BackendKind::Local.caps().max_diff_level, 3);
+        assert!(BackendKind::Local.caps().can_mkdir);
+        assert_eq!(BackendKind::Sftp.caps().max_diff_level, 2);
+        assert!(BackendKind::Sftp.caps().can_mkdir);
+        assert_eq!(BackendKind::Http.caps().max_diff_level, 1);
+        assert!(!BackendKind::Http.caps().can_mkdir);
+    }
+
+    #[test]
+    fn diff_level_clamped_by_weakest_side() {
+        // 请求层 3：任一侧 SFTP → 落到 2；HTTP → 落到 1；两侧本地保持 3
+        let clamp = |l: BackendKind, r: BackendKind, req: u8| {
+            req.min(l.caps().max_diff_level)
+                .min(r.caps().max_diff_level)
+                .max(1)
+        };
+        assert_eq!(clamp(BackendKind::Local, BackendKind::Sftp, 3), 2);
+        assert_eq!(clamp(BackendKind::Sftp, BackendKind::Sftp, 3), 2);
+        assert_eq!(clamp(BackendKind::Local, BackendKind::Http, 3), 1);
+        assert_eq!(clamp(BackendKind::Local, BackendKind::Local, 3), 3);
     }
 }
