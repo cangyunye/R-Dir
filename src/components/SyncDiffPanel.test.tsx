@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { SyncDiffPanel, type SyncDiffPanelProps } from "./SyncDiffPanel";
+import {
+  SyncDiffModal,
+  SyncDiffStatusBar,
+  type SyncDiffModalProps,
+  type SyncDiffSummary,
+} from "./SyncDiffPanel";
 import type { DiffEntry } from "@/lib/types";
 import type { SyncLink } from "@/lib/sync-link";
 
@@ -28,8 +33,17 @@ const link: SyncLink = {
   rightRoot: "/R",
 };
 
-function renderPanel(over: Partial<SyncDiffPanelProps> = {}) {
-  const props: SyncDiffPanelProps = {
+const summary: SyncDiffSummary = {
+  status: "done",
+  total: 21,
+  diffCount: 5,
+  diverged: false,
+  error: null,
+};
+
+function makeModalProps(over: Partial<SyncDiffModalProps> = {}): SyncDiffModalProps {
+  return {
+    open: true,
     link,
     leftPath: "/L",
     rightPath: "/R",
@@ -43,32 +57,97 @@ function renderPanel(over: Partial<SyncDiffPanelProps> = {}) {
     onCreateMissing: vi.fn(),
     onReturnAlign: vi.fn(),
     onUnlink: vi.fn(),
+    onClose: vi.fn(),
     ...over,
   };
-  render(<SyncDiffPanel {...props} />);
+}
+
+function renderModal(over: Partial<SyncDiffModalProps> = {}) {
+  const props = makeModalProps(over);
+  render(<SyncDiffModal {...props} />);
   return props;
 }
 
-describe("SyncDiffPanel（v0.18 同步比对面板）", () => {
-  it("渲染条目、状态标签与总数", () => {
-    renderPanel();
-    expect(screen.getByText("a.txt")).toBeTruthy();
-    expect(screen.getByText("仅左侧")).toBeTruthy();
-    expect(screen.getByText("仅右侧")).toBeTruthy();
-    expect(screen.getByText("4 项")).toBeTruthy();
-    expect(screen.getByText("已对齐")).toBeTruthy();
+describe("SyncDiffStatusBar（状态栏摘要段）", () => {
+  it("完成态显示总数与差异数,点击打开模态", () => {
+    const onOpen = vi.fn();
+    render(<SyncDiffStatusBar summary={summary} onOpen={onOpen} />);
+    expect(screen.getByText("21 项 · 5 差异")).toBeTruthy();
+    fireEvent.click(screen.getByTitle("查看同步比对结果（Ctrl+Shift+X）"));
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
-  it("只看差异过滤掉 same 条目", () => {
-    renderPanel();
-    expect(screen.getByText("d.txt")).toBeTruthy();
+  it("一致时显示「一致」;未对齐为 warn 色调", () => {
+    const { rerender } = render(
+      <SyncDiffStatusBar summary={{ ...summary, diffCount: 0 }} onOpen={vi.fn()} />,
+    );
+    expect(screen.getByText("21 项 · 一致")).toBeTruthy();
+
+    rerender(
+      <SyncDiffStatusBar summary={{ ...summary, diverged: true }} onOpen={vi.fn()} />,
+    );
+    expect(screen.getByText("未对齐 · 21 项")).toBeTruthy();
+    expect(
+      document.querySelector('[data-sync-diff-status="warn"]'),
+    ).not.toBeNull();
+  });
+
+  it("运行中与失败态", () => {
+    const { rerender } = render(
+      <SyncDiffStatusBar summary={{ ...summary, status: "running" }} onOpen={vi.fn()} />,
+    );
+    expect(screen.getByText("比对中…")).toBeTruthy();
+
+    rerender(
+      <SyncDiffStatusBar
+        summary={{ ...summary, status: "error", error: "未连接" }}
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("比对失败")).toBeTruthy();
+    expect(
+      document.querySelector('[data-sync-diff-status="error"]'),
+    ).not.toBeNull();
+  });
+});
+
+describe("SyncDiffModal（v0.18.2 结果模态）", () => {
+  it("open=false 不渲染任何内容", () => {
+    const { container } = render(<SyncDiffModal {...makeModalProps({ open: false })} />);
+    expect(container.querySelector("[data-sync-diff-modal]")).toBeNull();
+  });
+
+  it("渲染条目、状态与对齐徽标;只看差异过滤 same", () => {
+    renderModal();
+    expect(screen.getByText("a.txt")).toBeTruthy();
+    expect(screen.getByText("仅左侧")).toBeTruthy();
+    expect(screen.getByText("已对齐")).toBeTruthy();
     fireEvent.click(screen.getByText("只看差异"));
     expect(screen.queryByText("d.txt")).toBeNull();
     expect(screen.getByText("a.txt")).toBeTruthy();
   });
 
-  it("未对齐显示横幅与三个操作按钮", () => {
-    const props = renderPanel({
+  it("Esc 关闭;遮罩空白点击关闭", () => {
+    const props = renderModal();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+    const overlay = document.querySelector("[data-sync-diff-modal]")!;
+    fireEvent.mouseDown(overlay, { target: overlay });
+    expect(props.onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("工具行:交换左右 / 重新对齐 / 断开链接", () => {
+    const props = renderModal();
+    fireEvent.click(screen.getByText("交换左右"));
+    expect(props.onSwap).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText("重新对齐"));
+    expect(props.onRealign).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText("断开链接"));
+    expect(props.onUnlink).toHaveBeenCalledTimes(1);
+  });
+
+  it("未对齐横幅:三按钮可用", () => {
+    const props = renderModal({
       alignment: {
         state: "diverged",
         layer: "a/b",
@@ -83,12 +162,10 @@ describe("SyncDiffPanel（v0.18 同步比对面板）", () => {
     expect(props.onCreateMissing).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByText("返回对齐"));
     expect(props.onReturnAlign).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByText("断开链接"));
-    expect(props.onUnlink).toHaveBeenCalled();
   });
 
-  it("对侧不支持 mkdir 时隐藏「新建并进入」", () => {
-    renderPanel({
+  it("对侧不可 mkdir 时隐藏「新建并进入」", () => {
+    renderModal({
       alignment: {
         state: "diverged",
         layer: "",
@@ -104,7 +181,7 @@ describe("SyncDiffPanel（v0.18 同步比对面板）", () => {
   });
 
   it("一侧越界显示离开根目录提示", () => {
-    renderPanel({
+    renderModal({
       alignment: {
         state: "diverged",
         layer: "",
@@ -118,15 +195,8 @@ describe("SyncDiffPanel（v0.18 同步比对面板）", () => {
     expect(screen.queryByText("在对侧新建并进入")).toBeNull();
   });
 
-  it("折叠后仅存头部", () => {
-    renderPanel();
-    fireEvent.click(screen.getByTitle("折叠面板"));
-    expect(screen.queryByText("a.txt")).toBeNull();
-    expect(screen.getByText("同步比对")).toBeTruthy();
-  });
-
   it("比对失败显示错误", () => {
-    renderPanel({ status: "error", entries: null, error: "未连接" });
+    renderModal({ status: "error", entries: null, error: "未连接" });
     expect(screen.getByText(/比对失败/)).toBeTruthy();
   });
 });

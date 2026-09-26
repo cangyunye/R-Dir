@@ -141,7 +141,7 @@ import { Trash2, Bird } from "lucide-react";
 import { PaneListMenu } from "@/components/PaneListMenu";
 import { PropertiesDialog } from "@/components/PropertiesDialog";
 import { DiffDialog } from "@/components/DiffDialog";
-import { SyncDiffPanel } from "@/components/SyncDiffPanel";
+import { SyncDiffModal } from "@/components/SyncDiffPanel";
 import { MenuBar } from "@/components/MenuBar";
 
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
@@ -1431,6 +1431,8 @@ useEffect(() => {
   } | null>(null);
   const syncSeqRef = useRef(0);
   const syncDiffIdRef = useRef<string | null>(null);
+  /** v0.18.2 结果模态开关(状态栏段/Ctrl+Shift+X) */
+  const [syncResultsOpen, setSyncResultsOpen] = useState(false);
 
   /** v0.18 开启/断开同步比对：要求活动标签恰好两个路径窗格（排除 http 与标签视图） */
   const toggleSyncDiff = useCallback(() => {
@@ -1473,7 +1475,7 @@ useEffect(() => {
       setSyncLink(null);
     }
   }, [tabs, syncLink]);
-  /** 断链时取消在途比对并清空面板状态 */
+  /** 断链时取消在途比对、清空面板状态并关闭结果模态 */
   useEffect(() => {
     if (syncLink) return;
     const id = syncDiffIdRef.current;
@@ -1482,6 +1484,7 @@ useEffect(() => {
       void cancelDiff(id).catch(() => {});
     }
     setSyncRun(null);
+    setSyncResultsOpen(false);
   }, [syncLink]);
 
   /** 镜像跟随（方案 A1）：监听链接窗格路径变化（覆盖地址栏/侧栏/前进后退/双击定位等一切导航入口）。
@@ -1743,6 +1746,10 @@ useEffect(() => {
     const target = syncLink ? mirrorPath(syncLink, oSide, fullRel) : "";
     return backendCaps(backendKind(target)).canMkdir;
   })();
+  /** 状态栏摘要:差异数(status !== same 的条目) */
+  const syncDiffCount = syncRun?.entries
+    ? syncRun.entries.reduce((n, e) => (e.status !== "same" ? n + 1 : n), 0)
+    : 0;
 
   /** v0.18 差异窗口双击定位：在对应窗格进入父目录并选中该条目 */
   const locateFromDiff = useCallback(
@@ -2417,6 +2424,13 @@ useEffect(() => {
     toggleTheme: () => toggleTheme(),
     openSettings: () => setSettingsOpen(true),
     openHelp: () => setSettingsOpen(true),
+    toggleSyncResults: () => {
+      if (!syncLinkRef.current) {
+        showError("未开启同步比对（菜单「工具 → 同步比对（左右窗格）」可开启）");
+        return;
+      }
+      setSyncResultsOpen((v) => !v);
+    },
   };
 
   useEffect(() => {
@@ -2736,9 +2750,10 @@ useEffect(() => {
         )}
       </div>
 
-      {/* v0.18 同步比对面板：底部横条，跨全宽，关闭 = 断开链接 */}
+      {/* v0.18.2 同步比对结果模态:状态栏段 / Ctrl+Shift+X 打开,实时更新;断开链接 = 清理 */}
       {syncLink && syncPanes && (
-        <SyncDiffPanel
+        <SyncDiffModal
+          open={syncResultsOpen}
           link={syncLink}
           leftPath={syncPanes.lp.path}
           rightPath={syncPanes.rp.path}
@@ -2752,6 +2767,7 @@ useEffect(() => {
           onCreateMissing={() => void createMissingAndEnter()}
           onReturnAlign={returnToAlignment}
           onUnlink={() => setSyncLink(null)}
+          onClose={() => setSyncResultsOpen(false)}
         />
       )}
 
@@ -2766,6 +2782,20 @@ useEffect(() => {
         transfer={transfer}
         onCancelDownload={(url) => void cancelHttpDownload(url)}
         onSharePanel={() => setSharePanelOpen(true)}
+        syncDiff={
+          syncLink && syncPanes
+            ? {
+                summary: {
+                  status: syncRun?.status ?? "running",
+                  total: syncRun?.entries?.length ?? 0,
+                  diffCount: syncDiffCount,
+                  diverged: syncPanes.alignment.state === "diverged",
+                  error: syncRun?.error ?? null,
+                },
+                onOpen: () => setSyncResultsOpen(true),
+              }
+            : undefined
+        }
       />
 
       <ShareDialog

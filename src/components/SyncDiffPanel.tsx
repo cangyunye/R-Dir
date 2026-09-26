@@ -1,14 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeftRight,
-  ChevronDown,
-  ChevronUp,
   FolderPlus,
   Link2,
   Link2Off,
   Loader2,
   Undo2,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -64,17 +63,72 @@ function SideChip({ side, path }: { side: "left" | "right"; path: string }) {
         className="h-1.5 w-1.5 shrink-0 rounded-full"
         style={{ background: side === "left" ? MARK_COLORS["left-only"] : MARK_COLORS["right-only"] }}
       />
-      <span className="max-w-40 truncate">{basename(path) || path}</span>
+      <span className="max-w-52 truncate">{basename(path) || path}</span>
     </span>
   );
 }
 
-export interface SyncDiffPanelProps {
+export type SyncDiffStatus = "running" | "done" | "cancelled" | "error";
+
+/** 状态栏摘要段的数据(不感知比对细节) */
+export interface SyncDiffSummary {
+  status: SyncDiffStatus;
+  total: number;
+  diffCount: number;
+  diverged: boolean;
+  error?: string | null;
+}
+
+/** v0.18.2 状态栏摘要段:实时显示比对概况,点击打开结果模态 */
+export function SyncDiffStatusBar({
+  summary,
+  onOpen,
+}: {
+  summary: SyncDiffSummary;
+  onOpen: () => void;
+}) {
+  const tone =
+    summary.status === "error" ? "error" : summary.diverged ? "warn" : "ok";
+  const text =
+    summary.status === "running"
+      ? "比对中…"
+      : summary.status === "error"
+        ? "比对失败"
+        : summary.status === "cancelled"
+          ? "已取消"
+          : summary.diverged
+            ? `未对齐 · ${summary.total} 项`
+            : summary.diffCount > 0
+              ? `${summary.total} 项 · ${summary.diffCount} 差异`
+              : `${summary.total} 项 · 一致`;
+  return (
+    <button
+      data-sync-diff-status={tone}
+      onClick={onOpen}
+      title="查看同步比对结果（Ctrl+Shift+X）"
+      className={cn(
+        "flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] hover:bg-muted",
+        tone === "error" && "border-red-500/40 text-red-600 dark:text-red-400",
+        tone === "warn" && "border-amber-500/40 text-amber-700 dark:text-amber-400",
+      )}
+    >
+      {summary.status === "running" ? (
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+      ) : (
+        <Link2 className="h-3 w-3 shrink-0" />
+      )}
+      <span className="max-w-44 truncate">{text}</span>
+    </button>
+  );
+}
+
+export interface SyncDiffModalProps {
+  open: boolean;
   link: SyncLink;
   leftPath: string;
   rightPath: string;
   alignment: LinkAlignment;
-  status: "running" | "done" | "cancelled" | "error";
+  status: SyncDiffStatus;
   entries: DiffEntry[] | null;
   error?: string | null;
   /** 未对齐时「在对侧新建并进入」是否可用（对侧 canMkdir） */
@@ -84,10 +138,14 @@ export interface SyncDiffPanelProps {
   onCreateMissing: () => void;
   onReturnAlign: () => void;
   onUnlink: () => void;
+  onClose: () => void;
 }
 
-/** v0.18 底部实时比对面板（同步浏览）：跨全宽横条，可折叠，关闭 = 断开链接。 */
-export function SyncDiffPanel({
+const GRID_COLS = "minmax(0,1fr) 130px 130px 100px";
+
+/** v0.18.2 同步比对结果模态:按需打开,实时更新;Esc/遮罩空白/X 关闭 */
+export function SyncDiffModal({
+  open,
   link,
   leftPath,
   rightPath,
@@ -101,16 +159,31 @@ export function SyncDiffPanel({
   onCreateMissing,
   onReturnAlign,
   onUnlink,
-}: SyncDiffPanelProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  onClose,
+}: SyncDiffModalProps) {
   const [onlyDiff, setOnlyDiff] = useState(false);
 
-  const aligned = alignment.state === "aligned";
+  // Esc 关闭(捕获阶段,与 SettingsDialog 同模式)
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, onClose]);
+
   const rows = useMemo(() => {
     if (!entries) return [];
     return onlyDiff ? entries.filter((e) => e.status !== "same") : entries;
   }, [entries, onlyDiff]);
 
+  if (!open) return null;
+
+  const aligned = alignment.state === "aligned";
   const missingText =
     alignment.state === "diverged" && alignment.outsideRoot
       ? "一侧已离开链接根目录"
@@ -132,31 +205,77 @@ export function SyncDiffPanel({
 
   return (
     <div
-      data-sync-diff-panel=""
+      data-sync-diff-modal=""
       data-link-tab={link.tabId}
-      className="shrink-0 border-t bg-muted/20 text-[13px]"
+      className="fixed inset-0 z-[85] flex items-center justify-center bg-black/40"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      {/* 头部（折叠后仅存此行） */}
-      <div className="flex h-9 items-center gap-2 px-2">
-        <Link2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="shrink-0 text-xs font-semibold">同步比对</span>
-        <span
-          className={cn(
-            "inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-[10px] font-medium",
-            aligned ? "bg-green-500/15 text-green-700 dark:text-green-400" : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-          )}
-        >
-          {aligned ? "已对齐" : "未对齐"}
-        </span>
-        <SideChip side="left" path={leftPath} />
-        <span className="text-[10px] text-muted-foreground">⇄</span>
-        <SideChip side="right" path={rightPath} />
-        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
-          {status === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
-          {status === "error" && <span className="text-red-600 dark:text-red-400">{statusText}{error ? `：${error}` : ""}</span>}
-          {status !== "error" && statusText}
-        </span>
-        <span className="ml-auto flex items-center gap-0.5">
+      <div className="flex h-[min(600px,85vh)] w-[720px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl">
+        {/* 头部 */}
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
+          <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="shrink-0 text-sm font-semibold">同步比对</span>
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-[10px] font-medium",
+              aligned
+                ? "bg-green-500/15 text-green-700 dark:text-green-400"
+                : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+            )}
+          >
+            {aligned ? "已对齐" : "未对齐"}
+          </span>
+          <SideChip side="left" path={leftPath} />
+          <span className="text-[10px] text-muted-foreground">⇄</span>
+          <SideChip side="right" path={rightPath} />
+          <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+            {status === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
+            {status === "error" && (
+              <span className="text-red-600 dark:text-red-400">
+                {statusText}
+                {error ? `：${error}` : ""}
+              </span>
+            )}
+            {status !== "error" && statusText}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0"
+            onClick={onClose}
+            title="关闭（Esc）"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* 未对齐横幅 */}
+        {missingText && (
+          <div className="flex shrink-0 items-center gap-2 border-b bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 truncate">{missingText}，更深层暂不比对。</span>
+            <span className="ml-auto flex shrink-0 items-center gap-1">
+              {canCreate && (
+                <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={onCreateMissing}>
+                  <FolderPlus className="mr-1 h-3 w-3" /> 在对侧新建并进入
+                </Button>
+              )}
+              {canReturn && (
+                <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={onReturnAlign}>
+                  返回对齐
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={onUnlink}>
+                断开链接
+              </Button>
+            </span>
+          </div>
+        )}
+
+        {/* 工具行 */}
+        <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
           <Button
             variant="ghost"
             size="sm"
@@ -166,62 +285,28 @@ export function SyncDiffPanel({
           >
             只看差异
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onSwap} title="交换左右">
-            <ArrowLeftRight className="h-3.5 w-3.5" />
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onSwap} title="交换左右方位后重算">
+            <ArrowLeftRight className="mr-1 h-3 w-3" /> 交换左右
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onRealign} title="重新对齐（两侧跳回链接锚点）">
-            <Undo2 className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => setCollapsed((v) => !v)}
-            title={collapsed ? "展开面板" : "折叠面板"}
-          >
-            {collapsed ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onRealign} title="两侧跳回链接锚点">
+            <Undo2 className="mr-1 h-3 w-3" /> 重新对齐
           </Button>
           <Button
             variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-red-600 hover:text-red-700 dark:text-red-400"
+            size="sm"
+            className="ml-auto h-7 px-2 text-xs text-red-600 hover:text-red-700 dark:text-red-400"
             onClick={onUnlink}
             title="断开链接并关闭面板"
           >
-            <Link2Off className="h-3.5 w-3.5" />
+            <Link2Off className="mr-1 h-3 w-3" /> 断开链接
           </Button>
-        </span>
-      </div>
-
-      {/* 未对齐横幅 */}
-      {!collapsed && missingText && (
-        <div className="flex items-center gap-2 border-t bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-400">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span className="min-w-0 truncate">{missingText}，更深层暂不比对。</span>
-          <span className="ml-auto flex shrink-0 items-center gap-1">
-            {canCreate && (
-              <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={onCreateMissing}>
-                <FolderPlus className="mr-1 h-3 w-3" /> 在对侧新建并进入
-              </Button>
-            )}
-            {canReturn && (
-              <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={onReturnAlign}>
-                返回对齐
-              </Button>
-            )}
-            <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={onUnlink}>
-              断开链接
-            </Button>
-          </span>
         </div>
-      )}
 
-      {/* 条目列表 */}
-      {!collapsed && (
-        <div className="max-h-56 overflow-y-auto border-t">
+        {/* 条目列表 */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <div
             className="sticky top-0 grid items-center border-b bg-muted/40 text-[11px] font-medium text-muted-foreground"
-            style={{ gridTemplateColumns: "minmax(0,1fr) 110px 110px 92px" }}
+            style={{ gridTemplateColumns: GRID_COLS }}
           >
             <span className="px-2 py-1">名称</span>
             <span className="px-2 py-1 text-right">左大小</span>
@@ -229,7 +314,7 @@ export function SyncDiffPanel({
             <span className="px-2 py-1">状态</span>
           </div>
           {rows.length === 0 ? (
-            <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+            <div className="px-2 py-6 text-center text-xs text-muted-foreground">
               {status === "running" ? "正在比对…" : entries && entries.length > 0 ? "没有差异条目" : "（空目录）"}
             </div>
           ) : (
@@ -239,7 +324,7 @@ export function SyncDiffPanel({
                 <div
                   key={`${e.name}:${e.left?.path ?? ""}:${e.right?.path ?? ""}`}
                   className="grid items-center border-b text-xs hover:bg-muted/40"
-                  style={{ gridTemplateColumns: "minmax(0,1fr) 110px 110px 92px" }}
+                  style={{ gridTemplateColumns: GRID_COLS }}
                   title={e.left?.path && e.right?.path ? `${e.left.path} ⇄ ${e.right.path}` : e.left?.path ?? e.right?.path}
                 >
                   <span className={cn("truncate px-2 py-1", e.is_dir && "font-medium")}>{e.name}</span>
@@ -255,7 +340,7 @@ export function SyncDiffPanel({
             })
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

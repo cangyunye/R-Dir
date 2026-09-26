@@ -1,6 +1,7 @@
 import { AlertCircle, FolderOpen, Layers, Loader2, X , Share2 } from "lucide-react";
 import { formatSize } from "@/lib/format";
 import type { TransferProgress } from "@/lib/types";
+import { SyncDiffStatusBar, type SyncDiffSummary } from "@/components/SyncDiffPanel";
 
 const PHASE_LABEL: Record<TransferProgress["phase"], string> = {
   copy: "复制",
@@ -25,6 +26,7 @@ export function StatusBar({
   transfer,
   onCancelDownload,
   onSharePanel,
+  syncDiff,
 }: {
   path: string;
   total: number;
@@ -37,6 +39,11 @@ export function StatusBar({
   onCancelDownload?: (url: string) => void;
   /** v0.7：打开分享管理面板 */
   onSharePanel?: () => void;
+  /** v0.18.2 同步比对摘要段（无链接时不传）：点击打开结果模态 */
+  syncDiff?: {
+    summary: SyncDiffSummary;
+    onOpen: () => void;
+  };
 }) {
   const pct =
     transfer && transfer.fileTotal > 0
@@ -87,6 +94,7 @@ export function StatusBar({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-3">
+          {syncDiff && <SyncDiffStatusBar summary={syncDiff.summary} onOpen={syncDiff.onOpen} />}
           {onSharePanel && (
             <button
               onClick={onSharePanel}
