@@ -199,4 +199,40 @@ describe("SyncDiffModal（v0.18.2 结果模态）", () => {
     renderModal({ status: "error", entries: null, error: "未连接" });
     expect(screen.getByText(/比对失败/)).toBeTruthy();
   });
+
+  it("v0.19 双击两侧同在的文件行直接同名比较（免基准）", () => {
+    const onCompare = vi.fn();
+    renderModal({ onCompare });
+    fireEvent.doubleClick(screen.getByText("c.txt"));
+    expect(onCompare).toHaveBeenCalledWith("/L/c.txt", "/R/c.txt", "c.txt");
+    // 双击图标按钮同样触发（c.txt/d.txt 两行都有图标）
+    fireEvent.click(screen.getAllByTitle("文本比较这两个文件")[0]);
+    expect(onCompare).toHaveBeenCalledTimes(2);
+  });
+
+  it("v0.19 单侧条目与类型冲突行不可比较（无图标、双击无效）", () => {
+    const onCompare = vi.fn();
+    const dirEntries: DiffEntry[] = [
+      {
+        name: "only_right.txt",
+        is_dir: false,
+        left: null,
+        right: side("/R/only_right.txt", 5),
+        status: "right-only",
+      },
+      {
+        name: "mixed",
+        is_dir: true,
+        left: side("/L/mixed", 0),
+        right: { path: "/R/mixed", size: 0, modified: 1, is_dir: false },
+        status: "different",
+        reason: "type",
+      },
+    ];
+    renderModal({ onCompare, entries: dirEntries });
+    fireEvent.doubleClick(screen.getByText("only_right.txt"));
+    fireEvent.doubleClick(screen.getByText("mixed"));
+    expect(onCompare).not.toHaveBeenCalled();
+    expect(screen.queryByTitle("文本比较这两个文件")).toBeNull();
+  });
 });

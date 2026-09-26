@@ -24,6 +24,10 @@ import {
   Info,
   ArrowLeftRight,
   Link2,
+  GitCompare,
+  Crosshair,
+  ListTree,
+  FileDiff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
@@ -168,6 +172,12 @@ export function FileList({
   onPropertiesDir,
   onDiff,
   onSyncDiff,
+  compareBase,
+  onSetCompareBase,
+  onCompareWithBase,
+  onComparePick,
+  onCompareSelected,
+  onViewPatch,
   diffMarks,
   linkBadge,
 }: {
@@ -247,6 +257,18 @@ export function FileList({
   onDiff: () => void;
   /** v0.18 空白处右键「同步比对（左右窗格）」：开启/断开链接 */
   onSyncDiff: () => void;
+  /** v0.19 文本比较基准（跨窗格共享的全局状态，与应用内剪贴板同模式） */
+  compareBase?: { path: string; name: string } | null;
+  /** v0.19 右键「设为比较基准」 */
+  onSetCompareBase?: (entry: FileEntry, paneId: number) => void;
+  /** v0.19 右键「与基准比较」 */
+  onCompareWithBase?: (entry: FileEntry) => void;
+  /** v0.19 右键「与另一文件比较…」：打开窗格选择器 */
+  onComparePick?: (entry: FileEntry) => void;
+  /** v0.19 右键「比较所选两个文件」（同目录双选） */
+  onCompareSelected?: (paths: [string, string]) => void;
+  /** v0.19 右键 .patch/.diff「查看 Diff」 */
+  onViewPatch?: (path: string) => void;
   /** v0.18 同步比对行内标注（name → 判定）；仅链接且窗格正处比对层时传入 */
   diffMarks?: DiffMarkMap;
   /** v0.18 同步比对链接标识：该窗格的方位（undefined = 未链接） */
@@ -972,6 +994,49 @@ export function FileList({
                 <ContextMenuItem onClick={() => onCopyPath(entry.path)}>
                   <Clipboard className="mr-2 h-4 w-4" /> 复制路径
                 </ContextMenuItem>
+                {/* v0.19 文本比较（仅文件；基准为跨窗格全局状态，同应用内剪贴板模式） */}
+                {!entry.is_dir && (onSetCompareBase || onCompareWithBase || onComparePick) && (
+                  <MenuGroup
+                    id="compare"
+                    label="比较"
+                    icon={<GitCompare className="mr-2 h-4 w-4" />}
+                    expanded={expandedMenu === "compare"}
+                    onToggle={toggleMenuGroup}
+                  >
+                    {targets.length === 2 &&
+                      targets.every((p) => {
+                        const t = entries.find((x) => x.path === p);
+                        return !!t && !t.is_dir;
+                      }) && (
+                        <ContextMenuItem
+                          onClick={() => onCompareSelected?.(targets as [string, string])}
+                        >
+                          <GitCompare className="mr-2 h-4 w-4" /> 比较所选两个文件
+                        </ContextMenuItem>
+                      )}
+                    <ContextMenuItem onClick={() => onSetCompareBase?.(entry, paneId)}>
+                      <Crosshair className="mr-2 h-4 w-4" />
+                      {compareBase?.path === entry.path ? "取消比较基准" : "设为比较基准"}
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      disabled={!compareBase}
+                      onClick={() => onCompareWithBase?.(entry)}
+                    >
+                      <GitCompare className="mr-2 h-4 w-4" /> 与基准比较
+                      {!compareBase && (
+                        <span className="ml-1 text-[10px] text-muted-foreground">（先设基准）</span>
+                      )}
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => onComparePick?.(entry)}>
+                      <ListTree className="mr-2 h-4 w-4" /> 与另一文件比较…
+                    </ContextMenuItem>
+                    {(entry.extension === "patch" || entry.extension === "diff") && (
+                      <ContextMenuItem onClick={() => onViewPatch?.(entry.path)}>
+                        <FileDiff className="mr-2 h-4 w-4" /> 查看 Diff
+                      </ContextMenuItem>
+                    )}
+                  </MenuGroup>
+                )}
                 <ContextMenuSeparator />
                 {/* 标签（Finder 风格，折叠组内联展开） */}
                 <MenuGroup

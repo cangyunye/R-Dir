@@ -31,6 +31,7 @@ import {
   GitCompare,
   Link2,
   Link2Off,
+  FileDiff,
   Download,
 } from "lucide-react";
 import {
@@ -94,6 +95,8 @@ export interface MenuActions {
   /** v0.18 同步比对（底部实时面板）：开启/断开链接 */
   onOpenSyncDiff: () => void;
   syncDiffActive: boolean;
+  /** v0.19 Git Diff 粘贴导入（解析 unified diff 渲染左右差异） */
+  onOpenGitDiff: () => void;
   // 视图 / 全局
   dark: boolean;
   onToggleTheme: () => void;
@@ -322,6 +325,10 @@ export function MenuBar(actions: MenuActions) {
               <Link2 className="mr-2 h-4 w-4" /> 同步比对（左右窗格）
             </>
           )}
+        </DropdownMenuItem>
+        {/* v0.19 Git Diff：粘贴 unified diff 直接渲染左右差异 */}
+        <DropdownMenuItem onClick={actions.onOpenGitDiff}>
+          <FileDiff className="mr-2 h-4 w-4" /> 打开 Git Diff…
         </DropdownMenuItem>
       </MenuButton>
 

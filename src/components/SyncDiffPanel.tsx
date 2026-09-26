@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowLeftRight,
   FolderPlus,
+  GitCompare,
   Link2,
   Link2Off,
   Loader2,
@@ -138,6 +139,8 @@ export interface SyncDiffModalProps {
   onCreateMissing: () => void;
   onReturnAlign: () => void;
   onUnlink: () => void;
+  /** v0.19 双击/点图标对两侧同名文件直接文本比较（免基准）；左右路径取条目自带的完整路径 */
+  onCompare?: (left: string, right: string, name: string) => void;
   onClose: () => void;
 }
 
@@ -159,6 +162,7 @@ export function SyncDiffModal({
   onCreateMissing,
   onReturnAlign,
   onUnlink,
+  onCompare,
   onClose,
 }: SyncDiffModalProps) {
   const [onlyDiff, setOnlyDiff] = useState(false);
@@ -212,7 +216,13 @@ export function SyncDiffModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex h-[min(600px,85vh)] w-[720px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl">
+      <div
+        className="flex flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
+        style={{
+          width: "calc(min(720px, 94vw) / var(--rdir-zoom, 1))",
+          height: "calc(min(600px, 85vh) / var(--rdir-zoom, 1))",
+        }}
+      >
         {/* 头部 */}
         <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
           <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -320,12 +330,29 @@ export function SyncDiffModal({
           ) : (
             rows.map((e) => {
               const st = statusLabel(e);
+              // v0.19 两侧都存在且都是文件 → 可直接同名文本比较（免基准）
+              const comparable =
+                !!onCompare &&
+                !!e.left &&
+                !!e.right &&
+                !e.is_dir &&
+                !e.left.is_dir &&
+                !e.right.is_dir;
               return (
                 <div
                   key={`${e.name}:${e.left?.path ?? ""}:${e.right?.path ?? ""}`}
-                  className="grid items-center border-b text-xs hover:bg-muted/40"
+                  className="group grid items-center border-b text-xs hover:bg-muted/40"
                   style={{ gridTemplateColumns: GRID_COLS }}
-                  title={e.left?.path && e.right?.path ? `${e.left.path} ⇄ ${e.right.path}` : e.left?.path ?? e.right?.path}
+                  title={
+                    comparable
+                      ? "双击直接文本比较两侧同名文件"
+                      : e.left?.path && e.right?.path
+                        ? `${e.left.path} ⇄ ${e.right.path}`
+                        : e.left?.path ?? e.right?.path
+                  }
+                  onDoubleClick={() => {
+                    if (comparable) onCompare!(e.left!.path, e.right!.path, e.name);
+                  }}
                 >
                   <span className={cn("truncate px-2 py-1", e.is_dir && "font-medium")}>{e.name}</span>
                   <span className="px-2 py-1 text-right tabular-nums text-muted-foreground">
@@ -334,7 +361,18 @@ export function SyncDiffModal({
                   <span className="px-2 py-1 text-right tabular-nums text-muted-foreground">
                     {e.right ? (e.right.is_dir ? "—" : formatSize(e.right.size)) : "—"}
                   </span>
-                  <span className={cn("px-2 py-1", st.className)}>{st.text}</span>
+                  <span className={cn("flex items-center gap-1 px-2 py-1", st.className)}>
+                    {st.text}
+                    {comparable && (
+                      <button
+                        className="shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-accent group-hover:opacity-70"
+                        title="文本比较这两个文件"
+                        onClick={() => onCompare!(e.left!.path, e.right!.path, e.name)}
+                      >
+                        <GitCompare className="h-3 w-3" />
+                      </button>
+                    )}
+                  </span>
                 </div>
               );
             })

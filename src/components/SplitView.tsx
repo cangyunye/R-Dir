@@ -80,6 +80,12 @@ export interface PaneHandlers {
   onDiff: () => void;
   /** v0.18 空白处右键「同步比对（左右窗格）」：开启/断开链接 */
   onSyncDiff: () => void;
+  /** v0.19 文本比较基准（跨窗格全局状态） */
+  onSetCompareBase: (entry: FileEntry, paneId: number) => void;
+  onCompareWithBase: (entry: FileEntry) => void;
+  onComparePick: (entry: FileEntry) => void;
+  onCompareSelected: (paths: [string, string]) => void;
+  onViewPatch: (path: string) => void;
 }
 
 function PaneView({
@@ -100,6 +106,7 @@ function PaneView({
   highlight,
   diffMarks,
   linkBadge,
+  compareBase,
   handlers,
 }: {
   pane: PaneState;
@@ -122,6 +129,8 @@ function PaneView({
   /** v0.18 同步比对标注入（窗格不在比对层时为 undefined） */
   diffMarks?: DiffMarkMap;
   linkBadge?: LinkSide;
+  /** v0.19 文本比较基准（跨窗格全局状态） */
+  compareBase?: { path: string; name: string } | null;
   handlers: PaneHandlers;
 }) {
   const h = handlers;
@@ -210,6 +219,12 @@ dragTarget={dragOver?.targetPaneId === pane.id}
         onPropertiesDir={h.onPropertiesDir}
         onDiff={h.onDiff}
         onSyncDiff={h.onSyncDiff}
+        compareBase={compareBase}
+        onSetCompareBase={h.onSetCompareBase}
+        onCompareWithBase={h.onCompareWithBase}
+        onComparePick={h.onComparePick}
+        onCompareSelected={h.onCompareSelected}
+        onViewPatch={h.onViewPatch}
         diffMarks={diffMarks}
         linkBadge={linkBadge}
       />
@@ -297,6 +312,7 @@ export function SplitView({
   highlight,
   diffMarksByPane,
   linkBadgeByPane,
+  compareBase,
   handlers,
 }: {
   node: PaneNode;
@@ -318,6 +334,8 @@ export function SplitView({
   /** v0.18 同步比对：窗格 → 行内标注 / 表头链接方位标识 */
   diffMarksByPane?: Record<number, DiffMarkMap>;
   linkBadgeByPane?: Record<number, LinkSide>;
+  /** v0.19 文本比较基准（跨窗格全局状态） */
+  compareBase?: { path: string; name: string } | null;
   handlers: PaneHandlers;
 }) {
   if (node.type === "pane") {
@@ -342,6 +360,7 @@ export function SplitView({
         highlight={highlight}
         diffMarks={diffMarksByPane?.[node.paneId]}
         linkBadge={linkBadgeByPane?.[node.paneId]}
+        compareBase={compareBase}
         handlers={handlers}
       />
     );
@@ -372,6 +391,7 @@ export function SplitView({
           highlight={highlight}
           diffMarksByPane={diffMarksByPane}
           linkBadgeByPane={linkBadgeByPane}
+          compareBase={compareBase}
           handlers={handlers}
         />
       </div>
@@ -404,6 +424,7 @@ export function SplitView({
           highlight={highlight}
           diffMarksByPane={diffMarksByPane}
           linkBadgeByPane={linkBadgeByPane}
+          compareBase={compareBase}
           handlers={handlers}
         />
       </div>

@@ -271,6 +271,47 @@ export interface DiffOutcome {
   cancelled: boolean;
 }
 
+// ---- v0.19 文本比较（文件 vs 文件 / git diff 解析共用 hunk 模型） ----
+
+/** 参与文本比较的一侧（远程侧经临时下载，读后即删） */
+export interface TextSide {
+  path: string;
+  localPath: string;
+  isTemp: boolean;
+  /** 含非 UTF-8 字节，已 lossy 转换 */
+  lossy: boolean;
+  bytes: number;
+  lines: number;
+}
+
+/** 一段连续同类型行：eq 相同 / del 左侧独有 / add 右侧独有；行号 1 基 */
+export interface TextSegment {
+  kind: "eq" | "del" | "add";
+  leftStart: number | null;
+  rightStart: number | null;
+  lines: string[];
+}
+
+export interface TextDiffOutcome {
+  left: TextSide;
+  right: TextSide;
+  segments: TextSegment[];
+  additions: number;
+  deletions: number;
+  same: boolean;
+  /** 中段过大退化为整块替换（未做行级对齐） */
+  coarse: boolean;
+}
+
+/** 读取文本文件（.patch/.diff「查看 Diff」解析用） */
+export interface TextFileContent {
+  path: string;
+  localPath: string;
+  isTemp: boolean;
+  lossy: boolean;
+  text: string;
+}
+
 // ---- v0.7 窗口分享 ----
 export interface ShareConnLog {
   ip: string;

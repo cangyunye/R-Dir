@@ -23,9 +23,12 @@ export interface PaneListItem {
 export function PaneListMenu({
   panes,
   onActivate,
+  markPaneKey,
 }: {
   panes: PaneListItem[];
   onActivate: (tabId: number, paneId: number) => void;
+  /** v0.19 文本比较基准所在窗格（`${tabId}:${paneId}`），列表中显示标记 */
+  markPaneKey?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -75,7 +78,15 @@ export function PaneListMenu({
                 <span className="w-3 shrink-0 text-center font-mono text-primary">
                   {p.active ? "*" : ""}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-xs">{p.title}</span>
+                <span className="min-w-0 flex-1 truncate text-xs">
+                  {markPaneKey === `${p.tabId}:${p.paneId}` && (
+                    <span
+                      className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle"
+                      title="文本比较基准所在窗格"
+                    />
+                  )}
+                  {p.title}
+                </span>
                 <span className="max-w-44 truncate text-[10px] text-muted-foreground">
                   {p.path}
                 </span>

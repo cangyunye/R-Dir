@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
@@ -141,6 +141,9 @@ import { Trash2, Bird } from "lucide-react";
 import { PaneListMenu } from "@/components/PaneListMenu";
 import { PropertiesDialog } from "@/components/PropertiesDialog";
 import { DiffDialog } from "@/components/DiffDialog";
+import { TextDiffDialog, type TextDiffSource } from "@/components/TextDiffDialog";
+import { ComparePickDialog, type ComparePickPane } from "@/components/ComparePickDialog";
+import { GitDiffDialog } from "@/components/GitDiffDialog";
 import { SyncDiffModal } from "@/components/SyncDiffPanel";
 import { MenuBar } from "@/components/MenuBar";
 
@@ -1417,6 +1420,100 @@ useEffect(() => {
     rightPane: number;
   } | null>(null);
 
+  // ==================== v0.19 文本比较（任意两文件 / git diff 解析） ====================
+
+  /** 文本比较窗口来源 */
+  const [textDiffSource, setTextDiffSource] = useState<TextDiffSource | null>(null);
+  /** 比较基准（跨窗格全局状态，与应用内剪贴板同模式；不随会话保存） */
+  const [compareBase, setCompareBase] = useState<{
+    path: string;
+    name: string;
+    tabId: number;
+    paneId: number;
+  } | null>(null);
+  /** 「与另一文件比较…」选择器：当前基准侧条目 */
+  const [comparePickFor, setComparePickFor] = useState<FileEntry | null>(null);
+  /** Git Diff 粘贴导入对话框 */
+  const [gitDiffOpen, setGitDiffOpen] = useState(false);
+  /** v0.19 设/清基准的状态栏右下角瞬时提示 */
+  const [compareBaseHint, setCompareBaseHint] = useState<string | null>(null);
+  const compareBaseHintTimer = useRef<number | null>(null);
+  const showCompareBaseHint = useCallback((text: string) => {
+    setCompareBaseHint(text);
+    if (compareBaseHintTimer.current) window.clearTimeout(compareBaseHintTimer.current);
+    compareBaseHintTimer.current = window.setTimeout(() => setCompareBaseHint(null), 2600);
+  }, []);
+
+  const openTextDiff = useCallback(
+    (left: string, right: string, leftLabel?: string, rightLabel?: string) => {
+      setTextDiffSource({ kind: "files", left, right, leftLabel, rightLabel });
+    },
+    [],
+  );
+
+  const handleSetCompareBase = useCallback(
+    (entry: FileEntry, paneId: number) => {
+      if (compareBase && compareBase.path === entry.path) {
+        setCompareBase(null);
+        showCompareBaseHint("已清除比较基准");
+        return;
+      }
+      const tabId = tabsRef.current.find((t) => !!t.panes[paneId])?.id ?? -1;
+      setCompareBase({ path: entry.path, name: entry.name, tabId, paneId });
+      showCompareBaseHint(`已设为比较基准：${entry.name}`);
+    },
+    [compareBase, showCompareBaseHint],
+  );
+
+  const handleClearCompareBase = useCallback(() => {
+    setCompareBase(null);
+    showCompareBaseHint("已清除比较基准");
+  }, [showCompareBaseHint]);
+
+  const handleCompareWithBase = useCallback(
+    (entry: FileEntry) => {
+      if (!compareBase) {
+        showError("未设置比较基准：请先在另一个文件上右键「设为比较基准」");
+        return;
+      }
+      if (compareBase.path === entry.path) {
+        showError("与基准是同一个文件，无需比较");
+        return;
+      }
+      openTextDiff(compareBase.path, entry.path, compareBase.name, entry.name);
+    },
+    [compareBase, showError, openTextDiff],
+  );
+
+  const handleCompareSelected = useCallback(
+    (paths: [string, string]) => {
+      const base = (p: string) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p;
+      openTextDiff(paths[0], paths[1], base(paths[0]), base(paths[1]));
+    },
+    [openTextDiff],
+  );
+
+  /** 选择器候选窗格：所有窗格当前目录的文件（读内存列表，零 IO） */
+  const comparePickPanes = useMemo<ComparePickPane[]>(() => {
+    if (!comparePickFor) return [];
+    const out: ComparePickPane[] = [];
+    for (const t of tabs) {
+      for (const pid of collectPaneIds(t.root)) {
+        const p = t.panes[pid];
+        if (!p || p.tagId) continue;
+        out.push({
+          key: `${t.id}:${pid}`,
+          title: t.customTitle ?? t.title,
+          path: p.path,
+          files: p.entries
+            .filter((e) => !e.is_dir && e.path !== comparePickFor.path)
+            .map((e) => ({ name: e.name, path: e.path })),
+        });
+      }
+    }
+    return out;
+  }, [tabs, comparePickFor]);
+
   // ==================== v0.18 同步浏览 + 实时比对面板 ====================
 
   /** 链接状态（不随会话保存，D8）：开启即记录两侧锚点，随导航实时重算比对 */
@@ -2544,6 +2641,11 @@ useEffect(() => {
     },
     onDiff: openDiff,
     onSyncDiff: toggleSyncDiff,
+    onSetCompareBase: handleSetCompareBase,
+    onCompareWithBase: handleCompareWithBase,
+    onComparePick: (entry) => setComparePickFor(entry),
+    onCompareSelected: handleCompareSelected,
+    onViewPatch: (path) => setTextDiffSource({ kind: "patchFile", path }),
   };
 
   const selectedSize = activePane
@@ -2652,6 +2754,7 @@ useEffect(() => {
         canClosePane={!!activeTab && !isSinglePane(activeTab.root)}
         onFocusNextPane={focusNextPane}
         onOpenDiff={openDiff}
+        onOpenGitDiff={() => setGitDiffOpen(true)}
         onOpenSyncDiff={toggleSyncDiff}
         syncDiffActive={!!syncLink}
         showHidden={showHidden}
@@ -2692,7 +2795,17 @@ useEffect(() => {
         syncDiffActive={!!syncLink}
         onToggleSyncDiff={toggleSyncDiff}
         focusTick={addressFocusTick}
-        trailing={<PaneListMenu panes={paneList} onActivate={activatePane} />}
+        trailing={
+          <PaneListMenu
+            panes={paneList}
+            onActivate={activatePane}
+            markPaneKey={
+              compareBase && compareBase.tabId >= 0
+                ? `${compareBase.tabId}:${compareBase.paneId}`
+                : undefined
+            }
+          />
+        }
       />
 
       <div className="flex min-h-0 flex-1">
@@ -2737,6 +2850,7 @@ useEffect(() => {
               highlight={!(activeTab && isSinglePane(activeTab.root))}
               diffMarksByPane={syncMarks}
               linkBadgeByPane={syncBadges}
+              compareBase={compareBase}
               handlers={handlers}
             />
           ) : null}
@@ -2772,6 +2886,7 @@ useEffect(() => {
           onCreateMissing={() => void createMissingAndEnter()}
           onReturnAlign={returnToAlignment}
           onUnlink={() => setSyncLink(null)}
+          onCompare={(l, r, name) => openTextDiff(l, r, name, name)}
           onClose={() => setSyncResultsOpen(false)}
         />
       )}
@@ -2801,6 +2916,12 @@ useEffect(() => {
               }
             : undefined
         }
+        compareBase={
+          compareBase
+            ? { name: compareBase.name, path: compareBase.path, onClear: handleClearCompareBase }
+            : undefined
+        }
+        baseHint={compareBaseHint}
       />
 
       <ShareDialog
@@ -2935,6 +3056,35 @@ useEffect(() => {
             refreshPane(diffTarget.leftPane);
             refreshPane(diffTarget.rightPane);
           }}
+        />
+      )}
+
+      {/* v0.19 文本比较窗口：文件 vs 文件 / git diff 解析共用 */}
+      {textDiffSource && (
+        <TextDiffDialog source={textDiffSource} onClose={() => setTextDiffSource(null)} />
+      )}
+
+      {/* v0.19 与另一文件比较：窗格选择器 */}
+      {comparePickFor && (
+        <ComparePickDialog
+          baseName={comparePickFor.name}
+          panes={comparePickPanes}
+          onPick={(f) => {
+            openTextDiff(comparePickFor.path, f.path, comparePickFor.name, f.name);
+            setComparePickFor(null);
+          }}
+          onClose={() => setComparePickFor(null)}
+        />
+      )}
+
+      {/* v0.19 Git Diff 粘贴导入 */}
+      {gitDiffOpen && (
+        <GitDiffDialog
+          onConfirm={(text) => {
+            setGitDiffOpen(false);
+            setTextDiffSource({ kind: "patchText", text });
+          }}
+          onClose={() => setGitDiffOpen(false)}
         />
       )}
 

@@ -1,4 +1,4 @@
-import { AlertCircle, FolderOpen, Layers, Loader2, X , Share2 } from "lucide-react";
+import { AlertCircle, Crosshair, FolderOpen, Layers, Loader2, X , Share2 } from "lucide-react";
 import { formatSize } from "@/lib/format";
 import type { TransferProgress } from "@/lib/types";
 import { SyncDiffStatusBar, type SyncDiffSummary } from "@/components/SyncDiffPanel";
@@ -27,6 +27,8 @@ export function StatusBar({
   onCancelDownload,
   onSharePanel,
   syncDiff,
+  compareBase,
+  baseHint,
 }: {
   path: string;
   total: number;
@@ -44,6 +46,14 @@ export function StatusBar({
     summary: SyncDiffSummary;
     onOpen: () => void;
   };
+  /** v0.19 文本比较基准芯片（未设置时不传） */
+  compareBase?: {
+    name: string;
+    path: string;
+    onClear: () => void;
+  };
+  /** v0.19 设/清基准的瞬时提示（右下角，App 侧定时清除） */
+  baseHint?: string | null;
 }) {
   const pct =
     transfer && transfer.fileTotal > 0
@@ -94,6 +104,27 @@ export function StatusBar({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-3">
+          {baseHint && (
+            <span className="max-w-52 truncate text-primary" title={baseHint}>
+              {baseHint}
+            </span>
+          )}
+          {compareBase && (
+            <span
+              className="flex items-center gap-1 rounded border border-primary/40 px-1.5 py-0.5 text-primary"
+              title={`文本比较基准：${compareBase.path}`}
+            >
+              <Crosshair className="h-3 w-3 shrink-0" />
+              <span className="max-w-32 truncate">{compareBase.name}</span>
+              <button
+                onClick={compareBase.onClear}
+                title="清除比较基准"
+                className="shrink-0 hover:text-foreground"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
           {syncDiff && <SyncDiffStatusBar summary={syncDiff.summary} onOpen={syncDiff.onOpen} />}
           {onSharePanel && (
             <button

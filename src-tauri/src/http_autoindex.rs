@@ -464,6 +464,20 @@ pub async fn http_download_to(
     res
 }
 
+/// 下载 URL 到临时目录（v0.19 文本比较用，无进度事件），返回本地路径。
+/// 不发传输事件：比较是短任务，避免指示器残留（v0.18.1 教训：事件必须成对收尾）。
+pub async fn download_to_temp(url: String) -> Result<String, String> {
+    let dir = std::env::temp_dir().join("r-dir-diff");
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("创建临时目录失败：{e}"))?;
+        let cancel = AtomicBool::new(false);
+        let mut noemit = |_: &progress::TransferProgress| {};
+        download_with_progress(&dir.to_string_lossy(), &url, &cancel, &mut noemit)
+    })
+    .await
+    .map_err(|e| format!("下载任务失败：{e}"))?
+}
+
 /// 下载实现（进度经回调发出，便于单元测试不依赖 AppHandle）
 fn download_with_progress(
     local_dir: &str,

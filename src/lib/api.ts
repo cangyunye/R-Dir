@@ -194,6 +194,16 @@ export const diffDirs = (
 /** 取消进行中的差异比对 */
 export const cancelDiff = (id: string) => invoke<void>("cancel_diff", { id });
 
+// ---- v0.19 文本比较 ----
+
+/** 任意两侧（本地/SFTP/HTTP）的行级文本比较 */
+export const diffTextFiles = (left: string, right: string) =>
+  invoke<import("./types").TextDiffOutcome>("diff_text_files", { left, right });
+
+/** 读取文本文件内容（.patch/.diff 解析用；支持 SFTP/HTTP 路径） */
+export const readTextFile = (path: string) =>
+  invoke<import("./types").TextFileContent>("read_text_file", { path });
+
 /** 读取单个路径的元信息（「属性」统计当前目录用） */
 export const statEntry = (path: string) =>
   invoke<FileEntry>("stat_entry", { path });

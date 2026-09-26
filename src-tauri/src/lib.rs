@@ -7,6 +7,7 @@ mod ops;
 mod progress;
 mod search;
 mod sizestat;
+mod text_diff;
 mod volumes;
 
 #[cfg(feature = "sftp")]
@@ -701,6 +702,127 @@ fn cancel_diff(state: tauri::State<'_, AppState>, id: String) {
     }
 }
 
+// ==================== v0.19 文本比较 ====================
+
+/// 解析文本比较的一侧路径：本地直接用；SFTP/HTTP 先下载到临时目录（用完即删）。
+/// 返回 (本地路径, 是否临时文件)。
+async fn resolve_text_side(
+    state: &tauri::State<'_, AppState>,
+    path: &str,
+) -> Result<(String, bool), String> {
+    if path.starts_with("sftp://") {
+        #[cfg(feature = "sftp")]
+        {
+            ensure_plugin(state, "sftp")?;
+            let pool = state.sftp_pool.lock().await;
+            let dir = std::env::temp_dir().join("r-dir-diff");
+            // sftp::download_to 不建目录（与 sftp_download 的既有约定一致），这里必须自建，
+            // 否则 File::create 报 os error 3「系统找不到指定的路径」
+            std::fs::create_dir_all(&dir).map_err(|e| format!("创建临时目录失败：{e}"))?;
+            // download_to 同名自动加后缀，避免两侧同名文件相互覆盖
+            let local = sftp::download_to(&pool, &dir.to_string_lossy(), path, |_, _| {}).await?;
+            return Ok((local, true));
+        }
+        #[cfg(not(feature = "sftp"))]
+        {
+            let _ = state;
+            Err("SFTP 插件未编译，无法读取远程文件".into())
+        }
+    } else if path.starts_with("http://") || path.starts_with("https://") {
+        if !plugins::plugin_enabled(&state.plugins, "http") {
+            return Err("HTTP autoindex 插件已禁用（设置 → 插件中可重新启用）".into());
+        }
+        Ok((http_autoindex::download_to_temp(path.to_string()).await?, true))
+    } else {
+        Ok((path.to_string(), false))
+    }
+}
+
+/// v0.19 文本比较：任意两侧（本地 / SFTP / HTTP）的行级 diff。
+#[tauri::command]
+async fn diff_text_files(
+    state: tauri::State<'_, AppState>,
+    left: String,
+    right: String,
+) -> Result<text_diff::TextDiffOutcome, String> {
+    let (llocal, ltemp) = resolve_text_side(&state, &left)
+        .await
+        .map_err(|e| format!("左侧准备失败：{e}"))?;
+    let (rlocal, rtemp) = resolve_text_side(&state, &right)
+        .await
+        .map_err(|e| format!("右侧准备失败：{e}"))?;
+    // 读取 + 行级 diff 是纯 CPU/IO 同步段（上限 8MB×2），放 blocking 池避免占用异步运行时
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = (|| -> Result<text_diff::TextDiffOutcome, String> {
+            let (lt, llossy, lbytes) = text_diff::read_local_text(std::path::Path::new(&llocal))?;
+            let (rt, rlossy, rbytes) = text_diff::read_local_text(std::path::Path::new(&rlocal))?;
+            let la = text_diff::split_lines(&lt);
+            let rb = text_diff::split_lines(&rt);
+            let (segments, coarse) = text_diff::diff_segments(&la, &rb);
+            let (additions, deletions, same) = text_diff::segment_stats(&segments);
+            Ok(text_diff::TextDiffOutcome {
+                left: text_diff::TextSide {
+                    path: left,
+                    local_path: llocal.clone(),
+                    is_temp: ltemp,
+                    lossy: llossy,
+                    bytes: lbytes,
+                    lines: la.len(),
+                },
+                right: text_diff::TextSide {
+                    path: right,
+                    local_path: rlocal.clone(),
+                    is_temp: rtemp,
+                    lossy: rlossy,
+                    bytes: rbytes,
+                    lines: rb.len(),
+                },
+                segments,
+                additions,
+                deletions,
+                same,
+                coarse,
+            })
+        })();
+        // 临时文件用完即删（best-effort；失败留待系统清理临时目录）
+        if ltemp {
+            let _ = std::fs::remove_file(&llocal);
+        }
+        if rtemp {
+            let _ = std::fs::remove_file(&rlocal);
+        }
+        outcome
+    })
+    .await
+    .map_err(|e| format!("比较任务失败：{e}"))?
+}
+
+/// v0.19 读取文本文件内容（.patch / .diff「查看 Diff」解析用；支持 SFTP/HTTP 路径）。
+#[tauri::command]
+async fn read_text_file(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<text_diff::TextFileContent, String> {
+    let (local, temp) = resolve_text_side(&state, &path).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = text_diff::read_local_text(std::path::Path::new(&local)).map(
+            |(text, lossy, _)| text_diff::TextFileContent {
+                path,
+                local_path: local.clone(),
+                is_temp: temp,
+                lossy,
+                text,
+            },
+        );
+        if temp {
+            let _ = std::fs::remove_file(&local);
+        }
+        result
+    })
+    .await
+    .map_err(|e| format!("读取任务失败：{e}"))?
+}
+
 /// 读取单个路径的元信息（「属性」统计当前目录用）。
 #[tauri::command]
 fn stat_entry(path: String) -> Result<fs_ops::FileEntry, String> {
@@ -1229,6 +1351,8 @@ pub fn run() {
         // 目录差异比对（v0.17 / v0.18 进度与取消）
         diff_dirs,
         cancel_diff,
+        diff_text_files,
+        read_text_file,
         stat_entry,
         // 插件注册表（v0.5）
         list_plugins,

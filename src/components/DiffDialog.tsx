@@ -318,10 +318,12 @@ export function DiffDialog({
       }}
     >
       <div
-        className={cn(
-          "flex flex-col overflow-hidden rounded-lg border bg-background shadow-xl",
-          maximized ? "h-[calc(100vh-24px)] w-[calc(100vw-24px)]" : "h-[80vh] w-[960px] max-w-[95vw]",
-        )}
+        className="flex flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
+        style={
+          maximized
+            ? { width: "calc((100vw - 24px) / var(--rdir-zoom, 1))", height: "calc((100vh - 24px) / var(--rdir-zoom, 1))" }
+            : { width: "calc(min(960px, 95vw) / var(--rdir-zoom, 1))", height: "calc(80vh / var(--rdir-zoom, 1))" }
+        }
       >
         {/* 标题栏 */}
         <div className="flex items-center justify-between border-b px-4 py-2.5">
