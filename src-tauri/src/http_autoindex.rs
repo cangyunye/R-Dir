@@ -582,7 +582,7 @@ fn download_with_progress(
         f.write_all(&buf[..n]).map_err(|e| format!("写入失败：{e}"))?;
         done += n as u64;
         if total > 0 {
-            let mut p = progress::TransferProgress::start("download", "下载中…", 1);
+            let mut p = progress::TransferProgress::start("download", &name, 1);
             p.file_done = done;
             p.file_total = total;
             p.id = Some(url.to_string());
@@ -594,10 +594,12 @@ fn download_with_progress(
     // 续传完成：.part 重命名为最终文件名
     std::fs::rename(&part, &dest).map_err(|e| format!("完成文件失败：{e}"))?;
     if total > 0 {
-        let mut p = progress::TransferProgress::start("download", "下载完成", 1);
+        // done=true 是前端 1.5s 后清除传输指示的依据，缺失会导致指示器永久卡住
+        let mut p = progress::TransferProgress::start("download", &name, 1);
         p.file_done = done;
         p.file_total = total;
         p.id = Some(url.to_string());
+        p.done = true;
         emit(&p);
     }
     Ok(dest.to_string_lossy().to_string())

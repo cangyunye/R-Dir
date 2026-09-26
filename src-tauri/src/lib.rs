@@ -707,6 +707,25 @@ fn stat_entry(path: String) -> Result<fs_ops::FileEntry, String> {
     fs_ops::stat_entry(&path)
 }
 
+/// 传输指示的文件名 label：取路径末段（兼容 sftp:// URL 与本地路径）；取不到时回退默认文案。
+#[cfg(feature = "sftp")]
+fn transfer_label(path: &str, fallback: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// 传输收尾事件：前端仅在收到 done=true 后 1.5s 清除状态栏传输指示，
+/// 缺失会导致指示器永久卡在「下载中… 100%」（v0.18.1 修复）。
+#[cfg(feature = "sftp")]
+fn emit_transfer_done(app: &tauri::AppHandle, phase: &str, label: &str) {
+    let mut p = progress::TransferProgress::start(phase, label, 1);
+    p.done = true;
+    progress::emit(app, &p);
+}
+
 /// 下载远程文件到临时目录，返回本地路径（供打开）
 #[cfg(feature = "sftp")]
 #[tauri::command]
@@ -716,14 +735,17 @@ async fn sftp_download(
     path: String,
 ) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
+    let name = transfer_label(&path, "下载中…");
     let pool = state.sftp_pool.lock().await;
-    sftp::download(&pool, &path, |done, total| {
-        let mut p = progress::TransferProgress::start("download", "下载中…", 1);
+    let result = sftp::download(&pool, &path, |done, total| {
+        let mut p = progress::TransferProgress::start("download", &name, 1);
         p.file_done = done;
         p.file_total = total;
         progress::emit(&app, &p);
     })
-    .await
+    .await;
+    emit_transfer_done(&app, "download", &name);
+    result
 }
 
 /// 下载远程文件到指定本地目录（粘贴/拖拽 远程→本地），返回本地路径
@@ -736,14 +758,17 @@ async fn sftp_download_to(
     path: String,
 ) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
+    let name = transfer_label(&path, "下载中…");
     let pool = state.sftp_pool.lock().await;
-    sftp::download_to(&pool, &local_dir, &path, |done, total| {
-        let mut p = progress::TransferProgress::start("download", "下载中…", 1);
+    let result = sftp::download_to(&pool, &local_dir, &path, |done, total| {
+        let mut p = progress::TransferProgress::start("download", &name, 1);
         p.file_done = done;
         p.file_total = total;
         progress::emit(&app, &p);
     })
-    .await
+    .await;
+    emit_transfer_done(&app, "download", &name);
+    result
 }
 
 /// 上传本地文件到远程目录（拖拽/复制）
@@ -757,14 +782,17 @@ async fn sftp_upload(
     name: String,
 ) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
+    let label = transfer_label(&name, "上传中…");
     let pool = state.sftp_pool.lock().await;
-    sftp::upload(&pool, &local, &dest, &name, |done, total| {
-        let mut p = progress::TransferProgress::start("upload", "上传中…", 1);
+    let result = sftp::upload(&pool, &local, &dest, &name, |done, total| {
+        let mut p = progress::TransferProgress::start("upload", &label, 1);
         p.file_done = done;
         p.file_total = total;
         progress::emit(&app, &p);
     })
-    .await
+    .await;
+    emit_transfer_done(&app, "upload", &label);
+    result
 }
 
 /// 远程新建目录

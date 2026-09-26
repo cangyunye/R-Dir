@@ -10,6 +10,10 @@ const PHASE_LABEL: Record<TransferProgress["phase"], string> = {
   compress: "压缩",
 };
 
+/** 部分后端任务以固定文案作 label（复制/移动/压缩不逐文件改名）；
+ *  此时不再拼接阶段名，避免渲染成「复制中：复制中…」（v0.18.1） */
+const GENERIC_LABELS = new Set(["下载中…", "上传中…", "复制中…", "移动中…", "压缩中…"]);
+
 export function StatusBar({
   path,
   total,
@@ -55,7 +59,9 @@ export function StatusBar({
               <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
               {transfer.done
                 ? `${PHASE_LABEL[transfer.phase]}完成`
-                : `${PHASE_LABEL[transfer.phase]}中：${transfer.label}`}
+                : GENERIC_LABELS.has(transfer.label)
+                  ? `${PHASE_LABEL[transfer.phase]}中…`
+                  : `${PHASE_LABEL[transfer.phase]}中：${transfer.label}`}
               {transfer.totalFiles > 1 && !transfer.done && (
                 <span className="tabular-nums">
                   {transfer.doneFiles + 1}/{transfer.totalFiles}
