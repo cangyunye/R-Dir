@@ -47,7 +47,8 @@ test.describe("1. 启动", () => {
     await expect(menu).toContainText("编辑");
     await expect(menu).toContainText("查看");
     await page.keyboard.press("Escape");
-    await page.keyboard.press("Control+k");
+    // CI 在 macOS 上跑 e2e：键位按平台取 Mod（⌘/Ctrl），硬编码 Control 在 mac 非注册键位
+    await page.keyboard.press(`${MOD}+k`);
     await expect(page.getByPlaceholder(/搜索命令/)).toBeVisible();
   });
 });
