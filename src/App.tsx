@@ -2919,6 +2919,7 @@ useEffect(() => {
           activePane.selection.length === 1 &&
           !(activePane.entries.find((e) => e.path === activePane.selection[0])?.is_dir ?? false)
         }
+        onRevealFile={(p) => openSearchResult(parentPath(p), p)}
         onNavigate={navigate}
         searchOpen={searchOpen}
         onToggleSearch={toggleSearchPanel}

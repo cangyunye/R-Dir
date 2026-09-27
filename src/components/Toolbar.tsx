@@ -20,7 +20,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
-import { completePath } from "@/lib/api";
+import { completePath, resolvePath, statPath } from "@/lib/api";
 import { splitPathSegments } from "@/lib/path-segments";
 
 /** 彩虹分段配色：固定色相环（低透明度着色，明暗主题自适应） */
@@ -46,6 +46,7 @@ export function Toolbar({
   onToggleSyncDiff,
   focusTick,
   leafIsFile = false,
+  onRevealFile,
   trailing,
 }: {
   canBack: boolean;
@@ -65,10 +66,13 @@ export function Toolbar({
   focusTick: number;
   /** 地址栏当前展示的是单选文件路径（末段点击=回到其所在目录） */
   leafIsFile?: boolean;
+  /** 输入的是已存在的文件路径：跳转父目录并选中该文件 */
+  onRevealFile?: (filePath: string) => void;
   /** 搜索按钮右侧的插槽（如「已连接窗格」下拉） */
   trailing?: React.ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
+  const [pathError, setPathError] = useState<string | null>(null);
   const [draft, setDraft] = useState(path);
   const [completions, setCompletions] = useState<string[]>([]);
   const [compIndex, setCompIndex] = useState(-1);
@@ -99,6 +103,7 @@ export function Toolbar({
   }, [path, editing]);
 
   const enterEdit = useCallback(() => {
+    setPathError(null);
     setEditing(true);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
@@ -138,18 +143,51 @@ export function Toolbar({
   /** navigateNow=true 直接跳转；false 仅补全到地址栏继续编辑 */
   const choose = useCallback(
     (p: string, navigateNow: boolean) => {
+      setPathError(null);
       if (navigateNow) {
         onNavigate(p);
         setDraft(p);
         closeCompletion();
+        setEditing(false);
       } else {
         setDraft(p);
         closeCompletion();
         inputRef.current?.focus();
       }
     },
-    [onNavigate, closeCompletion],
+    [onNavigate, closeCompletion, setEditing],
   );
+
+  /** 回车提交：本地路径先校验（不存在就地提示，不切换窗格）；目录导航、文件跳父目录选中 */
+  const submitDraft = useCallback(async () => {
+    const raw = draft.trim();
+    if (!raw) return;
+    // 远程/虚拟路径交给既有导航逻辑（sftp 连接框、tags 视图、http 索引）
+    if (raw.startsWith("sftp://") || /^https?:\/\//.test(raw) || raw.startsWith("tags://")) {
+      onNavigate(raw);
+      closeCompletion();
+      setEditing(false);
+      return;
+    }
+    let abs = raw;
+    try {
+      abs = await resolvePath(raw, cwd);
+    } catch {
+      // 解析失败按原样校验
+    }
+    try {
+      const kind = await statPath(abs);
+      if (kind === "file") {
+        (onRevealFile ?? ((p: string) => onNavigate(p)))(abs);
+      } else {
+        onNavigate(raw); // 目录/软链：交给 navigate 解析并导航
+      }
+      closeCompletion();
+      setEditing(false);
+    } catch {
+      setPathError(`路径不存在或无法访问：${abs}`);
+    }
+  }, [draft, cwd, onNavigate, onRevealFile, closeCompletion]);
 
   return (
     <div className="flex h-10 items-center gap-1 border-b bg-muted/20 px-2">
@@ -199,11 +237,9 @@ export function Toolbar({
           e.preventDefault();
           if (compOpen && compIndex >= 0 && completions[compIndex]) {
             choose(completions[compIndex], true);
-          } else if (draft.trim()) {
-            onNavigate(draft.trim());
-            closeCompletion();
+          } else {
+            void submitDraft();
           }
-          setEditing(false);
         }}
       >
         <div className="relative">
@@ -213,6 +249,7 @@ export function Toolbar({
             value={draft}
             onChange={(e) => {
               setDraft(e.target.value);
+              setPathError(null);
               fetchCompletions(e.target.value);
             }}
             onBlur={() => {
@@ -239,10 +276,14 @@ export function Toolbar({
               } else if (e.key === "Escape") {
                 closeCompletion();
                 setDraft(path);
+                setPathError(null);
                 setEditing(false);
               }
             }}
-            className="h-7 pr-12 text-xs"
+            className={cn(
+              "h-7 pr-12 text-xs",
+              pathError && "border-destructive focus-visible:ring-destructive/40",
+            )}
             placeholder="输入路径后回车跳转，Tab 补全目录"
             spellCheck={false}
           />
@@ -288,6 +329,15 @@ export function Toolbar({
                 <span className="truncate">{p}</span>
               </button>
             ))}
+          </div>
+        )}
+
+        {pathError && (
+          <div
+            data-path-error=""
+            className="absolute left-0 right-0 top-full z-50 mt-1 rounded-md border border-destructive/40 bg-popover px-2 py-1.5 text-[11px] text-destructive shadow-lg"
+          >
+            {pathError}
           </div>
         )}
       </form>

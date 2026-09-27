@@ -562,3 +562,32 @@ test.describe("19. 路径栏面包屑（v0.21.0）", () => {
     await expect(page.locator("[data-pathbar]")).toBeVisible();
   });
 });
+
+test.describe("20. 路径栏输入校验（v0.21.0）", () => {
+  test("R9 不存在的路径回车：就地红字提示，窗格不切换", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+l`);
+    await page.locator("#rdir-addr-input").fill(`${HOME}/不存在的目录`);
+    await page.locator("#rdir-addr-input").press("Enter");
+    const hint = page.locator("[data-path-error]");
+    await expect(hint).toBeVisible();
+    await expect(hint).toContainText("路径不存在或无法访问");
+    // 不导航：当前目录内容保持，仍处编辑态可继续修改
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+    await expect(page.locator("#rdir-addr-input")).toBeVisible();
+    // 修改输入后提示消失
+    await page.locator("#rdir-addr-input").fill(`${HOME}/Documents`);
+    await expect(hint).toHaveCount(0);
+    await page.locator("#rdir-addr-input").press("Enter");
+    await expect(page.locator(`[data-path="${HOME}/Documents/readme.md"]`)).toBeVisible();
+  });
+
+  test("R10 输入已存在的文件路径：跳父目录并选中该文件", async ({ page }) => {
+    await page.locator(`[data-path="${HOME}/Documents"]`).dblclick();
+    await page.keyboard.press(`${MOD}+l`);
+    await page.locator("#rdir-addr-input").fill(`${HOME}/Notes.txt`);
+    await page.locator("#rdir-addr-input").press("Enter");
+    const row = page.locator(`[data-path="${HOME}/Notes.txt"]`);
+    await expect(row).toBeVisible();
+    await expect(row).toHaveClass(/ring-1/);
+  });
+});

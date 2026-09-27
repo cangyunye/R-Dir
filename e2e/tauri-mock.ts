@@ -192,7 +192,8 @@ export async function installTauriMock(page: Page): Promise<void> {
             return f.dir ? "dir" : f.symlink ? "symlink" : "file";
           }
         }
-        return "file";
+        // 与真实后端一致：不存在即抛错（地址栏校验依赖该语义）
+        throw new Error(`ENOENT: ${p}`);
       },
       stat_paths: (a) => {
         const paths = (a.paths as string[]) ?? [];
