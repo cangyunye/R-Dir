@@ -515,3 +515,21 @@ test.describe("17. 删除确认弹窗（v0.21.0）", () => {
     await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toHaveCount(0);
   });
 });
+
+test.describe("18. 搜索起始目录回归（点击选中后 Ctrl+F）", () => {
+  // 用户曾报：Ctrl+F 前点击了文件/文件夹，搜索起点不对。
+  // 当前代码验证：选中只影响地址栏显示（PropertiesBar/地址栏），不影响窗格 path，
+  // 搜索面板冻结的目录恒为窗格目录——用例锁定该行为。
+  test("R6 点击文件后 Ctrl+F：搜索目录仍为本层级，递归检索正常", async ({ page }) => {
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    await page.keyboard.press(`${MOD}+f`);
+
+    // 面板头部冻结目录 = 窗格目录（而非选中条目路径；属性栏的 title=选中路径不算）
+    await expect(page.locator(`span[title="${HOME}"]`).first()).toBeVisible();
+
+    // 递归检索从本层级起搜：能命中子目录 Documents 下的 readme.md
+    await page.locator("input[type=checkbox]").first().check();
+    await page.getByPlaceholder("检索文件（fd 正则）…").fill("readme");
+    await expect(page.locator(`[data-search-path="${HOME}/Documents/readme.md"]`)).toBeVisible();
+  });
+});
