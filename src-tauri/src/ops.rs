@@ -4,8 +4,23 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-/// 复制进度回调：参数为 (当前文件已复制字节, 当前文件总字节)
-pub type ProgressCb<'a> = &'a mut dyn FnMut(u64, u64);
+/// 传输进度回调事件（本地复制/移动）。
+pub enum CbEvent<'a> {
+    /// 开始复制一个文件（携带源文件名，展示用）
+    Start(&'a str),
+    /// 当前文件字节进度：(已复制字节, 总字节)
+    Bytes(u64, u64),
+    /// 一个顶层条目完成（含被跳过的），用于递增 done_files
+    EntryDone,
+}
+
+/// 进度回调。返回 false 表示用户取消，引擎应尽快中止（就地清理半成品）。
+pub type ProgressCb<'a> = &'a mut dyn FnMut(CbEvent) -> bool;
+
+/// 回调报取消时统一走这个错误，命令层据此把提示收敛为「已取消」。
+fn cancelled() -> std::io::Error {
+    std::io::Error::other("传输已取消")
+}
 
 /// 一条待用户裁决的同名冲突。
 #[derive(Debug, Clone, Serialize)]
@@ -105,6 +120,9 @@ pub fn copy_entries_plan(
         if let Some(t) = apply_transfer(src, &dest.join(name), plan, Mode::Copy, &mut cb)? {
             created.push(t.to_string_lossy().to_string());
         }
+        if !cb(CbEvent::EntryDone) {
+            return Err(cancelled().to_string());
+        }
     }
     Ok(created)
 }
@@ -127,6 +145,9 @@ pub fn move_entries_plan(
         if let Some(t) = apply_transfer(src, &dest.join(name), plan, Mode::Move, &mut cb)? {
             moved.push((p.clone(), t.to_string_lossy().to_string()));
         }
+        if !cb(CbEvent::EntryDone) {
+            return Err(cancelled().to_string());
+        }
     }
     Ok(moved)
 }
@@ -137,7 +158,7 @@ fn apply_transfer(
     dst: &Path,
     plan: &HashMap<String, Resolution>,
     mode: Mode,
-    cb: &mut dyn FnMut(u64, u64),
+    cb: &mut dyn FnMut(CbEvent) -> bool,
 ) -> Result<Option<PathBuf>, String> {
     let mut target = dst.to_path_buf();
     if dst.exists() {
@@ -169,7 +190,7 @@ fn apply_dir(
     target: &Path,
     plan: &HashMap<String, Resolution>,
     mode: Mode,
-    cb: &mut dyn FnMut(u64, u64),
+    cb: &mut dyn FnMut(CbEvent) -> bool,
 ) -> Result<(), String> {
     if target.exists() {
         if target.is_dir() {
@@ -194,7 +215,7 @@ fn apply_file(
     src: &Path,
     target: &Path,
     mode: Mode,
-    cb: &mut dyn FnMut(u64, u64),
+    cb: &mut dyn FnMut(CbEvent) -> bool,
 ) -> Result<(), String> {
     if target.exists() && target.is_dir() {
         fs::remove_dir_all(target).map_err(|e| format!("覆盖目录 {} 失败：{}", target.display(), e))?;
@@ -255,6 +276,9 @@ pub fn copy_entries(paths: &[String], dest: &str, mut cb: ProgressCb) -> Result<
         let target = dest.join(name);
         copy_recursive(src, &target, &mut cb).map_err(|e| format!("复制 {} 失败：{}", p, e))?;
         created.push(target.to_string_lossy().to_string());
+        if !cb(CbEvent::EntryDone) {
+            return Err(cancelled().to_string());
+        }
     }
     Ok(created)
 }
@@ -277,6 +301,9 @@ pub fn move_entries(paths: &[String], dest: &str, mut cb: ProgressCb) -> Result<
             remove_recursive(src).map_err(|e| format!("移动 {} 清理失败：{}", p, e))?;
         }
         moved.push((p.clone(), target.to_string_lossy().to_string()));
+        if !cb(CbEvent::EntryDone) {
+            return Err(cancelled().to_string());
+        }
     }
     Ok(moved)
 }
@@ -385,7 +412,7 @@ pub fn create_file(parent: &str, name: &str) -> Result<String, String> {
     Ok(target.to_string_lossy().to_string())
 }
 
-fn copy_recursive(src: &Path, dst: &Path, cb: &mut dyn FnMut(u64, u64)) -> std::io::Result<()> {
+fn copy_recursive(src: &Path, dst: &Path, cb: &mut dyn FnMut(CbEvent) -> bool) -> std::io::Result<()> {
     if src.is_dir() {
         // 覆盖语义：目标已存在时先删除再复制；目标若是文件也一并清除（类型冲突同步用）
         if dst.exists() {
@@ -410,12 +437,186 @@ fn copy_recursive(src: &Path, dst: &Path, cb: &mut dyn FnMut(u64, u64)) -> std::
     Ok(())
 }
 
-/// 流式复制文件并回报进度（64KB 块）
-fn copy_file_progress(src: &Path, dst: &Path, cb: &mut dyn FnMut(u64, u64)) -> std::io::Result<()> {
+/// 平台快速路径：能 reflink/克隆就不搬数据，能交给系统复制引擎就不过应用内存。
+/// Ok(true) = 已由快速路径完成；Ok(false) = 平台/文件系统不支持，走回退循环；
+/// Err = 快速路径中途失败（半成品已就地清理）。
+#[allow(unused_variables)]
+fn copy_file_fast(src: &Path, dst: &Path, cb: &mut dyn FnMut(CbEvent) -> bool) -> std::io::Result<bool> {
+    #[cfg(windows)]
+    return copy_file_fast_windows(src, dst, cb);
+    #[cfg(target_os = "macos")]
+    return copy_file_fast_macos(src, dst, cb);
+    #[cfg(target_os = "linux")]
+    return copy_file_fast_linux(src, dst, cb);
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (src, dst, cb);
+        Ok(false)
+    }
+}
+
+/// Windows：CopyFileExW（系统复制引擎，块级进度回调，回调内可取消；
+/// 返回 PROGRESS_CANCEL 时系统自行删除目标半成品）。
+#[cfg(windows)]
+fn copy_file_fast_windows(
+    src: &Path,
+    dst: &Path,
+    cb: &mut dyn FnMut(CbEvent) -> bool,
+) -> std::io::Result<bool> {
+    use std::os::raw::c_void;
+    use std::os::windows::ffi::OsStrExt;
+
+    type DWORD = u32;
+    type LPVOID = *mut c_void;
+    const PROGRESS_CONTINUE: DWORD = 0;
+    const PROGRESS_CANCEL: DWORD = 1;
+    const ERROR_REQUEST_ABORTED: i32 = 1235;
+    const ERROR_OPERATION_ABORTED: i32 = 995;
+
+    extern "system" {
+        fn CopyFileExW(
+            lpExistingFileName: *const u16,
+            lpNewFileName: *const u16,
+            lpProgressRoutine: Option<
+                unsafe extern "system" fn(i64, i64, i64, i64, DWORD, DWORD, *mut c_void, *mut c_void, LPVOID) -> DWORD,
+            >,
+            lpData: LPVOID,
+            lpCancel: *mut i32,
+            dwCopyFlags: DWORD,
+        ) -> i32;
+    }
+
+    struct Ctx<'a>(&'a mut dyn FnMut(CbEvent) -> bool);
+
+    extern "system" fn routine(
+        total: i64,
+        transferred: i64,
+        _stream_size: i64,
+        _stream_transferred: i64,
+        _stream_number: DWORD,
+        _reason: DWORD,
+        _hsrc: *mut c_void,
+        _hdst: *mut c_void,
+        data: LPVOID,
+    ) -> DWORD {
+        let ctx = unsafe { &mut *(data as *mut Ctx) };
+        if (ctx.0)(CbEvent::Bytes(transferred.max(0) as u64, total.max(0) as u64)) {
+            PROGRESS_CONTINUE
+        } else {
+            PROGRESS_CANCEL
+        }
+    }
+
+    let to_wide = |p: &Path| -> Vec<u16> {
+        p.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+    };
+    let srcw = to_wide(src);
+    let dstw = to_wide(dst);
+    let mut ctx = Ctx(cb);
+    let mut cancel: i32 = 0;
+    let ok = unsafe {
+        CopyFileExW(
+            srcw.as_ptr(),
+            dstw.as_ptr(),
+            Some(routine),
+            &mut ctx as *mut Ctx as LPVOID,
+            &mut cancel,
+            0,
+        )
+    };
+    if ok != 0 {
+        Ok(true)
+    } else {
+        let e = std::io::Error::last_os_error();
+        let _ = fs::remove_file(dst); // 清理半成品（取消时系统通常已删，兜底）
+        if e.raw_os_error() == Some(ERROR_REQUEST_ABORTED) || e.raw_os_error() == Some(ERROR_OPERATION_ABORTED) {
+            Err(cancelled())
+        } else {
+            Err(e)
+        }
+    }
+}
+
+/// macOS：clonefile（APFS 同卷 O(1) 克隆，不搬数据）；跨卷/不支持时回退。
+#[cfg(target_os = "macos")]
+fn copy_file_fast_macos(
+    src: &Path,
+    dst: &Path,
+    cb: &mut dyn FnMut(CbEvent) -> bool,
+) -> std::io::Result<bool> {
+    use std::os::unix::ffi::OsStrExt;
+    let csrc = std::ffi::CString::new(src.as_os_str().as_bytes())?;
+    let cdst = std::ffi::CString::new(dst.as_os_str().as_bytes())?;
+    let _ = fs::remove_file(dst); // clonefile 要求目标不存在；此处语义为覆盖
+    let rc = unsafe { libc::clonefile(csrc.as_ptr(), cdst.as_ptr(), 0) };
+    if rc == 0 {
+        let total = fs::metadata(src).map(|m| m.len()).unwrap_or(0);
+        if !cb(CbEvent::Bytes(total, total)) {
+            let _ = fs::remove_file(dst);
+            return Err(cancelled());
+        }
+        Ok(true)
+    } else {
+        let e = std::io::Error::last_os_error();
+        match e.raw_os_error() {
+            // EXDEV 跨卷 / ENOTSUP·ENOSYS 文件系统不支持 / EPERM / EINVAL → 回退
+            Some(libc::EXDEV)
+            | Some(libc::ENOTSUP)
+            | Some(libc::ENOSYS)
+            | Some(libc::EPERM)
+            | Some(libc::EINVAL) => Ok(false),
+            _ => Err(e),
+        }
+    }
+}
+
+/// Linux：FICLONE ioctl（btrfs/XFS/ZFS/NFSv4.2 等 reflink，不搬数据）；不支持时回退。
+/// （不再走 copy_file_range：本地常规文件上它只是内核态循环，收益可忽略，徒增部分拷贝的回退复杂度。）
+#[cfg(target_os = "linux")]
+fn copy_file_fast_linux(
+    src: &Path,
+    dst: &Path,
+    cb: &mut dyn FnMut(CbEvent) -> bool,
+) -> std::io::Result<bool> {
+    use std::os::unix::io::AsRawFd;
+    let srcf = fs::File::open(src)?;
+    let _ = fs::remove_file(dst);
+    let dstf = fs::File::create(dst)?;
+    let rc = unsafe { libc::ioctl(dstf.as_raw_fd(), libc::FICLONE, srcf.as_raw_fd()) };
+    if rc == 0 {
+        let total = fs::metadata(src).map(|m| m.len()).unwrap_or(0);
+        if !cb(CbEvent::Bytes(total, total)) {
+            let _ = fs::remove_file(dst);
+            return Err(cancelled());
+        }
+        Ok(true)
+    } else {
+        // 文件系统不支持 reflink：删掉空目标，走用户态回退循环
+        drop(dstf);
+        let _ = fs::remove_file(dst);
+        Ok(false)
+    }
+}
+
+/// 流式复制文件并回报进度。优先平台快速路径（reflink/系统复制引擎，
+/// FastCopy 思路：避开用户态逐块搬运），不支持时回退 1MB 缓冲循环。
+fn copy_file_progress(src: &Path, dst: &Path, cb: &mut dyn FnMut(CbEvent) -> bool) -> std::io::Result<()> {
+    let name = src
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if !cb(CbEvent::Start(&name)) {
+        return Err(cancelled());
+    }
+    match copy_file_fast(src, dst, cb) {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(e) => return Err(e),
+    }
     let total = src.metadata().map(|m| m.len()).unwrap_or(0);
     let mut r = fs::File::open(src)?;
     let mut w = fs::File::create(dst)?;
-    let mut buf = vec![0u8; 64 * 1024];
+    let mut buf = vec![0u8; 1024 * 1024];
     let mut done: u64 = 0;
     loop {
         let n = r.read(&mut buf)?;
@@ -424,7 +625,10 @@ fn copy_file_progress(src: &Path, dst: &Path, cb: &mut dyn FnMut(u64, u64)) -> s
         }
         w.write_all(&buf[..n])?;
         done += n as u64;
-        cb(done, total);
+        if !cb(CbEvent::Bytes(done, total)) {
+            let _ = fs::remove_file(dst);
+            return Err(cancelled());
+        }
     }
     w.flush()?;
     Ok(())
@@ -456,8 +660,8 @@ mod tests {
             .collect()
     }
 
-    fn noop() -> impl FnMut(u64, u64) {
-        |_, _| {}
+    fn noop() -> impl FnMut(CbEvent) -> bool {
+        |_| true
     }
 
     #[test]
@@ -741,6 +945,82 @@ mod tests {
         let base = tmp("perm-del-missing");
         let ghost = base.join("nope").to_string_lossy().to_string();
         assert!(permanent_delete_entries(&[ghost]).is_err());
+    }
+
+    // ---- 进度事件协议（Start/Bytes/EntryDone）与取消 ----
+
+    /// 统计进度事件：Start 次数、EntryDone 次数、最大 (done,total)
+    #[derive(Debug, Default)]
+    struct Events {
+        starts: usize,
+        entry_dones: usize,
+        max_done: u64,
+        max_total: u64,
+        last_name: String,
+    }
+
+    fn track(ev: &mut Events, e: CbEvent) -> bool {
+        match e {
+            CbEvent::Start(name) => {
+                ev.starts += 1;
+                ev.last_name = name.to_string();
+            }
+            CbEvent::Bytes(done, total) => {
+                ev.max_done = ev.max_done.max(done);
+                ev.max_total = ev.max_total.max(total);
+            }
+            CbEvent::EntryDone => ev.entry_dones += 1,
+        }
+        true
+    }
+
+    #[test]
+    fn copy_reports_start_bytes_entrydone() {
+        let base = tmp("events");
+        let dir = base.join("d");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.bin"), vec![0u8; 100]).unwrap();
+        fs::write(dir.join("b.bin"), b"small").unwrap();
+        fs::write(base.join("top.bin"), vec![0u8; 10]).unwrap();
+        fs::create_dir_all(base.join("out")).unwrap();
+
+        let mut ev = Events::default();
+        copy_entries(
+            &[dir.to_string_lossy().to_string(), base.join("top.bin").to_string_lossy().to_string()],
+            &base.join("out").to_string_lossy().to_string(),
+            &mut |e| track(&mut ev, e),
+        )
+        .unwrap();
+        // 目录内 2 个文件 + 顶层 1 个文件 = 3 次 Start
+        assert_eq!(ev.starts, 3, "每个文件一次 Start: {ev:?}");
+        // 顶层条目 2 个 = 2 次 EntryDone（目录整体算一条）
+        assert_eq!(ev.entry_dones, 2, "每个顶层条目一次 EntryDone: {ev:?}");
+        assert_eq!(ev.max_done, 100);
+        assert!(ev.max_total >= 100);
+    }
+
+    #[test]
+    fn copy_cancel_aborts_with_error() {
+        let base = tmp("cancel-cb");
+        fs::write(base.join("f.txt"), b"data").unwrap();
+        fs::create_dir_all(base.join("out")).unwrap();
+        let r = copy_entries(
+            &[base.join("f.txt").to_string_lossy().to_string()],
+            &base.join("out").to_string_lossy().to_string(),
+            &mut |_| false,
+        );
+        assert!(r.is_err(), "回调返回 false 应中止");
+        // 空文件也能走完 Start → EntryDone 协议（0 字节不产生 Bytes）
+        fs::write(base.join("empty.txt"), b"").unwrap();
+        let mut ev = Events::default();
+        copy_entries(
+            &[base.join("empty.txt").to_string_lossy().to_string()],
+            &base.join("out").to_string_lossy().to_string(),
+            &mut |e| track(&mut ev, e),
+        )
+        .unwrap();
+        assert_eq!(ev.starts, 1);
+        assert_eq!(ev.entry_dones, 1);
     }
 }
 

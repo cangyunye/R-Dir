@@ -15,6 +15,9 @@ const PHASE_LABEL: Record<TransferProgress["phase"], string> = {
  *  此时不再拼接阶段名，避免渲染成「复制中：复制中…」（v0.18.1） */
 const GENERIC_LABELS = new Set(["下载中…", "上传中…", "复制中…", "移动中…", "压缩中…"]);
 
+/** 可停止的传输阶段：HTTP 下载（按 url 取消）+ 本地复制/移动（按任务 id 取消） */
+const CANCELLABLE = new Set<TransferProgress["phase"]>(["download", "copy", "move"]);
+
 export function StatusBar({
   path,
   total,
@@ -24,7 +27,7 @@ export function StatusBar({
   error,
   notice,
   transfer,
-  onCancelDownload,
+  onCancelTransfer,
   onSharePanel,
   syncDiff,
   compareBase,
@@ -38,7 +41,8 @@ export function StatusBar({
   error: string | null;
   notice: string | null;
   transfer?: TransferProgress | null;
-  onCancelDownload?: (url: string) => void;
+  /** 停止传输（HTTP 下载 / 本地复制 / 移动） */
+  onCancelTransfer?: (id: string, phase: TransferProgress["phase"]) => void;
   /** v0.7：打开分享管理面板 */
   onSharePanel?: () => void;
   /** v0.18.2 同步比对摘要段（无链接时不传）：点击打开结果模态 */
@@ -75,7 +79,9 @@ export function StatusBar({
             <span className="flex items-center gap-1 truncate">
               <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
               {transfer.done
-                ? `${PHASE_LABEL[transfer.phase]}完成`
+                ? transfer.label === "已取消"
+                  ? "已取消"
+                  : `${PHASE_LABEL[transfer.phase]}完成`
                 : GENERIC_LABELS.has(transfer.label)
                   ? `${PHASE_LABEL[transfer.phase]}中…`
                   : `${PHASE_LABEL[transfer.phase]}中：${transfer.label}`}
@@ -135,10 +141,10 @@ export function StatusBar({
               <Share2 className="h-3 w-3" /> 分享
             </button>
           )}
-          {transfer && !transfer.done && transfer.phase === "download" && transfer.id && onCancelDownload && (
+          {transfer && !transfer.done && transfer.id && onCancelTransfer && CANCELLABLE.has(transfer.phase) && (
             <button
-              onClick={() => onCancelDownload(transfer.id!)}
-              title="停止下载"
+              onClick={() => onCancelTransfer(transfer.id!, transfer.phase)}
+              title={`停止${PHASE_LABEL[transfer.phase]}`}
               className="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] text-destructive hover:bg-destructive/10"
             >
               <X className="h-3 w-3" /> 停止

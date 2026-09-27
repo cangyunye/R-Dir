@@ -3963,6 +3963,7 @@ dependencies = [
  "dirs 5.0.1",
  "futures-util",
  "ignore",
+ "libc",
  "local-ip-address",
  "objc2",
  "objc2-app-kit",

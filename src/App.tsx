@@ -75,6 +75,7 @@ import {
   parentDir,
   permanentDeleteEntries,
   restoreFromTrash,
+  cancelTransfer,
   renameEntry,
   resolvePath,
   sftpConnect,
@@ -2042,7 +2043,9 @@ useEffect(() => {
         }
         refreshPane(pid);
       } catch (e) {
-        showError(String(e));
+        // 取消传输不算错误，收敛为轻提示；剪贴板保留可继续粘贴
+        const msg = String(e);
+        showError(msg.includes("取消") ? "已取消" : msg);
       }
     },
     [clipboard, activePane, tabs, refreshPane, showError, pushOp, isSftpPath, runTransfer],
@@ -2984,7 +2987,13 @@ useEffect(() => {
         error={activePane?.error ?? null}
         notice={notice}
         transfer={transfer}
-        onCancelDownload={(url) => void cancelHttpDownload(url)}
+        onCancelTransfer={(id, phase) => {
+          if (phase === "download") {
+            void cancelHttpDownload(id);
+          } else {
+            void cancelTransfer(id).catch(() => {});
+          }
+        }}
         onSharePanel={() => setSharePanelOpen(true)}
         syncDiff={
           syncLink && syncPanes

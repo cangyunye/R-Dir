@@ -85,6 +85,9 @@ export const permanentDeleteEntries = (paths: string[]) =>
 export const restoreFromTrash = (paths: string[]) =>
   invoke<string[]>("restore_from_trash", { paths });
 
+/** 取消进行中的本地复制/移动（id 来自 transfer-progress 事件载荷） */
+export const cancelTransfer = (id: string) => invoke<void>("cancel_transfer", { id });
+
 export const createDir = (parent: string, name: string) =>
   invoke<string>("create_dir", { parent, name });
 

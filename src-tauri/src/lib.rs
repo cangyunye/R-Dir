@@ -45,6 +45,10 @@ pub struct AppState {
     pub diff_cancels: std::sync::Mutex<
         std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>,
     >,
+    /// 本地复制/移动的取消标记（id → flag，id 随 transfer-progress 事件下发）
+    pub transfer_cancels: std::sync::Mutex<
+        std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    >,
     /// 窗口分享管理器（v0.7，feature = "share"）
     #[cfg(feature = "share")]
     pub share: share::ShareState,
@@ -1015,70 +1019,163 @@ fn parent_dir(path: String) -> Result<String, String> {
     }
 }
 
+/// 生成传输任务 id（毫秒时间戳 + 进程内序号，够唯一且无依赖）
+fn next_transfer_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(1);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("t{ts}-{n}")
+}
+
+/// 取消进行中的本地复制/移动（id 来自 transfer-progress 事件载荷）。
+#[tauri::command]
+fn cancel_transfer(state: tauri::State<'_, AppState>, id: String) {
+    if let Some(flag) = state.transfer_cancels.lock().unwrap().get(&id) {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// 复制条目到目标目录，返回实际创建路径（供撤销记录）。
 #[tauri::command]
-async fn copy_entries(app: tauri::AppHandle, paths: Vec<String>, dest: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+async fn copy_entries(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    paths: Vec<String>,
+    dest: String,
+) -> Result<Vec<String>, String> {
+    let id = next_transfer_id();
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state
+        .transfer_cancels
+        .lock()
+        .unwrap()
+        .insert(id.clone(), flag.clone());
+    let id_task = id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
-        let mut done_files = 0usize;
-        let created = ops::copy_entries(&paths, &dest, &mut |file_done, file_total| {
-            let mut p = progress::TransferProgress::start("copy", "复制中…", n);
-            p.done_files = done_files;
+        let mut done_entries = 0usize;
+        let mut label = String::from("复制中…");
+        let mut file_done = 0u64;
+        let mut file_total = 0u64;
+        let r = ops::copy_entries(&paths, &dest, &mut |ev| {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return false;
+            }
+            match ev {
+                ops::CbEvent::Start(name) => {
+                    label = name.to_string();
+                    file_done = 0;
+                    file_total = 0;
+                }
+                ops::CbEvent::Bytes(done, total) => {
+                    file_done = done;
+                    file_total = total;
+                }
+                ops::CbEvent::EntryDone => done_entries += 1,
+            }
+            let mut p = progress::TransferProgress::start("copy", &label, n);
+            p.done_files = done_entries;
             p.file_done = file_done;
             p.file_total = file_total;
+            p.id = Some(id_task.clone());
             progress::emit(&app, &p);
-        })?;
-        done_files = n;
-        progress::emit(
-            &app,
-            &progress::TransferProgress {
-                phase: "copy".into(),
-                label: "复制完成".into(),
-                done_files,
-                total_files: n,
-                file_done: 0,
-                file_total: 0,
-                done: true,
-                id: None,
-            },
-        );
-        Ok(created)
+            true
+        });
+        emit_transfer_end(&app, "copy", n, &r);
+        r
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    state.transfer_cancels.lock().unwrap().remove(&id);
+    result
 }
 
 /// 移动条目到目标目录，返回 (源, 目标) 路径对（供撤销记录）。
 #[tauri::command]
-async fn move_entries(app: tauri::AppHandle, paths: Vec<String>, dest: String) -> Result<Vec<(String, String)>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+async fn move_entries(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    paths: Vec<String>,
+    dest: String,
+) -> Result<Vec<(String, String)>, String> {
+    let id = next_transfer_id();
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state
+        .transfer_cancels
+        .lock()
+        .unwrap()
+        .insert(id.clone(), flag.clone());
+    let id_task = id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
-        let mut done_files = 0usize;
-        let moved = ops::move_entries(&paths, &dest, &mut |file_done, file_total| {
-            let mut p = progress::TransferProgress::start("move", "移动中…", n);
-            p.done_files = done_files;
+        let mut done_entries = 0usize;
+        let mut label = String::from("移动中…");
+        let mut file_done = 0u64;
+        let mut file_total = 0u64;
+        let r = ops::move_entries(&paths, &dest, &mut |ev| {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return false;
+            }
+            match ev {
+                ops::CbEvent::Start(name) => {
+                    label = name.to_string();
+                    file_done = 0;
+                    file_total = 0;
+                }
+                ops::CbEvent::Bytes(done, total) => {
+                    file_done = done;
+                    file_total = total;
+                }
+                ops::CbEvent::EntryDone => done_entries += 1,
+            }
+            let mut p = progress::TransferProgress::start("move", &label, n);
+            p.done_files = done_entries;
             p.file_done = file_done;
             p.file_total = file_total;
+            p.id = Some(id_task.clone());
             progress::emit(&app, &p);
-        })?;
-        done_files = n;
-        progress::emit(
-            &app,
-            &progress::TransferProgress {
-                phase: "move".into(),
-                label: "移动完成".into(),
-                done_files,
-                total_files: n,
-                file_done: 0,
-                file_total: 0,
-                done: true,
-                id: None,
-            },
-        );
-        Ok(moved)
+            true
+        });
+        emit_transfer_end(&app, "move", n, &r);
+        r
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    state.transfer_cancels.lock().unwrap().remove(&id);
+    result
+}
+
+/// 传输结束（完成/失败/取消）统一发 done 事件：失败与取消也要终止进度条，
+/// 取消时前端把文案收敛为「已取消」。
+fn emit_transfer_end<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    phase: &str,
+    total: usize,
+    r: &Result<impl Sized, String>,
+) {
+    let zh = if phase == "copy" { "复制" } else { "移动" };
+    let label = match r {
+        Ok(_) => format!("{zh}完成"),
+        Err(e) if e.contains("取消") => "已取消".into(),
+        Err(_) => "传输失败".into(),
+    };
+    progress::emit(
+        app,
+        &progress::TransferProgress {
+            phase: phase.into(),
+            label,
+            done_files: total,
+            total_files: total,
+            file_done: 0,
+            file_total: 0,
+            done: true,
+            id: None,
+        },
+    );
 }
 
 /// 扫描复制/移动前需用户裁决的同名冲突（同名目录可合并，不返回冲突）。
@@ -1093,70 +1190,112 @@ async fn scan_conflicts(paths: Vec<String>, dest: String) -> Result<Vec<ops::Con
 #[tauri::command]
 async fn copy_entries_plan(
     app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
     paths: Vec<String>,
     dest: String,
     resolutions: std::collections::HashMap<String, ops::Resolution>,
 ) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let id = next_transfer_id();
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state
+        .transfer_cancels
+        .lock()
+        .unwrap()
+        .insert(id.clone(), flag.clone());
+    let id_task = id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
-        let created = ops::copy_entries_plan(&paths, &dest, &resolutions, &mut |file_done, file_total| {
-            let mut p = progress::TransferProgress::start("copy", "复制中…", n);
+        let mut done_entries = 0usize;
+        let mut label = String::from("复制中…");
+        let mut file_done = 0u64;
+        let mut file_total = 0u64;
+        let r = ops::copy_entries_plan(&paths, &dest, &resolutions, &mut |ev| {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return false;
+            }
+            match ev {
+                ops::CbEvent::Start(name) => {
+                    label = name.to_string();
+                    file_done = 0;
+                    file_total = 0;
+                }
+                ops::CbEvent::Bytes(done, total) => {
+                    file_done = done;
+                    file_total = total;
+                }
+                ops::CbEvent::EntryDone => done_entries += 1,
+            }
+            let mut p = progress::TransferProgress::start("copy", &label, n);
+            p.done_files = done_entries;
             p.file_done = file_done;
             p.file_total = file_total;
+            p.id = Some(id_task.clone());
             progress::emit(&app, &p);
-        })?;
-        progress::emit(
-            &app,
-            &progress::TransferProgress {
-                phase: "copy".into(),
-                label: "复制完成".into(),
-                done_files: n,
-                total_files: n,
-                file_done: 0,
-                file_total: 0,
-                done: true,
-                id: None,
-            },
-        );
-        Ok(created)
+            true
+        });
+        emit_transfer_end(&app, "copy", n, &r);
+        r
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    state.transfer_cancels.lock().unwrap().remove(&id);
+    result
 }
 
 /// 按冲突裁决表移动，返回 (源, 目标) 路径对（供撤销反向移动）。
 #[tauri::command]
 async fn move_entries_plan(
     app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
     paths: Vec<String>,
     dest: String,
     resolutions: std::collections::HashMap<String, ops::Resolution>,
 ) -> Result<Vec<(String, String)>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let id = next_transfer_id();
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state
+        .transfer_cancels
+        .lock()
+        .unwrap()
+        .insert(id.clone(), flag.clone());
+    let id_task = id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
-        let moved = ops::move_entries_plan(&paths, &dest, &resolutions, &mut |file_done, file_total| {
-            let mut p = progress::TransferProgress::start("move", "移动中…", n);
+        let mut done_entries = 0usize;
+        let mut label = String::from("移动中…");
+        let mut file_done = 0u64;
+        let mut file_total = 0u64;
+        let r = ops::move_entries_plan(&paths, &dest, &resolutions, &mut |ev| {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return false;
+            }
+            match ev {
+                ops::CbEvent::Start(name) => {
+                    label = name.to_string();
+                    file_done = 0;
+                    file_total = 0;
+                }
+                ops::CbEvent::Bytes(done, total) => {
+                    file_done = done;
+                    file_total = total;
+                }
+                ops::CbEvent::EntryDone => done_entries += 1,
+            }
+            let mut p = progress::TransferProgress::start("move", &label, n);
+            p.done_files = done_entries;
             p.file_done = file_done;
             p.file_total = file_total;
+            p.id = Some(id_task.clone());
             progress::emit(&app, &p);
-        })?;
-        progress::emit(
-            &app,
-            &progress::TransferProgress {
-                phase: "move".into(),
-                label: "移动完成".into(),
-                done_files: n,
-                total_files: n,
-                file_done: 0,
-                file_total: 0,
-                done: true,
-                id: None,
-            },
-        );
-        Ok(moved)
+            true
+        });
+        emit_transfer_end(&app, "move", n, &r);
+        r
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    state.transfer_cancels.lock().unwrap().remove(&id);
+    result
 }
 
 /// 把文件列表写入系统剪贴板（跨应用复制）。
@@ -1297,6 +1436,7 @@ pub fn run() {
         stat_paths,
         copy_entries,
         move_entries,
+        cancel_transfer,
         scan_conflicts,
         copy_entries_plan,
         move_entries_plan,

@@ -62,6 +62,10 @@ objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL"
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = "5"
 
+# 复制快速路径的系统调用（macOS clonefile / Linux FICLONE ioctl）
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 default = ["sftp", "share"]
 sftp = ["dep:russh", "dep:russh-keys", "dep:tokio", "dep:aes-gcm", "dep:sha2", "dep:base64", "dep:rand"]
