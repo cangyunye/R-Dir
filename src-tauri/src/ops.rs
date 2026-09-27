@@ -338,21 +338,33 @@ pub fn rename_entry(path: &str, new_name: &str) -> Result<String, String> {
 }
 
 /// 删除条目（进回收站）。
+/// IFileOperation 偶发瞬时中止（目录句柄被占用、回收站忙等），重试一次再报错。
 pub fn delete_entries(paths: &[String]) -> Result<(), String> {
     let paths: Vec<&Path> = paths.iter().map(|s| Path::new(s)).collect();
-    trash::delete_all(&paths).map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("拒绝访问") || msg.contains("Permission denied") || msg.contains("access") {
-            format!("删除失败：权限不足，请以管理员身份运行 R-Dir，或将文件拖到回收站后手动清空。
+    let attempt = || {
+        trash::delete_all(&paths).map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("拒绝访问") || msg.contains("Permission denied") || msg.contains("access") {
+                format!("删除失败：权限不足，请以管理员身份运行 R-Dir，或将文件拖到回收站后手动清空。
 详情：{}", msg)
-        } else if msg.contains("being used") || msg.contains("占用") {
-            format!("删除失败：文件正在被其他程序占用，请关闭后重试。
+            } else if msg.contains("being used") || msg.contains("占用") {
+                format!("删除失败：文件正在被其他程序占用，请关闭后重试。
 详情：{}", msg)
-        } else {
-            format!("删除失败：{}", msg)
+            } else if msg.contains("aborted") || msg.contains("Aborted") {
+                // IFileOperation 的 "Some operations were aborted"：多为句柄占用或回收站瞬时不可用
+                "删除失败：无法移入回收站（目录可能正被其他程序占用，或该磁盘回收站暂不可用）".to_string()
+            } else {
+                format!("删除失败：{}", msg)
+            }
+        })
+    };
+    match attempt() {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            attempt()
         }
-    })?;
-    Ok(())
+    }
 }
 
 /// 永久删除条目（绕过回收站，不可恢复）。

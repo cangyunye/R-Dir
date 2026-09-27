@@ -16,7 +16,9 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 - **修复：快速定位（typeahead）只吃首字母**：点击行后焦点在行元素（`tabIndex=0`），输入首字母匹配命中后滚动列表，虚拟滚动窗口变化把焦点行卸载出渲染区，焦点掉到 body，后续按键不再经过容器的 onKeyDown——缓冲永远停在首字母（如 C:\Windows 中输 `disk` 只匹配到 `Debug`）。修复：命中后把焦点收回列表容器（容器不参与虚拟卸载）再滚动；定位提示保留时长 2s→1s。
 - **修复：右键重命名输入框闪退、「改名后名字没变」（同根因）**：radix 菜单关闭的焦点恢复与 RenameInput 的延迟聚焦竞态，输掉时 onBlur 以未修改的名字提交 → `commitRename` 静默 no-op → 输入框关闭且名字不变（双击路径无菜单故正常）。修复：行菜单 `onCloseAutoFocus` 在重命名命中时 `preventDefault` 阻断焦点恢复 + RenameInput 按 0/120/300ms 重试聚焦直到拿稳（已持焦时跳过，不打断光标）。**连带修复：分屏右键不激活窗格**（激活挂在 onClick，右键不触发 click，非活动窗格的右键重命名/粘贴刷新被推迟）——容器 `onContextMenu` 也触发激活，对齐资源管理器。
 - **修复：pending 选中被 StrictMode 双调用丢弃**：目录加载完成后的 pending 消费原写在 `setTabs` updater 内部，清 ref 的副作用在 dev StrictMode 双调用 updater 时被第二次调用丢弃——粘贴定位选中（及既有搜索结果定位）不生效。updater 外读 ref、算交集、清 ref，updater 只做纯映射。
-- 测试：e2e 新增「键盘焦点回归」2 例（R1 右键重命名越过 300ms 重试窗口断言焦点拿稳且改名生效；R2 复制→粘贴后新条目被选中）；tauri-mock 补 `rename_entry` / `copy_entries_plan` / `scan_conflicts` 桩。全量 52 e2e + 322 前端（25 文件）+ 84 Rust 用例通过。
+- **搜索结果右键内联重命名**：搜索面板（文件名/内容两个 tab）结果行右键新增「重命名」（仅本地路径），行内输入框编辑（Enter/失焦提交、Esc 取消）；RenameInput 从 FileList 抽为共享组件（含焦点重试修复）。改名完成后乐观更新递归结果集、刷新正显示该目录的窗格并定位选中新条目；当前层结果由窗格 entries 派生，随窗格刷新自然更新。
+- **修复：回收站删除偶发无效（`Some operations were aborted`）**：Windows IFileOperation 偶发瞬时中止（目录句柄被占用、回收站忙等），后端失败后延时 250ms 自动重试一次，并把该错误人话化为「无法移入回收站（目录可能正被其他程序占用，或该磁盘回收站暂不可用）」；前端回收站删除失败时对齐资源管理器给退路——弹窗询问是否**永久删除**（明示不可恢复），不再卡死在无效状态。
+- 测试：e2e 新增「键盘焦点回归」2 例（R1 右键重命名越过 300ms 重试窗口断言焦点拿稳且改名生效；R2 复制→粘贴后新条目被选中）；tauri-mock 补 `rename_entry` / `copy_entries_plan` / `scan_conflicts` / `find_files` 桩。新增搜索内联重命名回归 R3；全量 53 e2e + 322 前端（25 文件）+ 84 Rust 用例通过。
 
 ## v0.20.0 (2026-09-27)
 
