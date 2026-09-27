@@ -5,6 +5,19 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.21.0 (2026-09-27)
+
+- **本地复制/移动提速 + 进度修复 + 中途取消**（FastCopy 思路：避开用户态逐块搬运——能 reflink/克隆就不复制数据，能交给系统复制引擎就不过应用内存）。
+  - **平台快速路径**收敛在 `copy_file_progress`（本地复制唯一咽喉：粘贴、移动跨卷回退、复制到当前目录、拖拽、同步同步全部经过，天然仅本地生效，SFTP/HTTP 不受影响）：Windows `CopyFileExW`（系统复制引擎，块级进度回调、回调内可取消）；macOS `clonefile`（APFS 同卷 O(1) 克隆，几十 GB 秒级完成，追平 Finder）；Linux `FICLONE` ioctl（btrfs/XFS/ZFS/NFSv4.2 reflink）。全部不支持时静默回退用户态循环，缓冲 64KB→1MB（系统调用次数降 16 倍）。选 CopyFileExW 而非 CopyFile2：免引入 windows 大依赖，NTFS 上与 Explorer 同受磁盘带宽限制；Linux 不走 `copy_file_range`：本地常规文件收益可忽略，徒增部分拷贝回退复杂度。不调外部 cp/robocopy：进度/取消/错误处理无法无缝接入。
+  - **进度协议重构**：`ProgressCb` 改为 `CbEvent`（Start 文件名 / Bytes 字节 / EntryDone 条目完成）且回调返回 false 即取消。修复 `doneFiles` 恒 0 的已知缺陷（此前只有当前文件字节百分比准确），StatusBar 现显示真实 `n/N` 进度与正在复制的文件名。
+  - **中途取消**：`AppState.transfer_cancels` 注册表（仿 `size_cancels`），后端生成任务 id 随 `transfer-progress` 事件下发；新命令 `cancel_transfer(id)`；状态栏「停止」按钮从仅 HTTP 下载扩展到复制/移动；取消/失败也发 done 事件终止进度条，取消文案收敛为「已取消」，粘贴被取消不弹错误、剪贴板保留可继续粘贴。新增 libc（unix 目标）依赖。测试：Rust 新增进度事件协议/取消中止用例。
+- **粘贴完成后定位并选中新条目**：`pendingSelectRef` 由单路径扩为路径数组，目录加载后与条目求交集全部选中（首项为主选中）；`doPaste` 收集实际落点——本地复制/移动用后端返回的 `created`/`moved` 目标（含冲突改名裁决的真实路径）、远程→本地用 `sftpDownloadTo` 返回值（含 " (n)" 去重改名）、本地→远程用 `dest + basename(src)`；FileList 新增主选中滚动进可视区 effect（复用快速定位滚动数学，仅依赖 primary，普通刷新不打断滚动位置）。
+- **右键菜单新增撤销/重做入口，删除纳入撤销栈**：文件条目菜单（删除之后）与空白处菜单（粘贴之后）各加「撤销/重做」，空栈置灰，复用既有全局操作栈（粘贴/移动/重命名/新建本就可撤销，Ctrl+Z / ⋮ 菜单已有入口）。`FileOp` 新增 `delete` 种类：回收站删除成功后记录（永久删除与 SFTP 删除仍不记录——前者不可恢复、后者无回收站）；撤销 = 新后端命令 `restore_from_trash`（`trash::os_limited::list()` 按 original_path 匹配、同路径多条取删除时间最新、`restore_all` 还原，找不到报「可能已被清空或移走」），重做 = 再删进回收站。
+- **修复：快速定位（typeahead）只吃首字母**：点击行后焦点在行元素（`tabIndex=0`），输入首字母匹配命中后滚动列表，虚拟滚动窗口变化把焦点行卸载出渲染区，焦点掉到 body，后续按键不再经过容器的 onKeyDown——缓冲永远停在首字母（如 C:\Windows 中输 `disk` 只匹配到 `Debug`）。修复：命中后把焦点收回列表容器（容器不参与虚拟卸载）再滚动；定位提示保留时长 2s→1s。
+- **修复：右键重命名输入框闪退、「改名后名字没变」（同根因）**：radix 菜单关闭的焦点恢复与 RenameInput 的延迟聚焦竞态，输掉时 onBlur 以未修改的名字提交 → `commitRename` 静默 no-op → 输入框关闭且名字不变（双击路径无菜单故正常）。修复：行菜单 `onCloseAutoFocus` 在重命名命中时 `preventDefault` 阻断焦点恢复 + RenameInput 按 0/120/300ms 重试聚焦直到拿稳（已持焦时跳过，不打断光标）。**连带修复：分屏右键不激活窗格**（激活挂在 onClick，右键不触发 click，非活动窗格的右键重命名/粘贴刷新被推迟）——容器 `onContextMenu` 也触发激活，对齐资源管理器。
+- **修复：pending 选中被 StrictMode 双调用丢弃**：目录加载完成后的 pending 消费原写在 `setTabs` updater 内部，清 ref 的副作用在 dev StrictMode 双调用 updater 时被第二次调用丢弃——粘贴定位选中（及既有搜索结果定位）不生效。updater 外读 ref、算交集、清 ref，updater 只做纯映射。
+- 测试：e2e 新增「键盘焦点回归」2 例（R1 右键重命名越过 300ms 重试窗口断言焦点拿稳且改名生效；R2 复制→粘贴后新条目被选中）；tauri-mock 补 `rename_entry` / `copy_entries_plan` / `scan_conflicts` 桩。全量 52 e2e + 322 前端（25 文件）+ 84 Rust 用例通过。
+
 ## v0.20.0 (2026-09-27)
 
 - **方案A预览：撤常驻菜单条，新增命令面板 + 右上角 ⋮ 应用菜单**：`Ctrl+K` / `Ctrl+Shift+P` 呼出命令面板（动作注册表统一驱动，键位可录制）；原七个下拉菜单摊平为 ⋮ 分组平铺列表，保留全部功能入口用于发现；⚙ 设置 / 🌙 主题切换一并收进标签栏右侧常驻区；菜单「退出」改走"是否保存会话"询问（原为直接退出）。
