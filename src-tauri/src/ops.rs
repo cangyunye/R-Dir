@@ -337,6 +337,38 @@ pub fn permanent_delete_entries(paths: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// 从回收站还原条目（撤销删除用）。按原始路径匹配，同路径多条取删除时间最新的一条。
+/// 返回实际还原的路径。
+pub fn restore_from_trash(paths: &[String]) -> Result<Vec<String>, String> {
+    use std::collections::{HashMap, HashSet};
+    use trash::os_limited;
+    let want: HashSet<&str> = paths.iter().map(|s| s.as_str()).collect();
+    let items = os_limited::list().map_err(|e| format!("读取回收站失败：{}", e))?;
+    let mut latest: HashMap<String, trash::TrashItem> = HashMap::new();
+    for item in items {
+        let orig = item.original_path().to_string_lossy().to_string();
+        if !want.contains(orig.as_str()) {
+            continue;
+        }
+        match latest.get(&orig) {
+            Some(prev) if prev.time_deleted >= item.time_deleted => continue,
+            _ => {
+                latest.insert(orig, item);
+            }
+        }
+    }
+    if latest.is_empty() {
+        return Err("回收站中找不到这些条目，可能已被清空或移走".into());
+    }
+    let restore: Vec<trash::TrashItem> = latest.into_values().collect();
+    let restored: Vec<String> = restore
+        .iter()
+        .map(|i| i.original_path().to_string_lossy().to_string())
+        .collect();
+    os_limited::restore_all(restore).map_err(|e| format!("从回收站还原失败：{}", e))?;
+    Ok(restored)
+}
+
 /// 新建文件夹，返回新路径。
 pub fn create_dir(parent: &str, name: &str) -> Result<String, String> {
     check_name(name)?;

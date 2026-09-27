@@ -60,6 +60,11 @@ export interface PaneHandlers {
   /** v0.7：分享此目录（右键） */
   onShareDir: (dir: string) => void;
   onPaste: (paneId: number) => void;
+  /** 撤销 / 重做（右键菜单入口，全局操作栈） */
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
   onSelectAll: (paneId: number) => void;
   onInvertSelection: (paneId: number) => void;
   /** 标签与快捷访问 */
@@ -193,6 +198,10 @@ function PaneView({
         onShareDir={(dir) => h.onShareDir(dir)}
         onPaste={() => h.onPaste(pane.id)}
         canPaste={canPaste}
+        onUndo={h.onUndo}
+        onRedo={h.onRedo}
+        canUndo={h.canUndo}
+        canRedo={h.canRedo}
         onSelectAll={() => h.onSelectAll(pane.id)}
         onInvertSelection={() => h.onInvertSelection(pane.id)}
         fileTags={fileTags}

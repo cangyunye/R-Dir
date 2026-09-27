@@ -74,6 +74,7 @@ import {
   clipboardReadFiles,
   parentDir,
   permanentDeleteEntries,
+  restoreFromTrash,
   renameEntry,
   resolvePath,
   sftpConnect,
@@ -218,7 +219,7 @@ let nextTabId = 1;
 let nextPaneId = 1;
 let nextSplitId = 1;
 
-/** 可撤销/重做的文件操作记录（只记录可安全反向的操作；回收站删除不记录） */
+/** 可撤销/重做的文件操作记录（只记录可安全反向的操作；永久删除与 SFTP 删除不记录） */
 type FileOp =
   | {
       kind: "copy";
@@ -236,7 +237,9 @@ type FileOp =
       destPane: number;
     }
   | { kind: "rename"; oldPath: string; newPath: string; paneId: number }
-  | { kind: "create"; path: string; isDir: boolean; paneId: number };
+  | { kind: "create"; path: string; isDir: boolean; paneId: number }
+  /** 回收站删除：撤销 = restore_from_trash，重做 = 再删一次 */
+  | { kind: "delete"; paths: string[]; paneId: number };
 
 function makePane(path: string): PaneState {
   return {
@@ -2186,6 +2189,8 @@ useEffect(() => {
           await sftpDelete(list);
         } else {
           await deleteEntries(list);
+          // 回收站删除可撤销：记录进撤销栈
+          pushOp({ kind: "delete", paths: list, paneId: p });
         }
         setTabs((ts) =>
           ts.map((t) => {
@@ -2202,7 +2207,7 @@ useEffect(() => {
         showError(String(e));
       }
     },
-    [refreshPane, showError, isSftpPath],
+    [refreshPane, showError, isSftpPath, pushOp],
   );
 
   const doDelete = useCallback(
@@ -2307,6 +2312,9 @@ useEffect(() => {
       } else if (op.kind === "create") {
         await deleteEntries([op.path]);
         refreshPane(op.paneId);
+      } else if (op.kind === "delete") {
+        await restoreFromTrash(op.paths);
+        refreshPane(op.paneId);
       }
       setRedoStack((s) => [...s.slice(-49), op]);
     } catch (e) {
@@ -2338,6 +2346,9 @@ useEffect(() => {
         await (op.isDir
           ? createDir(parentPath(op.path), basename(op.path))
           : createFile(parentPath(op.path), basename(op.path)));
+        refreshPane(op.paneId);
+      } else if (op.kind === "delete") {
+        await deleteEntries(op.paths);
         refreshPane(op.paneId);
       }
       setUndoStack((s) => [...s.slice(-49), op]);
@@ -2692,6 +2703,10 @@ useEffect(() => {
       setShareDialogOpen(true);
     },
     onPaste: (paneId) => void doPaste(paneId),
+    onUndo: () => void undo(),
+    onRedo: () => void redo(),
+    canUndo: undoStack.length > 0,
+    canRedo: redoStack.length > 0,
     onSelectAll: selectAllIn,
     onInvertSelection: invertSelectionIn,
     onToggleTag: toggleTag,

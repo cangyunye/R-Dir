@@ -81,6 +81,10 @@ export const deleteEntries = (paths: string[]) =>
 export const permanentDeleteEntries = (paths: string[]) =>
   invoke<void>("permanent_delete_entries", { paths });
 
+/** 从回收站还原（撤销删除），返回还原的路径 */
+export const restoreFromTrash = (paths: string[]) =>
+  invoke<string[]>("restore_from_trash", { paths });
+
 export const createDir = (parent: string, name: string) =>
   invoke<string>("create_dir", { parent, name });
 

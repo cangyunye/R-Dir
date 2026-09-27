@@ -28,6 +28,8 @@ import {
   Crosshair,
   ListTree,
   FileDiff,
+  Undo2,
+  Redo2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
@@ -143,6 +145,10 @@ export function FileList({
   onShareDir,
   onPaste,
   canPaste,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
   onSelectAll,
   onInvertSelection,
   fileTags,
@@ -218,6 +224,11 @@ export function FileList({
   onShareDir: (dir: string) => void;
   onPaste: () => void;
   canPaste: boolean;
+  /** 撤销 / 重做（全局操作栈，右键菜单入口） */
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
   onSelectAll: () => void;
   onInvertSelection: () => void;
   fileTags: FileTags;
@@ -1028,6 +1039,14 @@ export function FileList({
                   <Trash2 className="mr-2 h-4 w-4" /> 删除（回收站）
                 </ContextMenuItem>
                 <ContextMenuSeparator />
+                {/* 撤销 / 重做作用于全局操作栈（粘贴/移动/重命名/新建/删除） */}
+                <ContextMenuItem onClick={onUndo} disabled={!canUndo}>
+                  <Undo2 className="mr-2 h-4 w-4" /> 撤销
+                </ContextMenuItem>
+                <ContextMenuItem onClick={onRedo} disabled={!canRedo}>
+                  <Redo2 className="mr-2 h-4 w-4" /> 重做
+                </ContextMenuItem>
+                <ContextMenuSeparator />
                 <ContextMenuItem onClick={() => onCopyPath(entry.path)}>
                   <Clipboard className="mr-2 h-4 w-4" /> 复制路径
                 </ContextMenuItem>
@@ -1193,6 +1212,13 @@ export function FileList({
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onPaste} disabled={!canPaste}>
             <Clipboard className="mr-2 h-4 w-4" /> 粘贴
+          </ContextMenuItem>
+          {/* 撤销 / 重做作用于全局操作栈（粘贴/移动/重命名/新建/删除） */}
+          <ContextMenuItem onClick={onUndo} disabled={!canUndo}>
+            <Undo2 className="mr-2 h-4 w-4" /> 撤销
+          </ContextMenuItem>
+          <ContextMenuItem onClick={onRedo} disabled={!canRedo}>
+            <Redo2 className="mr-2 h-4 w-4" /> 重做
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onSelectAll}>

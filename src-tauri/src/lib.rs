@@ -1195,6 +1195,14 @@ async fn permanent_delete_entries(paths: Vec<String>) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+/// 从回收站还原条目（撤销删除），返回还原的路径。
+#[tauri::command]
+async fn restore_from_trash(paths: Vec<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || ops::restore_from_trash(&paths))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// 新建文件夹。
 #[tauri::command]
 async fn create_dir(parent: String, name: String) -> Result<String, String> {
@@ -1297,6 +1305,7 @@ pub fn run() {
         rename_entry,
         delete_entries,
         permanent_delete_entries,
+        restore_from_trash,
         create_dir,
         create_file,
         search_content,
