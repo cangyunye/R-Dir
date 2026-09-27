@@ -378,6 +378,9 @@ pub fn permanent_delete_entries(paths: &[String]) -> Result<(), String> {
 
 /// 从回收站还原条目（撤销删除用）。按原始路径匹配，同路径多条取删除时间最新的一条。
 /// 返回实际还原的路径。
+/// 注：`trash::os_limited` 仅在 Windows 与非 macOS 的 Unix 提供（macOS 走 Finder 回收站），
+/// 故 macOS 分支单独实现。
+#[cfg(not(target_os = "macos"))]
 pub fn restore_from_trash(paths: &[String]) -> Result<Vec<String>, String> {
     use std::collections::{HashMap, HashSet};
     use trash::os_limited;
@@ -405,6 +408,43 @@ pub fn restore_from_trash(paths: &[String]) -> Result<Vec<String>, String> {
         .map(|i| i.original_path().to_string_lossy().to_string())
         .collect();
     os_limited::restore_all(restore).map_err(|e| format!("从回收站还原失败：{}", e))?;
+    Ok(restored)
+}
+
+/// macOS：trash crate 不提供 os_limited（Finder 回收站），按同名条目从 `~/.Trash` 移回原路径。
+/// 覆盖常见场景（主卷、未重名冲突）；外置卷（/Volumes/X/.Trashes）与重名冲突条目会报「找不到」。
+#[cfg(target_os = "macos")]
+pub fn restore_from_trash(paths: &[String]) -> Result<Vec<String>, String> {
+    let trash_dir = dirs::home_dir()
+        .ok_or("无法定位用户目录")?
+        .join(".Trash");
+    let mut restored = Vec::new();
+    for p in paths {
+        let orig = Path::new(p);
+        let name = orig
+            .file_name()
+            .ok_or_else(|| format!("非法路径：{p}"))?
+            .to_string_lossy()
+            .to_string();
+        let cand = trash_dir.join(&name);
+        if !cand.exists() {
+            return Err(format!(
+                "回收站中找不到 {name}（可能已被清空、重名冲突或位于外置卷）"
+            ));
+        }
+        if orig.exists() {
+            return Err(format!("原位置已有同名项目，无法还原：{p}"));
+        }
+        if let Some(parent) = orig.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
+        }
+        if fs::rename(&cand, orig).is_err() {
+            // 跨卷回退：复制 + 删除
+            copy_recursive(&cand, orig, &mut |_| true).map_err(|e| format!("还原失败：{e}"))?;
+            remove_recursive(&cand).map_err(|e| format!("还原清理失败：{e}"))?;
+        }
+        restored.push(p.clone());
+    }
     Ok(restored)
 }
 
