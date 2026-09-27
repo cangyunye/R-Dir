@@ -482,3 +482,36 @@ test.describe("16. 搜索结果内联重命名（v0.21.0）", () => {
     await expect(page.locator(`[data-path="${HOME}/renamed_photo.png"]`)).toBeVisible();
   });
 });
+
+test.describe("17. 删除确认弹窗（v0.21.0）", () => {
+  test("R4 删除目录：确认框展示内部统计，确认后删除", async ({ page }) => {
+    await page.locator(`[data-path="${HOME}/Projects"]`).click({ button: "right" });
+    await page.getByRole("menu").getByText("删除（回收站）").click();
+
+    const dialog = page.locator("[data-delete-confirm]");
+    await expect(dialog).toBeVisible();
+    // 内部统计（与属性同引擎）：递归计入 Projects 内的 app.ts(900B)
+    await expect(dialog).toContainText("个文件");
+    await expect(dialog).toContainText("900B");
+    await expect(dialog).toContainText("撤销恢复");
+
+    await dialog.getByRole("button", { name: "删除" }).click();
+    await expect(page.locator(`[data-path="${HOME}/Projects"]`)).toHaveCount(0);
+  });
+
+  test("R5 删除文件也弹确认框：取消则不删，确认才删除", async ({ page }) => {
+    // 文件此前不弹框，现在一律确认
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click({ button: "right" });
+    await page.getByRole("menu").getByText("删除（回收站）").click();
+    const dialog = page.locator("[data-delete-confirm]");
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByRole("button", { name: "取消" }).click();
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click({ button: "right" });
+    await page.getByRole("menu").getByText("删除（回收站）").click();
+    await page.locator("[data-delete-confirm]").getByRole("button", { name: "删除" }).click();
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toHaveCount(0);
+  });
+});

@@ -151,6 +151,19 @@ export async function installTauriMock(page: Page): Promise<void> {
       },
       // 无同名冲突（夹具固定不冲突）
       scan_conflicts: () => [],
+      // 回收站删除：直接从虚拟 FS 移除（删除确认弹窗回归用）
+      delete_entries: (a) => {
+        const paths = (a.paths as string[]) ?? [];
+        for (const p of paths) {
+          const parent = parentOf(p);
+          const dir = FS[parent];
+          if (dir) {
+            const idx = dir.findIndex((x) => `${parent}/${x.name}` === p);
+            if (idx >= 0) dir.splice(idx, 1);
+          }
+          delete FS[p]; // 目录连带移除其子树清单
+        }
+      },
       // fd 递归检索：对虚拟 FS 做子串匹配（搜索面板内联重命名回归用）
       find_files: (a) => {
         const q = String(a.pattern).toLowerCase();

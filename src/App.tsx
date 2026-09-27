@@ -139,9 +139,10 @@ import {
 } from "@/lib/persist";
 import { shareStopByDir, shareList } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Trash2, Bird } from "lucide-react";
+import { Bird } from "lucide-react";
 import { PaneListMenu } from "@/components/PaneListMenu";
 import { PropertiesDialog } from "@/components/PropertiesDialog";
+import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { DiffDialog } from "@/components/DiffDialog";
 import { TextDiffDialog, type TextDiffSource } from "@/components/TextDiffDialog";
 import { ComparePickDialog, type ComparePickPane } from "@/components/ComparePickDialog";
@@ -1431,6 +1432,8 @@ useEffect(() => {
   const [confirmDelete, setConfirmDelete] = useState<{
     paneId: number;
     paths: string[];
+    /** 参与统计与展示的条目（缺失的路径合成占位条目） */
+    entries: FileEntry[];
   } | null>(null);
 
   /** v0.16 属性弹窗：右键「属性」选中的条目（目录递归统计大小） */
@@ -2243,16 +2246,26 @@ useEffect(() => {
       const p = paneId !== undefined ? paneId : activePane?.id;
       const list = paths ?? activePane?.selection ?? [];
       if (p === undefined || list.length === 0) return;
-      // 删除文件夹前弹确认框（文件直接进回收站）
+      // 一律弹确认框（含内部统计：与右键「属性」同一套递归引擎）
       const pane = tabs.flatMap((t) => Object.values(t.panes)).find((x) => x.id === p);
-      const hasDir = !!pane?.entries.some((e) => e.is_dir && list.includes(e.path));
-      if (hasDir) {
-        setConfirmDelete({ paneId: p, paths: list });
-        return;
-      }
-      void doDeleteNow(p, list);
+      const known = pane?.entries.filter((e) => list.includes(e.path)) ?? [];
+      const knownSet = new Set(known.map((e) => e.path));
+      const synthesized: FileEntry[] = list
+        .filter((path) => !knownSet.has(path))
+        .map((path) => ({
+          name: path.split(/[\\/]/).pop() ?? path,
+          path,
+          is_dir: false,
+          is_symlink: false,
+          size: 0,
+          modified: null,
+          created: null,
+          permissions: "",
+          extension: "",
+        }));
+      setConfirmDelete({ paneId: p, paths: list, entries: [...known, ...synthesized] });
     },
-    [activePane, tabs, doDeleteNow],
+    [activePane, tabs],
   );
 
   /** 确认删除弹窗的"删除"按钮 */
@@ -3130,38 +3143,14 @@ useEffect(() => {
         <ConflictDialog conflicts={conflictReq} onDone={finishConflicts} />
       )}
 
-      {/* 删除文件夹确认弹窗 */}
+      {/* 删除确认弹窗（一律确认；目录内部统计与右键「属性」同一套引擎） */}
       {confirmDelete && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setConfirmDelete(null);
-          }}
-        >
-          <div className="w-[380px] max-w-[92vw] rounded-lg border bg-background p-4 shadow-xl">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <Trash2 className="h-4 w-4 text-destructive" /> 确认删除
-            </div>
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              将删除 {confirmDelete.paths.length} 个项目（含文件夹），移入回收站。
-              <br />
-              文件夹的删除需要确认，文件删除不弹此框。
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setConfirmDelete(null)}>
-                取消
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={confirmDeleteNow}
-                autoFocus
-              >
-                删除
-              </Button>
-            </div>
-          </div>
-        </div>
+        <DeleteConfirmDialog
+          key={confirmDelete.paths.join("|")}
+          entries={confirmDelete.entries}
+          onConfirm={confirmDeleteNow}
+          onCancel={() => setConfirmDelete(null)}
+        />
       )}
 
       {/* v0.16 属性弹窗：目录递归统计大小 + 滚动数字 */}
