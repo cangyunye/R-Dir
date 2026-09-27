@@ -446,8 +446,8 @@ useEffect(() => {
   })();
   const bootRef = useRef(false);
   const noticeTimer = useRef<number | null>(null);
-  /** 内容搜索结果定位：目录加载完成后选中该文件 */
-  const pendingSelectRef = useRef<string | null>(null);
+  /** 内容搜索结果定位/粘贴后定位：目录加载完成后选中这些条目 */
+  const pendingSelectRef = useRef<string[] | null>(null);
   /** 已关闭标签页（恢复用） */
   const closedTabsRef = useRef<{ tab: TabState; index: number }[]>([]);
 
@@ -725,9 +725,13 @@ useEffect(() => {
             if (!p) return t;
             let selection = p.selection;
             const pending = pendingSelectRef.current;
-            if (pending && entries.some((e) => e.path === pending)) {
-              selection = [pending];
-              pendingSelectRef.current = null;
+            if (pending && pending.length > 0) {
+              const pendingSet = new Set(pending);
+              const hits = entries.filter((e) => pendingSet.has(e.path)).map((e) => e.path);
+              if (hits.length > 0) {
+                selection = hits;
+                pendingSelectRef.current = null;
+              }
             }
             const updated = { ...p, entries, loading: false, selection };
             const title = t.activePane === activePane.id ? updated.title : t.title;
@@ -1254,7 +1258,7 @@ useEffect(() => {
       if (activePane.path === dir) {
         selectRange(activePane.id, [filePath]);
       } else {
-        pendingSelectRef.current = filePath;
+        pendingSelectRef.current = [filePath];
         navigate(dir);
       }
     },
@@ -1972,6 +1976,8 @@ useEffect(() => {
       const localSrcs = srcs.filter((p) => !isSftpPath(p));
       const sftpSrcs = srcs.filter((p) => isSftpPath(p));
       const destIsSftp = isSftpPath(dest);
+      /** 实际落点（含冲突改名后的路径）：粘贴完成后定位 + 选中 */
+      const pasted: string[] = [];
       try {
         if (destIsSftp) {
           // 目标远程：仅支持本地 → 远程上传；远程→远程暂不支持
@@ -1981,20 +1987,24 @@ useEffect(() => {
           }
           for (const src of localSrcs) {
             await sftpUpload(src, dest, basename(src));
+            pasted.push(dest.endsWith("/") ? dest + basename(src) : `${dest}/${basename(src)}`);
           }
           setClipboard(null);
+          if (pasted.length > 0) pendingSelectRef.current = pasted;
           refreshPane(pid);
           return;
         }
         // 目标本地
         for (const src of sftpSrcs) {
-          await sftpDownloadTo(dest, src);
+          const local = await sftpDownloadTo(dest, src);
+          if (local) pasted.push(local);
         }
         if (localSrcs.length > 0) {
           const r = await runTransfer(isCut ? "move" : "copy", localSrcs, dest);
           if (r === null) return; // 用户「停止」：保留剪贴板，不清理
           if (r.moved) {
             pushOp({ kind: "move", pairs: r.moved, dest, srcPane: pid, destPane: pid });
+            pasted.push(...r.moved.map(([, to]) => to));
           } else if (r.created) {
             pushOp({
               kind: "copy",
@@ -2004,6 +2014,7 @@ useEffect(() => {
               srcPane: pid,
               destPane: pid,
             });
+            pasted.push(...r.created);
           }
         }
         if (sftpSrcs.length > 0 && localSrcs.length === 0 && isCut) {
@@ -2011,6 +2022,21 @@ useEffect(() => {
           showError("远程剪切暂按复制处理（不删除源文件）");
         }
         setClipboard(null);
+        if (pasted.length > 0) {
+          if (activePane && pid === activePane.id) {
+            // 活动窗格：待列表刷新后定位选中（见目录加载 effect 的 pending 消费）
+            pendingSelectRef.current = pasted;
+          } else {
+            // 非活动窗格兜底：直接写选中，条目在其被激活加载时仍然成立
+            setTabs((ts) =>
+              ts.map((t) => {
+                const pane = t.panes[pid];
+                if (!pane) return t;
+                return { ...t, panes: { ...t.panes, [pid]: { ...pane, selection: pasted } } };
+              }),
+            );
+          }
+        }
         refreshPane(pid);
       } catch (e) {
         showError(String(e));

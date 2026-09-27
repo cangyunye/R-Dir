@@ -308,6 +308,24 @@ export function FileList({
   const primary = selection.length > 0 ? selection[0] : null;
   /** Shift 范围选择的锚点 */
   const anchorRef = useRef<string | null>(null);
+  // 主选中变化时滚动进可视区（粘贴后定位、搜索结果定位等外部选中）。
+  // 只依赖 primary：普通刷新/排序不变时不触发，避免打断用户当前滚动位置。
+  useEffect(() => {
+    if (!primary) return;
+    const el = listScrollRef.current;
+    if (!el) return;
+    const idx = sorted.findIndex((x) => x.path === primary);
+    if (idx < 0) return;
+    // 焦点若在行元素上，先收回列表容器，防止随后的滚动把焦点行卸载出虚拟窗口
+    const ae = document.activeElement as HTMLElement | null;
+    if (ae && ae !== el && el.contains(ae)) el.focus({ preventScroll: true });
+    const target = idx * ROW_HEIGHT;
+    const top = el.scrollTop;
+    const bottom = top + el.clientHeight - ROW_HEIGHT;
+    if (target < top) el.scrollTop = target;
+    else if (target > bottom) el.scrollTop = target - el.clientHeight + ROW_HEIGHT * 2;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primary]);
   /** 行拖拽的目标集合：已选中项按下时携带全部选中项 */
   const targetsFor = (entry: FileEntry): string[] =>
     propsRef.current.selection.includes(entry.path)
