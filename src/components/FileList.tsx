@@ -85,12 +85,17 @@ function RenameInput({
   const [value, setValue] = useState(initial);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    // 延迟聚焦：避免右键菜单关闭时 radix 的焦点恢复抢先夺走输入框焦点（触发 onBlur 立即提交）
-    const t = window.setTimeout(() => {
-      ref.current?.focus();
-      ref.current?.select();
-    }, 120);
-    return () => window.clearTimeout(t);
+    // 右键菜单关闭时 radix 会把焦点恢复到触发行，若晚于本输入框聚焦就会把焦点抢走
+    // （onBlur 以未修改的名字提交 → 静默关闭，看起来"重命名失败"）。
+    // 按 0/120/300ms 重试聚焦直到拿稳；已持焦时跳过，避免打断用户光标。
+    const attempts = [0, 120, 300].map((ms) =>
+      window.setTimeout(() => {
+        if (document.activeElement === ref.current) return;
+        ref.current?.focus();
+        ref.current?.select();
+      }, ms),
+    );
+    return () => attempts.forEach((t) => window.clearTimeout(t));
   }, []);
   return (
     <Input
@@ -383,15 +388,20 @@ export function FileList({
     const buf = typeAheadRef.current;
     setTypeAhead(buf);
     setTypeAheadFading(false);
-    // 2 秒未输入：重置缓冲并开始淡出提示
+    // 1 秒未输入：重置缓冲并开始淡出提示
     typeAheadTimer.current = window.setTimeout(() => {
       typeAheadRef.current = "";
       setTypeAheadFading(true);
       window.setTimeout(() => setTypeAhead(""), 500);
-    }, 2000);
+    }, 1000);
     const idx = sorted.findIndex((x) => x.name.toLowerCase().startsWith(buf));
     if (idx >= 0) {
       onSelect(sorted[idx], false);
+      // 焦点收回列表容器：焦点若在行元素上，随后的滚动会让虚拟窗口卸载该行、
+      // 焦点掉到 body，后续按键就再也进不来（只吃得到首字母）
+      if (document.activeElement !== listScrollRef.current) {
+        listScrollRef.current?.focus({ preventScroll: true });
+      }
       const el = listScrollRef.current;
       if (el) {
         const target = idx * ROW_HEIGHT;
@@ -663,6 +673,7 @@ export function FileList({
         dragTarget && "shadow-[inset_0_0_0_2px_hsl(var(--primary)/0.7)]",
       )}
       onClick={onActivate}
+      onContextMenu={onActivate}
     >
       {/* 键盘快速定位提示：面板中央大字号，输入后 2 秒淡出 */}
       {typeAhead && (
@@ -892,7 +903,15 @@ export function FileList({
                   </div>
                 </div>
               </ContextMenuTrigger>
-              <ContextMenuContent className="min-w-48" collisionPadding={10}>
+              <ContextMenuContent
+                className="min-w-48"
+                collisionPadding={10}
+                onCloseAutoFocus={(e) => {
+                  // 右键「重命名」时焦点要留给行内 RenameInput；
+                  // 阻止 radix 关闭菜单后把焦点恢复到触发行（会抢走输入框焦点）
+                  if (renaming?.path === entry.path) e.preventDefault();
+                }}
+              >
                 <ContextMenuItem onClick={() => onOpen(entry)}>
                   <FolderInput className="mr-2 h-4 w-4" /> 打开
                 </ContextMenuItem>
