@@ -7,6 +7,7 @@ import {
   FileSearch,
   FolderSearch,
   Loader2,
+  Pencil,
   SearchX,
   X,
   Zap,
@@ -22,7 +23,9 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { FileIcon } from "@/components/FileIcon";
-import { findFiles, searchContent } from "@/lib/api";
+import { RenameInput } from "@/components/RenameInput";
+import { findFiles, renameEntry, searchContent } from "@/lib/api";
+import { isSftpPath } from "@/lib/sftp-path";
 import type { FileEntry, FindEntry, SearchMatch } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -65,7 +68,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 
-/** 一条搜索结果：单击选中、双击打开（文件走系统关联程序，目录进入）、右键定位/打开/复制路径 */
+/** 一条搜索结果：单击选中、双击打开（文件走系统关联程序，目录进入）、右键定位/打开/重命名/复制路径 */
 function ResultRow({
   path,
   relPath,
@@ -75,6 +78,8 @@ function ResultRow({
   onReveal,
   onOpenFile,
   onCopyPath,
+  onRename,
+  renaming,
   children,
 }: {
   path: string;
@@ -85,8 +90,23 @@ function ResultRow({
   onReveal: (path: string, isDir: boolean) => void;
   onOpenFile: (path: string) => void;
   onCopyPath: (path: string) => void;
+  /** 右键重命名（仅本地路径）：进入行内编辑 */
+  onRename?: (path: string, name: string) => void;
+  /** 当前行改名中：渲染行内输入框（不再挂右键菜单） */
+  renaming?: { name: string; onCommit: (name: string) => void; onCancel: () => void } | null;
   children: ReactNode;
 }) {
+  if (renaming) {
+    return (
+      <div
+        data-search-path={path}
+        className="flex w-full items-center gap-1.5 px-2 py-1"
+      >
+        <RenameInput initial={renaming.name} onCommit={renaming.onCommit} onCancel={renaming.onCancel} />
+      </div>
+    );
+  }
+  const name = path.split(/[\\/]/).pop() ?? path;
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -113,6 +133,11 @@ function ResultRow({
             <ExternalLink className="mr-2 h-4 w-4" /> 打开（默认应用）
           </ContextMenuItem>
         )}
+        {onRename && !isSftpPath(path) && (
+          <ContextMenuItem onClick={() => onRename(path, name)}>
+            <Pencil className="mr-2 h-4 w-4" /> 重命名
+          </ContextMenuItem>
+        )}
         <ContextMenuSeparator />
         <ContextMenuItem onClick={() => onCopyPath(path)}>
           <Clipboard className="mr-2 h-4 w-4" /> 复制绝对路径
@@ -132,6 +157,8 @@ export function SearchPanel({
   onReveal,
   onOpenFile,
   onCopyPath,
+  onRenamed,
+  onError,
   onClose,
 }: {
   entries: FileEntry[];
@@ -144,6 +171,10 @@ export function SearchPanel({
   onOpenFile: (path: string) => void;
   /** 复制路径文本（绝对 / 相对） */
   onCopyPath: (path: string) => void;
+  /** 搜索结果内联重命名完成：刷新正显示该目录的窗格并定位新条目 */
+  onRenamed: (oldPath: string, newPath: string) => void;
+  /** 重命名失败的错误提示（App 全局 notice） */
+  onError: (msg: string) => void;
   /** 关闭搜索面板（右上角 ×） */
   onClose: () => void;
 }) {
@@ -152,6 +183,43 @@ export function SearchPanel({
   const [selected, setSelected] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
+
+  // 搜索结果行内重命名（本地路径）
+  const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null);
+  /** rel_path 尾段改名（当前层 results 由窗格 entries 派生，不走这里） */
+  const withNewTail = (rel: string, oldName: string, newName: string) =>
+    rel.endsWith(oldName) ? rel.slice(0, rel.length - oldName.length) + newName : rel;
+  const commitRename = async (oldPath: string, newName: string) => {
+    setRenaming(null);
+    const trimmed = newName.trim();
+    const oldName = oldPath.split(/[\\/]/).pop() ?? "";
+    if (!trimmed || trimmed === oldName) return;
+    try {
+      const newPath = await renameEntry(oldPath, trimmed);
+      // 乐观更新递归结果集；当前层结果由窗格 entries 派生，经 onRenamed 刷新窗格后自然更新
+      setFdResults((rs) =>
+        rs.map((r) =>
+          r.path === oldPath ? { ...r, path: newPath, rel_path: withNewTail(r.rel_path, oldName, trimmed) } : r,
+        ),
+      );
+      setCResults((rs) =>
+        rs.map((m) =>
+          m.path === oldPath ? { ...m, path: newPath, rel_path: withNewTail(m.rel_path, oldName, trimmed) } : m,
+        ),
+      );
+      onRenamed(oldPath, newPath);
+    } catch (e) {
+      onError(String(e));
+    }
+  };
+  const renamingForRow = (path: string) =>
+    renaming?.path === path
+      ? {
+          name: renaming.name,
+          onCommit: (name: string) => void commitRename(path, name),
+          onCancel: () => setRenaming(null),
+        }
+      : null;
 
   // 外部命令：切换 tab + 聚焦对应输入框
   useEffect(() => {
@@ -401,6 +469,8 @@ export function SearchPanel({
                         onReveal={onReveal}
                         onOpenFile={onOpenFile}
                         onCopyPath={onCopyPath}
+                        onRename={(p, name) => setRenaming({ path: p, name })}
+                        renaming={renamingForRow(e.path)}
                       >
                         <span className="flex w-full items-center gap-2 px-2.5 py-1.5 text-xs">
                           <FileIcon entry={fe} size={14} className="shrink-0" />
@@ -434,6 +504,8 @@ export function SearchPanel({
                     onReveal={onReveal}
                     onOpenFile={onOpenFile}
                     onCopyPath={onCopyPath}
+                    onRename={(p, name) => setRenaming({ path: p, name })}
+                    renaming={renamingForRow(e.path)}
                   >
                     <span className="flex w-full items-center gap-2 px-2.5 py-1.5 text-xs">
                       <FileIcon entry={e} size={14} className="shrink-0" />
@@ -503,6 +575,8 @@ export function SearchPanel({
                       onReveal={onReveal}
                       onOpenFile={onOpenFile}
                       onCopyPath={onCopyPath}
+                      onRename={(p, name) => setRenaming({ path: p, name })}
+                      renaming={renamingForRow(m.path)}
                     >
                       <span className="block w-full px-2.5 py-1.5">
                         <span className="flex items-center gap-1.5 text-xs">

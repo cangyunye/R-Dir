@@ -44,6 +44,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { RenameInput } from "@/components/RenameInput";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TAG_DEFS, tagLabel, type FileTags, type TagNames } from "@/lib/persist";
@@ -74,46 +75,7 @@ function extLabel(entry: FileEntry): string {
  * 存在大量寻址盲区（如 Edge 实际安装名为 Microsoft Edge.app），误报“未安装”，
  * 故 v0.4 起移除所有内置探测展示，右键“打开”即系统默认方式（可靠），
  * 其余工具由用户自行注册。 */
-/** 行内重命名输入框 */
-function RenameInput({
-  initial,
-  onCommit,
-  onCancel,
-}: {
-  initial: string;
-  onCommit: (name: string) => void;
-  onCancel: () => void;
-}) {
-  const [value, setValue] = useState(initial);
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    // 右键菜单关闭时 radix 会把焦点恢复到触发行，若晚于本输入框聚焦就会把焦点抢走
-    // （onBlur 以未修改的名字提交 → 静默关闭，看起来"重命名失败"）。
-    // 按 0/120/300ms 重试聚焦直到拿稳；已持焦时跳过，避免打断用户光标。
-    const attempts = [0, 120, 300].map((ms) =>
-      window.setTimeout(() => {
-        if (document.activeElement === ref.current) return;
-        ref.current?.focus();
-        ref.current?.select();
-      }, ms),
-    );
-    return () => attempts.forEach((t) => window.clearTimeout(t));
-  }, []);
-  return (
-    <Input
-      ref={ref}
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") onCommit(value);
-        if (e.key === "Escape") onCancel();
-      }}
-      onBlur={() => onCommit(value)}
-      className="h-6 min-w-0 flex-1 px-1.5 text-[13px]"
-      spellCheck={false}
-    />
-  );
-}
+
 
 export interface RenameState {
   path: string;

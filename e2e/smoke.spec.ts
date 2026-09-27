@@ -453,3 +453,32 @@ test.describe("15. 键盘焦点回归（v0.21.0 修复）", () => {
     await expect(pasted).toHaveClass(/ring-1/);
   });
 });
+
+test.describe("16. 搜索结果内联重命名（v0.21.0）", () => {
+  test("R3 递归检索结果右键重命名：改名生效、面板与主列表同步更新", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+f`);
+    await page.getByPlaceholder("搜索当前层文件名…").fill("photo");
+    // 开启 fd 递归检索后再输入触发检索
+    await page.getByText("递归检索（fd 引擎）").click();
+    const input = page.getByPlaceholder("检索文件（fd 正则）…");
+    await input.fill("photo");
+
+    const row = page.locator(`[data-search-path="${HOME}/photo.png"]`);
+    await expect(row).toBeVisible();
+    await row.click({ button: "right" });
+    const menu = page.getByRole("menu");
+    await expect(menu).toContainText("重命名");
+    await menu.getByText("重命名").click();
+
+    const input2 = page.locator(`[data-search-path="${HOME}/photo.png"] input`);
+    await expect(input2).toBeVisible();
+    await page.waitForTimeout(400);
+    await expect(input2).toBeFocused();
+    await input2.fill("renamed_photo.png");
+    await input2.press("Enter");
+
+    // 面板结果乐观更新 + 所在目录窗格刷新 + 定位选中
+    await expect(page.locator(`[data-search-path="${HOME}/renamed_photo.png"]`)).toBeVisible();
+    await expect(page.locator(`[data-path="${HOME}/renamed_photo.png"]`)).toBeVisible();
+  });
+});

@@ -1270,6 +1270,19 @@ useEffect(() => {
     [activePane, navigate, selectRange],
   );
 
+  /** 搜索面板内联重命名完成：刷新正显示该目录的所有窗格，并定位选中新条目 */
+  const handleSearchRenamed = useCallback(
+    (oldPath: string, newPath: string) => {
+      const parent = parentPath(oldPath);
+      tabs
+        .flatMap((t) => Object.values(t.panes))
+        .filter((p) => p.path === parent)
+        .forEach((p) => refreshPane(p.id));
+      pendingSelectRef.current = [newPath];
+    },
+    [tabs, refreshPane],
+  );
+
   /** 标签视图中打开条目：目录直接进入（脱离标签视图），文件定位所在目录并选中 */
   const openTagFile = useCallback(
     async (path: string) => {
@@ -2192,9 +2205,20 @@ useEffect(() => {
         if (list.length > 0 && isSftpPath(list[0])) {
           await sftpDelete(list);
         } else {
-          await deleteEntries(list);
-          // 回收站删除可撤销：记录进撤销栈
-          pushOp({ kind: "delete", paths: list, paneId: p });
+          try {
+            await deleteEntries(list);
+            // 回收站删除可撤销：记录进撤销栈
+            pushOp({ kind: "delete", paths: list, paneId: p });
+          } catch (trashErr) {
+            // 回收站失败（被占用/权限/回收站不可用）：对齐资源管理器，给永久删除退路
+            const ok = await confirmDialog(
+              `移入回收站失败：${trashErr}
+
+要永久删除所选 ${list.length} 项吗？此操作不可恢复。`,
+            );
+            if (!ok) return;
+            await permanentDeleteEntries(list);
+          }
         }
         setTabs((ts) =>
           ts.map((t) => {
@@ -2953,6 +2977,8 @@ useEffect(() => {
             onReveal={revealPath}
             onOpenFile={openFileExternal}
             onCopyPath={copyPath}
+            onRenamed={handleSearchRenamed}
+            onError={showError}
           />
         )}
       </div>
