@@ -88,14 +88,22 @@
 }
 
 /* 根元素 CSS `zoom`（界面字体缩放）会让 Radix/Floating UI 的 portal 定位整体按
-   zoom 倍率偏移（视口未缩放、内容被缩放），右键菜单因此溢出窗口底部。
-   处理：popper 包裹层反向缩放回 1，使 Floating UI 坐标与视口一致；菜单内容再
-   缩放回 zoom 以保持视觉大小；可用高度按 zoom 折算以正确限制高度。
-   仅作用于右键菜单（`:has`），不影响菜单栏下拉等其它 popper。 */
-[data-radix-popper-content-wrapper]:has(> [data-slot="context-menu-content"]) {
+   zoom 倍率偏移（视口未缩放、内容被缩放）——锚定弹层被推到触发点右下方
+   坐标×(zoom−1) 处：⋮ 应用菜单在右上角离原点最远，最大化时整体出视口，
+   表现为"点击无反应"，小窗口则边缘被裁（v0.19.0 只给右键菜单打过补丁）。
+   统一按 popper 包裹层收口，覆盖现有与未来所有 Radix 锚定弹层（右键菜单/
+   下拉菜单，及日后引入的 Select/Popover/Tooltip 等），不再按组件逐个补：
+   1) 包裹层反向缩放回 1，使 Floating UI 坐标与视口一致；
+   2) 内容再缩放回 zoom，保持与界面一致的视觉大小；
+   3) 带内滚的菜单内容，可用高度按 zoom 折算以正确限高（覆盖 ui 组件里的
+      max-h 可用高度工具类；unlayered 规则优先于 @layer utilities）。 */
+[data-radix-popper-content-wrapper] {
   zoom: calc(1 / var(--rdir-zoom, 1));
 }
-[data-slot="context-menu-content"] {
+[data-radix-popper-content-wrapper] > * {
   zoom: var(--rdir-zoom, 1);
+}
+[data-slot="context-menu-content"],
+[data-slot="dropdown-menu-content"] {
   max-height: calc(var(--radix-popper-available-height, 100vh) / var(--rdir-zoom, 1));
 }

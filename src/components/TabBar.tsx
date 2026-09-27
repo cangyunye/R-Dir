@@ -3,6 +3,7 @@ import { Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { toggleWindowMaximize, WindowControls } from "@/components/WindowControls";
 
 export interface TabItem {
   id: number;
@@ -127,6 +128,12 @@ export function TabBar({
   return (
     <div
       ref={containerRef}
+      data-tauri-drag-region
+      // 无边框窗口（decorations:false）：标签栏兼任标题栏，空白处拖动移动窗口、
+      // 双击最大化/还原。target 检查避免与标签双击重命名冲突（拖拽区按 target 判定）。
+      onDoubleClick={(e) => {
+        if (e.target === e.currentTarget) toggleWindowMaximize();
+      }}
       className="relative flex items-end gap-0.5 border-b bg-muted/20 px-1.5 pt-1 select-none"
     >
       {tabs.map((tab, idx) => (
@@ -222,6 +229,9 @@ export function TabBar({
           {trailing}
         </div>
       )}
+
+      {/* 无边框窗口自绘控制：最小化 / 最大化 / 关闭（贴右上角整行高，浏览器环境不渲染） */}
+      <WindowControls />
 
       {/* 右键标签菜单（v0.15）：关闭 / 重命名 / 移动到最右边 */}
       {menu && (

@@ -307,12 +307,29 @@ export async function installTauriMock(page: Page): Promise<void> {
       "plugin:opener|open_url": () => null,
       "plugin:opener|reveal_item_in_dir": () => null,
       "plugin:process|exit": () => null,
+      // ---- 无边框窗口自绘控制（feat-titlebar）：记录命令供用例断言 ----
+      "plugin:window|minimize": () => {
+        winCmds.push("minimize");
+        return null;
+      },
+      "plugin:window|toggle_maximize": () => {
+        winCmds.push("toggle_maximize");
+        return null;
+      },
+      "plugin:window|close": () => {
+        winCmds.push("close");
+        return null;
+      },
+      "plugin:window|start_dragging": () => null,
+      "plugin:window|is_maximized": () => false,
     };
 
     const callbacks = new Map<number, (data: unknown) => unknown>();
     let nextId = 1;
     /** 记录 opener 打开过的路径，供用例断言"双击用关联程序打开" */
     const opened: string[] = [];
+    /** 记录自绘窗口控制发出的窗口命令（minimize / toggle_maximize / close） */
+    const winCmds: string[] = [];
 
     const internals = {
       invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
@@ -361,6 +378,6 @@ export async function installTauriMock(page: Page): Promise<void> {
       }
       return origFetch ? origFetch(input, init) : Promise.reject(new Error("fetch unavailable"));
     }) as typeof window.fetch;
-    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened };
+    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds };
   });
 }

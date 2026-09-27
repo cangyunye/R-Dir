@@ -212,8 +212,7 @@ export function AppMenu(actions: AppMenuActions) {
         <DropdownMenuContent
           align="end"
           className="min-w-[300px]"
-          // 根 zoom 时 70vh 会被放大，按 --rdir-zoom 折算封顶（同右键菜单的处理）
-          style={{ maxHeight: "calc(70vh / var(--rdir-zoom, 1))" }}
+          // maxHeight 折算由 index.css 的 dropdown-menu-content 规则统一处理（同右键菜单）
         >
           <Item
             icon={<Command />}
@@ -284,10 +283,10 @@ export function AppMenu(actions: AppMenuActions) {
           <Item icon={<ArrowLeftRight />} label="聚焦下一窗格" shortcutId="focusNextPane" onClick={actions.onFocusNextPane} />
 
           <GroupLabel>工具</GroupLabel>
-          <Item icon={<GitCompare />} label="差异比对（左右窗格）…" onClick={actions.onOpenDiff} />
+          <Item icon={<GitCompare />} label="差异比对…" onClick={actions.onOpenDiff} />
           <Item
             icon={actions.syncDiffActive ? <Link2Off /> : <Link2 />}
-            label={actions.syncDiffActive ? "断开同步比对" : "同步比对（左右窗格）"}
+            label={actions.syncDiffActive ? "断开同步比对" : "同步比对"}
             onClick={actions.onOpenSyncDiff}
           />
           <Item icon={<FileDiff />} label="打开 Git Diff…" onClick={actions.onOpenGitDiff} />
@@ -296,7 +295,7 @@ export function AppMenu(actions: AppMenuActions) {
           <DropdownMenuLabel className="px-2 font-normal text-muted-foreground">
             {actions.appName}
           </DropdownMenuLabel>
-          <Item icon={<Settings />} label="设置（快捷键录制与主题）" shortcutId="openSettings" onClick={actions.onOpenSettings} />
+          <Item icon={<Settings />} label="设置" shortcutId="openSettings" onClick={actions.onOpenSettings} />
           <Item icon={<Download />} label="检查更新…" onClick={actions.onCheckUpdate} />
           <Item icon={<Globe />} label="GitHub 仓库" onClick={actions.onOpenRepo} />
           <Item icon={<Info />} label={<>版本 {actions.appVersion || pkg.version}（Tauri 2 + React）</>} disabled onClick={() => {}} />
