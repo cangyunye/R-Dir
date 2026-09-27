@@ -118,6 +118,39 @@ export async function installTauriMock(page: Page): Promise<void> {
         return items.map((f) => entry(p, f));
       },
       parent_dir: (a) => parentOf(String(a.path)),
+      // 行内重命名：直接改虚拟 FS（右键重命名焦点回归用）
+      rename_entry: (a) => {
+        const p = String(a.path);
+        const newName = String(a.newName).trim();
+        const parent = parentOf(p);
+        const dir = FS[parent];
+        if (!dir) throw new Error(`ENOENT: ${parent}`);
+        if (newName === "" || dir.some((x) => x.name === newName)) {
+          throw new Error(`EEXIST: ${newName}`);
+        }
+        const idx = dir.findIndex((x) => `${parent}/${x.name}` === p);
+        if (idx < 0) throw new Error(`ENOENT: ${p}`);
+        dir[idx] = { ...dir[idx], name: newName };
+        return `${parent}/${newName}`;
+      },
+      // 按裁决表复制（粘贴用）：虚拟 FS 内追加条目，返回创建路径
+      copy_entries_plan: (a) => {
+        const paths = (a.paths as string[]) ?? [];
+        const dest = String(a.dest);
+        const d = FS[dest];
+        if (!d) throw new Error(`ENOENT: ${dest}`);
+        const created: string[] = [];
+        for (const p of paths) {
+          const parent = parentOf(p);
+          const f = FS[parent]?.find((x) => `${parent}/${x.name}` === p);
+          if (!f) continue;
+          d.push({ ...f });
+          created.push(`${dest}/${f.name}`);
+        }
+        return created;
+      },
+      // 无同名冲突（夹具固定不冲突）
+      scan_conflicts: () => [],
       // 返回数组（真实后端为补全列表；空数组 = 不弹补全下拉）
       complete_path: () => [],
       stat_path: (a) => {

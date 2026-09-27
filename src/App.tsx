@@ -723,20 +723,21 @@ useEffect(() => {
     listDir(activePane.path)
       .then((entries) => {
         if (cancelled) return;
+        // 在 updater 外消费 pending：updater 必须是纯函数（StrictMode 会双调用，
+        // 在内部清 ref 的副作用会被第二次调用丢弃，导致选中不生效）
+        const pending = pendingSelectRef.current;
+        let hits: string[] | null = null;
+        if (pending && pending.length > 0) {
+          const pendingSet = new Set(pending);
+          hits = entries.filter((e) => pendingSet.has(e.path)).map((e) => e.path);
+          if (hits.length > 0) pendingSelectRef.current = null;
+          else hits = null;
+        }
         setTabs((ts) =>
           ts.map((t) => {
             const p = t.panes[activePane.id];
             if (!p) return t;
-            let selection = p.selection;
-            const pending = pendingSelectRef.current;
-            if (pending && pending.length > 0) {
-              const pendingSet = new Set(pending);
-              const hits = entries.filter((e) => pendingSet.has(e.path)).map((e) => e.path);
-              if (hits.length > 0) {
-                selection = hits;
-                pendingSelectRef.current = null;
-              }
-            }
+            const selection = hits ?? p.selection;
             const updated = { ...p, entries, loading: false, selection };
             const title = t.activePane === activePane.id ? updated.title : t.title;
             return { ...t, panes: { ...t.panes, [activePane.id]: updated }, title };
@@ -1993,8 +1994,8 @@ useEffect(() => {
             await sftpUpload(src, dest, basename(src));
             pasted.push(dest.endsWith("/") ? dest + basename(src) : `${dest}/${basename(src)}`);
           }
-          setClipboard(null);
-          if (pasted.length > 0) pendingSelectRef.current = pasted;
+        setClipboard(null);
+        if (pasted.length > 0) pendingSelectRef.current = pasted;
           refreshPane(pid);
           return;
         }

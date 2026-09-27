@@ -415,3 +415,41 @@ test.describe("14. 整页不滚动（界面缩放回归，v0.18.3）", () => {
     );
   });
 });
+
+test.describe("15. 键盘焦点回归（v0.21.0 修复）", () => {
+  // 根因：radix 右键菜单关闭时的焦点恢复会抢走行内重命名输入框的焦点，
+  // onBlur 以未修改的名字静默提交 → 输入框闪退、名字不变。
+  // 修复后输入框应拿到焦点并拿稳（0/120/300ms 重试），可正常输入改名。
+  test("R1 右键重命名：输入框保持焦点，改名后列表显示新名称", async ({ page }) => {
+    const row = page.locator(`[data-path="${HOME}/Notes.txt"]`);
+    await row.click({ button: "right" });
+    const menu = page.getByRole("menu");
+    await expect(menu).toContainText("重命名");
+    await menu.getByText("重命名").click();
+
+    const input = row.locator("input");
+    await expect(input).toBeVisible();
+    // 越过 300ms 重试窗口断言焦点仍在输入框上（修复前会被 radix 抢走并闪退）
+    await page.waitForTimeout(400);
+    await expect(input).toBeFocused();
+
+    await input.fill("Renamed.txt");
+    await input.press("Enter");
+    await expect(page.locator(`[data-path="${HOME}/Renamed.txt"]`)).toBeVisible();
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toHaveCount(0);
+  });
+
+  // 粘贴完成后应定位并选中新条目（含主选中高亮）
+  test("R2 复制→粘贴：新条目出现在目标目录且被选中", async ({ page }) => {
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    await page.keyboard.press(`${MOD}+c`);
+    await page.locator(`[data-path="${HOME}/Documents"]`).dblclick();
+    await expect(page.locator(`[data-path="${HOME}/Documents/readme.md"]`)).toBeVisible();
+
+    await page.keyboard.press(`${MOD}+v`);
+    const pasted = page.locator(`[data-path="${HOME}/Documents/Notes.txt"]`);
+    await expect(pasted).toBeVisible();
+    // 主选中：行带 ring 高亮（粘贴后定位选中）
+    await expect(pasted).toHaveClass(/ring-1/);
+  });
+});
