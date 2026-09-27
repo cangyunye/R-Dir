@@ -3,16 +3,31 @@ import {
   ArrowDownToLine,
   ChevronLeft,
   ChevronRight,
+  Clipboard,
   CornerUpLeft,
   Folder,
   Link2,
+  Pencil,
   RefreshCw,
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import { completePath } from "@/lib/api";
+import { splitPathSegments } from "@/lib/path-segments";
+
+/** 彩虹分段配色：固定色相环（低透明度着色，明暗主题自适应） */
+function segmentHue(i: number): number {
+  const HUES = [4, 28, 46, 88, 160, 200, 236, 276, 320];
+  return HUES[i % HUES.length];
+}
 
 export function Toolbar({
   canBack,
@@ -30,6 +45,7 @@ export function Toolbar({
   syncDiffActive,
   onToggleSyncDiff,
   focusTick,
+  leafIsFile = false,
   trailing,
 }: {
   canBack: boolean;
@@ -47,25 +63,48 @@ export function Toolbar({
   onToggleSyncDiff: () => void;
   /** 快捷键聚焦信号（Ctrl+L / ⌘+L） */
   focusTick: number;
+  /** 地址栏当前展示的是单选文件路径（末段点击=回到其所在目录） */
+  leafIsFile?: boolean;
   /** 搜索按钮右侧的插槽（如「已连接窗格」下拉） */
   trailing?: React.ReactNode;
 }) {
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(path);
   const [completions, setCompletions] = useState<string[]>([]);
   const [compIndex, setCompIndex] = useState(-1);
   const [compOpen, setCompOpen] = useState(false);
   const timerRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const crumbsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setDraft(path), [path]);
 
-  // 外部聚焦信号 → 聚焦地址栏输入框
+  // 外部聚焦信号 → 切到编辑模式并聚焦地址栏输入框
   useEffect(() => {
     if (focusTick > 0) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
+      setEditing(true);
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      });
     }
   }, [focusTick]);
+
+  // 面包屑模式：路径变化（含首次进入）自动滚动到末段
+  useEffect(() => {
+    if (!editing) {
+      const el = crumbsRef.current;
+      if (el) el.scrollLeft = el.scrollWidth;
+    }
+  }, [path, editing]);
+
+  const enterEdit = useCallback(() => {
+    setEditing(true);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+  }, []);
 
   const fetchCompletions = useCallback(
     (value: string) => {
@@ -153,8 +192,9 @@ export function Toolbar({
         <RefreshCw className="h-4 w-4" />
       </Button>
 
+      {/* 编辑输入框常驻挂载（value 供外部断言/恢复），面包屑模式下隐藏 */}
       <form
-        className="relative ml-1 flex-1"
+        className={cn("relative ml-1 flex-1", !editing && "hidden")}
         onSubmit={(e) => {
           e.preventDefault();
           if (compOpen && compIndex >= 0 && completions[compIndex]) {
@@ -163,6 +203,7 @@ export function Toolbar({
             onNavigate(draft.trim());
             closeCompletion();
           }
+          setEditing(false);
         }}
       >
         <div className="relative">
@@ -175,10 +216,13 @@ export function Toolbar({
               fetchCompletions(e.target.value);
             }}
             onBlur={() => {
-              // 延迟关闭，允许点击下拉项
+              // 延迟关闭，允许点击下拉项；若 150ms 内已重新聚焦（Esc 后立刻点铅笔/Ctrl+L），
+              // 说明用户又进入了编辑，放弃本次收起
               window.setTimeout(() => {
+                if (document.activeElement === inputRef.current) return;
                 setDraft(path);
                 closeCompletion();
+                setEditing(false);
               }, 150);
             }}
             onKeyDown={(e) => {
@@ -194,6 +238,8 @@ export function Toolbar({
                 choose(completions[idx], false);
               } else if (e.key === "Escape") {
                 closeCompletion();
+                setDraft(path);
+                setEditing(false);
               }
             }}
             className="h-7 pr-12 text-xs"
@@ -246,6 +292,81 @@ export function Toolbar({
         )}
       </form>
 
+      {!editing && (
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div data-pathbar="" className="relative ml-1 flex min-w-0 flex-1 items-center">
+            <div
+              ref={crumbsRef}
+              className="flex min-w-0 flex-1 items-center overflow-x-auto py-0.5 [scrollbar-width:thin]"
+              onMouseDown={(e) => {
+                // 点击空白处进入编辑模式（分段点击由按钮自身处理）
+                if (e.target === e.currentTarget) enterEdit();
+              }}
+            >
+              {splitPathSegments(path).map((seg, i, arr) => {
+                const isLast = i === arr.length - 1;
+                const hue = segmentHue(i);
+                return (
+                  <button
+                    key={`${seg.target}:${i}`}
+                    type="button"
+                    title={seg.target}
+                    onClick={() => {
+                      // 末段是单选文件时，点击回到其所在目录
+                      onNavigate(isLast && leafIsFile ? seg.target.slice(0, seg.target.length - seg.label.length - 1) || seg.target : seg.target);
+                      setEditing(false);
+                    }}
+                    className={cn(
+                      "mx-px flex h-[22px] shrink-0 cursor-default items-center text-[11px] leading-none text-foreground/90",
+                      "transition-[filter] hover:brightness-110",
+                      isLast && "font-semibold text-foreground",
+                    )}
+                    style={{
+                      background: `hsl(${hue} 65% 55% / ${isLast ? 0.3 : 0.16})`,
+                      clipPath:
+                        i === 0
+                          ? "polygon(0 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 0 100%)"
+                          : "polygon(0 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 0 100%, 7px 50%)",
+                      paddingLeft: i === 0 ? 10 : 15,
+                      paddingRight: 10,
+                    }}
+                  >
+                    <span className="max-w-44 truncate">{seg.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              data-pathbar-edit=""
+              onMouseDown={(e) => {
+                // 用 mousedown 而非 click：click 是组合事件，若中途 React 重渲染替换了
+                // 按钮节点，click 不会派发，导致偶发点铅笔没反应
+                e.preventDefault();
+                enterEdit();
+              }}
+              title="编辑路径（可复制）"
+              className="ml-0.5 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="min-w-40">
+          <ContextMenuItem onClick={enterEdit}>
+            <Pencil className="mr-2 h-4 w-4" /> 编辑路径（可复制）
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={() => {
+              navigator.clipboard?.writeText(path).catch(() => {});
+            }}
+          >
+            <Clipboard className="mr-2 h-4 w-4" /> 复制路径
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+      )}
       <Button
         variant="ghost"
         size="icon"

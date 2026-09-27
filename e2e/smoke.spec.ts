@@ -117,7 +117,7 @@ test.describe("5. 右键菜单", () => {
 test.describe("6. 搜索", () => {
   test("S1 打开搜索面板", async ({ page }) => {
     await page.keyboard.press(`${MOD}+KeyF`);
-    await expect(page.getByPlaceholder(/搜索|输入/).first()).toBeVisible();
+    await expect(page.getByPlaceholder("搜索当前层文件名…")).toBeVisible();
   });
 
   test("S2 结果右键出现定位/复制路径项", async ({ page }) => {
@@ -315,12 +315,14 @@ test.describe("13. 同步比对（v0.18 同步浏览 + 实时面板）", () => {
 
     // 左窗格 → syncA
     await page.locator(`[data-path="${HOME}/Documents"]`).first().click();
+    await page.locator("[data-pathbar-edit]").click();
     await page.locator("#rdir-addr-input").fill(syncA);
     await page.locator("#rdir-addr-input").press("Enter");
     await expect(page.locator(`[data-path="${syncA}/onlyA.txt"]`)).toBeVisible();
 
     // 右窗格 → syncB（此时只剩右窗格还列着 Documents）
     await page.locator(`[data-path="${HOME}/Documents"]`).first().click();
+    await page.locator("[data-pathbar-edit]").click();
     await page.locator("#rdir-addr-input").fill(syncB);
     await page.locator("#rdir-addr-input").press("Enter");
     await expect(page.locator(`[data-path="${syncB}/common"]`)).toBeVisible();
@@ -531,5 +533,32 @@ test.describe("18. 搜索起始目录回归（点击选中后 Ctrl+F）", () => 
     await page.locator("input[type=checkbox]").first().check();
     await page.getByPlaceholder("检索文件（fd 正则）…").fill("readme");
     await expect(page.locator(`[data-search-path="${HOME}/Documents/readme.md"]`)).toBeVisible();
+  });
+});
+
+test.describe("19. 路径栏面包屑（v0.21.0）", () => {
+  test("R7 分段展示与点击跳转：点上一层级返回", async ({ page }) => {
+    await page.locator(`[data-path="${HOME}/Documents"]`).dblclick();
+    const bar = page.locator("[data-pathbar]");
+    await expect(bar).toBeVisible();
+    // 分段：/ / mock / home / Documents（末段高亮=当前位置）
+    await expect(bar.getByRole("button", { name: "Documents" })).toBeVisible();
+    // 点击 home 分段返回上级
+    await bar.getByRole("button", { name: "home", exact: true }).click();
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+    // 路径变化后分段同步
+    await expect(bar.getByRole("button", { name: "Documents" })).toHaveCount(0);
+  });
+
+  test("R8 点击铅笔进入编辑模式：输入框含完整路径，Esc 返回面包屑", async ({ page }) => {
+    await page.locator(`[data-path="${HOME}/Documents"]`).dblclick();
+    await page.locator("[data-pathbar-edit]").click();
+    const input = page.locator("#rdir-addr-input");
+    await expect(input).toBeVisible();
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue(`${HOME}/Documents`);
+    // Esc 退出编辑，回到面包屑
+    await input.press("Escape");
+    await expect(page.locator("[data-pathbar]")).toBeVisible();
   });
 });

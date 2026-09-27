@@ -2914,6 +2914,11 @@ useEffect(() => {
         onRefresh={refresh}
         path={addressPath}
         cwd={activePane?.path ?? homePath}
+        leafIsFile={
+          !!activePane &&
+          activePane.selection.length === 1 &&
+          !(activePane.entries.find((e) => e.path === activePane.selection[0])?.is_dir ?? false)
+        }
         onNavigate={navigate}
         searchOpen={searchOpen}
         onToggleSearch={toggleSearchPanel}
