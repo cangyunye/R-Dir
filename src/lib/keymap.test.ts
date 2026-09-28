@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vitest";
 import {
   ACTIONS,
   keyEventString,
@@ -295,5 +295,74 @@ describe("formatBinding", () => {
   });
   it("多键绑定用 / 分隔", () => {
     expect(formatBinding("alt+up / backspace")).toBe("Alt+↑ / Backspace");
+  });
+});
+
+// ---- v0.21.1：macOS ⌫ = 返回上级（模拟 mac 平台重新加载模块）----
+describe("macOS 分支（v0.21.1 ⌫=返回上级）", () => {
+  const ORIGINAL_UA = window.navigator.userAgent;
+  const ev = (partial: Partial<KeyboardEvent>): KeyboardEvent =>
+    ({
+      key: "n",
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+      ...partial,
+    }) as KeyboardEvent;
+
+  beforeAll(() => {
+    Object.defineProperty(window.navigator, "userAgent", {
+      value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+      configurable: true,
+    });
+  });
+  afterAll(() => {
+    Object.defineProperty(window.navigator, "userAgent", {
+      value: ORIGINAL_UA,
+      configurable: true,
+    });
+    vi.resetModules();
+  });
+
+  /** 以 mac 身份重新加载 keymap（isMac 在模块加载时求值，必须重载才能切分支） */
+  async function loadMacKeymap() {
+    vi.resetModules();
+    return await import("./keymap");
+  }
+
+  it("默认绑定：goUp 含 backspace，delete 含 mod+backspace", async () => {
+    const m = await loadMacKeymap();
+    expect(m.isMac).toBe(true);
+    expect(m.ACTIONS.find((a) => a.id === "goUp")!.mac).toContain("backspace");
+    expect(m.ACTIONS.find((a) => a.id === "delete")!.mac).toContain("mod+backspace");
+  });
+
+  it("⌫（Backspace 无修饰）→ backspace → goUp", async () => {
+    const m = await loadMacKeymap();
+    const combo = m.keyEventString(ev({ key: "Backspace" }));
+    expect(combo).toBe("backspace");
+    expect(m.findAction(combo)?.id).toBe("goUp");
+  });
+
+  it("⌘+⌫ → mod+backspace → delete", async () => {
+    const m = await loadMacKeymap();
+    const combo = m.keyEventString(ev({ key: "Backspace", metaKey: true }));
+    expect(combo).toBe("mod+backspace");
+    expect(m.findAction(combo)?.id).toBe("delete");
+  });
+
+  it("fn+⌫（e.key=Delete）→ delete → delete", async () => {
+    const m = await loadMacKeymap();
+    const combo = m.keyEventString(ev({ key: "Delete" }));
+    expect(combo).toBe("delete");
+    expect(m.findAction(combo)?.id).toBe("delete");
+  });
+
+  it("⌘+↑ 仍是 goUp（原有绑定不受影响）", async () => {
+    const m = await loadMacKeymap();
+    const combo = m.keyEventString(ev({ key: "ArrowUp", metaKey: true }));
+    expect(combo).toBe("mod+up");
+    expect(m.findAction(combo)?.id).toBe("goUp");
   });
 });

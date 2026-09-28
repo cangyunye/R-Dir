@@ -282,6 +282,8 @@ export interface TextSide {
   lossy: boolean;
   bytes: number;
   lines: number;
+  /** 行尾格式（v0.21.1 换行符差异提示）；旧后端/mock 可能缺省 */
+  eol?: "lf" | "crlf" | "mixed" | "none";
 }
 
 /** 一段连续同类型行：eq 相同 / del 左侧独有 / add 右侧独有；行号 1 基 */

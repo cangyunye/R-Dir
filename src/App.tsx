@@ -107,7 +107,7 @@ import {
   resetRatios,
   setSplitRatio,
 } from "@/lib/paneTree";
-import { ACTIONS, bindingOf, findAction, keyEventString } from "@/lib/keymap";
+import { ACTIONS, bindingOf, findAction, isMac, keyEventString } from "@/lib/keymap";
 import { fetchLatestRelease, REPO_URL } from "@/lib/update";
 import {
   loadCustomQuick,
@@ -302,10 +302,10 @@ export default function App() {
   /** v0.14 复制/剪切成功后的中央提示（约 1 秒内消失） */
   const [clipboardTip, setClipboardTip] = useState<{ text: string; tick: number } | null>(null);
   const clipboardTipTimer = useRef<number | null>(null);
-  const flashClipboardTip = useCallback((text: string) => {
+  const flashClipboardTip = useCallback((text: string, ms = 900) => {
     setClipboardTip({ text, tick: Date.now() });
     if (clipboardTipTimer.current) window.clearTimeout(clipboardTipTimer.current);
-    clipboardTipTimer.current = window.setTimeout(() => setClipboardTip(null), 900);
+    clipboardTipTimer.current = window.setTimeout(() => setClipboardTip(null), ms);
   }, []);
   /** 拖拽悬停目标窗格（自实现 DnD） */
   const [dragOver, setDragOver] = useState<{
@@ -1072,6 +1072,27 @@ useEffect(() => {
     };
   }, []);
 
+  // v0.21.1 退出询问的对话框级快捷键（仅 closeDialogOpen 时挂载，避免与全局键位冲突）：
+  // Esc=取消 / Ctrl+S(或 ⌘S)=保存并退出 / Ctrl+C=不保存。capture 阶段拦截，
+  // 压制全局 keymap 分发（否则 Esc 会顺带清空文件选中）。
+  useEffect(() => {
+    if (!closeDialogOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      const save = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && key === "s";
+      const noSave = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && key === "c";
+      if (e.key === "Escape" || save || noSave) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (save) void handleExitWithSave();
+        else if (noSave) void handleExitNoSave();
+        else setCloseDialogOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, [closeDialogOpen, handleExitWithSave, handleExitNoSave]);
+
   const goUp = useCallback(async () => {
     if (!activePane) return;
     try {
@@ -1563,6 +1584,8 @@ useEffect(() => {
   const toggleSyncDiff = useCallback(() => {
     if (syncLinkRef.current) {
       setSyncLink(null);
+      // v0.21.1 开/断开同步比对给中央提示（状态栏 pill 太小，新用户难发现）
+      flashClipboardTip("已断开同步比对", 1200);
       return;
     }
     if (!activeTab) return;
@@ -1580,7 +1603,11 @@ useEffect(() => {
       leftRoot: panes[0].path,
       rightRoot: panes[1].path,
     });
-  }, [activeTab, showError]);
+    flashClipboardTip(
+      `已开启同步比对：左右窗格联动导航（${isMac ? "⌘+⇧+X" : "Ctrl+Shift+X"} 查看结果）`,
+      2400,
+    );
+  }, [activeTab, showError, flashClipboardTip]);
 
   /** 链接的两个窗格与其对齐状态（窗格被关闭时为 null，由下方 effect 断链） */
   const syncPanes = (() => {
@@ -3240,13 +3267,14 @@ useEffect(() => {
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setCloseDialogOpen(false)}>
-                取消
+                取消<span className="ml-1.5 text-[10px] opacity-60">Esc</span>
               </Button>
               <Button variant="outline" size="sm" onClick={() => void handleExitNoSave()}>
-                不保存
+                不保存<span className="ml-1.5 text-[10px] opacity-60">Ctrl+C</span>
               </Button>
               <Button size="sm" onClick={() => void handleExitWithSave()} autoFocus>
                 保存并退出
+                <span className="ml-1.5 text-[10px] opacity-60">{isMac ? "⌘S" : "Ctrl+S"}</span>
               </Button>
             </div>
           </div>

@@ -22,6 +22,10 @@ use crate::fs_ops::FileEntry;
 /// 三层 mtime 比较默认容差：跨文件系统（FAT/exFAT 2s 粒度、网络盘）常有时差噪声。
 pub const DEFAULT_MTIME_TOLERANCE_MS: i64 = 2000;
 
+/// v0.21.1「仅换行符不同」细查的大小上限：大小不同的文件对只有不超过该值才读内容
+/// 判定 eol（换行符差异本质是文本问题；避免对大型二进制文件做无谓的全量读）。
+pub const EOL_REFINE_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
 /// 比对选项。
 #[derive(Clone, Debug)]
 pub struct DiffOptions {
@@ -110,16 +114,28 @@ fn name_key(name: &str, case_sensitive: bool) -> String {
 }
 
 /// 三层哈希结果：正常值 / 被取消 / 读取失败。
+/// Ok 携带 (原始哈希, CRLF 归一化哈希)：v0.21.1 用于识别「仅换行符不同」。
 enum HashOutcome {
-    Ok(u64),
+    Ok(u64, u64),
     Cancelled,
     Error,
 }
 
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+
+#[inline]
+fn fnv1a_byte(h: u64, b: u8) -> u64 {
+    (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3)
+}
+
 /// FNV-1a 64 位流式哈希（确定性、无依赖；仅用于比对相等性）。
+/// 单遍同时计算原始哈希与 CRLF 归一化哈希（\r\n 视同 \n；裸 \r 照常计入，
+/// 跨块用 pending_cr 一字节前瞻保证正确）。
 /// 支持取消：每读一块检查一次，保证大文件也能及时停止。
 fn fnv1a_file(path: &Path, cancel: &AtomicBool) -> HashOutcome {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut h: u64 = FNV_OFFSET;
+    let mut hn: u64 = FNV_OFFSET;
+    let mut pending_cr = false;
     let mut f = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(_) => return HashOutcome::Error,
@@ -137,11 +153,29 @@ fn fnv1a_file(path: &Path, cancel: &AtomicBool) -> HashOutcome {
             break;
         }
         for &b in &buf[..n] {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            h = fnv1a_byte(h, b);
+            if pending_cr {
+                pending_cr = false;
+                if b == b'\n' {
+                    // CRLF：\r 已跳过，仅计入 \n
+                    hn = fnv1a_byte(hn, b);
+                } else {
+                    // 裸 \r：补记 \r 后再计当前字节
+                    hn = fnv1a_byte(hn, b'\r');
+                    hn = fnv1a_byte(hn, b);
+                }
+            } else if b == b'\r' {
+                pending_cr = true;
+            } else {
+                hn = fnv1a_byte(hn, b);
+            }
         }
     }
-    HashOutcome::Ok(h)
+    // 文件以孤立 \r 结尾：照常计入归一化哈希
+    if pending_cr {
+        hn = fnv1a_byte(hn, b'\r');
+    }
+    HashOutcome::Ok(h, hn)
 }
 
 /// 比对两个目录的顶层条目，支持进度回调与取消。
@@ -263,6 +297,8 @@ pub fn compare_entries<F: FnMut(&DiffProgress)>(
 }
 
 /// 判定单条目的状态；三层中「同名同大小的文件」延迟到 hash 阶段再定论。
+/// 大小不同的小文件（≤ EOL_REFINE_MAX_BYTES）在 level 3 也延迟到 hash 阶段，
+/// 以识别「仅换行符不同」（CRLF↔LF 必然导致大小不同，v0.21.1）。
 fn classify(
     name: String,
     le: Option<FileEntry>,
@@ -289,6 +325,10 @@ fn classify(
             } else if opts.level <= 1 {
                 ("same".into(), None)
             } else if a.size != b.size {
+                if opts.level >= 3 && a.size <= EOL_REFINE_MAX_BYTES && b.size <= EOL_REFINE_MAX_BYTES {
+                    // 暂定 size；hash 阶段可能细化为 eol（仅换行符不同）
+                    hash_pair = Some((a.clone(), b.clone()));
+                }
                 ("different".into(), Some("size".into()))
             } else if opts.level >= 3 {
                 hash_pair = Some((a.clone(), b.clone()));
@@ -312,7 +352,8 @@ fn classify(
     )
 }
 
-/// 三层同名同大小文件的最终判定：hash 不同 → content；hash 相同但时间超容差 → mtime。
+/// 三层同名同大小文件的最终判定：hash 不同 → content（CRLF 归一化后相同则 eol）；
+/// hash 相同但时间超容差 → mtime。
 fn hash_verdict(
     a: &FileEntry,
     b: &FileEntry,
@@ -323,12 +364,22 @@ fn hash_verdict(
         (_, HashOutcome::Cancelled) | (HashOutcome::Cancelled, _) => {
             return ("same".into(), None);
         }
-        (HashOutcome::Ok(x), HashOutcome::Ok(y)) => (Some(x), Some(y)),
+        (HashOutcome::Ok(x, xn), HashOutcome::Ok(y, yn)) => (Some((x, xn)), Some((y, yn))),
         // 任一侧读取失败：无法确认相等，按内容差异处理
         _ => (None, None),
     };
     match (lh, rh) {
-        (Some(x), Some(y)) if x != y => ("different".into(), Some("content".into())),
+        (Some((x, xn)), Some((y, yn))) if x != y => {
+            if xn == yn {
+                // 原始字节不同但 CRLF 归一化后相同 → 仅换行符（LF/UNIX ↔ CRLF/DOS）不同
+                ("different".into(), Some("eol".into()))
+            } else if a.size == b.size {
+                ("different".into(), Some("content".into()))
+            } else {
+                // 大小不同且内容确也不同：维持既有 size 语义（避免改变 DiffDialog 行为）
+                ("different".into(), Some("size".into()))
+            }
+        }
         (None, None) => ("different".into(), Some("content".into())),
         _ => match (a.modified, b.modified) {
             (Some(x), Some(y)) if (x - y).abs() > opts.mtime_tolerance_ms => {
@@ -429,6 +480,51 @@ mod tests {
         let e = l3.iter().find(|e| e.name == "f.bin").unwrap();
         assert_eq!(e.status, "different");
         assert_eq!(e.reason.as_deref(), Some("content"));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn level3_detects_eol_only_diff() {
+        let base = tmp("eol");
+        let a = base.join("a");
+        let b = base.join("b");
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        // 同内容不同行尾（大小不同）→ 三层细化为仅换行符
+        fs::write(a.join("f.txt"), b"line1\r\nline2\r\n").unwrap();
+        fs::write(b.join("f.txt"), b"line1\nline2\n").unwrap();
+        // 大小不同且内容确也不同 → 维持 size 语义
+        fs::write(a.join("g.txt"), b"aaa\r\nbbb\r\n").unwrap();
+        fs::write(b.join("g.txt"), b"xxx\nyyy\n").unwrap();
+        let d = compare_with(&a, &b, 3);
+        let by = |n: &str| d.iter().find(|e| e.name == n).unwrap();
+        assert_eq!(by("f.txt").status, "different");
+        assert_eq!(by("f.txt").reason.as_deref(), Some("eol"));
+        assert_eq!(by("g.txt").reason.as_deref(), Some("size"));
+        // level 2 不读内容：f.txt 仍为 size
+        let d2 = compare_with(&a, &b, 2);
+        assert_eq!(
+            d2.iter().find(|e| e.name == "f.txt").unwrap().reason.as_deref(),
+            Some("size")
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn level3_eol_only_large_crosses_read_blocks() {
+        let base = tmp("eolbig");
+        let a = base.join("a");
+        let b = base.join("b");
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        // 70k 行（约 210KB / 140KB）多次跨越 64KB 读块边界，\r 恰在块边界的情形也会出现
+        let n = 70000;
+        fs::write(a.join("big.txt"), "a\r\n".repeat(n)).unwrap();
+        fs::write(b.join("big.txt"), "a\n".repeat(n)).unwrap();
+        let d = compare_with(&a, &b, 3);
+        let e = d.iter().find(|e| e.name == "big.txt").unwrap();
+        assert_eq!(e.status, "different");
+        assert_eq!(e.reason.as_deref(), Some("eol"));
         let _ = fs::remove_dir_all(&base);
     }
 

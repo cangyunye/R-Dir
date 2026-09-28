@@ -1,6 +1,6 @@
 [package]
 name = "rust-file-manager"
-version = "0.21.0"
+version = "0.21.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -33,6 +33,8 @@ dirs = "5"
 trash = "5"
 regex = "1"
 ignore = "0.4"
+# v0.21.1 文本比较编码切换（GBK/Big5/Shift_JIS 等 WhatWG 标准编码解码）
+encoding_rs = "0.8"
 # v0.9 压缩改为调用系统命令（ditto / powershell / tar / zip），不再依赖 Rust crate
 # HTTP autoindex 插件：轻量同步 HTTP 客户端（rustls，无系统依赖）
 ureq = { version = "2", default-features = false, features = ["rustls", "gzip"] }

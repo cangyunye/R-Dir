@@ -45,7 +45,7 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
     // eq 行左右两侧各渲染一次
     expect(screen.getAllByText("one")).toHaveLength(2);
     expect(screen.getAllByText("tail")).toHaveLength(2);
-    expect(diffTextFiles).toHaveBeenCalledWith("/L/a.log", "/R/a.log");
+    expect(diffTextFiles).toHaveBeenCalledWith("/L/a.log", "/R/a.log", "utf-8");
     expect(screen.getByText("+1")).toBeTruthy();
     expect(screen.getByText("−1")).toBeTruthy();
   });
@@ -120,6 +120,70 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
     const box = container.querySelector(".rounded-lg") as HTMLElement;
     expect(box.style.height).toContain("var(--rdir-zoom");
     expect(box.style.width).toContain("var(--rdir-zoom");
+  });
+
+  it("v0.21.1 编码切换：下拉改 GBK 后两侧按新编码重新比较", async () => {
+    render(
+      <TextDiffDialog
+        source={{ kind: "files", left: "/L/a.log", right: "/R/a.log" }}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() => expect(screen.getAllByText("one").length).toBeGreaterThan(0));
+    const select = screen.getByDisplayValue("UTF-8") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "gbk" } });
+    await waitFor(() =>
+      expect(diffTextFiles).toHaveBeenLastCalledWith("/L/a.log", "/R/a.log", "gbk"),
+    );
+  });
+
+  it("v0.21.1 两侧行尾不同时显示换行符徽标", async () => {
+    diffTextFiles.mockResolvedValue(
+      outcome({
+        left: {
+          path: "/L/a.log",
+          localPath: "/L/a.log",
+          isTemp: false,
+          lossy: false,
+          bytes: 10,
+          lines: 4,
+          eol: "lf",
+        },
+        right: {
+          path: "/R/a.log",
+          localPath: "/R/a.log",
+          isTemp: false,
+          lossy: false,
+          bytes: 12,
+          lines: 4,
+          eol: "crlf",
+        },
+      }),
+    );
+    render(
+      <TextDiffDialog
+        source={{ kind: "files", left: "/L/a.log", right: "/R/a.log" }}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText(/换行符/)).toBeTruthy());
+  });
+
+  it("v0.21.1 两侧行尾相同时不显示换行符徽标", async () => {
+    diffTextFiles.mockResolvedValue(
+      outcome({
+        left: { path: "/L/a.log", localPath: "/L/a.log", isTemp: false, lossy: false, bytes: 10, lines: 4, eol: "lf" },
+        right: { path: "/R/a.log", localPath: "/R/a.log", isTemp: false, lossy: false, bytes: 10, lines: 4, eol: "lf" },
+      }),
+    );
+    render(
+      <TextDiffDialog
+        source={{ kind: "files", left: "/L/a.log", right: "/R/a.log" }}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() => expect(screen.getAllByText("one").length).toBeGreaterThan(0));
+    expect(screen.queryByText(/换行符/)).toBeNull();
   });
 });
 

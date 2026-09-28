@@ -48,7 +48,7 @@ npm run tauri build   # 产物在 src-tauri/target/release/bundle/
 
 | 操作 | Windows | macOS |
 |---|---|---|
-| 上一级目录 | `Alt+↑` / `Backspace` | `⌘+↑` |
+| 上一级目录 | `Alt+↑` / `Backspace` | `⌘+↑` / `⌫` |
 | 后退 / 前进 | `Alt+←` / `Alt+→` | `⌘+[` / `⌘+]` |
 | 刷新 | `F5` | `⌘+R` |
 | 聚焦地址栏 | `Ctrl+L` | `⌘+L` |
@@ -64,8 +64,8 @@ npm run tauri build   # 产物在 src-tauri/target/release/bundle/
 | 复制到当前目录 | `Ctrl+D` | `⌘+D` |
 | 重命名 | `F2` | `F2` |
 | 打开 | `Enter` / 双击 | `Enter` / 双击 |
-| 删除（回收站） | `Delete` | `⌘+Delete` |
-| 永久删除（需确认） | `Shift+Delete` | `⌘+Option+Delete` |
+| 删除（回收站） | `Delete` | `⌘+⌫` / `fn+⌫` |
+| 永久删除（需确认） | `Shift+Delete` | `⌘+Option+⌫` |
 | 新建文件夹 / 文件 | `Ctrl+Shift+N` / `Ctrl+Alt+N` | `⌘+Shift+N` / `⌘+Option+N` |
 | 复制完整路径 | `Ctrl+Shift+C` | `⌘+Shift+C` |
 | 撤销 / 重做 | `Ctrl+Z` / `Ctrl+Y` | `⌘+Z` / `⌘+Shift+Z` |

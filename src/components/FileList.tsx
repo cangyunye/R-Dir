@@ -666,6 +666,19 @@ export function FileList({
       onClick={onActivate}
       onContextMenu={onActivate}
     >
+      {/* v0.21.1 同步比对窗格标识：链接时窗格顶部通栏色条（左=琥珀 / 右=天蓝） */}
+      {linkBadge && (
+        <div
+          data-sync-link-side={linkBadge}
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5"
+          style={{
+            background:
+              linkBadge === "left"
+                ? "var(--sync-mark-left, #f59e0b)"
+                : "var(--sync-mark-right, #0ea5e9)",
+          }}
+        />
+      )}
       {/* 键盘快速定位提示：面板中央大字号，输入后 2 秒淡出 */}
       {typeAhead && (
         <div
@@ -708,17 +721,19 @@ export function FileList({
             disabled={col.key === null}
           >
             {col.label}
-            {/* v0.18 同步比对链接标识：名称列尾显示方位点 */}
+            {/* v0.18 同步比对链接标识（v0.21.1 加大：彩色徽章替代小点） */}
             {col.key === "name" && linkBadge && (
-              <span className="ml-1 inline-flex items-center gap-0.5" title="此窗格已加入同步比对">
+              <span
+                className={cn(
+                  "ml-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                  linkBadge === "left"
+                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                    : "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+                )}
+                title="同步比对已开启：此窗格与另一侧窗格联动导航，右键或工具栏可断开"
+              >
                 <Link2 className="h-3 w-3" />
-                <span
-                  className="h-1.5 w-1.5 rounded-full"
-                  style={{
-                    background:
-                      linkBadge === "left" ? "var(--sync-mark-left, #f59e0b)" : "var(--sync-mark-right, #0ea5e9)",
-                  }}
-                />
+                同步·{linkBadge === "left" ? "左" : "右"}
               </span>
             )}
             {col.key &&

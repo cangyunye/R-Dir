@@ -24,6 +24,8 @@ export const MARK_COLORS = {
 } as const;
 
 export function markColor(mark: DiffMark): string {
+  // v0.21.1 仅换行符不同（CRLF↔LF）：紫色，与红色「内容不同」区分
+  if (mark.status === "different" && mark.reason === "eol") return "#8b5cf6";
   return MARK_COLORS[mark.status];
 }
 
@@ -35,6 +37,9 @@ export function markTooltip(mark: DiffMark): string {
       return "仅右侧有此条目";
     default:
       if (mark.reason === "type") return "类型不同（一侧为文件夹）";
+      if (mark.reason === "eol") {
+        return "仅换行符不同（一侧 CRLF/DOS ↔ 一侧 LF/UNIX，其余内容相同）";
+      }
       if (mark.reason === "size") {
         return `两侧大小不同（左 ${formatSize(mark.leftSize ?? 0)} · 右 ${formatSize(mark.rightSize ?? 0)}）`;
       }
@@ -52,6 +57,9 @@ function statusLabel(e: DiffEntry): { text: string; className: string } {
       return { text: "相同", className: "text-muted-foreground" };
     default:
       if (e.reason === "type") return { text: "类型不同", className: "text-red-600 dark:text-red-400" };
+      if (e.reason === "eol") {
+        return { text: "仅换行符", className: "text-violet-600 dark:text-violet-400" };
+      }
       return { text: "不同", className: "text-red-600 dark:text-red-400" };
   }
 }

@@ -14,7 +14,7 @@ const HOME = "/mock/home";
 
 // 与 src/lib/keymap.ts 的 isMac 判定保持一致：macOS 上 mod = ⌘(Meta)，Windows/Linux = Ctrl
 const MOD = process.platform === "darwin" ? "Meta" : "Control";
-// goUp 的默认键位：mac = mod+up，win = alt+up（Backspace 只在 Windows 生效）
+// goUp 的默认键位：mac = mod+up / ⌫(Backspace)，win = alt+up / Backspace（v0.21.1 起两平台 ⌫ 一致）
 const GO_UP = process.platform === "darwin" ? "Meta+ArrowUp" : "Alt+ArrowUp";
 
 test.beforeEach(async ({ page }) => {

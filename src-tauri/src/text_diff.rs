@@ -32,6 +32,8 @@ pub struct TextSide {
     pub lossy: bool,
     pub bytes: u64,
     pub lines: usize,
+    /// 行尾格式："lf" | "crlf" | "mixed" | "none"（v0.21.1 换行符差异提示用）
+    pub eol: String,
 }
 
 /// 一段连续同类型的行。eq = 两侧相同；del = 左侧独有；add = 右侧独有。
@@ -90,7 +92,9 @@ pub fn split_lines(s: &str) -> Vec<String> {
 }
 
 /// 读取本地文件为文本（二进制 / 大小守卫）。返回 (文本, 是否 lossy, 字节数)。
-pub fn read_local_text(path: &Path) -> Result<(String, bool, u64), String> {
+/// encoding 为 None / "utf-8" 时走 UTF-8；否则按 WhatWG 标签（gbk / big5 / shift_jis …）
+/// 经 encoding_rs 解码，无效字节替换为 U+FFFD 并置 lossy（v0.21.1 编码切换）。
+pub fn read_local_text(path: &Path, encoding: Option<&str>) -> Result<(String, bool, u64), String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("读取失败：{e}"))?;
     if meta.is_dir() {
         return Err("路径是目录，无法按文本比较".into());
@@ -109,10 +113,35 @@ pub fn read_local_text(path: &Path) -> Result<(String, bool, u64), String> {
     if bytes[..probe_len].contains(&0u8) {
         return Err("疑似二进制文件，不支持文本比较".into());
     }
-    // UTF-8 快路径零拷贝（from_utf8 取回所有权）；仅非法字节才 lossy 复制一份
-    match String::from_utf8(bytes) {
-        Ok(text) => Ok((text, false, bytes_len)),
-        Err(e) => Ok((String::from_utf8_lossy(e.as_bytes()).to_string(), true, bytes_len)),
+    let is_utf8 = encoding
+        .map(|e| e.is_empty() || e.eq_ignore_ascii_case("utf-8") || e.eq_ignore_ascii_case("utf8"))
+        .unwrap_or(true);
+    if is_utf8 {
+        // UTF-8 快路径零拷贝（from_utf8 取回所有权）；仅非法字节才 lossy 复制一份
+        match String::from_utf8(bytes) {
+            Ok(text) => Ok((text, false, bytes_len)),
+            Err(e) => Ok((String::from_utf8_lossy(e.as_bytes()).to_string(), true, bytes_len)),
+        }
+    } else {
+        let label = encoding.unwrap_or_default();
+        let enc = encoding_rs::Encoding::for_label(label.as_bytes())
+            .ok_or_else(|| format!("不支持的编码：{label}"))?;
+        // decode_with_bom_removal：不做 BOM 嗅探（尊重用户显式选择），仅移除匹配的 BOM
+        let (cow, had_errors) = enc.decode_with_bom_removal(&bytes);
+        Ok((cow.into_owned(), had_errors, bytes_len))
+    }
+}
+
+/// 行尾格式探测（v0.21.1 换行符差异提示）："lf" | "crlf" | "mixed" | "none"。
+/// 裸 \r（经典 Mac）不参与判定，按无换行处理。
+pub fn detect_eol(s: &str) -> &'static str {
+    let crlf = s.matches("\r\n").count();
+    let lf = s.matches('\n').count().saturating_sub(crlf);
+    match (crlf, lf) {
+        (0, 0) => "none",
+        (0, _) => "lf",
+        (_, 0) => "crlf",
+        _ => "mixed",
     }
 }
 
@@ -468,16 +497,45 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("t.txt");
         std::fs::write(&f, b"hello\nworld\n").unwrap();
-        let (text, lossy, bytes) = read_local_text(&f).unwrap();
+        let (text, lossy, bytes) = read_local_text(&f, None).unwrap();
         assert_eq!(text, "hello\nworld\n");
         assert!(!lossy);
         assert_eq!(bytes, 12);
         // 二进制
         let fb = dir.join("b.bin");
         std::fs::write(&fb, [0x68, 0x00, 0x69]).unwrap();
-        assert!(read_local_text(&fb).is_err());
+        assert!(read_local_text(&fb, None).is_err());
         // 目录
-        assert!(read_local_text(&dir).is_err());
+        assert!(read_local_text(&dir, None).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_local_text_gbk_decoding() {
+        let dir = std::env::temp_dir().join("r-dir-text-diff-enc-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        // "你好\n" 的 GBK 编码（无 BOM）
+        let f = dir.join("g.txt");
+        std::fs::write(&f, [0xC4, 0xE3, 0xBA, 0xC3, 0x0A]).unwrap();
+        // 默认 UTF-8 解码 → lossy 乱码
+        let (text, lossy, _) = read_local_text(&f, None).unwrap();
+        assert!(lossy);
+        assert_ne!(text, "你好\n");
+        // 显式 GBK → 正常解码
+        let (text, lossy, _) = read_local_text(&f, Some("gbk")).unwrap();
+        assert!(!lossy);
+        assert_eq!(text, "你好\n");
+        // 不支持的编码标签 → 报错
+        assert!(read_local_text(&f, Some("no-such-encoding")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn detect_eol_variants() {
+        assert_eq!(detect_eol("a\nb\n"), "lf");
+        assert_eq!(detect_eol("a\r\nb\r\n"), "crlf");
+        assert_eq!(detect_eol("a\nb\r\n"), "mixed");
+        assert_eq!(detect_eol("abc"), "none");
+        assert_eq!(detect_eol(""), "none");
     }
 }

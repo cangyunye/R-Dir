@@ -27,6 +27,23 @@ interface Section {
 const ROW_H = 24;
 const BUFFER = 8;
 
+/** v0.21.1 编码切换：value 为 WhatWG 标签，后端经 encoding_rs 解码 */
+const ENCODINGS: { value: string; label: string }[] = [
+  { value: "utf-8", label: "UTF-8" },
+  { value: "gbk", label: "GBK" },
+  { value: "big5", label: "Big5" },
+  { value: "shift_jis", label: "Shift_JIS" },
+  { value: "euc-kr", label: "EUC-KR" },
+  { value: "windows-1252", label: "Latin-1" },
+];
+
+const EOL_LABEL: Record<string, string> = {
+  lf: "LF (UNIX)",
+  crlf: "CRLF (DOS)",
+  mixed: "混合行尾",
+  none: "无换行",
+};
+
 type Item =
   | { type: "section"; si: number }
   | { type: "row"; row: DiffRow }
@@ -62,6 +79,10 @@ export function TextDiffDialog({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(400);
+  /** v0.21.1 编码切换（仅 files 模式；切换后两侧同时按新编码重新比较） */
+  const [encoding, setEncoding] = useState("utf-8");
+  /** 两侧行尾格式（files 模式，来自后端 TextSide.eol） */
+  const [eols, setEols] = useState<{ left?: string; right?: string }>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -73,7 +94,7 @@ export function TextDiffDialog({
     const load = async () => {
       try {
         if (source.kind === "files") {
-          const out = await diffTextFiles(source.left, source.right);
+          const out = await diffTextFiles(source.left, source.right, encoding);
           if (!alive) return;
           setSections([
             {
@@ -86,6 +107,7 @@ export function TextDiffDialog({
           setSame(out.same);
           setCoarse(out.coarse);
           setLossy(out.left.lossy || out.right.lossy);
+          setEols({ left: out.left.eol, right: out.right.eol });
         } else {
           const text =
             source.kind === "patchText" ? source.text : (await readTextFile(source.path)).text;
@@ -106,6 +128,7 @@ export function TextDiffDialog({
           setSame(total.additions === 0 && total.deletions === 0);
           setCoarse(false);
           setLossy(false);
+          setEols({});
         }
       } catch (e) {
         if (alive) setError(String(e));
@@ -117,7 +140,7 @@ export function TextDiffDialog({
     return () => {
       alive = false;
     };
-  }, [source]);
+  }, [source, encoding]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -211,11 +234,23 @@ export function TextDiffDialog({
             {lossy && (
               <span
                 className="flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-500"
-                title="文件含非 UTF-8 字节（如 GBK 编码），已按替换符显示，比对结果仅供参考"
+                title={`文件按 ${encoding === "utf-8" ? "UTF-8" : encoding.toUpperCase()} 解码存在无效字节（可能选错了编码），已按替换符显示，比对结果仅供参考`}
               >
                 <TriangleAlert className="h-3 w-3" /> 编码
               </span>
             )}
+            {source.kind === "files" &&
+              eols.left &&
+              eols.right &&
+              eols.left !== eols.right && (
+                <span
+                  className="flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-500"
+                  title={`两侧行尾格式不同：左 ${EOL_LABEL[eols.left] ?? eols.left} · 右 ${EOL_LABEL[eols.right] ?? eols.right}。行级比对已按归一化换行处理，此差异不体现在上方行差异中`}
+                >
+                  <TriangleAlert className="h-3 w-3" /> 换行符 {EOL_LABEL[eols.left] ?? eols.left} ↔{" "}
+                  {EOL_LABEL[eols.right] ?? eols.right}
+                </span>
+              )}
           </div>
           <div className="flex items-center gap-1">
             <button
@@ -250,6 +285,26 @@ export function TextDiffDialog({
             </>
           )}
           {source.kind !== "files" && <span>共 {sections.length} 个文件段落</span>}
+          {source.kind === "files" && (
+            <label
+              className="flex shrink-0 items-center gap-1"
+              title="选择编码后，左右两侧同时按该编码重新解码并比较"
+            >
+              <span>编码</span>
+              <select
+                value={encoding}
+                disabled={loading}
+                onChange={(e) => setEncoding(e.target.value)}
+                className="rounded border bg-transparent px-1 py-0.5 tabular-nums hover:bg-accent disabled:opacity-50"
+              >
+                {ENCODINGS.map((e) => (
+                  <option key={e.value} value={e.value}>
+                    {e.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <span className="ml-auto shrink-0 tabular-nums">
             <span className="text-emerald-600">+{stats.additions}</span>
             {" "}

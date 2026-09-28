@@ -743,11 +743,13 @@ async fn resolve_text_side(
 }
 
 /// v0.19 文本比较：任意两侧（本地 / SFTP / HTTP）的行级 diff。
+/// encoding：None/utf-8 之外的 WhatWG 标签（gbk / big5 / shift_jis …）按指定编码解码（v0.21.1）。
 #[tauri::command]
 async fn diff_text_files(
     state: tauri::State<'_, AppState>,
     left: String,
     right: String,
+    encoding: Option<String>,
 ) -> Result<text_diff::TextDiffOutcome, String> {
     let (llocal, ltemp) = resolve_text_side(&state, &left)
         .await
@@ -758,8 +760,9 @@ async fn diff_text_files(
     // 读取 + 行级 diff 是纯 CPU/IO 同步段（上限 8MB×2），放 blocking 池避免占用异步运行时
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = (|| -> Result<text_diff::TextDiffOutcome, String> {
-            let (lt, llossy, lbytes) = text_diff::read_local_text(std::path::Path::new(&llocal))?;
-            let (rt, rlossy, rbytes) = text_diff::read_local_text(std::path::Path::new(&rlocal))?;
+            let enc = encoding.as_deref();
+            let (lt, llossy, lbytes) = text_diff::read_local_text(std::path::Path::new(&llocal), enc)?;
+            let (rt, rlossy, rbytes) = text_diff::read_local_text(std::path::Path::new(&rlocal), enc)?;
             let la = text_diff::split_lines(&lt);
             let rb = text_diff::split_lines(&rt);
             let (segments, coarse) = text_diff::diff_segments(&la, &rb);
@@ -772,6 +775,7 @@ async fn diff_text_files(
                     lossy: llossy,
                     bytes: lbytes,
                     lines: la.len(),
+                    eol: text_diff::detect_eol(&lt).to_string(),
                 },
                 right: text_diff::TextSide {
                     path: right,
@@ -780,6 +784,7 @@ async fn diff_text_files(
                     lossy: rlossy,
                     bytes: rbytes,
                     lines: rb.len(),
+                    eol: text_diff::detect_eol(&rt).to_string(),
                 },
                 segments,
                 additions,
@@ -809,7 +814,7 @@ async fn read_text_file(
 ) -> Result<text_diff::TextFileContent, String> {
     let (local, temp) = resolve_text_side(&state, &path).await?;
     tauri::async_runtime::spawn_blocking(move || {
-        let result = text_diff::read_local_text(std::path::Path::new(&local)).map(
+        let result = text_diff::read_local_text(std::path::Path::new(&local), None).map(
             |(text, lossy, _)| text_diff::TextFileContent {
                 path,
                 local_path: local.clone(),

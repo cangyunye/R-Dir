@@ -19,7 +19,7 @@ const A = (a: Omit<KeyAction, "win" | "mac"> & { win: string; mac: string }): Ke
 
 export const ACTIONS: KeyAction[] = [
   // 导航
-  A({ id: "goUp", label: "上一级目录", group: "导航", win: "alt+up / backspace", mac: "mod+up" }),
+  A({ id: "goUp", label: "上一级目录", group: "导航", win: "alt+up / backspace", mac: "mod+up / backspace" }),
   A({ id: "goBack", label: "后退", group: "导航", win: "alt+left", mac: "mod+[" }),
   A({ id: "goForward", label: "前进", group: "导航", win: "alt+right", mac: "mod+]" }),
   A({ id: "refresh", label: "刷新", group: "导航", win: "f5", mac: "mod+r" }),
@@ -36,8 +36,8 @@ export const ACTIONS: KeyAction[] = [
   A({ id: "duplicate", label: "复制到当前目录", group: "文件操作", win: "mod+d", mac: "mod+d" }),
   A({ id: "rename", label: "重命名", group: "文件操作", win: "f2", mac: "f2" }),
   A({ id: "open", label: "打开", group: "文件操作", win: "enter", mac: "enter" }),
-  A({ id: "delete", label: "删除到回收站", group: "文件操作", win: "delete", mac: "mod+delete / delete" }),
-  A({ id: "deletePermanent", label: "永久删除（需确认）", group: "文件操作", win: "shift+delete", mac: "mod+alt+delete" }),
+  A({ id: "delete", label: "删除到回收站", group: "文件操作", win: "delete", mac: "mod+backspace / delete" }),
+  A({ id: "deletePermanent", label: "永久删除（需确认）", group: "文件操作", win: "shift+delete", mac: "mod+alt+backspace / mod+alt+delete" }),
   A({ id: "newFolder", label: "新建文件夹", group: "文件操作", win: "mod+shift+n", mac: "mod+shift+n" }),
   A({ id: "newFile", label: "新建文件", group: "文件操作", win: "mod+alt+n", mac: "mod+alt+n" }),
   A({ id: "copyPath", label: "复制完整路径", group: "文件操作", win: "mod+shift+c", mac: "mod+shift+c" }),
@@ -231,11 +231,8 @@ export function keyEventString(e: KeyboardEvent): string {
     if (e.ctrlKey) parts.push("ctrl");
     if (e.altKey) parts.push("alt");
     if (e.shiftKey) parts.push("shift");
-    // macOS 退格键事件 key 为 "Backspace"，按删除语义归一化（匹配 mod+delete 绑定）
-    if (e.key === "Backspace") {
-      parts.push("delete");
-      return parts.join("+");
-    }
+    // v0.21.1：⌫（Backspace）与 fn+⌫（Delete）分别归一化为 backspace/delete，
+    // ⌫ 返回上级与 Windows 一致；删除文件用 fn+⌫ 或 ⌘+⌫
   } else {
     if (e.ctrlKey) parts.push("mod");
     if (e.altKey) parts.push("alt");
