@@ -21,6 +21,14 @@ export const completePath = (input: string, cwd: string) =>
 export const resolvePath = (input: string, cwd: string) =>
   invoke<string>("resolve_path", { input, cwd });
 
+/** 地址栏命令补全：PATH 可执行前缀匹配（v0.22.0，插件停用时返回空） */
+export const completeCommands = (prefix: string) =>
+  invoke<import("./types").CommandSuggest[]>("complete_commands", { prefix });
+
+/** 地址栏命令执行：在 cwd 新开终端窗口执行命令串（v0.22.0） */
+export const runCommand = (input: string, cwd: string) =>
+  invoke<void>("run_command", { input, cwd });
+
 export const getVolumes = () => invoke<VolumeInfo[]>("get_volumes");
 
 export const getQuickAccess = () =>

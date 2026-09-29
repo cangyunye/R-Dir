@@ -33,6 +33,17 @@ pub fn launch_terminal(shell_id: &str, path: &str) -> Result<(), String> {
     }
 }
 
+/// 在指定目录新开终端窗口执行命令串（v0.22.0 地址栏命令执行）。
+/// 唯一例外于"不拼 shell 字符串"原则：命令串本身就是用户要交给 shell 的输入
+/// （含参数/管道等），按原样传递；路径部分（cd 目录）仍走转义，不经拼接注入。
+pub fn exec_in_terminal(command: &str, dir: &str) -> Result<(), String> {
+    if is_mac() {
+        mac_exec(command, dir)
+    } else {
+        win_exec(command, dir)
+    }
+}
+
 // ───────────────────────── macOS ─────────────────────────
 
 fn mac_terminal(shell_id: &str, dir: &str) -> Result<(), String> {
@@ -67,7 +78,35 @@ fn mac_terminal(shell_id: &str, dir: &str) -> Result<(), String> {
     }
 }
 
+/// macOS：AppleScript 在 Terminal 中 cd 到目录后执行命令串。
+/// cd 目录与用户命令都做 AppleScript 字符串层转义（引号/反斜杠），
+/// 转义后 Terminal 收到的仍是原始字符，由 shell 自行解释。
+fn mac_exec(command: &str, dir: &str) -> Result<(), String> {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!(
+        "tell application \"Terminal\" to do script \"cd \\\"{}\\\" && {}\"",
+        esc(dir),
+        esc(command)
+    );
+    launch(&Command::new("osascript").arg("-e").arg(&script), None).map_err(|e| {
+        if e.contains("not authorized") || e.contains("不允许") || e.contains("-1743") {
+            format!("执行命令需要授权：请在 系统设置 → 隐私与安全性 → 自动化 中允许本应用控制\"终端\"后再试。\n原始错误：{e}")
+        } else {
+            e
+        }
+    })
+}
+
 // ───────────────────────── Windows ─────────────────────────
+
+fn win_exec(command: &str, dir: &str) -> Result<(), String> {
+    // PowerShell 新控制台：-NoExit 保持窗口；工作目录由 OS 设置（cd 零转义）
+    let ps = detect::find_win_cli("powershell").unwrap_or_else(|| "powershell.exe".into());
+    launch_in_console(
+        &Command::new(ps).arg("-NoExit").arg("-Command").arg(command),
+        Some(dir),
+    )
+}
 
 fn win_terminal(shell_id: &str, dir: &str) -> Result<(), String> {
     match shell_id {

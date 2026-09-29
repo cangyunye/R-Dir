@@ -1,4 +1,5 @@
 mod clipboard;
+mod cmdrun;
 mod compress;
 mod diff;
 mod find;
@@ -49,6 +50,8 @@ pub struct AppState {
     pub transfer_cancels: std::sync::Mutex<
         std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>,
     >,
+    /// 地址栏命令：PATH 可执行扫描缓存（v0.22.0）
+    pub cmd_cache: std::sync::Mutex<cmdrun::ExecCache>,
     /// 窗口分享管理器（v0.7，feature = "share"）
     #[cfg(feature = "share")]
     pub share: share::ShareState,
@@ -1493,6 +1496,9 @@ pub fn run() {
         opener::remove_custom_opener,
         opener::list_shells,
         opener::open_terminal,
+        // 地址栏命令执行（v0.22.0）
+        cmdrun::complete_commands,
+        cmdrun::run_command,
         // 会话保存 / 恢复
         session_save,
         session_load,

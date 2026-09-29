@@ -342,3 +342,10 @@ export interface ShareCreateResult {
   url: string;
   expiresAt: number | null;
 }
+
+/** 地址栏命令补全条目（v0.22.0，与 Rust 端 cmdrun::CommandSuggest 对应） */
+export interface CommandSuggest {
+  name: string;
+  /** 命中的可执行文件完整路径 */
+  path: string;
+}

@@ -591,3 +591,86 @@ test.describe("20. 路径栏输入校验（v0.21.0）", () => {
     await expect(row).toHaveClass(/ring-1/);
   });
 });
+
+test.describe("21. 地址栏命令（v0.22.0）", () => {
+  test("R11 裸词补全出现命令分组：回车在终端执行（记录 input 与 cwd）", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+l`);
+    const input = page.locator("#rdir-addr-input");
+    await input.fill("git");
+    // 本层无 git 开头的目录，命令分组独立出现：git / gitui（含可执行路径）
+    await expect(page.locator("[data-cmd-suggest]")).toHaveCount(2);
+    await expect(page.locator("[data-cmd-suggest]").first()).toContainText("git");
+    await expect(page.locator("[data-cmd-suggest]").first()).toContainText("/usr/bin/git");
+    await input.press("Enter");
+    // 执行成功：退出编辑态回面包屑、窗格留在原目录
+    await expect(page.locator("[data-pathbar]")).toBeVisible();
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+    const rec = await page.evaluate(
+      () =>
+        (window as unknown as { __RDIR_E2E_MOCK__: { runCmds: { input: string; cwd: string }[] } })
+          .__RDIR_E2E_MOCK__.runCmds,
+    );
+    expect(rec.at(-1)).toEqual({ input: "git", cwd: HOME });
+  });
+
+  test("R12 Tab 补全命令名（尾随空格）；点击命令项直接执行", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+l`);
+    const input = page.locator("#rdir-addr-input");
+    await input.fill("gr");
+    await expect(page.locator("[data-cmd-suggest]")).toHaveCount(1);
+    await input.press("Tab");
+    // Tab 只补全到输入框（带尾随空格便于补参数），不执行
+    await expect(input).toHaveValue("grep ");
+    await expect(page.locator("[data-cmd-suggest]")).toHaveCount(0);
+    // 点击命令项 → 立即执行
+    await input.fill("gre");
+    await expect(page.locator("[data-cmd-suggest]")).toHaveCount(1);
+    await page.locator("[data-cmd-suggest]").first().click();
+    await expect(page.locator("[data-pathbar]")).toBeVisible();
+    const rec = await page.evaluate(
+      () =>
+        (window as unknown as { __RDIR_E2E_MOCK__: { runCmds: { input: string; cwd: string }[] } })
+          .__RDIR_E2E_MOCK__.runCmds,
+    );
+    expect(rec.at(-1)).toEqual({ input: "grep", cwd: HOME });
+  });
+
+  test("R13 带参数命令行回车执行：整串原样传给终端，多词不再弹命令组", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+l`);
+    const input = page.locator("#rdir-addr-input");
+    await input.fill("git status");
+    // 多词输入不请求命令补全（只有目录补全逻辑，此处无命中 → 无下拉）
+    await expect(page.locator("[data-cmd-suggest]")).toHaveCount(0);
+    await input.press("Enter");
+    await expect(page.locator("[data-pathbar]")).toBeVisible();
+    const rec = await page.evaluate(
+      () =>
+        (window as unknown as { __RDIR_E2E_MOCK__: { runCmds: { input: string; cwd: string }[] } })
+          .__RDIR_E2E_MOCK__.runCmds,
+    );
+    expect(rec.at(-1)).toEqual({ input: "git status", cwd: HOME });
+  });
+
+  test("R14 既不是路径也不是命令：合并红字提示、保持编辑态", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+l`);
+    const input = page.locator("#rdir-addr-input");
+    await input.fill("zzzznope");
+    await input.press("Enter");
+    const hint = page.locator("[data-path-error]");
+    await expect(hint).toBeVisible();
+    await expect(hint).toContainText("路径不存在，也不是 PATH 中的命令：zzzznope");
+    // 窗格不动、仍处编辑态可继续修改
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+    await expect(input).toBeVisible();
+  });
+
+  test("R15 带分隔符的输入不出现命令分组（路径语义优先）", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+l`);
+    const input = page.locator("#rdir-addr-input");
+    await input.fill(`${HOME}/git`);
+    // 绝对路径输入只走目录补全，即便 PATH 里真有 git
+    await expect(page.locator("[data-dir-suggest], [data-cmd-suggest]")).toHaveCount(0);
+    await input.press("Escape");
+    await expect(page.locator("[data-pathbar]")).toBeVisible();
+  });
+});

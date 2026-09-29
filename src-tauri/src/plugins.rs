@@ -126,6 +126,17 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         enabled: enabled("terminal"),
         configurable: false,
     });
+    v.push(PluginInfo {
+        id: "cmdrun".into(),
+        name: "地址栏命令".into(),
+        description: "路径栏输入命令：PATH 可执行扫描补全，回车在终端中 cd 到当前目录执行".into(),
+        version: "0.22".into(),
+        source: "builtin".into(),
+        protocols: vec![],
+        operations: vec!["run".into()],
+        enabled: enabled("cmdrun"),
+        configurable: false,
+    });
     v
 }
 

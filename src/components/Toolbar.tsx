@@ -10,6 +10,7 @@ import {
   Pencil,
   RefreshCw,
   Search,
+  Terminal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,8 +21,10 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
-import { completePath, resolvePath, statPath } from "@/lib/api";
+import { completeCommands, completePath, resolvePath, runCommand, statPath } from "@/lib/api";
+import { firstCommandToken, hasScheme, isCommandToken } from "@/lib/cmdline";
 import { splitPathSegments } from "@/lib/path-segments";
+import type { CommandSuggest } from "@/lib/types";
 
 /** 彩虹分段配色：固定色相环（低透明度着色，明暗主题自适应） */
 function segmentHue(i: number): number {
@@ -75,6 +78,8 @@ export function Toolbar({
   const [pathError, setPathError] = useState<string | null>(null);
   const [draft, setDraft] = useState(path);
   const [completions, setCompletions] = useState<string[]>([]);
+  /** PATH 命令补全（v0.22.0）：与目录补全并列展示，键盘索引在目录组之后 */
+  const [cmds, setCmds] = useState<CommandSuggest[]>([]);
   const [compIndex, setCompIndex] = useState(-1);
   const [compOpen, setCompOpen] = useState(false);
   const timerRef = useRef<number | null>(null);
@@ -116,19 +121,23 @@ export function Toolbar({
       if (timerRef.current) window.clearTimeout(timerRef.current);
       if (!value.trim()) {
         setCompletions([]);
+        setCmds([]);
         setCompOpen(false);
         return;
       }
       timerRef.current = window.setTimeout(async () => {
-        try {
-          const items = await completePath(value, cwd);
-          setCompletions(items);
-          setCompIndex(-1);
-          setCompOpen(items.length > 0);
-        } catch {
-          setCompletions([]);
-          setCompOpen(false);
-        }
+        // 裸词 + 本地窗格：目录补全之外并行请求 PATH 命令补全（v0.22.0）
+        const wantCmds = isCommandToken(value) && !hasScheme(cwd);
+        const [dirs, cmdItems] = await Promise.all([
+          completePath(value, cwd).catch(() => [] as string[]),
+          wantCmds
+            ? completeCommands(value.trim()).catch(() => [] as CommandSuggest[])
+            : Promise.resolve([] as CommandSuggest[]),
+        ]);
+        setCompletions(dirs);
+        setCmds(cmdItems);
+        setCompIndex(-1);
+        setCompOpen(dirs.length + cmdItems.length > 0);
       }, 120);
     },
     [cwd],
@@ -136,6 +145,7 @@ export function Toolbar({
 
   const closeCompletion = useCallback(() => {
     setCompletions([]);
+    setCmds([]);
     setCompOpen(false);
     setCompIndex(-1);
   }, []);
@@ -156,6 +166,44 @@ export function Toolbar({
       }
     },
     [onNavigate, closeCompletion, setEditing],
+  );
+
+  /** 在终端中执行命令：成功退出编辑态（当前路径不变），失败就地红字提示。
+   * notFoundPrefix 非空时把后端「未找到命令」合并为该前缀文案（路径兜底场景两个词都不是）。 */
+  const tryRunCommand = useCallback(
+    async (input: string, notFoundPrefix: string | null) => {
+      setPathError(null);
+      try {
+        await runCommand(input, cwd);
+        closeCompletion();
+        setEditing(false);
+        return true;
+      } catch (e) {
+        const msg = String(e);
+        setPathError(
+          msg.includes("未找到命令") && notFoundPrefix
+            ? `${notFoundPrefix}：${input}`
+            : msg,
+        );
+        return false;
+      }
+    },
+    [cwd, closeCompletion],
+  );
+
+  /** 命令补全项：Tab 只补全到输入框（尾随空格便于补参数）；回车/点击直接执行 */
+  const chooseCmd = useCallback(
+    (c: CommandSuggest, executeNow: boolean) => {
+      if (executeNow) {
+        void tryRunCommand(c.name, null);
+      } else {
+        setPathError(null);
+        setDraft(`${c.name} `);
+        closeCompletion();
+        inputRef.current?.focus();
+      }
+    },
+    [tryRunCommand, closeCompletion],
   );
 
   /** 回车提交：本地路径先校验（不存在就地提示，不切换窗格）；目录导航、文件跳父目录选中 */
@@ -185,9 +233,14 @@ export function Toolbar({
       closeCompletion();
       setEditing(false);
     } catch {
+      // 路径不存在：首 token 是裸词且当前窗格为本地 → 按 PATH 命令兜底（终端中执行）
+      if (!hasScheme(cwd) && firstCommandToken(raw)) {
+        await tryRunCommand(raw, "路径不存在，也不是 PATH 中的命令");
+        return;
+      }
       setPathError(`路径不存在或无法访问：${abs}`);
     }
-  }, [draft, cwd, onNavigate, onRevealFile, closeCompletion]);
+  }, [draft, cwd, onNavigate, onRevealFile, closeCompletion, tryRunCommand]);
 
   return (
     <div className="flex h-10 items-center gap-1 border-b bg-muted/20 px-2">
@@ -235,8 +288,13 @@ export function Toolbar({
         className={cn("relative ml-1 flex-1", !editing && "hidden")}
         onSubmit={(e) => {
           e.preventDefault();
-          if (compOpen && compIndex >= 0 && completions[compIndex]) {
-            choose(completions[compIndex], true);
+          if (compOpen && compIndex >= 0) {
+            if (compIndex < completions.length && completions[compIndex]) {
+              choose(completions[compIndex], true);
+            } else {
+              const c = cmds[compIndex - completions.length];
+              if (c) chooseCmd(c, true);
+            }
           } else {
             void submitDraft();
           }
@@ -263,16 +321,22 @@ export function Toolbar({
               }, 150);
             }}
             onKeyDown={(e) => {
-              if (e.key === "ArrowDown" && compOpen && completions.length > 0) {
+              const total = completions.length + cmds.length;
+              if (e.key === "ArrowDown" && compOpen && total > 0) {
                 e.preventDefault();
-                setCompIndex((i) => Math.min(i + 1, completions.length - 1));
+                setCompIndex((i) => Math.min(i + 1, total - 1));
               } else if (e.key === "ArrowUp" && compOpen) {
                 e.preventDefault();
                 setCompIndex((i) => Math.max(i - 1, -1));
-              } else if (e.key === "Tab" && compOpen && completions.length > 0) {
+              } else if (e.key === "Tab" && compOpen && total > 0) {
                 e.preventDefault();
                 const idx = compIndex >= 0 ? compIndex : 0;
-                choose(completions[idx], false);
+                if (idx < completions.length) {
+                  choose(completions[idx], false);
+                } else {
+                  const c = cmds[idx - completions.length];
+                  if (c) chooseCmd(c, false);
+                }
               } else if (e.key === "Escape") {
                 closeCompletion();
                 setDraft(path);
@@ -284,7 +348,7 @@ export function Toolbar({
               "h-7 pr-12 text-xs",
               pathError && "border-destructive focus-visible:ring-destructive/40",
             )}
-            placeholder="输入路径后回车跳转，Tab 补全目录"
+            placeholder="输入路径回车跳转；输入命令回车在终端执行；Tab 补全"
             spellCheck={false}
           />
           <Button
@@ -296,8 +360,11 @@ export function Toolbar({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              if (draft.trim() && draft.trim() !== path) {
-                onNavigate(draft.trim());
+              const d = draft.trim();
+              // 含空格的裸词命令行（如 "git status"）不是可导航路径，回落普通刷新
+              const looksCommand = /\s/.test(d) && firstCommandToken(d) !== null;
+              if (d && d !== path && !looksCommand) {
+                onNavigate(d);
               } else {
                 onRefresh();
               }
@@ -310,12 +377,13 @@ export function Toolbar({
           </span>
         </div>
 
-        {compOpen && completions.length > 0 && (
+        {compOpen && (completions.length > 0 || cmds.length > 0) && (
           <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-md border bg-popover p-1 shadow-lg">
             {completions.map((p, i) => (
               <button
                 key={p}
                 type="button"
+                data-dir-suggest=""
                 onMouseDown={(e) => {
                   e.preventDefault();
                   choose(p, true);
@@ -329,6 +397,36 @@ export function Toolbar({
                 <span className="truncate">{p}</span>
               </button>
             ))}
+            {cmds.length > 0 && (
+              <div className="mt-1 border-t px-2 pb-0.5 pt-1.5 text-[10px] text-muted-foreground">
+                命令（回车在终端中执行）
+              </div>
+            )}
+            {cmds.map((c, j) => {
+              const i = completions.length + j;
+              return (
+                <button
+                  key={c.path}
+                  type="button"
+                  data-cmd-suggest=""
+                  title={`在终端中执行：${c.name}（${c.path}）`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    chooseCmd(c, true);
+                  }}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
+                    i === compIndex ? "bg-accent text-accent-foreground" : "text-foreground",
+                  )}
+                >
+                  <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="shrink-0 font-medium">{c.name}</span>
+                  <span className="ml-1 min-w-0 flex-1 truncate text-right text-muted-foreground/70">
+                    {c.path}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
 

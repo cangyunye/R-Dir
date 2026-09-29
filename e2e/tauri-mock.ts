@@ -333,6 +333,7 @@ export async function installTauriMock(page: Page): Promise<void> {
           { id: "share", name: "窗口分享", description: "", protocols: ["share"], operations: ["serve"] },
           { id: "opener", name: "打开方式", description: "", protocols: [], operations: ["open_with"] },
           { id: "terminal", name: "终端", description: "", protocols: [], operations: ["open_terminal"] },
+          { id: "cmdrun", name: "地址栏命令", description: "", protocols: [], operations: ["run"] },
         ].map((p) => ({
           ...p,
           version: "0.12.0",
@@ -342,6 +343,21 @@ export async function installTauriMock(page: Page): Promise<void> {
         })),
       list_openers: () => [],
       list_shells: () => [],
+      // ---- 地址栏命令（v0.22.0）：PATH 补全桩 + 执行记录（供用例断言） ----
+      complete_commands: (a) => {
+        const prefix = String(a.prefix ?? "").toLowerCase();
+        return CMDS.filter((c) => c.name.toLowerCase().startsWith(prefix));
+      },
+      run_command: (a) => {
+        const input = String(a.input ?? "");
+        const head = input.trim().split(/\s+/)[0] ?? "";
+        if (!CMDS.some((c) => c.name === head)) {
+          // 与真实后端一致：首 token 不在 PATH → 报错（前端合并为「也不是 PATH 中的命令」）
+          throw new Error(`未找到命令：${head}（不在 PATH 中）`);
+        }
+        runCmds.push({ input, cwd: String(a.cwd ?? "") });
+        return null;
+      },
       // ---- SFTP：一台"已保存密码"的服务器 + 一台需要手输的服务器 ----
       sftp_list_servers: () => SFTP_SERVERS.map((s) => ({ ...s })),
       sftp_connect: (a) => {
@@ -394,6 +410,14 @@ export async function installTauriMock(page: Page): Promise<void> {
     const opened: string[] = [];
     /** 记录自绘窗口控制发出的窗口命令（minimize / toggle_maximize / close） */
     const winCmds: string[] = [];
+    /** PATH 可执行桩：前缀过滤语义与真实后端一致 */
+    const CMDS = [
+      { name: "git", path: "/usr/bin/git" },
+      { name: "gitui", path: "/opt/homebrew/bin/gitui" },
+      { name: "grep", path: "/usr/bin/grep" },
+    ];
+    /** 地址栏执行的命令记录（input + cwd），供用例断言 */
+    const runCmds: { input: string; cwd: string }[] = [];
 
     const internals = {
       invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
@@ -442,6 +466,6 @@ export async function installTauriMock(page: Page): Promise<void> {
       }
       return origFetch ? origFetch(input, init) : Promise.reject(new Error("fetch unavailable"));
     }) as typeof window.fetch;
-    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds };
+    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds };
   });
 }
