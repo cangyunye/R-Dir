@@ -60,10 +60,12 @@ fn mac_terminal(shell_id: &str, dir: &str) -> Result<(), String> {
                 _ => "zsh",
             };
             let cli = detect::find_cli(shell).ok_or_else(|| format!("未找到 {shell}"))?;
-            // AppleScript：cd 到目录再启动 shell；转义双引号与反斜杠
+            // AppleScript：cd 到目录再启动 shell；转义双引号与反斜杠。
+            // do script 只开窗不激活（Terminal 在后台时新窗会藏在当前应用后面），
+            // 末尾 activate 前台化
             let esc_dir = dir.replace('\\', "\\\\").replace('"', "\\\"");
             let script = format!(
-                "tell application \"Terminal\" to do script \"cd \\\"{esc_dir}\\\" && {cli}\""
+                "tell application \"Terminal\"\ndo script \"cd \\\"{esc_dir}\\\" && {cli}\"\nactivate\nend tell"
             );
             launch(&Command::new("osascript").arg("-e").arg(&script), None)
                 .map_err(|e| {
@@ -81,10 +83,12 @@ fn mac_terminal(shell_id: &str, dir: &str) -> Result<(), String> {
 /// macOS：AppleScript 在 Terminal 中 cd 到目录后执行命令串。
 /// cd 目录与用户命令都做 AppleScript 字符串层转义（引号/反斜杠），
 /// 转义后 Terminal 收到的仍是原始字符，由 shell 自行解释。
+/// `do script` 只开窗不激活（Terminal 已在程序坞时新窗藏在当前应用后面），
+/// 末尾 `activate` 把 Terminal 调到前台。
 fn mac_exec(command: &str, dir: &str) -> Result<(), String> {
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let script = format!(
-        "tell application \"Terminal\" to do script \"cd \\\"{}\\\" && {}\"",
+        "tell application \"Terminal\"\ndo script \"cd \\\"{}\\\" && {}\"\nactivate\nend tell",
         esc(dir),
         esc(command)
     );
