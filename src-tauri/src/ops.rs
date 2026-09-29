@@ -337,27 +337,33 @@ pub fn rename_entry(path: &str, new_name: &str) -> Result<String, String> {
     Ok(target.to_string_lossy().to_string())
 }
 
+/// 将 trash crate 的错误转为人话提示（分支跨平台：Windows IFileOperation / macOS Finder AppleScript）。
+fn map_trash_error(msg: String) -> String {
+    if msg.contains("-5000") || msg.contains("没有必要的权限") || msg.contains("Read-only") {
+        // macOS：外置克隆系统盘的系统卷为 sealed 只读挂载，卷上无法写入 .Trashes，
+        // 访达移入废纸篓必报 -5000「没有必要的权限」——与自动化授权/管理员身份无关，
+        // 只能永久删除或先把文件移到可写卷。osascript 报错尾缀的错误码与系统语言无关，故以 "-5000" 为准。
+        format!("删除失败：该磁盘可能为只读（如外置系统盘的系统卷，无法写入其废纸篓），无法移入回收站；可改用永久删除，或先把文件移到可写磁盘。
+详情：{}", msg)
+    } else if msg.contains("拒绝访问") || msg.contains("Permission denied") || msg.contains("access") {
+        format!("删除失败：权限不足，请以管理员身份运行 R-Dir，或将文件拖到回收站后手动清空。
+详情：{}", msg)
+    } else if msg.contains("being used") || msg.contains("占用") {
+        format!("删除失败：文件正在被其他程序占用，请关闭后重试。
+详情：{}", msg)
+    } else if msg.contains("aborted") || msg.contains("Aborted") {
+        // IFileOperation 的 "Some operations were aborted"：多为句柄占用或回收站瞬时不可用
+        "删除失败：无法移入回收站（目录可能正被其他程序占用，或该磁盘回收站暂不可用）".to_string()
+    } else {
+        format!("删除失败：{}", msg)
+    }
+}
+
 /// 删除条目（进回收站）。
 /// IFileOperation 偶发瞬时中止（目录句柄被占用、回收站忙等），重试一次再报错。
 pub fn delete_entries(paths: &[String]) -> Result<(), String> {
     let paths: Vec<&Path> = paths.iter().map(|s| Path::new(s)).collect();
-    let attempt = || {
-        trash::delete_all(&paths).map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("拒绝访问") || msg.contains("Permission denied") || msg.contains("access") {
-                format!("删除失败：权限不足，请以管理员身份运行 R-Dir，或将文件拖到回收站后手动清空。
-详情：{}", msg)
-            } else if msg.contains("being used") || msg.contains("占用") {
-                format!("删除失败：文件正在被其他程序占用，请关闭后重试。
-详情：{}", msg)
-            } else if msg.contains("aborted") || msg.contains("Aborted") {
-                // IFileOperation 的 "Some operations were aborted"：多为句柄占用或回收站瞬时不可用
-                "删除失败：无法移入回收站（目录可能正被其他程序占用，或该磁盘回收站暂不可用）".to_string()
-            } else {
-                format!("删除失败：{}", msg)
-            }
-        })
-    };
+    let attempt = || trash::delete_all(&paths).map_err(|e| map_trash_error(e.to_string()));
     match attempt() {
         Ok(()) => Ok(()),
         Err(_) => {
@@ -997,6 +1003,30 @@ mod tests {
         let base = tmp("perm-del-missing");
         let ghost = base.join("nope").to_string_lossy().to_string();
         assert!(permanent_delete_entries(&[ghost]).is_err());
+    }
+
+    #[test]
+    fn trash_error_readonly_volume_maps_to_actionable_hint() {
+        // macOS 真实报错：外置克隆系统盘（sealed 只读系统卷）上访达移废纸篓 -5000
+        let raw = r#"Error during a `trash` operation: Os { code: 1, description: "The AppleScript exited with error. stderr: 29:96: execution error: “Finder”遇到一个错误：无法完成此操作，因为你没有必要的权限。 (-5000)\n" }"#;
+        let mapped = map_trash_error(raw.to_string());
+        assert!(mapped.contains("只读"), "应提示只读卷: {mapped}");
+        assert!(mapped.contains("永久删除"), "应给出永久删除出口: {mapped}");
+        assert!(mapped.contains(raw), "详情应保留原始报错: {mapped}");
+        // 英文环境同一错误：osascript 尾缀错误码与系统语言无关
+        let en = "The AppleScript exited with error. stderr: 1:1: execution error: “Finder” got an error: Operation not permitted. (-5000)";
+        assert!(map_trash_error(en.to_string()).contains("只读"));
+    }
+
+    #[test]
+    fn trash_error_other_branches_unchanged() {
+        assert!(map_trash_error("xxx 拒绝访问 xxx".into()).contains("权限不足"));
+        assert!(map_trash_error("file is being used by another process".into()).contains("占用"));
+        assert!(map_trash_error("Some operations were aborted".into()).contains("暂不可用"));
+        assert_eq!(
+            map_trash_error("weird failure".into()),
+            "删除失败：weird failure"
+        );
     }
 
     // ---- 进度事件协议（Start/Bytes/EntryDone）与取消 ----
