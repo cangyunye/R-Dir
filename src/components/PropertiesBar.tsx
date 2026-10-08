@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Info } from "lucide-react";
 import type { FileEntry } from "@/lib/types";
 import { formatSize, formatTime } from "@/lib/format";
@@ -12,8 +13,10 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 底部属性栏：选中单个文件时显示详细属性 */
-export function PropertiesBar({
+/** 底部属性栏：选中单个文件时显示详细属性。
+ *  memo：props 是窗格状态的原引用，App 因传输进度等无关状态重渲染时跳过
+ *  （否则 selection.map(entries.find) 的 O(m·n) 每次渲染都要重算）。 */
+export const PropertiesBar = memo(function PropertiesBar({
   entries,
   selection,
 }: {
@@ -71,4 +74,4 @@ export function PropertiesBar({
       )}
     </div>
   );
-}
+});

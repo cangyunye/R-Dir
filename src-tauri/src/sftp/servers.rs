@@ -150,3 +150,151 @@ pub fn decrypt_password(master: &[u8], stored: &str) -> Result<String, String> {
         .map_err(|_| "密码解密失败（master-key 可能已变化）".to_string())?;
     String::from_utf8(plain).map_err(|_| "解密内容不是有效文本".into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pw_cfg(password: &str, save: bool) -> AuthConfig {
+        AuthConfig::Password { password: password.into(), save_password: save }
+    }
+
+    #[test]
+    fn seal_without_master_keeps_plaintext() {
+        let mut auth = pw_cfg("secret", true);
+        seal_auth_secrets(&mut auth, None).unwrap();
+        match auth {
+            AuthConfig::Password { password, save_password } => {
+                assert_eq!(password, "secret", "未设置主密钥：明文原样保留，不再报 NEED_MASTER_KEY");
+                assert!(save_password);
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn seal_with_master_encrypts_and_decrypts_back() {
+        let mut auth = pw_cfg("secret", true);
+        seal_auth_secrets(&mut auth, Some(b"mk")).unwrap();
+        match auth {
+            AuthConfig::Password { password, .. } => {
+                assert!(password.starts_with(ENC_PREFIX));
+                assert_eq!(decrypt_password(b"mk", &password).unwrap(), "secret");
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn seal_skips_unsaved_and_already_encrypted() {
+        let enc = encrypt_password(b"mk", "already").unwrap();
+        let mut a = pw_cfg("", true); // 空密码跳过
+        seal_auth_secrets(&mut a, Some(b"mk")).unwrap();
+        let mut b = pw_cfg("", false); // 未勾选记住跳过
+        seal_auth_secrets(&mut b, None).unwrap();
+        let mut c = pw_cfg(&enc, true); // 已是密文跳过
+        seal_auth_secrets(&mut c, Some(b"mk")).unwrap();
+        match c {
+            AuthConfig::Password { password, .. } => assert_eq!(password, enc),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn migrate_encrypts_only_plaintext_saved_entries() {
+        let mut file = ServersFile {
+            master_key_check: None,
+            servers: vec![
+                ServerConfigFile {
+                    id: "a".into(),
+                    name: "a".into(),
+                    host: "h".into(),
+                    port: 22,
+                    user: "u".into(),
+                    root: None,
+                    group: String::new(),
+                    auth: pw_cfg("plain1", true),
+                },
+                ServerConfigFile {
+                    id: "b".into(),
+                    name: "b".into(),
+                    host: "h".into(),
+                    port: 22,
+                    user: "u".into(),
+                    root: None,
+                    group: String::new(),
+                    auth: pw_cfg("", false),
+                },
+            ],
+        };
+        let n = encrypt_all_plaintext(&mut file, b"mk").unwrap();
+        assert_eq!(n, 1, "只有勾选记住且有明文的条目被迁移");
+        match &file.servers[0].auth {
+            AuthConfig::Password { password, .. } => {
+                assert!(password.starts_with(ENC_PREFIX));
+                assert_eq!(decrypt_password(b"mk", password).unwrap(), "plain1");
+            }
+            _ => panic!(),
+        }
+    }
+}
+
+// ==================== 主密钥策略（v0.22.2） ====================
+// 主密码只用于解锁既有密文；首次创建服务器不强制设置——未设置主密钥时
+// "记住的密码"以明文存盘（本机配置文件），设置主密钥时回填加密为密文。
+
+/// 落盘前处理认证密钥材料：需要记住的密码/口令，有 master-key → 加密为 enc:v1:，
+/// 未设置 → 保持明文原样存盘（不再返回 NEED_MASTER_KEY）。
+pub fn seal_auth_secrets(auth: &mut AuthConfig, master: Option<&[u8]>) -> Result<(), String> {
+    match auth {
+        AuthConfig::Password { password, save_password } => {
+            if *save_password
+                && !password.is_empty()
+                && !password.starts_with(ENC_PREFIX)
+            {
+                if let Some(mk) = master {
+                    *password = encrypt_password(mk, password)?;
+                }
+            }
+        }
+        AuthConfig::PublicKey { passphrase, save_passphrase, .. } => {
+            if *save_passphrase {
+                if let Some(p) = passphrase.as_deref() {
+                    if !p.is_empty() && !p.starts_with(ENC_PREFIX) {
+                        if let Some(mk) = master {
+                            *passphrase = Some(encrypt_password(mk, p)?);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 把清单中所有明文密码/口令加密为密文（设置主密钥时的回填迁移）；返回迁移条数。
+/// 已是密文（enc:v1:）或未勾选记住的条目跳过。
+pub fn encrypt_all_plaintext(file: &mut ServersFile, master: &[u8]) -> Result<usize, String> {
+    let mut n = 0;
+    for srv in file.servers.iter_mut() {
+        match &mut srv.auth {
+            AuthConfig::Password { password, save_password } => {
+                if *save_password && !password.is_empty() && !password.starts_with(ENC_PREFIX) {
+                    *password = encrypt_password(master, password)?;
+                    n += 1;
+                }
+            }
+            AuthConfig::PublicKey { passphrase, save_passphrase, .. } => {
+                if *save_passphrase {
+                    if let Some(p) = passphrase.as_deref() {
+                        if !p.is_empty() && !p.starts_with(ENC_PREFIX) {
+                            *passphrase = Some(encrypt_password(master, p)?);
+                            n += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(n)
+}

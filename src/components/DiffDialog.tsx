@@ -51,6 +51,10 @@ const REASON_LABEL: Record<string, string> = {
 /** mtime 容差可选值（秒） */
 const MTIME_CHOICES = [0, 1, 2, 5, 30] as const;
 
+// 虚拟滚动参数：行高 = 16px 行距 + py-1.5 ×2 + 1px 边框，行上需对应加 h-[29px] 固定
+const DIFF_ROW_H = 29;
+const DIFF_BUFFER = 6;
+
 function StatusBadge({ entry }: { entry: DiffEntry }) {
   const cls =
     entry.status === "different"
@@ -223,6 +227,32 @@ export function DiffDialog({
     () => (onlyDiff ? entries.filter((e) => e.status !== "same") : entries),
     [entries, onlyDiff],
   );
+
+  // 虚拟滚动：数千条差异不再一次性铺 DOM（参照 TextDiffDialog 的做法）
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(400);
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
+    ro.observe(el);
+    setViewportH(el.clientHeight);
+    return () => ro.disconnect();
+  }, []);
+  const range = useMemo(() => {
+    const start = Math.max(0, Math.floor(scrollTop / DIFF_ROW_H) - DIFF_BUFFER);
+    const end = Math.min(
+      visible.length,
+      Math.ceil((scrollTop + viewportH) / DIFF_ROW_H) + DIFF_BUFFER,
+    );
+    return {
+      start,
+      end,
+      padTop: start * DIFF_ROW_H,
+      padBottom: Math.max(0, visible.length - end) * DIFF_ROW_H,
+    };
+  }, [visible, scrollTop, viewportH]);
 
   const toggle = (name: string) => {
     setSelected((prev) => {
@@ -466,7 +496,11 @@ export function DiffDialog({
         </div>
 
         {/* 列表 */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          className="min-h-0 flex-1 overflow-y-auto"
+          ref={listRef}
+          onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        >
           {comparing && entries.length === 0 ? (
             <div className="flex h-32 items-center justify-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" /> 正在比对…
@@ -483,14 +517,15 @@ export function DiffDialog({
             </div>
           ) : (
             <div className="text-xs">
-              {visible.map((e) => {
+              {range.padTop > 0 && <div style={{ height: range.padTop }} />}
+              {visible.slice(range.start, range.end).map((e) => {
                 const checked = selected.has(e.name);
                 const clickable = e.status !== "same";
                 return (
                   <div
                     key={e.name}
                     className={cn(
-                      "grid grid-cols-[28px_1fr_140px_140px_90px] items-center border-b px-2 py-1.5",
+                      "grid h-[29px] grid-cols-[28px_1fr_140px_140px_90px] items-center border-b px-2 py-1.5",
                       clickable ? "cursor-pointer hover:bg-muted/40" : "opacity-70",
                     )}
                     onClick={() => clickable && toggle(e.name)}
@@ -529,6 +564,7 @@ export function DiffDialog({
                   </div>
                 );
               })}
+              {range.padBottom > 0 && <div style={{ height: range.padBottom }} />}
             </div>
           )}
         </div>

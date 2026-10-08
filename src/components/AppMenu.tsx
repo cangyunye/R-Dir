@@ -14,6 +14,7 @@ import {
   GitCompare,
   Globe,
   Info,
+  KeyRound,
   LayoutPanelLeft,
   LayoutPanelTop,
   Link2,
@@ -96,6 +97,8 @@ export interface AppMenuActions {
   syncDiffActive: boolean;
   /** v0.19 Git Diff 粘贴导入 */
   onOpenGitDiff: () => void;
+  /** v0.22.2 SFTP 主密钥（设置/解锁已保存密码） */
+  onMasterKey: () => void;
   // 帮助 / 右上角常驻
   onOpenSettings: () => void;
   onCheckUpdate: () => void;
@@ -290,6 +293,7 @@ export function AppMenu(actions: AppMenuActions) {
             onClick={actions.onOpenSyncDiff}
           />
           <Item icon={<FileDiff />} label="打开 Git Diff…" onClick={actions.onOpenGitDiff} />
+          <Item icon={<KeyRound />} label="SFTP 主密钥…" onClick={actions.onMasterKey} />
 
           <GroupLabel>帮助</GroupLabel>
           <DropdownMenuLabel className="px-2 font-normal text-muted-foreground">

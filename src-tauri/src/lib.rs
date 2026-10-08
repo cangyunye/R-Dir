@@ -252,7 +252,9 @@ async fn sftp_list_servers(
 }
 
 /// 保存（新增或更新）服务器；返回最新清单。
-/// 勾选"记住密码"时用 master-key 加密存储（未设置 master-key 返回 NEED_MASTER_KEY）。
+/// 勾选"记住密码"时加密存储：已设置并解锁 master-key → AES-256-GCM 密文；
+/// 未设置 → 明文原样存盘（v0.22.2 起首次创建不强制设置主密码，主密码只用于解锁
+/// 既有密文；之后在 ⋮ 菜单设置主密钥时自动把明文回填加密）。
 /// 编辑已有服务器时，密码/口令/密钥留空 = 保留原值（不覆盖）。
 #[cfg(feature = "sftp")]
 #[tauri::command]
@@ -288,31 +290,8 @@ async fn sftp_save_server(
             _ => {}
         }
     }
-    // 需要落盘的密码/口令 → 用 master-key 加密
-    match &mut server.auth {
-        AuthConfig::Password { password, save_password } => {
-            if *save_password && !password.is_empty() && !password.starts_with(sftp::servers::ENC_PREFIX) {
-                let mk = state.master_key.lock().await;
-                let Some(key) = mk.as_deref() else {
-                    return Err("NEED_MASTER_KEY: 需要先设置主密钥（用于加密保存的密码）".into());
-                };
-                *password = sftp::servers::encrypt_password(key, password)?;
-            }
-        }
-        AuthConfig::PublicKey { passphrase, save_passphrase, .. } => {
-            if *save_passphrase {
-                if let Some(p) = passphrase.as_deref() {
-                    if !p.is_empty() && !p.starts_with(sftp::servers::ENC_PREFIX) {
-                        let mk = state.master_key.lock().await;
-                        let Some(key) = mk.as_deref() else {
-                            return Err("NEED_MASTER_KEY: 需要先设置主密钥（用于加密保存的口令）".into());
-                        };
-                        *passphrase = Some(sftp::servers::encrypt_password(key, p)?);
-                    }
-                }
-            }
-        }
-    }
+    // 需要落盘的密码/口令 → 有主密钥则加密，没有则明文存盘（不阻断首次创建）
+    sftp::servers::seal_auth_secrets(&mut server.auth, state.master_key.lock().await.as_deref())?;
     if let Some(existing) = file.servers.iter_mut().find(|s| s.id == id) {
         *existing = server;
     } else {
@@ -354,7 +333,9 @@ async fn sftp_master_key_status(
     Ok(sftp::MasterKeyStatus { configured, active })
 }
 
-/// 设置 master-key（仅内存）。首次设置写入校验值；已设置则校验输入是否匹配。
+/// 设置 master-key（仅内存）。首次设置写入校验值，并把清单中已有的
+/// 明文密码/口令回填加密（v0.22.2：首次创建不再强制设主密码，明文在此时升级为密文）；
+/// 已设置则校验输入是否匹配。
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_set_master_key(
@@ -373,6 +354,7 @@ async fn sftp_set_master_key(
         }
     } else {
         file.master_key_check = Some(sftp::servers::master_key_check(key.as_bytes()));
+        sftp::servers::encrypt_all_plaintext(&mut file, key.as_bytes())?;
         sftp::servers::save_file(&path, &file)?;
     }
     *state.master_key.lock().await = Some(key.into_bytes());
@@ -727,7 +709,7 @@ async fn resolve_text_side(
             // 否则 File::create 报 os error 3「系统找不到指定的路径」
             std::fs::create_dir_all(&dir).map_err(|e| format!("创建临时目录失败：{e}"))?;
             // download_to 同名自动加后缀，避免两侧同名文件相互覆盖
-            let local = sftp::download_to(&pool, &dir.to_string_lossy(), path, |_, _| {}).await?;
+            let local = sftp::download_to(&pool, &dir.to_string_lossy(), path, false, |_, _| {}).await?;
             return Ok((local, true));
         }
         #[cfg(not(feature = "sftp"))]
@@ -871,7 +853,11 @@ async fn sftp_download(
     ensure_plugin(&state, "sftp")?;
     let name = transfer_label(&path, "下载中…");
     let pool = state.sftp_pool.lock().await;
+    let mut throttle = progress::Throttle::new();
     let result = sftp::download(&pool, &path, |done, total| {
+        if done < total && !throttle.ready() {
+            return;
+        }
         let mut p = progress::TransferProgress::start("download", &name, 1);
         p.file_done = done;
         p.file_total = total;
@@ -890,11 +876,16 @@ async fn sftp_download_to(
     state: tauri::State<'_, AppState>,
     local_dir: String,
     path: String,
+    overwrite: Option<bool>,
 ) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
     let name = transfer_label(&path, "下载中…");
     let pool = state.sftp_pool.lock().await;
-    let result = sftp::download_to(&pool, &local_dir, &path, |done, total| {
+    let mut throttle = progress::Throttle::new();
+    let result = sftp::download_to(&pool, &local_dir, &path, overwrite.unwrap_or(false), |done, total| {
+        if done < total && !throttle.ready() {
+            return;
+        }
         let mut p = progress::TransferProgress::start("download", &name, 1);
         p.file_done = done;
         p.file_total = total;
@@ -918,7 +909,11 @@ async fn sftp_upload(
     ensure_plugin(&state, "sftp")?;
     let label = transfer_label(&name, "上传中…");
     let pool = state.sftp_pool.lock().await;
+    let mut throttle = progress::Throttle::new();
     let result = sftp::upload(&pool, &local, &dest, &name, |done, total| {
+        if done < total && !throttle.ready() {
+            return;
+        }
         let mut p = progress::TransferProgress::start("upload", &label, 1);
         p.file_done = done;
         p.file_total = total;
@@ -1069,6 +1064,7 @@ async fn copy_entries(
         let mut label = String::from("复制中…");
         let mut file_done = 0u64;
         let mut file_total = 0u64;
+        let mut throttle = progress::Throttle::new();
         let r = ops::copy_entries(&paths, &dest, &mut |ev| {
             if flag.load(std::sync::atomic::Ordering::Relaxed) {
                 return false;
@@ -1078,10 +1074,15 @@ async fn copy_entries(
                     label = name.to_string();
                     file_done = 0;
                     file_total = 0;
+                    throttle.reset();
                 }
                 ops::CbEvent::Bytes(done, total) => {
                     file_done = done;
                     file_total = total;
+                    // 中间帧限频；每个文件的最后一帧随 EntryDone 立即发出
+                    if !throttle.ready() {
+                        return true;
+                    }
                 }
                 ops::CbEvent::EntryDone => done_entries += 1,
             }
@@ -1124,6 +1125,7 @@ async fn move_entries(
         let mut label = String::from("移动中…");
         let mut file_done = 0u64;
         let mut file_total = 0u64;
+        let mut throttle = progress::Throttle::new();
         let r = ops::move_entries(&paths, &dest, &mut |ev| {
             if flag.load(std::sync::atomic::Ordering::Relaxed) {
                 return false;
@@ -1133,10 +1135,15 @@ async fn move_entries(
                     label = name.to_string();
                     file_done = 0;
                     file_total = 0;
+                    throttle.reset();
                 }
                 ops::CbEvent::Bytes(done, total) => {
                     file_done = done;
                     file_total = total;
+                    // 中间帧限频；每个文件的最后一帧随 EntryDone 立即发出
+                    if !throttle.ready() {
+                        return true;
+                    }
                 }
                 ops::CbEvent::EntryDone => done_entries += 1,
             }
@@ -1217,6 +1224,7 @@ async fn copy_entries_plan(
         let mut label = String::from("复制中…");
         let mut file_done = 0u64;
         let mut file_total = 0u64;
+        let mut throttle = progress::Throttle::new();
         let r = ops::copy_entries_plan(&paths, &dest, &resolutions, &mut |ev| {
             if flag.load(std::sync::atomic::Ordering::Relaxed) {
                 return false;
@@ -1226,10 +1234,15 @@ async fn copy_entries_plan(
                     label = name.to_string();
                     file_done = 0;
                     file_total = 0;
+                    throttle.reset();
                 }
                 ops::CbEvent::Bytes(done, total) => {
                     file_done = done;
                     file_total = total;
+                    // 中间帧限频；每个文件的最后一帧随 EntryDone 立即发出
+                    if !throttle.ready() {
+                        return true;
+                    }
                 }
                 ops::CbEvent::EntryDone => done_entries += 1,
             }
@@ -1273,6 +1286,7 @@ async fn move_entries_plan(
         let mut label = String::from("移动中…");
         let mut file_done = 0u64;
         let mut file_total = 0u64;
+        let mut throttle = progress::Throttle::new();
         let r = ops::move_entries_plan(&paths, &dest, &resolutions, &mut |ev| {
             if flag.load(std::sync::atomic::Ordering::Relaxed) {
                 return false;
@@ -1282,10 +1296,15 @@ async fn move_entries_plan(
                     label = name.to_string();
                     file_done = 0;
                     file_total = 0;
+                    throttle.reset();
                 }
                 ops::CbEvent::Bytes(done, total) => {
                     file_done = done;
                     file_total = total;
+                    // 中间帧限频；每个文件的最后一帧随 EntryDone 立即发出
+                    if !throttle.ready() {
+                        return true;
+                    }
                 }
                 ops::CbEvent::EntryDone => done_entries += 1,
             }

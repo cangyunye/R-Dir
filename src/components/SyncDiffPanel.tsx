@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeftRight,
@@ -22,6 +22,10 @@ export const MARK_COLORS = {
   "right-only": "#0ea5e9",
   different: "#ef4444",
 } as const;
+
+// 虚拟滚动参数：行高 = 16px 行距 + py-1 ×2 + 1px 边框，行上需对应加 h-[25px] 固定
+const SYNC_ROW_H = 25;
+const SYNC_BUFFER = 6;
 
 export function markColor(mark: DiffMark): string {
   // v0.21.1 仅换行符不同（CRLF↔LF）：紫色，与红色「内容不同」区分
@@ -193,6 +197,35 @@ export function SyncDiffModal({
     return onlyDiff ? entries.filter((e) => e.status !== "same") : entries;
   }, [entries, onlyDiff]);
 
+  // 虚拟滚动：数千条差异不再一次性铺 DOM。面板常驻挂载（!open 返回 null），
+  // 滚动容器随开关装卸 → effect 依赖 open，重开时浏览器滚动位置归零需同步重置。
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(400);
+  useEffect(() => {
+    if (!open) return;
+    setScrollTop(0);
+    const el = listRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setViewportH(el.clientHeight));
+    ro.observe(el);
+    setViewportH(el.clientHeight);
+    return () => ro.disconnect();
+  }, [open]);
+  const range = useMemo(() => {
+    const start = Math.max(0, Math.floor(scrollTop / SYNC_ROW_H) - SYNC_BUFFER);
+    const end = Math.min(
+      rows.length,
+      Math.ceil((scrollTop + viewportH) / SYNC_ROW_H) + SYNC_BUFFER,
+    );
+    return {
+      start,
+      end,
+      padTop: start * SYNC_ROW_H,
+      padBottom: Math.max(0, rows.length - end) * SYNC_ROW_H,
+    };
+  }, [rows, scrollTop, viewportH]);
+
   if (!open) return null;
 
   const aligned = alignment.state === "aligned";
@@ -321,7 +354,11 @@ export function SyncDiffModal({
         </div>
 
         {/* 条目列表 */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          className="min-h-0 flex-1 overflow-y-auto"
+          ref={listRef}
+          onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        >
           <div
             className="sticky top-0 grid items-center border-b bg-muted/40 text-[11px] font-medium text-muted-foreground"
             style={{ gridTemplateColumns: GRID_COLS }}
@@ -336,7 +373,9 @@ export function SyncDiffModal({
               {status === "running" ? "正在比对…" : entries && entries.length > 0 ? "没有差异条目" : "（空目录）"}
             </div>
           ) : (
-            rows.map((e) => {
+            <>
+              {range.padTop > 0 && <div style={{ height: range.padTop }} />}
+              {rows.slice(range.start, range.end).map((e) => {
               const st = statusLabel(e);
               // v0.19 两侧都存在且都是文件 → 可直接同名文本比较（免基准）
               const comparable =
@@ -349,7 +388,7 @@ export function SyncDiffModal({
               return (
                 <div
                   key={`${e.name}:${e.left?.path ?? ""}:${e.right?.path ?? ""}`}
-                  className="group grid items-center border-b text-xs hover:bg-muted/40"
+                  className="group grid h-[25px] items-center border-b text-xs hover:bg-muted/40"
                   style={{ gridTemplateColumns: GRID_COLS }}
                   title={
                     comparable
@@ -383,7 +422,9 @@ export function SyncDiffModal({
                   </span>
                 </div>
               );
-            })
+            })}
+              {range.padBottom > 0 && <div style={{ height: range.padBottom }} />}
+            </>
           )}
         </div>
       </div>

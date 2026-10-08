@@ -301,7 +301,7 @@ export function FileList({
   }, [primary]);
   /** 行拖拽的目标集合：已选中项按下时携带全部选中项 */
   const targetsFor = (entry: FileEntry): string[] =>
-    propsRef.current.selection.includes(entry.path)
+    propsRef.current.selectionSet.has(entry.path)
       ? propsRef.current.selection
       : [entry.path];
 
@@ -410,6 +410,9 @@ export function FileList({
     bottom: number;
   } | null>(null);
 
+  // 选中集合：渲染路径每行都要判断，全选万级条目时 O(n)×行数 的字符串比较换成 Set
+  const selectionSet = useMemo(() => new Set(selection), [selection]);
+
   // 用 ref 保存最新 props，避免监听器闭包拿到过期值
   const propsRef = useRef({
     onDropPaths,
@@ -418,9 +421,10 @@ export function FileList({
     onSelectRange,
     onSelect,
     selection,
+    selectionSet,
     paneId,
   });
-  propsRef.current = { onDropPaths, onDragOverChange, onClearSelection, onSelectRange, onSelect, selection, paneId };
+  propsRef.current = { onDropPaths, onDragOverChange, onClearSelection, onSelectRange, onSelect, selection, selectionSet, paneId };
 
   const cleanupDrag = () => {
     window.removeEventListener("mousemove", onWinMouseMove);
@@ -545,7 +549,7 @@ export function FileList({
   const startRowPress = (e: React.MouseEvent, entry: FileEntry) => {
     if (e.button !== 0) return;
     e.stopPropagation();
-    const fromSelected = propsRef.current.selection.includes(entry.path);
+    const fromSelected = propsRef.current.selectionSet.has(entry.path);
     const additive = e.metaKey || e.ctrlKey;
     if (fromSelected) {
       // 从已选中项按下 → 文件拖拽（复制/移动）
@@ -779,11 +783,11 @@ export function FileList({
             <>
               {padTop > 0 && <div style={{ height: padTop }} />}
               {sorted.slice(start, end).map((entry) => {
-          const selected = selection.includes(entry.path);
+          const selected = selectionSet.has(entry.path);
           const isPrimary = primary === entry.path;
           const isRenaming = renaming?.path === entry.path;
           const mark = diffMarks?.[entry.name];
-          const targets = selection.includes(entry.path) ? selection : [entry.path];
+          const targets = selectionSet.has(entry.path) ? selection : [entry.path];
           return (
             <ContextMenu
               key={entry.path}
@@ -800,12 +804,18 @@ export function FileList({
                   onDragStart={(e) => {
                     // 跨应用拖出：把文件路径传给 OS
                     // 选中文本为空时拖当前项，否则拖选中项
-                    const paths = selection.includes(entry.path) ? selection : [entry.path];
+                    const paths = selectionSet.has(entry.path) ? selection : [entry.path];
                     // text/uri-list: file:///abs/path
                     const uriList = paths.map(p => 'file://' + p.replace(/\\/g, '/')).join('\r\n');
                     e.dataTransfer.setData('text/uri-list', uriList);
                     e.dataTransfer.setData('text/plain', paths.join('\n'));
-                    e.dataTransfer.effectAllowed = 'copy';
+                    // v0.22.2 应用内拖拽标记：window 的 dragover 据此开投放光标/提示条，
+                    // drop 据此拿源窗格 id（types 全程可读；值在 drop 阶段才可读）
+                    e.dataTransfer.setData('application/x-rdir-dnd', String(paneId));
+                    e.dataTransfer.effectAllowed = 'copyMove';
+                    // 原生拖拽接管后 mousemove/mouseup 停发——必须停掉自研鼠标拖拽，
+                    // 否则提示条滞留到松手后、下一次点击的 mouseup 误触发一次投放
+                    cleanupDrag();
                   }}
                   onMouseDown={(e) => startRowPress(e, entry)}
                   onClick={(e) => {

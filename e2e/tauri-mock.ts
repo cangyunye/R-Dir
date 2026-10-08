@@ -113,6 +113,7 @@ export async function installTauriMock(page: Page): Promise<void> {
       // 未知路径报错（与真实后端一致）：同步浏览的镜像探测依赖"列目录失败 = 对侧无此目录"
       list_dir: (a) => {
         const p = String(a.path);
+        listDirCalls.push(p);
         const items = FS[p];
         if (!items) throw new Error(`ENOENT: ${p}`);
         return items.map((f) => entry(p, f));
@@ -367,6 +368,37 @@ export async function installTauriMock(page: Page): Promise<void> {
         return { ...(s ?? SFTP_SERVERS[0]), connected: true };
       },
       sftp_save_server: () => SFTP_SERVERS.map((s) => ({ ...s, connected: true })),
+      // ---- SFTP 上传（v0.22.2 拖拽上传回归）：写虚拟 FS 并记录供用例断言 ----
+      sftp_upload: (a) => {
+        const dest = String(a.dest ?? "");
+        const name = String(a.name ?? "");
+        uploads.push({ local: String(a.local ?? ""), dest, name });
+        FS[dest] = FS[dest] ?? [];
+        if (!FS[dest].some((f) => f.name === name)) FS[dest].push({ name, size: 42 });
+        return `${dest}/${name}`;
+      },
+      // ---- SFTP 下载（v0.22.0 拖拽对称覆盖回归）：overwrite=false 时同名自动 " (n)" ----
+      sftp_download_to: (a) => {
+        const localDir = String(a.localDir ?? "");
+        const path = String(a.path ?? "");
+        const overwrite = !!a.overwrite;
+        downloads.push({ path, localDir, overwrite });
+        const name = path.split("/").filter(Boolean).pop() ?? "download";
+        FS[localDir] = FS[localDir] ?? [];
+        let finalName = name;
+        if (!overwrite) {
+          let n = 1;
+          while (FS[localDir].some((f) => f.name === finalName)) {
+            finalName = `${name} (${n})`;
+            n += 1;
+          }
+        } else {
+          const idx = FS[localDir].findIndex((f) => f.name === name);
+          if (idx >= 0) FS[localDir].splice(idx, 1);
+        }
+        FS[localDir].push({ name: finalName, size: 42 });
+        return `${localDir}/${finalName}`;
+      },
       sftp_remove_server: () => [],
       sftp_disconnect: () => null,
       sftp_master_key_status: () => ({ configured: false, active: false }),
@@ -374,7 +406,9 @@ export async function installTauriMock(page: Page): Promise<void> {
       plugin: () => null,
       "plugin:dialog|open": () => null,
       "plugin:dialog|save": () => null,
-      "plugin:dialog|message": () => null,
+      // plugin-dialog 的 confirm() 底层复用 message 命令，返回值按点击的按钮判定：
+      // (await messageCommand(...)) === 'Ok' → 这里恒返回 'Ok'（确认类对话框全部确认）
+      "plugin:dialog|message": () => "Ok",
       "plugin:dialog|confirm": () => true,
       "plugin:dialog|ask": () => false,
       "plugin:app|name": () => "R-Dir",
@@ -418,6 +452,12 @@ export async function installTauriMock(page: Page): Promise<void> {
     ];
     /** 地址栏执行的命令记录（input + cwd），供用例断言 */
     const runCmds: { input: string; cwd: string }[] = [];
+    /** list_dir 调用记录（v0.22.1 标签切换零重读回归用） */
+    const listDirCalls: string[] = [];
+    /** sftp_upload 记录（v0.22.2 拖拽上传回归用） */
+    const uploads: { local: string; dest: string; name: string }[] = [];
+    /** sftp_download_to 记录（v0.22.0 拖拽覆盖对称回归用） */
+    const downloads: { path: string; localDir: string; overwrite: boolean }[] = [];
 
     const internals = {
       invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
@@ -466,6 +506,6 @@ export async function installTauriMock(page: Page): Promise<void> {
       }
       return origFetch ? origFetch(input, init) : Promise.reject(new Error("fetch unavailable"));
     }) as typeof window.fetch;
-    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds };
+    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads };
   });
 }

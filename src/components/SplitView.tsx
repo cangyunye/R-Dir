@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+﻿import { memo, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PaneNode, PaneState, SplitDir } from "@/lib/types";
@@ -93,7 +93,9 @@ export interface PaneHandlers {
   onViewPatch: (path: string) => void;
 }
 
-function PaneView({
+// memo：App 层的 handlers 已 useMemo 稳定，传输进度等无关状态更新不再重渲染窗格
+// （否则每次 App 渲染都会重建 FileList 的全部内联回调与每行右键菜单子树）。
+const PaneView = memo(function PaneView({
   pane,
   showHidden,
   showExtensions,
@@ -241,7 +243,7 @@ dragTarget={dragOver?.targetPaneId === pane.id}
       {showProperties && <PropertiesBar entries={pane.entries} selection={pane.selection} />}
     </div>
   );
-}
+});
 
 function SplitDivider({
   dir,

@@ -580,6 +580,7 @@ fn download_with_progress(
     };
     let mut buf = [0u8; 64 * 1024];
     let mut done: u64 = done0;
+    let mut throttle = progress::Throttle::new();
     loop {
         let n = reader.read(&mut buf).map_err(|e| format!("读取失败：{e}"))?;
         if n == 0 {
@@ -595,7 +596,7 @@ fn download_with_progress(
         }
         f.write_all(&buf[..n]).map_err(|e| format!("写入失败：{e}"))?;
         done += n as u64;
-        if total > 0 {
+        if total > 0 && (done >= total || throttle.ready()) {
             let mut p = progress::TransferProgress::start("download", &name, 1);
             p.file_done = done;
             p.file_total = total;

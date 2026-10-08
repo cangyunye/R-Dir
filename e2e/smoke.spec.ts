@@ -16,6 +16,8 @@ const HOME = "/mock/home";
 const MOD = process.platform === "darwin" ? "Meta" : "Control";
 // goUp 的默认键位：mac = mod+up / ⌫(Backspace)，win = alt+up / Backspace（v0.21.1 起两平台 ⌫ 一致）
 const GO_UP = process.platform === "darwin" ? "Meta+ArrowUp" : "Alt+ArrowUp";
+// 刷新：mac = ⌘R，win = F5
+const REFRESH = process.platform === "darwin" ? "Meta+r" : "F5";
 
 test.beforeEach(async ({ page }) => {
   await installTauriMock(page);
@@ -672,5 +674,137 @@ test.describe("21. 地址栏命令（v0.22.0）", () => {
     await expect(page.locator("[data-dir-suggest], [data-cmd-suggest]")).toHaveCount(0);
     await input.press("Escape");
     await expect(page.locator("[data-pathbar]")).toBeVisible();
+  });
+});
+
+test.describe("22. 标签切换零重读 + keep-alive（v0.22.1）", () => {
+  const listDirCalls = (page: import("@playwright/test").Page) =>
+    page.evaluate(
+      () =>
+        (window as unknown as { __RDIR_E2E_MOCK__: { listDirCalls: string[] } })
+          .__RDIR_E2E_MOCK__.listDirCalls.length,
+    );
+
+  test("R16 切回已加载的标签不重读目录，隐藏标签树保持挂载", async ({ page }) => {
+    // 起始：tab1 在 HOME（beforeEach 已加载 1 次）
+    expect(await listDirCalls(page)).toBe(1);
+    // 新建 tab2（HOME，+1），进入 Documents（+1）
+    await page.keyboard.press(`${MOD}+KeyT`);
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(2);
+    // keep-alive 后隐藏的 tab1 树里也有 Documents 行，双击须限定可见树
+    await page.locator(`[data-path="${HOME}/Documents"]:visible`).dblclick();
+    await expect(page.locator(`[data-path="${HOME}/Documents/readme.md"]`)).toBeVisible();
+    expect(await listDirCalls(page)).toBe(3);
+    // 切回 tab1（HOME）：零 IO——不再发起 list_dir，列表立即来自内存 entries
+    await page.locator('[data-tab-idx="0"]').click();
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+    expect(await listDirCalls(page)).toBe(3);
+    // 再切回 tab2：同样零 IO
+    await page.locator('[data-tab-idx="1"]').click();
+    await expect(page.locator(`[data-path="${HOME}/Documents/readme.md"]`)).toBeVisible();
+    expect(await listDirCalls(page)).toBe(3);
+    // keep-alive：tab1 的窗格树仍在 DOM 中（隐藏而非卸载）——
+    // 当前活动 tab2 在 Documents，HOME 的 Notes.txt 只存在于 tab1 的隐藏树里
+    const hiddenRow = page.locator(`[data-path="${HOME}/Notes.txt"]`);
+    await expect(hiddenRow).toHaveCount(1);
+    await expect(hiddenRow).not.toBeVisible();
+  });
+
+  test("R17 刷新仍然重读目录：refreshKey 变化绕过缓存", async ({ page }) => {
+    expect(await listDirCalls(page)).toBe(1);
+    await page.keyboard.press(REFRESH);
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+    await expect.poll(() => listDirCalls(page)).toBe(2);
+  });
+});
+
+test.describe("23. 拖拽上传 + 全部标签下拉（v0.22.2）", () => {
+  test("R18 本地→SFTP 拖拽：松手即上传，重复拖拽走覆盖确认", async ({ page }) => {
+    // 三次跨窗格原生拖拽累计耗时较长（每次动作等待 + CDP 拖拽模拟）
+    test.slow();
+    // 左右分屏：活动窗格连 SFTP，另一窗格留在本地 HOME
+    await page.keyboard.press(`${MOD}+Backslash`);
+    await page.getByRole("button", { name: "生产机" }).click();
+    const remote = "sftp://u@127.0.0.1:22/remote";
+    await expect(page.locator(`[data-path="${remote}/deploy.sh"]`)).toBeVisible();
+    const uploads = () =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __RDIR_E2E_MOCK__: { uploads: { local: string; dest: string; name: string }[] } })
+            .__RDIR_E2E_MOCK__.uploads,
+      );
+    // 原生拖拽（HTML5 dragstart/dragover/drop）：松手即上传，无需再点击
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).dragTo(
+      page.locator(`[data-path="${remote}/deploy.sh"]`),
+    );
+    await expect(page.locator(`[data-path="${remote}/Notes.txt"]`)).toBeVisible();
+    expect((await uploads()).at(-1)).toMatchObject({ name: "Notes.txt", dest: remote });
+    // 再拖一次：远程已有同名 → 覆盖确认（mock 的 dialog|confirm 恒 true）→ 继续上传
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).dragTo(
+      page.locator(`[data-path="${remote}/deploy.sh"]`),
+    );
+    await expect
+      .poll(async () => (await uploads()).length, { timeout: 5000 })
+      .toBe(2);
+    // 反向拖拽（合成事件派发：CDP 拖拽模拟在多次拖拽后不稳定，改为直接驱动
+    // 应用的事件链 dragstart → window dragover/drop，覆盖的逻辑完全一致）：
+    // SFTP → 本地同名文件 → 覆盖确认后直接覆盖，不再自动改名 " (1)"
+    const downloads = () =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __RDIR_E2E_MOCK__: { downloads: { path: string; localDir: string; overwrite: boolean }[] } })
+            .__RDIR_E2E_MOCK__.downloads,
+      );
+    await page.evaluate(
+      ({ srcSel, dstSel }) => {
+        const src = document.querySelector(srcSel)!;
+        const dst = document.querySelector(dstSel)!;
+        const dt = new DataTransfer();
+        src.dispatchEvent(
+          new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }),
+        );
+        const r = dst.getBoundingClientRect();
+        const opts = {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: dt,
+          clientX: r.left + r.width / 2,
+          clientY: r.top + r.height / 2,
+        };
+        window.dispatchEvent(new DragEvent("dragover", opts));
+        window.dispatchEvent(new DragEvent("drop", opts));
+        src.dispatchEvent(new DragEvent("dragend", opts));
+      },
+      {
+        srcSel: `[data-path="${remote}/Notes.txt"]`,
+        dstSel: `[data-path="${HOME}/photo.png"]`,
+      },
+    );
+    await expect
+      .poll(async () => (await downloads()).length, { timeout: 5000 })
+      .toBe(1);
+    expect((await downloads()).at(-1)).toMatchObject({
+      path: `${remote}/Notes.txt`,
+      localDir: HOME,
+      overwrite: true,
+    });
+    // 未被改名新增
+    await expect(page.locator(`[data-path="${HOME}/Notes (1).txt"]`)).toHaveCount(0);
+  });
+
+  test("R19 全部标签下拉：列出全部、点击切换、行内关闭", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+KeyT`);
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(2);
+    await page.locator("[data-tabs-list]").click();
+    const panel = page.locator("[data-tabs-list-panel]");
+    await expect(panel).toBeVisible();
+    await expect(panel.locator("[data-tabs-list-item]")).toHaveCount(2);
+    // 点击第 1 项 → 切回第一个标签（活动标签高亮 bg-background）
+    await panel.locator('[data-tabs-list-item="0"]').click();
+    await expect(page.locator('[data-tab-idx="0"]')).toHaveClass(/bg-background/);
+    // 再次打开，从下拉里关闭第 2 个标签
+    await page.locator("[data-tabs-list]").click();
+    await panel.locator('[data-tabs-close="1"]').click();
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(1);
   });
 });

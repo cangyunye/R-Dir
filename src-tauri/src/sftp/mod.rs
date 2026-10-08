@@ -205,11 +205,14 @@ pub async fn download(
     Ok(dest.to_string_lossy().to_string())
 }
 
-/// 下载远程文件到指定本地目录（粘贴/拖拽 远程→本地）；同名自动加 " (n)" 后缀
+/// 下载远程文件到指定本地目录（粘贴/拖拽 远程→本地）。
+/// overwrite=false：同名自动加 " (n)" 后缀（粘贴的既有行为）；
+/// overwrite=true：直接覆盖同名文件（拖拽经用户覆盖确认后使用，v0.22.0）。
 pub async fn download_to(
     pool: &SessionPool,
     local_dir: &str,
     path: &str,
+    overwrite: bool,
     mut cb: impl FnMut(u64, u64),
 ) -> Result<String, String> {
     let (authority, remote) = parse_sftp_path(path)?;
@@ -222,9 +225,9 @@ pub async fn download_to(
         .unwrap_or_else(|| "download".into());
     let safe = sanitize_name(&name);
     let mut dest = PathBuf::from(local_dir).join(&safe);
-    // 同名冲突：追加 " (1)"、" (2)"…
+    // 同名冲突：追加 " (1)"、" (2)"…（overwrite 时直接覆盖）
     let mut n = 1;
-    while dest.exists() {
+    while dest.exists() && !overwrite {
         dest = PathBuf::from(local_dir).join(format!("{} ({})", safe, n));
         n += 1;
     }

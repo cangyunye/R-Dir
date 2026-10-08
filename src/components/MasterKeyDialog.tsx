@@ -139,9 +139,19 @@ export function MasterKeyDialog({
           <div className="flex items-start gap-2 rounded border bg-muted/40 px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
             <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
-              主密钥用于加密保存的服务器密码（AES-256-GCM）。
-              <br />
-              它<b>只存在内存中、不会写入磁盘</b>；应用不关闭则无需重复输入。
+              {configured ? (
+                <>
+                  输入主密钥解锁已保存的服务器密码（AES-256-GCM）。
+                  <br />
+                </>
+              ) : (
+                <>
+                  主密钥用于加密保存的服务器密码。未设置主密钥时，记住的密码以明文保存在本机配置中；
+                  设置后<b>现有的明文密码会立即自动加密</b>，之后连接需输入主密钥解锁。
+                  <br />
+                </>
+              )}
+              主密钥<b>只存在内存中、不会写入磁盘</b>；应用不关闭则无需重复输入。
               <br />
               验证通过后将自动重新连接未完成的远程目录；取消则保持当前布局、不连接。
             </span>

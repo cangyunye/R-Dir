@@ -154,9 +154,10 @@ export const sftpDisconnect = (id: string) =>
 export const sftpDownload = (path: string) =>
   invoke<string>("sftp_download", { path });
 
-/** 下载远程文件到指定本地目录（粘贴/拖拽 远程→本地），返回本地路径 */
-export const sftpDownloadTo = (localDir: string, path: string) =>
-  invoke<string>("sftp_download_to", { localDir, path });
+/** 下载远程文件到指定本地目录（粘贴/拖拽 远程→本地），返回本地路径；
+ *  overwrite=true 直接覆盖同名（拖拽经覆盖确认后），false 同名自动加 " (n)" 后缀 */
+export const sftpDownloadTo = (localDir: string, path: string, overwrite = false) =>
+  invoke<string>("sftp_download_to", { localDir, path, overwrite });
 
 /** 上传本地文件到远程目录（拖拽/复制） */
 export const sftpUpload = (local: string, dest: string, name: string) =>

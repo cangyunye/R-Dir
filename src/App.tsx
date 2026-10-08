@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { Activity, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
@@ -163,6 +163,9 @@ function sftpAuthorityId(path: string): string | null {
 }
 
 /** 序列化当前标签页布局为会话快照（SFTP 只存 serverId，不含任何凭据） */
+/** 非活动标签 keep-alive 上限（LRU）：超出后最久未激活的标签树卸载，退回「激活时重建」 */
+const KEEP_ALIVE_MAX = 8;
+
 function serializeSession(tabs: TabState[], activeId: number): SessionLayout {
   const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeId));
   return {
@@ -282,6 +285,11 @@ function parentPath(path: string): string {
 export default function App() {
   const [tabs, setTabs] = useState<TabState[]>([]);
   const [activeId, setActiveId] = useState<number>(0);
+  /** v0.22.1（方案B）：保留挂载的标签树（含活动标签，最近激活优先）。
+   *  切换标签用 React <Activity> 隐藏而非卸载——不重建虚拟列表行/每行右键菜单子树，
+   *  sorted 等 useMemo 与滚动状态全部保留；超 KEEP_ALIVE_MAX 淘汰最旧（配合方案A
+   *  的 loadedPaneKey，淘汰后再次激活仍不重读目录，只付一次挂载成本）。 */
+  const [keptTabIds, setKeptTabIds] = useState<number[]>([]);
   const [volumes, setVolumes] = useState<VolumeInfo[]>([]);
   const [quickAccess, setQuickAccess] = useState<QuickAccessItem[]>([]);
   const [showHidden, setShowHidden] = useState(false);
@@ -381,6 +389,11 @@ export default function App() {
 
   // ==================== 传输/复制进度（本地 + SFTP） ====================
   const [transfer, setTransfer] = useState<TransferProgress | null>(null);
+  /** 传输进行中标记（ref 供同步比对管线同步读取）：传输期间挂起实时比对，
+   *  结束后由 syncKick 统一补一轮，避免上传/下载过程中面板反复闪「比对中…」 */
+  const transferRef = useRef<TransferProgress | null>(null);
+  transferRef.current = transfer;
+  const [syncKick, setSyncKick] = useState(0);
 
   
   // v0.7 分享事件：创建/到期/停止 → 刷新管理面板
@@ -404,6 +417,8 @@ useEffect(() => {
         doneTimer = setTimeout(() => {
           setTransfer(null);
           doneTimer = null;
+          // 传输期间被挂起的同步比对在此统一补一轮（比对管线见 syncKick 依赖）
+          setSyncKick((k) => k + 1);
         }, 1500);
       }
     });
@@ -454,6 +469,8 @@ useEffect(() => {
   /** 内容搜索结果定位/粘贴后定位：目录加载完成后选中这些条目 */
   const pendingSelectRef = useRef<string[] | null>(null);
   /** 已关闭标签页（恢复用） */
+  // 「恢复关闭的标签」栈：记录整个 TabState（含各窗格 entries 数组），不设上限会
+  // 随反复开关大目录单调增长，重启前不释放 → FIFO 保留最近 20 条。
   const closedTabsRef = useRef<{ tab: TabState; index: number }[]>([]);
 
   const showError = useCallback((msg: string) => {
@@ -691,13 +708,44 @@ useEffect(() => {
     );
   }, []);
 
+  /** 批量刷新多个窗格（一次 setTabs）：拖拽/粘贴后的源+目标双窗格刷新合并为
+   *  一轮状态更新，同步比对只重跑一次而不是两次 */
+  const refreshPanes = useCallback((ids: number[]) => {
+    if (ids.length === 0) return;
+    setTabs((ts) =>
+      ts.map((t) => {
+        let changed = false;
+        const panes = { ...t.panes };
+        for (const id of ids) {
+          const pane = panes[id];
+          if (!pane) continue;
+          panes[id] = { ...pane, refreshKey: pane.refreshKey + 1 };
+          changed = true;
+        }
+        return changed ? { ...t, panes } : t;
+      }),
+    );
+  }, []);
+
   /** 会话恢复（v0.3.0）：重建标签集合 + 分屏树 + pane 路径；SFTP 并发重连（需 master-key） */
 
-  // 活动 pane 路径/刷新键变化时加载目录
+  // 活动 pane 路径/刷新键变化时加载目录。
+  // v0.22.1（方案A）：按 paneId 记住「当前 entries 属于哪次加载」（path:refreshKey），
+  // 未变（= 标签间/分屏内切换回来）直接用内存 entries，不再 loading + 重读目录
+  // （此前 activeId 在依赖里，每次切换都发起一次多余的 list_dir IO + 两轮额外渲染）。
+  // 导航离开后 entries 已被替换，回来时 key 不匹配 → 正常重读；F5 / 同路径回车
+  // bump refreshKey → 必然重读。加载失败不更新记录，再次激活自动重试。
+  const loadedPaneKeysRef = useRef<Map<number, string>>(new Map());
   useEffect(() => {
     if (!activePane) return;
+    const paneKey = `${activePane.path}:${activePane.refreshKey}`;
+    // entries 可能在标签视图切换时被清空（下方 VIRTUAL_TAG 分支），空了就要重拉
+    if (loadedPaneKeysRef.current.get(activePane.id) === paneKey && activePane.entries.length > 0) {
+      return;
+    }
     // 虚拟标签目录：不请求后端，清空 entries（由 TagView 渲染）
     if (VIRTUAL_TAG_RE.test(activePane.path)) {
+      loadedPaneKeysRef.current.set(activePane.id, paneKey);
       setTabs((ts) =>
         ts.map((t) => {
           const p = t.panes[activePane.id];
@@ -724,6 +772,7 @@ useEffect(() => {
     listDir(activePane.path)
       .then((entries) => {
         if (cancelled) return;
+        loadedPaneKeysRef.current.set(activePane.id, paneKey);
         // 在 updater 外消费 pending：updater 必须是纯函数（StrictMode 会双调用，
         // 在内部清 ref 的副作用会被第二次调用丢弃，导致选中不生效）
         const pending = pendingSelectRef.current;
@@ -1131,7 +1180,9 @@ useEffect(() => {
         const idx = ts.findIndex((t) => t.id === id);
         const target = ts[idx];
         if (target) {
-          closedTabsRef.current.push({ tab: target, index: idx });
+          const closed = closedTabsRef.current;
+          closed.push({ tab: target, index: idx });
+          if (closed.length > 20) closed.shift();
           // v0.7：关闭被分享的标签 → 自动停止其目录分享
           const dirs = new Set<string>();
           for (const pane of Object.values(target.panes)) {
@@ -1153,6 +1204,14 @@ useEffect(() => {
   );
 
   const selectTab = useCallback((id: number) => setActiveId(id), []);
+
+  // keep-alive LRU：激活即置顶，超 KEEP_ALIVE_MAX 淘汰最久未用的标签树
+  useEffect(() => {
+    setKeptTabIds((prev) => {
+      const next = [activeId, ...prev.filter((id) => id !== activeId)];
+      return next.length > KEEP_ALIVE_MAX ? next.slice(0, KEEP_ALIVE_MAX) : next;
+    });
+  }, [activeId]);
 
   /** 激活指定标签页中的某个窗格（路径栏右侧「已连接窗格」下拉） */
   const activatePane = useCallback((tabId: number, paneId: number) => {
@@ -1719,6 +1778,9 @@ useEffect(() => {
    *  边浏览边比对，比对只针对当前对齐层/共同层，层级按两侧后端能力钳制） */
   useEffect(() => {
     if (!syncPanes) return;
+    // 传输（上传/下载/复制/移动/压缩）进行中挂起比对：拖拽上传后的窗格刷新
+    // 不再让面板反复闪「比对中…」，传输结束（syncKick）后统一比对一轮
+    if (transferRef.current) return;
     const { leftDir, rightDir } = syncPanes.alignment;
     const level = maxDiffLevelFor(leftDir, rightDir);
     const caseSensitive = loadDiffCaseSensitive();
@@ -1757,6 +1819,7 @@ useEffect(() => {
     syncPanes?.lp.refreshKey,
     syncPanes?.rp.path,
     syncPanes?.rp.refreshKey,
+    syncKick,
   ]);
 
   /** 程序化导航任意窗格（面板按钮用）：加载条目 + 推历史 + 激活 */
@@ -1873,21 +1936,34 @@ useEffect(() => {
     await gotoPane(oSide === "left" ? link.leftPaneId : link.rightPaneId, target);
   }, [showError, gotoPane]);
 
-  /** 行内标注：仅当窗格正处比对层时传入（未对齐时 wanderer 更深层不标） */
-  const syncMarks: Record<number, DiffMarkMap> = (() => {
-    if (!syncLink || !syncPanes || !syncRun || syncRun.status !== "done" || !syncRun.entries) {
+  /** 行内标注：仅当窗格正处比对层时传入（未对齐时 wanderer 更深层不标）。
+   *  依赖取原始值 + useMemo：syncPanes 每次渲染都是新对象，直接依赖会击穿 PaneView 的 memo。 */
+  const lpPath = syncPanes?.lp.path;
+  const rpPath = syncPanes?.rp.path;
+  const alignLeftDir = syncPanes?.alignment.leftDir;
+  const alignRightDir = syncPanes?.alignment.rightDir;
+  const syncMarks: Record<number, DiffMarkMap> = useMemo(() => {
+    if (
+      !syncLink ||
+      lpPath === undefined ||
+      rpPath === undefined ||
+      !syncRun ||
+      syncRun.status !== "done" ||
+      !syncRun.entries
+    ) {
       return {};
     }
     const marks = marksFromOutcome(syncRun.entries);
     const out: Record<number, DiffMarkMap> = {};
-    if (syncPanes.lp.path === syncPanes.alignment.leftDir) out[syncLink.leftPaneId] = marks;
-    if (syncPanes.rp.path === syncPanes.alignment.rightDir) out[syncLink.rightPaneId] = marks;
+    if (lpPath === alignLeftDir) out[syncLink.leftPaneId] = marks;
+    if (rpPath === alignRightDir) out[syncLink.rightPaneId] = marks;
     return out;
-  })();
+  }, [syncLink, syncRun, lpPath, rpPath, alignLeftDir, alignRightDir]);
   /** 表头链接标识：链接窗格的方位 */
-  const syncBadges: Record<number, LinkSide> = syncLink
-    ? { [syncLink.leftPaneId]: "left", [syncLink.rightPaneId]: "right" }
-    : {};
+  const syncBadges: Record<number, LinkSide> = useMemo(
+    () => (syncLink ? { [syncLink.leftPaneId]: "left", [syncLink.rightPaneId]: "right" } : {}),
+    [syncLink],
+  );
   /** 「在对侧新建并进入」是否可用：对侧后端 canMkdir */
   const canCreateMissing = (() => {
     if (!syncPanes || syncPanes.alignment.state !== "diverged") return false;
@@ -2152,8 +2228,7 @@ useEffect(() => {
           for (const p of paths) {
             await httpDownloadTo(dest, p);
           }
-          refreshPane(targetPaneId);
-          refreshPane(sourcePaneId);
+          refreshPanes([targetPaneId, sourcePaneId]);
           return;
         }
         // 远程 ⇄ 远程：暂不支持（方案已评估保留）
@@ -2161,22 +2236,44 @@ useEffect(() => {
           showError("双端远程传输暂不支持");
           return;
         }
-        // 远程 → 本地：下载
+        // 远程 → 本地：下载。与 本地→远程 对称：目标已有同名条目先确认，
+        // 确认后直接覆盖（默认的自动改名 " (n)" 仅保留给粘贴流程）（v0.22.0）
         if (srcIsSftp && !destIsSftp) {
-          for (const p of paths) {
-            await sftpDownloadTo(dest, p);
+          const existing = new Set(
+            (await listDir(dest).catch(() => [] as FileEntry[])).map((e) => e.name),
+          );
+          const clashes = paths.map((p) => basename(p)).filter((n) => existing.has(n));
+          let overwrite = false;
+          if (clashes.length > 0) {
+            const preview =
+              clashes.slice(0, 5).join("、") + (clashes.length > 5 ? ` 等 ${clashes.length} 项` : "");
+            const ok = await confirmDialog(`目标目录已有同名条目：${preview}\n覆盖下载？`);
+            if (!ok) return;
+            overwrite = true;
           }
-          refreshPane(targetPaneId);
-          refreshPane(sourcePaneId);
+          for (const p of paths) {
+            await sftpDownloadTo(dest, p, overwrite);
+          }
+          refreshPanes([targetPaneId, sourcePaneId]);
           return;
         }
-        // 本地 → 远程：上传
+        // 本地 → 远程：上传。SFTP 写入用 FXF_TRUNC 会静默覆盖同名远程文件，
+        // 先列目标目录核对，存在同名 → 用户确认后才传（v0.22.2）
         if (!srcIsSftp && destIsSftp) {
+          const existing = new Set(
+            (await listDir(dest).catch(() => [] as FileEntry[])).map((e) => e.name),
+          );
+          const clashes = paths.map((p) => basename(p)).filter((n) => existing.has(n));
+          if (clashes.length > 0) {
+            const preview =
+              clashes.slice(0, 5).join("、") + (clashes.length > 5 ? ` 等 ${clashes.length} 项` : "");
+            const ok = await confirmDialog(`目标目录已有同名条目：${preview}\n覆盖上传？`);
+            if (!ok) return;
+          }
           for (const p of paths) {
             await sftpUpload(p, dest, basename(p));
           }
-          refreshPane(targetPaneId);
-          refreshPane(sourcePaneId);
+          refreshPanes([targetPaneId, sourcePaneId]);
           return;
         }
         // 本地 ⇄ 本地：带冲突裁决
@@ -2194,14 +2291,106 @@ useEffect(() => {
             destPane: targetPaneId,
           });
         }
-        refreshPane(targetPaneId);
-        refreshPane(sourcePaneId);
+        refreshPanes([targetPaneId, sourcePaneId]);
       } catch (e) {
         showError(String(e));
       }
     },
-    [tabs, refreshPane, showError, pushOp, isSftpPath, isHttpPath, runTransfer],
+    [tabs, refreshPanes, showError, pushOp, isSftpPath, isHttpPath, runTransfer],
   );
+
+  // v0.22.2 原生（HTML5）拖拽投放：行 onDragStart 后由浏览器接管拖动，mousemove/mouseup
+  // 停发，自研鼠标拖拽收不到松手事件——表现为拖动全程 🚫、松手后提示条才出现、
+  // 下一次点击才触发投放。这里在 window 上接原生事件流修复：
+  // dragover 实时驱动提示条与投放光标；drop 完成投放；dragend 兜底（Tauri
+  // dragDropEnabled 拦截 DOM drop 的平台）；drag 越出窗口（OS 拖出）不触发内部投放。
+  const droppedAtRef = useRef(0);
+  useEffect(() => {
+    const DND_TYPE = "application/x-rdir-dnd";
+    const isInternal = (e: DragEvent) => !!e.dataTransfer?.types.includes(DND_TYPE);
+    const paneAt = (x: number, y: number) => {
+      const el = document.elementFromPoint(x, y) as HTMLElement | null;
+      const paneEl = el?.closest?.("[data-pane-id]") as HTMLElement | null;
+      return paneEl ? Number(paneEl.dataset.paneId) : null;
+    };
+    let seenInternal = false;
+    let leftWindow = false;
+    let lastTarget: number | null = null;
+    let lastOp: "copy" | "move" = "copy";
+    let lastPos = { x: 0, y: 0 };
+    const onDragEnter = () => {
+      leftWindow = false;
+    };
+    const onDragOver = (e: DragEvent) => {
+      if (!isInternal(e)) return;
+      seenInternal = true;
+      e.preventDefault(); // 投放光标从 🚫 变为 copy/move
+      const op: "copy" | "move" = e.altKey ? "move" : "copy";
+      if (e.dataTransfer) e.dataTransfer.dropEffect = op === "move" ? "move" : "copy";
+      lastPos = { x: e.clientX, y: e.clientY };
+      const target = paneAt(e.clientX, e.clientY);
+      if (target !== lastTarget || op !== lastOp) {
+        lastTarget = target;
+        lastOp = op;
+        setDragOver(target !== null ? { targetPaneId: target, op } : null);
+      }
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (!e.relatedTarget) leftWindow = true;
+    };
+    const finishDrag = () => {
+      setDragOver(null);
+      lastTarget = null;
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!isInternal(e)) return;
+      e.preventDefault();
+      droppedAtRef.current = Date.now();
+      finishDrag();
+      const target = paneAt(e.clientX, e.clientY);
+      const source = Number(e.dataTransfer?.getData(DND_TYPE));
+      const paths = (e.dataTransfer?.getData("text/plain") ?? "")
+        .split("\n")
+        .filter(Boolean);
+      if (!Number.isNaN(source) && target !== null && target !== source && paths.length > 0) {
+        void doDropPaths(source, paths, e.altKey ? "move" : "copy", target);
+      }
+    };
+    const onDragEnd = (e: DragEvent) => {
+      // dragend 阶段 dataTransfer 已进入保护模式（types 清空），用 dragover 里的标记
+      if (!seenInternal) return;
+      seenInternal = false;
+      if (Date.now() - droppedAtRef.current < 300 || leftWindow) {
+        finishDrag();
+        return;
+      }
+      // DOM drop 被 webview 拦截的平台：dragend + 最近 dragover 坐标兜底完成投放
+      const target = paneAt(lastPos.x, lastPos.y);
+      const row = (e.target as HTMLElement | null)?.closest?.("[data-pane-id]") as HTMLElement | null;
+      const source = row ? Number(row.dataset.paneId) : null;
+      finishDrag();
+      if (source === null || Number.isNaN(source) || target === null || target === source) return;
+      // dataTransfer 已清空：paths 用源窗格当前选中（拖的就是选中组）或拖动行本身
+      const pane = tabsRef.current.flatMap((t) => Object.values(t.panes)).find((p) => p.id === source);
+      const rowPath =
+        (e.target as HTMLElement | null)?.closest?.("[data-path]")?.getAttribute("data-path") ?? null;
+      const paths =
+        pane && rowPath && pane.selection.includes(rowPath) ? pane.selection : rowPath ? [rowPath] : [];
+      if (paths.length > 0) void doDropPaths(source, paths, lastOp, target);
+    };
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    window.addEventListener("dragend", onDragEnd);
+    return () => {
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+      window.removeEventListener("dragend", onDragEnd);
+    };
+  }, [doDropPaths]);
 
   const startRename = useCallback((paneId: number, entry: FileEntry) => {
     setRenaming({ paneId, path: entry.path, name: entry.name });
@@ -2705,8 +2894,9 @@ useEffect(() => {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // SplitView handlers
-  const handlers: PaneHandlers = {
+  // SplitView handlers — useMemo 稳定引用：依赖全部是 useCallback 函数与低频状态，
+  // 传输进度等高频状态更新不重建本对象，配合 PaneView 的 React.memo 阻断全树重渲染。
+  const handlers: PaneHandlers = useMemo<PaneHandlers>(() => ({
     onSort: (paneId, key: SortKey) => {
       setTabs((ts) =>
         ts.map((t) => {
@@ -2797,13 +2987,58 @@ useEffect(() => {
     onComparePick: (entry) => setComparePickFor(entry),
     onCompareSelected: handleCompareSelected,
     onViewPatch: (path) => setTextDiffSource({ kind: "patchFile", path }),
-  };
+  }), [
+    // 值依赖（对象/数组仅低频变化；长度是原始值）
+    openers,
+    shells,
+    plugins,
+    undoStack.length,
+    redoStack.length,
+    // 函数依赖（均为 useCallback 稳定引用）
+    select,
+    selectRange,
+    clearSelection,
+    openEntry,
+    openFileExternal,
+    revealPath,
+    newTab,
+    handleOpenWith,
+    handleOpenTerminal,
+    handleAddCustomOpener,
+    doCopy,
+    doCut,
+    doDelete,
+    startRename,
+    commitRename,
+    copyPath,
+    refreshPane,
+    doDropPaths,
+    createAndRename,
+    doPaste,
+    undo,
+    redo,
+    selectAllIn,
+    invertSelectionIn,
+    toggleTag,
+    toggleQuick,
+    goBack,
+    goForward,
+    doCompress,
+    openDiff,
+    toggleSyncDiff,
+    handleSetCompareBase,
+    handleCompareWithBase,
+    handleCompareSelected,
+    showError,
+    onRatioChange,
+  ]);
 
-  const selectedSize = activePane
-    ? activePane.entries
-        .filter((e) => activePane.selection.includes(e.path))
-        .reduce((s, e) => s + e.size, 0)
-    : 0;
+  // Set 化 + 仅在活动窗格数据变化时重算：避免全选万级条目时每次渲染 O(n·m) 字符串比较
+  const selectedSize = useMemo(() => {
+    if (!activePane) return 0;
+    const sel = new Set(activePane.selection);
+    return activePane.entries.reduce((s, e) => (sel.has(e.path) ? s + e.size : s), 0);
+  }, [activePane]);
 
   /** 地址栏显示路径（v0.14）：单选文件时直接显示其完整路径；否则当前目录 */
   const addressPath = (() => {
@@ -2919,6 +3154,7 @@ useEffect(() => {
             onOpenSyncDiff={toggleSyncDiff}
             syncDiffActive={!!syncLink}
             onOpenGitDiff={() => setGitDiffOpen(true)}
+            onMasterKey={() => sftp.setMasterKeyOpen(true)}
             onOpenSettings={() => setSettingsOpen(true)}
             onCheckUpdate={() => void checkUpdate(false)}
             onOpenRepo={openRepo}
@@ -2988,30 +3224,39 @@ useEffect(() => {
         />
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          {activeTab ? (
-            <SplitView
-              node={activeTab.root}
-              panes={activeTab.panes}
-              activePaneId={activeTab.activePane}
-              showHidden={showHidden}
-              showExtensions={showExtensions}
-              showProperties={showProperties}
-              canPaste={!!activePane}
-              renaming={renaming}
-              dragOver={dragOver}
-              fileTags={fileTags}
-              tagNames={tagNames}
-              onRenameTag={renameTag}
-              customQuick={customQuick}
-              onOpenTagFile={openTagFile}
-              onExitTag={exitTagViewForPane}
-              highlight={!(activeTab && isSinglePane(activeTab.root))}
-              diffMarksByPane={syncMarks}
-              linkBadgeByPane={syncBadges}
-              compareBase={compareBase}
-              handlers={handlers}
-            />
-          ) : null}
+          {activeTab
+            ? tabs.map((t) => {
+                const isActive = t.id === activeId;
+                // 未进 keep-alive 集合的非活动标签不挂载（LRU 淘汰态，激活时重建）
+                if (!isActive && !keptTabIds.includes(t.id)) return null;
+                return (
+                  <Activity key={t.id} mode={isActive ? "visible" : "hidden"}>
+                    <SplitView
+                      node={t.root}
+                      panes={t.panes}
+                      activePaneId={t.activePane}
+                      showHidden={showHidden}
+                      showExtensions={showExtensions}
+                      showProperties={showProperties}
+                      canPaste={!!t.panes[t.activePane]}
+                      renaming={renaming}
+                      dragOver={dragOver}
+                      fileTags={fileTags}
+                      tagNames={tagNames}
+                      onRenameTag={renameTag}
+                      customQuick={customQuick}
+                      onOpenTagFile={openTagFile}
+                      onExitTag={exitTagViewForPane}
+                      highlight={!isSinglePane(t.root)}
+                      diffMarksByPane={syncMarks}
+                      linkBadgeByPane={syncBadges}
+                      compareBase={compareBase}
+                      handlers={handlers}
+                    />
+                  </Activity>
+                );
+              })
+            : null}
         </div>
 
         {searchOpen && searchPane && (

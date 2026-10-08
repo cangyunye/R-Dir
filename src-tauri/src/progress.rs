@@ -2,6 +2,7 @@
 //! 统一通过 Tauri 事件 "transfer-progress" 推送。
 
 use serde::Serialize;
+use std::time::{Duration, Instant};
 
 /// 进度载荷（camelCase 输出）
 #[derive(Clone, Debug, Serialize)]
@@ -42,4 +43,38 @@ impl TransferProgress {
 pub fn emit<R: tauri::Runtime>(app: &tauri::AppHandle<R>, p: &TransferProgress) {
     use tauri::Emitter;
     let _ = app.emit("transfer-progress", p);
+}
+
+/// 进度发射节流器：本地复制 1MB/帧、SFTP/HTTP 64KB/帧，千兆级传输会产生上万次
+/// 事件，而前端每次收到事件都整树重渲染；中间帧按时间限频即可。
+/// 首帧与收尾帧不受节流（调用方在 Start 时 reset，完成帧直接发送）。
+pub struct Throttle {
+    interval: Duration,
+    last: Option<Instant>,
+}
+
+impl Throttle {
+    pub fn new() -> Self {
+        Self {
+            interval: Duration::from_millis(100),
+            last: None,
+        }
+    }
+
+    /// 距上次放行是否已满间隔；放行时记录本次时刻。
+    pub fn ready(&mut self) -> bool {
+        let ok = match self.last {
+            None => true,
+            Some(t) => t.elapsed() >= self.interval,
+        };
+        if ok {
+            self.last = Some(Instant::now());
+        }
+        ok
+    }
+
+    /// 新文件/新阶段开始时重置，让下一帧立即发出。
+    pub fn reset(&mut self) {
+        self.last = None;
+    }
 }
