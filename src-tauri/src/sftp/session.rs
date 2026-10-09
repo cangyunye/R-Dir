@@ -236,12 +236,13 @@ impl SftpSession {
     }
 
     /// 打开远程文件并下载到本地路径（dest 为临时目录内的目标文件）
-    /// cb(done, total)：已下载字节 / 远程文件总字节
+    /// cb(done, total)：已下载字节 / 远程文件总字节；返回 false 中止下载
+    /// （关闭远程句柄、删除本地半成品文件，返回「已取消」）
     pub async fn download(
         &mut self,
         remote: &str,
         dest: &Path,
-        mut cb: impl FnMut(u64, u64),
+        mut cb: impl FnMut(u64, u64) -> bool,
     ) -> Result<u64, String> {
         let total = self.stat(remote).await?.size;
         let (_ty, body) = self
@@ -272,7 +273,12 @@ impl SftpSession {
                         .map_err(|e| format!("本地写入失败：{e}"))?;
                     offset += chunk as u64;
                     total_done += chunk as u64;
-                    cb(total_done, total);
+                    if !cb(total_done, total) {
+                        let _ = self.request(proto::CLOSE, |b| b.str(&handle)).await;
+                        drop(f);
+                        let _ = std::fs::remove_file(dest);
+                        return Err("已取消".into());
+                    }
                 }
                 proto::STATUS => break, // EOF：文件读取结束
                 _ => return Err("read 意外回复".into()),
@@ -283,12 +289,13 @@ impl SftpSession {
     }
 
     /// 上传本地文件到远程路径（覆盖）
-    /// cb(done, total)：已上传字节 / 本地文件总字节
+    /// cb(done, total)：已上传字节 / 本地文件总字节；返回 false 中止上传
+    /// （关闭远程句柄并尽力删除远端半成品，返回「已取消」）
     pub async fn upload(
         &mut self,
         local: &Path,
         remote: &str,
-        mut cb: impl FnMut(u64, u64),
+        mut cb: impl FnMut(u64, u64) -> bool,
     ) -> Result<u64, String> {
         let total = std::fs::metadata(local).map(|m| m.len()).unwrap_or(0);
         let mut f = std::fs::File::open(local).map_err(|e| format!("读取本地失败：{e}"))?;
@@ -319,7 +326,11 @@ impl SftpSession {
             .await?;
             offset += n as u64;
             total_done += n as u64;
-            cb(total_done, total);
+            if !cb(total_done, total) {
+                let _ = self.request(proto::CLOSE, |b| b.str(&handle)).await;
+                let _ = self.remove(remote).await;
+                return Err("已取消".into());
+            }
         }
         self.request(proto::CLOSE, |b| b.str(&handle)).await?;
         Ok(total_done)

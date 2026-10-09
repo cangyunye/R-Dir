@@ -182,6 +182,9 @@ export const sessionSave = (layout: SessionLayout) =>
 export const sessionLoad = () =>
   invoke<SessionLayout | null>("session_load");
 
+/** v0.23 退出确认后放行下一次应用退出（否则 Rust 侧 prevent_exit 会拦住 exit(0)） */
+export const allowExit = () => invoke<void>("allow_exit");
+
 // ---- 目录大小统计（v0.16 右键「属性」） ----
 export const computeSize = (id: string, paths: string[]) =>
   invoke<import("./types").SizeStat>("compute_size", { id, paths });

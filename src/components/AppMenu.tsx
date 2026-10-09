@@ -162,7 +162,9 @@ function Item({
   return (
     <DropdownMenuItem
       disabled={disabled}
-      onClick={onClick}
+      // 包一层箭头函数：Radix 的 onClick 会把 MouseEvent 作为首参透传，
+      // 直传可选参处理函数（如 onNewTab(path?)）会把事件对象误当参数（v0.23.0 修复）
+      onClick={() => onClick()}
       className={danger ? "text-destructive focus:text-destructive" : undefined}
     >
       <IconSlot icon={icon} checked={checked} />

@@ -88,6 +88,7 @@ import {
   sftpUpload,
   sessionLoad,
   sessionSave,
+  allowExit,
   statPath,
   statEntry,
   compressItems,
@@ -1087,18 +1088,21 @@ useEffect(() => {
     });
   }, [activePane, patchPane]);
 
-  /** 退出：保存当前会话布局后退出进程（exit 兜底，避免 destroy 链路挂起） */
+  /** 退出：保存当前会话布局后退出进程（exit 兜底，避免 destroy 链路挂起）。
+   *  v0.23 先 allow_exit 放行 Rust 侧 ExitRequested 拦截，否则 prevent_exit 会拦住 exit(0) */
   const handleExitWithSave = useCallback(async () => {
     try {
       await sessionSave(serializeSession(tabsRef.current, activeIdRef.current));
     } catch {
       /* 保存失败不阻塞退出 */
     }
+    await allowExit().catch(() => {});
     await exit(0).catch(() => getCurrentWindow().destroy());
   }, []);
 
   /** 退出：不保存，直接退出进程 */
   const handleExitNoSave = useCallback(async () => {
+    await allowExit().catch(() => {});
     await exit(0).catch(() => getCurrentWindow().destroy());
   }, []);
 
@@ -1119,6 +1123,18 @@ useEffect(() => {
     return () => {
       unlisten?.();
     };
+  }, []);
+
+  // v0.23 应用级退出（macOS ⌘Q / Dock 退出）被 Rust 侧拦截后转发到这里，
+  // 与窗口 X 关闭共用同一个确认对话框
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    void listen("app-exit-requested", () => {
+      setCloseDialogOpen(true);
+    }).then((u) => {
+      un = u;
+    });
+    return () => un?.();
   }, []);
 
   // v0.21.1 退出询问的对话框级快捷键（仅 closeDialogOpen 时挂载，避免与全局键位冲突）：
@@ -1260,6 +1276,68 @@ useEffect(() => {
     });
     setActiveId(rec.tab.id);
   }, []);
+
+  /** 关闭被分享的标签时停止其目录分享（closeTab 与批量关闭共用） */
+  const stopTabShares = useCallback((target: TabState) => {
+    const dirs = new Set<string>();
+    for (const pane of Object.values(target.panes)) {
+      if (pane.path && !pane.path.startsWith("sftp://") && !pane.path.startsWith("http")) {
+        dirs.add(pane.path);
+      }
+    }
+    dirs.forEach((d) => void shareStopByDir(d));
+  }, []);
+
+  /** 记录被批量关闭的标签进「恢复关闭的标签」栈（保留最近 20 条）。
+   *  在事件处理阶段用 tabsRef 读取最新标签，避免在 setTabs updater 里做副作用
+   *  被 StrictMode 双调用重复入栈。 */
+  const recordClosedTabs = useCallback(
+    (ids: number[]) => {
+      const cur = tabsRef.current;
+      for (const id of ids) {
+        const index = cur.findIndex((t) => t.id === id);
+        const tab = cur[index];
+        if (!tab) continue;
+        const closed = closedTabsRef.current;
+        closed.push({ tab, index });
+        if (closed.length > 20) closed.shift();
+        stopTabShares(tab);
+      }
+    },
+    [stopTabShares],
+  );
+
+  /** 关闭除 keepId 以外的所有标签（右键标签菜单） */
+  const closeOtherTabs = useCallback(
+    (keepId: number) => {
+      const cur = tabsRef.current;
+      if (cur.length <= 1 || !cur.some((t) => t.id === keepId)) return;
+      recordClosedTabs(cur.filter((t) => t.id !== keepId).map((t) => t.id));
+      setTabs((ts) => {
+        const kept = ts.find((t) => t.id === keepId);
+        return kept ? [kept] : ts;
+      });
+      setActiveId(keepId);
+    },
+    [recordClosedTabs],
+  );
+
+  /** 关闭 id 右侧的所有标签（右键标签菜单） */
+  const closeTabsToRight = useCallback(
+    (id: number) => {
+      const cur = tabsRef.current;
+      const idx = cur.findIndex((t) => t.id === id);
+      if (idx < 0 || idx >= cur.length - 1) return;
+      recordClosedTabs(cur.slice(idx + 1).map((t) => t.id));
+      setTabs((ts) => {
+        const i = ts.findIndex((t) => t.id === id);
+        return i < 0 ? ts : ts.slice(0, i + 1);
+      });
+      // 若活动标签落在被关闭的右侧区间，回落到 id
+      setActiveId((prev) => (cur.slice(0, idx + 1).some((t) => t.id === prev) ? prev : id));
+    },
+    [recordClosedTabs],
+  );
 
   // 列表操作（作用于指定 pane）
   const select = useCallback(
@@ -2827,7 +2905,8 @@ useEffect(() => {
     },
     // v0.20 命令面板 + 无默认键位的应用命令（面板 / ⋮ 菜单共用此分发表）
     commandPalette: () => setPaletteOpen((v) => !v),
-    quit: () => void handleExitWithSave(),
+    // v0.23 「退出」统一走确认对话框（与窗口 X 一致），不再静默保存退出
+    quit: () => setCloseDialogOpen(true),
     openDiff: () => openDiff(),
     openSyncDiff: () => toggleSyncDiff(),
     openGitDiff: () => setGitDiffOpen(true),
@@ -3103,13 +3182,17 @@ useEffect(() => {
         onNew={newTab}
         onReorder={reorderTab}
         onRename={renameTab}
+        onReopen={reopenTab}
+        canReopen={closedTabsRef.current.length > 0}
+        onCloseOthers={closeOtherTabs}
+        onCloseRight={closeTabsToRight}
         trailing={
           <AppMenu
             keymapVersion={keymapVer}
             onOpenPalette={() => setPaletteOpen(true)}
-            onNewTab={newTab}
+            onNewTab={() => newTab()}
             onCloseTab={() => activeTab && closeTab(activeTab.id)}
-            onQuit={() => void handleExitWithSave()}
+            onQuit={() => setCloseDialogOpen(true)}
             onNewFolder={() => activePane && void createAndRename(activePane.id, "dir")}
             onNewFile={() => activePane && void createAndRename(activePane.id, "file")}
             onUndo={() => void undo()}
@@ -3306,10 +3389,12 @@ useEffect(() => {
         notice={notice}
         transfer={transfer}
         onCancelTransfer={(id, phase) => {
-          if (phase === "download") {
-            void cancelHttpDownload(id);
-          } else {
+          // v0.23 SFTP 递归传输的 id 带 sftp: 前缀走通用取消；
+          // 无前缀的 download 是 HTTP 下载（id = url，走专用断点续传取消）
+          if (id.startsWith("sftp:") || phase !== "download") {
             void cancelTransfer(id).catch(() => {});
+          } else {
+            void cancelHttpDownload(id);
           }
         }}
         onSharePanel={() => setSharePanelOpen(true)}

@@ -16,6 +16,10 @@ function setup(overrides: Partial<Parameters<typeof TabBar>[0]> = {}) {
     onNew: vi.fn(),
     onReorder: vi.fn(),
     onRename: vi.fn(),
+    onReopen: vi.fn(),
+    canReopen: false,
+    onCloseOthers: vi.fn(),
+    onCloseRight: vi.fn(),
     ...overrides,
   };
   const { container } = render(<TabBar {...props} />);
@@ -132,5 +136,75 @@ describe("TabBar", () => {
     const menu = screen.getByText("关闭标签").closest("div.absolute");
     expect(menu).toBeTruthy();
     expect(container.contains(menu!)).toBe(true);
+  });
+
+  // ---- v0.23 单个标签菜单扩展：关闭其他 / 关闭右侧 ----
+  it("标签菜单含「关闭其他标签页」「关闭右侧标签页」", () => {
+    const { container } = setup();
+    const rows = container.querySelectorAll("[data-tab-idx]");
+    fireEvent.contextMenu(rows[0]);
+    expect(screen.getByText("关闭其他标签页")).toBeTruthy();
+    expect(screen.getByText("关闭右侧标签页")).toBeTruthy();
+  });
+
+  it("「关闭其他标签页」触发 onCloseOthers(id)", () => {
+    const { props, container } = setup();
+    const rows = container.querySelectorAll("[data-tab-idx]");
+    fireEvent.contextMenu(rows[0]);
+    fireEvent.click(screen.getByText("关闭其他标签页"));
+    expect(props.onCloseOthers).toHaveBeenCalledWith(1);
+  });
+
+  it("「关闭右侧标签页」触发 onCloseRight(id)", () => {
+    const { props, container } = setup();
+    const rows = container.querySelectorAll("[data-tab-idx]");
+    fireEvent.contextMenu(rows[0]);
+    fireEvent.click(screen.getByText("关闭右侧标签页"));
+    expect(props.onCloseRight).toHaveBeenCalledWith(1);
+  });
+
+  it("已在最右时「关闭右侧标签页」禁用", () => {
+    const { container } = setup();
+    const rows = container.querySelectorAll("[data-tab-idx]");
+    fireEvent.contextMenu(rows[1]);
+    const item = screen.getByText("关闭右侧标签页") as HTMLButtonElement;
+    expect(item.disabled).toBe(true);
+  });
+
+  // ---- v0.23 空白处右键：全局标签菜单（新建 / 恢复 / 全部标签页） ----
+  it("空白处右键弹出全局菜单，含三项", () => {
+    const { container } = setup();
+    fireEvent.contextMenu(container.firstChild as HTMLElement);
+    expect(screen.getByText("新建标签页")).toBeTruthy();
+    expect(screen.getByText("恢复关闭的标签页")).toBeTruthy();
+    expect(screen.getByText("全部标签页…")).toBeTruthy();
+  });
+
+  it("空白菜单「新建标签页」触发 onNew", () => {
+    const { props, container } = setup();
+    fireEvent.contextMenu(container.firstChild as HTMLElement);
+    fireEvent.click(screen.getByText("新建标签页"));
+    expect(props.onNew).toHaveBeenCalled();
+  });
+
+  it("无可恢复标签时「恢复关闭的标签页」禁用", () => {
+    const { container } = setup({ canReopen: false });
+    fireEvent.contextMenu(container.firstChild as HTMLElement);
+    const item = screen.getByText("恢复关闭的标签页") as HTMLButtonElement;
+    expect(item.disabled).toBe(true);
+  });
+
+  it("有可恢复标签时点击「恢复关闭的标签页」触发 onReopen", () => {
+    const { props, container } = setup({ canReopen: true });
+    fireEvent.contextMenu(container.firstChild as HTMLElement);
+    fireEvent.click(screen.getByText("恢复关闭的标签页"));
+    expect(props.onReopen).toHaveBeenCalled();
+  });
+
+  it("空白菜单「全部标签页…」展开全部标签下拉", () => {
+    const { container } = setup();
+    fireEvent.contextMenu(container.firstChild as HTMLElement);
+    fireEvent.click(screen.getByText("全部标签页…"));
+    expect(container.querySelector("[data-tabs-list-panel]")).toBeTruthy();
   });
 });

@@ -5,6 +5,17 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.23.0 (2026-10-08)
+
+- **SFTP 递归传输（文件夹拖拽/粘贴上传与下载）**：此前 SFTP 上传/下载是纯单文件实现（`session::upload` 循环读本地文件 / `session::download` 循环写本地文件，`mod` 路由层不判类型），拖拽或粘贴一个文件夹会直接报错（上传「读取本地失败：Is a directory」、下载被服务器拒绝打开目录）。现 `sftp::upload_path` / `sftp::download_to` 自动识别目录：上传远程逐级 mkdir（已存在并入，空目录同样创建）、本地逐级遍历（`metadata` 跟随软链，软链文件按文件传）；下载本地逐级 `create_dir_all`、远程逐级 `list_dir`、**逐段名称 sanitize**（远端名可能含 Windows 保留字符）；顶层同名沿用既有语义——粘贴自动加 " (n)" 后缀、拖拽先经覆盖确认（v0.22.0/v0.22.2 流程不变），目录在覆盖确认后并入已存在目标。前端粘贴/拖拽调用点零改动（后端透明递归）。
+  - **两阶段进度**：先遍历统计文件数与总字节（上传为本地快扫 `upload_plan`；下载为远程树遍历 `download_plan`，期间响应取消旗标），再按总文件数上报 `doneFiles/totalFiles` + 当前文件字节进度，状态栏显示「上传中：sub/dir/file.txt 3/17」。
+  - **接入传输取消**：SFTP 上传/下载注册 `transfer_cancels`，id 带 `sftp:` 前缀（前端取消路由据此判别——无前缀的 download 仍是 HTTP 断点续传取消，不再误路由）；`session` 层 download/upload 字节回调支持中止（返回 false 即关句柄并删除本地/远端半成品文件）；状态栏「上传」阶段新增停止按钮（compress 无 id 不受影响）。
+  - 测试：Rust +3（`upload_plan` 单文件 / 嵌套树含空目录计数 / 缺失路径报错）；e2e R18 拖拽上传既有用例回归通过。
+- **修复：右上角 ⋮ 菜单「新建标签页」无效**。Radix `DropdownMenuItem` 的 `onClick` 会把 MouseEvent 作为首参透传，而 AppMenu 对「新建标签页」直传了可选参函数 `onNewTab={newTab}`（`newTab(path?: string)`），事件对象被误当 path → `target.match(VIRTUAL_TAG_RE)` 抛 TypeError → `setTabs` 未执行，表现为菜单正常关闭但什么都没发生。其余菜单项全是零参函数或箭头包装所以无感，快捷键与命令面板走 `() => newTab()` 分发表也正常——只有菜单直传中招。现 `Item` 包装组件统一以零参调用回调（`onClick={() => onClick()}`，与组件契约 `onClick: () => void` 一致，根治所有现在与将来的菜单项参数泄漏），App 调用点同步改 `() => newTab()` 双保险。单测 +3（新建标签页/退出/开关项均断言零参触发）；e2e T2（⋮ → 新建标签页 → 标签数 +1）。
+- **修复：退出不再静默，统一弹「保存会话布局？」确认**。此前三条退出路径里只有窗口 X 有确认（v0.3.0 `onCloseRequested`）：⋮ 菜单与命令面板的「退出」直调保存 + `exit(0)` 跳过询问；**macOS ⌘Q / Dock「退出」更完全绕过会话保存**——应用级退出不触发窗口级 `onCloseRequested`，Rust 侧只处理了 `RunEvent::Exit`（停分享），布局变更直接丢失。现全部汇入同一对话框：菜单/面板「退出」改为打开确认对话框（与 X 一致的三选项）；Rust 侧拦截 `RunEvent::ExitRequested`（仍有窗口可承载对话框时 `prevent_exit()` + emit `app-exit-requested`），前端监听后弹同一对话框，确认后经新增 `allow_exit` 命令置位守卫再 `exit(0)` 放行（防止 prevent 与 exit 相互死锁）；最后一扇窗真正关闭（code 无窗口场景）不拦。e2e T3（⋮ → 退出 → 确认框出现 → 取消后应用保持运行）。
+- **标签栏右键菜单完善（空白处 + 单标签）**：此前只有单个标签右键菜单（关闭 / 重命名 / 移到最右），标签栏**空白处右键直接弹 WebView 系统菜单**（「重新载入 / 检查元素」）。现空白处右键接管为全局标签菜单——`新建标签页` / `恢复关闭的标签页`（无历史时置灰，`canReopen` 由关闭栈实时判定）/ `全部标签页…`（复用右上角下拉），并 `preventDefault` 屏蔽默认菜单；单个标签菜单补充「关闭其他标签页」「关闭右侧标签页」。空白菜单按光标定位，并以容器 `rect / offsetWidth` 比值把 zoom 后的视觉坐标换算回布局坐标（沿用 `--rdir-zoom` 方案），菜单仍走容器内绝对定位（非 portal）；`closest` 守卫保证只在真正空白处接管，标签/按钮/弹层内右键各自处理。`App` 新增 `closeOtherTabs` / `closeTabsToRight`：批量关闭同样把标签压入「恢复关闭的标签」栈（保留 20 条）并停止由此产生的目录分享，右侧批量关闭时活动标签若落在被关区间回落到源标签；关闭栈副作用改在事件阶段读 `tabsRef` 执行，避免 `StrictMode` 双调用重复入栈。TabBar +9 单测；e2e R20–R22（空白菜单三项与新建生效 / 关闭右侧 / 关闭后从空白菜单恢复）。
+- 测试：Rust 107 通过（+3）；前端 355 通过（28 文件，+12：AppMenu 菜单项零参回归 +3、TabBar 标签/空白右键菜单 +9）；e2e 74 通过（新增 T2/T3 + R20–R22：标签栏右键菜单）。版本号 package.json / tauri.conf.json / Cargo.toml(+lock) 同步 0.22.0 → 0.23.0。
+
 ## v0.22.0 (2026-10-08)
 
 - **地址栏命令执行（路径优先、命令兜底，既有路径行为零变化）**：路径栏升级为「路径 + 命令」双用途输入框。

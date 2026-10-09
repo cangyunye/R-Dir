@@ -52,6 +52,8 @@ pub struct AppState {
     >,
     /// 地址栏命令：PATH 可执行扫描缓存（v0.22.0）
     pub cmd_cache: std::sync::Mutex<cmdrun::ExecCache>,
+    /// v0.23 应用退出守卫：前端确认对话框放行后置位，下一次 ExitRequested 不再拦截
+    pub exit_allowed: std::sync::atomic::AtomicBool,
     /// 窗口分享管理器（v0.7，feature = "share"）
     #[cfg(feature = "share")]
     pub share: share::ShareState,
@@ -708,8 +710,10 @@ async fn resolve_text_side(
             // sftp::download_to 不建目录（与 sftp_download 的既有约定一致），这里必须自建，
             // 否则 File::create 报 os error 3「系统找不到指定的路径」
             std::fs::create_dir_all(&dir).map_err(|e| format!("创建临时目录失败：{e}"))?;
-            // download_to 同名自动加后缀，避免两侧同名文件相互覆盖
-            let local = sftp::download_to(&pool, &dir.to_string_lossy(), path, false, |_, _| {}).await?;
+            // download_to 同名自动加后缀，避免两侧同名文件相互覆盖（文本比较只传单文件）
+            let mut nocb = |_ev: sftp::XferEvent| true;
+            let local = sftp::download_to(&pool, &dir.to_string_lossy(), path, false, &mut nocb)
+                .await?;
             return Ok((local, true));
         }
         #[cfg(not(feature = "sftp"))]
@@ -842,6 +846,43 @@ fn emit_transfer_done(app: &tauri::AppHandle, phase: &str, label: &str) {
     progress::emit(app, &p);
 }
 
+/// 注册可取消传输：transfer_cancels 插入新旗标，返回 (id, 旗标)。
+/// prefix 用于前端取消路由判别（sftp: 走 cancel_transfer，无前缀的 download 是 http）。
+#[cfg(feature = "sftp")]
+fn register_transfer_cancel(
+    state: &tauri::State<'_, AppState>,
+    prefix: &str,
+) -> (String, std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    let id = format!("{prefix}{}", next_transfer_id());
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state
+        .transfer_cancels
+        .lock()
+        .unwrap()
+        .insert(id.clone(), flag.clone());
+    (id, flag)
+}
+
+/// SFTP 递归传输收尾：完成/失败/取消统一发 done 帧（取消文案收敛为「已取消」，
+/// 与本地复制 emit_transfer_end 同语义；其余 label 由前端按 phase 渲染「xx完成」）。
+#[cfg(feature = "sftp")]
+fn emit_sftp_transfer_end(
+    app: &tauri::AppHandle,
+    phase: &str,
+    total_files: usize,
+    r: &Result<impl Sized, String>,
+) {
+    let label = match r {
+        Ok(_) => "完成",
+        Err(e) if e.contains("取消") => "已取消",
+        Err(_) => "传输失败",
+    };
+    let mut p = progress::TransferProgress::start(phase, label, total_files);
+    p.done_files = total_files;
+    p.done = true;
+    progress::emit(app, &p);
+}
+
 /// 下载远程文件到临时目录，返回本地路径（供打开）
 #[cfg(feature = "sftp")]
 #[tauri::command]
@@ -868,7 +909,9 @@ async fn sftp_download(
     result
 }
 
-/// 下载远程文件到指定本地目录（粘贴/拖拽 远程→本地），返回本地路径
+/// 下载远程路径（文件或目录）到指定本地目录（粘贴/拖拽 远程→本地）。
+/// v0.23 递归：目录逐级建本地目录下载；进度按远程树统计的总文件数上报（计划阶段
+/// 即响应取消）；取消经 transfer_cancels（id 带 sftp: 前缀）。
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_download_to(
@@ -879,24 +922,58 @@ async fn sftp_download_to(
     overwrite: Option<bool>,
 ) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
-    let name = transfer_label(&path, "下载中…");
+    let label = transfer_label(&path, "下载中…");
+    let (id, flag) = register_transfer_cancel(&state, "sftp:");
     let pool = state.sftp_pool.lock().await;
-    let mut throttle = progress::Throttle::new();
-    let result = sftp::download_to(&pool, &local_dir, &path, overwrite.unwrap_or(false), |done, total| {
-        if done < total && !throttle.ready() {
-            return;
+    // 计划阶段：遍历远程树统计文件数（多个 RTT，期间响应取消）
+    let plan = match sftp::download_plan(&pool, &path, &flag).await {
+        Ok(p) => p,
+        Err(e) => {
+            state.transfer_cancels.lock().unwrap().remove(&id);
+            return Err(e);
         }
-        let mut p = progress::TransferProgress::start("download", &name, 1);
-        p.file_done = done;
-        p.file_total = total;
-        progress::emit(&app, &p);
+    };
+    let mut throttle = progress::Throttle::new();
+    let mut done_files = 0usize;
+    let mut cur_label = label.clone();
+    let id_task = id.clone();
+    let app_task = app.clone();
+    let result = sftp::download_to(&pool, &local_dir, &path, overwrite.unwrap_or(false), &mut move |ev| {
+        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        let mut p = progress::TransferProgress::start("download", &cur_label, plan.files);
+        p.id = Some(id_task.clone());
+        match ev {
+            sftp::XferEvent::Start(l) => {
+                cur_label = l;
+                throttle.reset();
+            }
+            sftp::XferEvent::Bytes(done, total) => {
+                if throttle.ready() {
+                    p.file_done = done;
+                    p.file_total = total;
+                    p.done_files = done_files;
+                    progress::emit(&app_task, &p);
+                }
+                return true;
+            }
+            sftp::XferEvent::EntryDone => done_files += 1,
+        }
+        p.label = cur_label.clone();
+        p.done_files = done_files;
+        progress::emit(&app_task, &p);
+        true
     })
     .await;
-    emit_transfer_done(&app, "download", &name);
+    state.transfer_cancels.lock().unwrap().remove(&id);
+    emit_sftp_transfer_end(&app, "download", plan.files, &result);
     result
 }
 
-/// 上传本地文件到远程目录（拖拽/复制）
+/// 上传本地路径（文件或目录）到远程目录（拖拽/粘贴）。
+/// v0.23 递归：目录逐级建远程目录上传；进度按计划阶段统计的总文件数上报；
+/// 取消经 transfer_cancels（id 带 sftp: 前缀，前端据此路由到 cancel_transfer）。
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_upload(
@@ -908,19 +985,46 @@ async fn sftp_upload(
 ) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
     let label = transfer_label(&name, "上传中…");
+    // 计划阶段：统计本地树（纯本地遍历，快）；失败回退单文件分母，不阻塞传输
+    let plan = sftp::upload_plan(&local).unwrap_or(sftp::TransferPlan { files: 1, bytes: 0 });
+    let (id, flag) = register_transfer_cancel(&state, "sftp:");
     let pool = state.sftp_pool.lock().await;
     let mut throttle = progress::Throttle::new();
-    let result = sftp::upload(&pool, &local, &dest, &name, |done, total| {
-        if done < total && !throttle.ready() {
-            return;
+    let mut done_files = 0usize;
+    let mut cur_label = label.clone();
+    let id_task = id.clone();
+    let app_task = app.clone();
+    let result = sftp::upload_path(&pool, &local, &dest, &name, &mut move |ev| {
+        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
         }
-        let mut p = progress::TransferProgress::start("upload", &label, 1);
-        p.file_done = done;
-        p.file_total = total;
-        progress::emit(&app, &p);
+        let mut p = progress::TransferProgress::start("upload", &cur_label, plan.files);
+        p.id = Some(id_task.clone());
+        match ev {
+            sftp::XferEvent::Start(l) => {
+                cur_label = l;
+                throttle.reset();
+            }
+            sftp::XferEvent::Bytes(done, total) => {
+                // 中间帧限频；Start 帧与 EntryDone 帧立即可见
+                if throttle.ready() {
+                    p.file_done = done;
+                    p.file_total = total;
+                    p.done_files = done_files;
+                    progress::emit(&app_task, &p);
+                }
+                return true;
+            }
+            sftp::XferEvent::EntryDone => done_files += 1,
+        }
+        p.label = cur_label.clone();
+        p.done_files = done_files;
+        progress::emit(&app_task, &p);
+        true
     })
     .await;
-    emit_transfer_done(&app, "upload", &label);
+    state.transfer_cancels.lock().unwrap().remove(&id);
+    emit_sftp_transfer_end(&app, "upload", plan.files, &result);
     result
 }
 
@@ -1464,6 +1568,7 @@ pub fn run() {
         copy_entries,
         move_entries,
         cancel_transfer,
+        allow_exit,
         scan_conflicts,
         copy_entries_plan,
         move_entries_plan,
@@ -1559,16 +1664,42 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
-            // v0.7：应用退出时停止所有分享服务
-            if let tauri::RunEvent::Exit = event {
-                #[cfg(feature = "share")]
-                {
-                    if let Some(share_state) = _app_handle.try_state::<share::ShareState>() {
-                        share::shutdown_all(&share_state.manager);
+            match event {
+                // v0.23：应用级退出（macOS ⌘Q / Dock「退出」/ app.exit）拦截转前端确认。
+                // 仅在仍有窗口可承载确认对话框时拦截；前端确认后经 allow_exit 置位
+                // 再 exit(0) 放行。窗口 X 关闭走 JS onCloseRequested（v0.3.0），不在此拦。
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    let allowed = _app_handle
+                        .try_state::<AppState>()
+                        .map(|s| s.exit_allowed.load(std::sync::atomic::Ordering::Relaxed))
+                        .unwrap_or(false);
+                    if !allowed && !_app_handle.webview_windows().is_empty() {
+                        api.prevent_exit();
+                        use tauri::Emitter;
+                        let _ = _app_handle.emit("app-exit-requested", ());
                     }
                 }
+                // v0.7：应用退出时停止所有分享服务
+                tauri::RunEvent::Exit => {
+                    #[cfg(feature = "share")]
+                    {
+                        if let Some(share_state) = _app_handle.try_state::<share::ShareState>() {
+                            share::shutdown_all(&share_state.manager);
+                        }
+                    }
+                }
+                _ => {}
             }
         });
+}
+
+/// v0.23：前端退出确认对话框（保存并退出/直接退出）放行下一次 ExitRequested。
+/// 置位后调用 exit(0) 不再被 prevent_exit 拦截。
+#[tauri::command]
+fn allow_exit(state: tauri::State<'_, AppState>) {
+    state
+        .exit_allowed
+        .store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// SFTP 插件集成测试：连接本机 SSH（127.0.0.1），密钥认证 + 列目录。
@@ -1760,11 +1891,11 @@ mod sftp_tests {
         let local = std::env::temp_dir().join(format!("rdir-upload-{}.txt", std::process::id()));
         std::fs::write(&local, "upload content 你好").unwrap();
         let remote2 = format!("{dir}/uploaded.txt");
-        sess.upload(&local, &remote2, |_, _| {}).await.expect("upload");
+        sess.upload(&local, &remote2, |_, _| true).await.expect("upload");
         let renamed = format!("{dir}/renamed.txt");
         sess.rename(&f1, &renamed).await.expect("rename");
         let local2 = std::env::temp_dir().join(format!("rdir-download-{}.txt", std::process::id()));
-        sess.download(&remote2, &local2, |_, _| {}).await.expect("download");
+        sess.download(&remote2, &local2, |_, _| true).await.expect("download");
         let text = std::fs::read_to_string(&local2).expect("read local");
         assert_eq!(text, "upload content 你好", "上传/下载内容往返应一致");
         // 清理：文件 + 目录 + 本地临时

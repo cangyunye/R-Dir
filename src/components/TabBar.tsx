@@ -18,6 +18,10 @@ export function TabBar({
   onNew,
   onReorder,
   onRename,
+  onReopen,
+  canReopen,
+  onCloseOthers,
+  onCloseRight,
   trailing,
 }: {
   tabs: TabItem[];
@@ -28,6 +32,14 @@ export function TabBar({
   onReorder: (from: number, to: number) => void;
   /** 双击标签重命名：空串表示恢复自动标题 */
   onRename: (id: number, title: string) => void;
+  /** 恢复最近关闭的标签页（空白处右键菜单） */
+  onReopen: () => void;
+  /** 是否有可恢复的关闭标签（无则菜单项置灰） */
+  canReopen: boolean;
+  /** 关闭除该标签外的所有标签（标签右键菜单） */
+  onCloseOthers: (id: number) => void;
+  /** 关闭该标签右侧的所有标签（标签右键菜单） */
+  onCloseRight: (id: number) => void;
   /** 右上角插槽（设置 / 主题 / 应用菜单），与「新建标签」按钮同行 */
   trailing?: React.ReactNode;
 }) {
@@ -37,10 +49,12 @@ export function TabBar({
   /** 正在内联重命名的标签 id */
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
-  /** 右键标签菜单（v0.15）：绝对定位在标签栏容器内，避免 portal + 根 zoom 导致溢出窗口 */
+  /** 右键菜单（v0.15 标签 / 空白处）：绝对定位在标签栏容器内，避免 portal + 根 zoom 导致溢出窗口 */
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [menu, setMenu] = useState<{ idx: number; left: number; top: number } | null>(null);
+  const [menu, setMenu] = useState<
+    { kind: "tab"; idx: number; left: number; top: number } | { kind: "blank"; left: number; top: number } | null
+  >(null);
   /** v0.22.2 全部标签下拉（Excel 式）：标签被压缩省略后仍可从这里查看/切换/关闭 */
   const [listOpen, setListOpen] = useState(false);
   const [listPos, setListPos] = useState({ left: 0, top: 0 });
@@ -61,7 +75,44 @@ export function TabBar({
     if (!c) return;
     const MENU_W = 168;
     const left = Math.max(0, Math.min(el.offsetLeft, c.clientWidth - MENU_W));
-    setMenu({ idx, left, top: el.offsetTop + el.offsetHeight });
+    setMenu({ kind: "tab", idx, left, top: el.offsetTop + el.offsetHeight });
+  };
+
+  /** 标签栏空白处右键：打开全局标签菜单（光标处）。
+   *  clientX/Y 是视觉（zoom 后）坐标，而绝对定位的 left/top 是未缩放布局坐标，
+   *  故用容器 rect 与 offsetWidth 的比值把坐标换算回布局空间。 */
+  const openBlankMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const c = containerRef.current;
+    if (!c) return;
+    const rect = c.getBoundingClientRect();
+    const ratioX = c.offsetWidth ? rect.width / c.offsetWidth : 1;
+    const ratioY = c.offsetHeight ? rect.height / c.offsetHeight : 1;
+    const MENU_W = 190;
+    const left = Math.max(0, Math.min((e.clientX - rect.left) / ratioX, c.clientWidth - MENU_W));
+    const top = (e.clientY - rect.top) / ratioY;
+    setMenu({ kind: "blank", left, top });
+  };
+
+  /** 容器级右键：仅空白区域接管，标签/按钮/弹层内的右键各自处理或忽略 */
+  const onBlankContextMenu = (e: React.MouseEvent) => {
+    const t = e.target as HTMLElement;
+    if (t.closest("[data-tab-idx],button,input,[data-tab-menu],[data-tabs-list-panel]")) return;
+    openBlankMenu(e);
+  };
+
+  /** 打开「全部标签」下拉（定位到右侧列表按钮下方） */
+  const openTabList = () => {
+    const c = containerRef.current;
+    const b = listBtnRef.current;
+    if (c && b) {
+      const LIST_W = 220;
+      setListPos({
+        left: Math.max(0, Math.min(b.offsetLeft, c.clientWidth - LIST_W)),
+        top: b.offsetTop + b.offsetHeight,
+      });
+    }
+    setListOpen(true);
   };
 
   // 右键菜单/全部标签下拉打开时：点击外部 / Esc / 窗口尺寸变化 → 关闭
@@ -149,6 +200,8 @@ export function TabBar({
     <div
       ref={containerRef}
       data-tauri-drag-region
+      // 空白处右键：接管为全局标签菜单，屏蔽 WebView 默认菜单
+      onContextMenu={onBlankContextMenu}
       // 无边框窗口（decorations:false）：标签栏兼任标题栏，空白处拖动移动窗口、
       // 双击最大化/还原。target 检查避免与标签双击重命名冲突（拖拽区按 target 判定）。
       onDoubleClick={(e) => {
@@ -247,16 +300,8 @@ export function TabBar({
         ref={listBtnRef}
         data-tabs-list=""
         onClick={() => {
-          const c = containerRef.current;
-          const b = listBtnRef.current;
-          if (c && b) {
-            const LIST_W = 220;
-            setListPos({
-              left: Math.max(0, Math.min(b.offsetLeft, c.clientWidth - LIST_W)),
-              top: b.offsetTop + b.offsetHeight,
-            });
-          }
-          setListOpen((v) => !v);
+          if (listOpen) setListOpen(false);
+          else openTabList();
         }}
         title="全部标签"
         className={cn(
@@ -287,47 +332,110 @@ export function TabBar({
       {/* 无边框窗口自绘控制：最小化 / 最大化 / 关闭（贴右上角整行高，浏览器环境不渲染） */}
       <WindowControls />
 
-      {/* 右键标签菜单（v0.15）：关闭 / 重命名 / 移动到最右边 */}
+      {/* 右键菜单（v0.15 标签 / 空白处全局）：容器内绝对定位，非 Portal */}
       {menu && (
         <div
           ref={menuRef}
+          data-tab-menu=""
           className="absolute z-50 min-w-[168px] rounded-md border bg-popover p-1 text-sm shadow-md"
           style={{ left: menu.left, top: menu.top }}
           onMouseDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
-          <button
-            type="button"
-            disabled={tabs.length <= 1}
-            onClick={() => {
-              onClose(tabs[menu.idx].id);
-              setMenu(null);
-            }}
-            className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
-          >
-            关闭标签
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              startRename(tabs[menu.idx]);
-              setMenu(null);
-            }}
-            className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
-          >
-            重命名
-          </button>
-          <button
-            type="button"
-            disabled={menu.idx === tabs.length - 1}
-            onClick={() => {
-              onReorder(menu.idx, tabs.length - 1);
-              setMenu(null);
-            }}
-            className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
-          >
-            移动到最右边
-          </button>
+          {menu.kind === "tab" ? (
+            <>
+              <button
+                type="button"
+                disabled={tabs.length <= 1}
+                onClick={() => {
+                  onClose(tabs[menu.idx].id);
+                  setMenu(null);
+                }}
+                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+              >
+                关闭标签
+              </button>
+              <button
+                type="button"
+                disabled={tabs.length <= 1}
+                onClick={() => {
+                  onCloseOthers(tabs[menu.idx].id);
+                  setMenu(null);
+                }}
+                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+              >
+                关闭其他标签页
+              </button>
+              <button
+                type="button"
+                disabled={menu.idx === tabs.length - 1}
+                onClick={() => {
+                  onCloseRight(tabs[menu.idx].id);
+                  setMenu(null);
+                }}
+                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+              >
+                关闭右侧标签页
+              </button>
+              <div className="my-1 h-px bg-border" />
+              <button
+                type="button"
+                onClick={() => {
+                  startRename(tabs[menu.idx]);
+                  setMenu(null);
+                }}
+                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
+              >
+                重命名
+              </button>
+              <button
+                type="button"
+                disabled={menu.idx === tabs.length - 1}
+                onClick={() => {
+                  onReorder(menu.idx, tabs.length - 1);
+                  setMenu(null);
+                }}
+                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+              >
+                移动到最右边
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  onNew();
+                  setMenu(null);
+                }}
+                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
+              >
+                新建标签页
+              </button>
+              <button
+                type="button"
+                disabled={!canReopen}
+                onClick={() => {
+                  onReopen();
+                  setMenu(null);
+                }}
+                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+              >
+                恢复关闭的标签页
+              </button>
+              <div className="my-1 h-px bg-border" />
+              <button
+                type="button"
+                onClick={() => {
+                  setMenu(null);
+                  openTabList();
+                }}
+                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
+              >
+                全部标签页…
+              </button>
+            </>
+          )}
         </div>
       )}
 

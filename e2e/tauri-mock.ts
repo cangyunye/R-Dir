@@ -110,6 +110,8 @@ export async function installTauriMock(page: Page): Promise<void> {
         { key: "downloads", path: `${HOME}/Documents` },
       ],
       session_load: () => null,
+      // v0.23 退出确认放行（真实后端置位守卫；浏览器环境无操作）
+      allow_exit: () => null,
       // 未知路径报错（与真实后端一致）：同步浏览的镜像探测依赖"列目录失败 = 对侧无此目录"
       list_dir: (a) => {
         const p = String(a.path);

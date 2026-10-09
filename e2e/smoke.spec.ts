@@ -96,6 +96,25 @@ test.describe("4. 标签页", () => {
     await page.keyboard.press(`${MOD}+KeyT`);
     await expect(page.locator("[data-tab-idx]")).toHaveCount(2);
   });
+
+  test("T2 ⋮ 应用菜单「新建标签页」可用（回归：菜单项 onClick 曾把 MouseEvent 透传给 onNewTab(path?)）", async ({
+    page,
+  }) => {
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(1);
+    await page.getByTitle("应用菜单").click();
+    await page.getByRole("menuitem", { name: "新建标签页" }).click();
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(2);
+  });
+
+  test("T3 ⋮ 菜单「退出」弹保存确认而非直接退出（v0.23 与窗口 X 共用询问）", async ({ page }) => {
+    await page.getByTitle("应用菜单").click();
+    await page.getByRole("menuitem", { name: "退出" }).click();
+    await expect(page.getByText("保存会话布局？")).toBeVisible();
+    // 取消 → 对话框关闭、应用保持运行
+    await page.getByRole("button", { name: /取消/ }).click();
+    await expect(page.getByText("保存会话布局？")).toHaveCount(0);
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(1);
+  });
 });
 
 test.describe("5. 右键菜单", () => {
@@ -806,5 +825,48 @@ test.describe("23. 拖拽上传 + 全部标签下拉（v0.22.2）", () => {
     await page.locator("[data-tabs-list]").click();
     await panel.locator('[data-tabs-close="1"]').click();
     await expect(page.locator("[data-tab-idx]")).toHaveCount(1);
+  });
+});
+
+test.describe("24. 标签栏右键菜单（v0.23）", () => {
+  test("R20 空白处右键弹全局菜单：新建/恢复/全部标签页，且新建生效", async ({ page }) => {
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(1);
+    // 命中标签与右上角常驻区之间的空白带（target 是拖拽区本身，非标签/按钮）
+    await page.locator("[data-tauri-drag-region]").first().click({
+      button: "right",
+      position: { x: 600, y: 12 },
+    });
+    await expect(page.getByText("新建标签页")).toBeVisible();
+    await expect(page.getByText("恢复关闭的标签页")).toBeVisible();
+    await expect(page.getByText("全部标签页…")).toBeVisible();
+    await page.getByText("新建标签页").click();
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(2);
+  });
+
+  test("R21 单个标签右键：关闭右侧标签页", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+KeyT`);
+    await page.keyboard.press(`${MOD}+KeyT`);
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(3);
+    await page.locator('[data-tab-idx="0"]').click({ button: "right" });
+    await expect(page.getByText("关闭其他标签页")).toBeVisible();
+    await page.getByText("关闭右侧标签页").click();
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(1);
+  });
+
+  test("R22 关闭后从空白菜单恢复关闭的标签页", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+KeyT`);
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(2);
+    // 关闭第 2 个标签
+    await page.locator('[data-tab-idx="1"]').click({ button: "right" });
+    await page.getByText("关闭标签", { exact: true }).click();
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(1);
+    // 空白处右键 → 恢复
+    await page.locator("[data-tauri-drag-region]").first().click({
+      button: "right",
+      position: { x: 600, y: 12 },
+    });
+    await expect(page.getByText("恢复关闭的标签页")).toBeEnabled();
+    await page.getByText("恢复关闭的标签页").click();
+    await expect(page.locator("[data-tab-idx]")).toHaveCount(2);
   });
 });
