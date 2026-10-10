@@ -72,6 +72,11 @@ jobs:
             args: "--bundles nsis"
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 60
+    # 显式声明：tauri-action 创建 Draft Release 需 contents: write。
+    # 仓库默认工作流权限若为只读，仅靠顶层 permissions 可能仍拿不到写权限，
+    # 故在 job 级再显式声明一次（见根因：Release 创建报 403 Resource not accessible）。
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
