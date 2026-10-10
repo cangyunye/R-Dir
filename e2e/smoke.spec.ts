@@ -897,3 +897,30 @@ test.describe("25. 快速定位（QuickJump）", () => {
     await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toHaveClass(/ring-inset/);
   });
 });
+
+test.describe("26. 鼠标侧键（后退/前进）", () => {
+  test("B1 侧键后退/前进驱动窗格历史（模拟 WKWebView：只发 mousedown/mouseup，不发 auxclick）", async ({
+    page,
+  }) => {
+    const pane = page.locator("[data-pane-id]").first();
+    // 关键：只派发 mousedown + mouseup（真实 WKWebView 对侧键的投递），不含 auxclick。
+    // 若将来有人把处理改回 onAuxClick，本用例会失败——这正是防止该 bug 第 N 次复发。
+    const sideKey = (button: 3 | 4) =>
+      pane.evaluate((el, b) => {
+        el.dispatchEvent(new MouseEvent("mousedown", { button: b, bubbles: true, cancelable: true }));
+        el.dispatchEvent(new MouseEvent("mouseup", { button: b, bubbles: true, cancelable: true }));
+      }, button);
+
+    // 进入 Documents（压入活动窗格历史）
+    await page.locator(`[data-path="${HOME}/Documents"]`).dblclick();
+    await expect(page.locator("#rdir-addr-input")).toHaveValue(`${HOME}/Documents`);
+
+    // 侧键后退(button 3) → 回到 HOME
+    await sideKey(3);
+    await expect(page.locator("#rdir-addr-input")).toHaveValue(HOME);
+
+    // 侧键前进(button 4) → 再回到 Documents
+    await sideKey(4);
+    await expect(page.locator("#rdir-addr-input")).toHaveValue(`${HOME}/Documents`);
+  });
+});
