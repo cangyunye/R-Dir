@@ -167,7 +167,7 @@ export function fuzzyMatch(query: string, target: string): FuzzyMatch | null {
   for (let ti = 0; ti < t.length && qi < q.length; ti++) {
     if (t[ti] !== q[qi]) continue;
     let bonus = MATCH_BASE;
-    if (prev === ti - 1) {
+    if (prev >= 0 && prev === ti - 1) {
       bonus += CONSECUTIVE_BONUS;
     } else if (prev >= 0) {
       const gap = ti - prev - 1;
@@ -468,6 +468,7 @@ export function QuickJump({
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return; // 忽略 IME 组合输入
               if (e.key === "ArrowDown") {
                 e.preventDefault();
                 e.stopPropagation();
@@ -1113,3 +1114,15 @@ git commit -m "test(e2e): 快速定位玻璃窗冒烟（键入开窗 / 回车定
 **2. Placeholder scan**：无 TBD/TODO；每个代码步骤均含完整代码与确切命令/预期。
 
 **3. Type consistency**：`FuzzyMatch`/`Ranked<T>`/`fuzzyMatch`/`rank`（Task 1）→ Task 3 导入一致；`QuickJumpRow{entry,positions}`、`QuickJumpProps`（Task 2）→ Task 3 `qjRows` 构造与 `<QuickJump>` 传参一致；`qjConfirm/index`、`qjMove(delta: 1|-1)`、`onActivate(i)`、`onHover(i)` 全程一致；DOM 选择器（`data-quickjump*`）在 Task 2/4/5 一致。
+
+---
+
+## 执行后修订（amendments）
+
+实现与审查过程中发现并已落地的偏差，记录以保持本文档与代码一致：
+
+1. **Task 1**：连续奖励守卫 `prev === ti - 1` 在首字符 `ti===0` 时 `-1===-1` 误判，已改为 `prev >= 0 && prev === ti - 1`（正文已同步修订）。
+2. **Task 2**：键盘处理补 IME 守卫 `if (e.nativeEvent.isComposing || e.keyCode === 229) return;`——否则中文组合输入期间 ↑↓/Enter/Esc 会被误当作导航/确认/取消（正文已同步修订）。
+3. **Task 4 追加修复**（计划原未涵盖，由审查暴露的空缺）：
+   - **Fix A**：`QuickJump` 增加活动行 `scrollIntoView({ block: "nearest" })` effect（依赖 `[activeIndex]`），避免匹配数超过一屏时高亮移出可视区。
+   - **Fix B**：`FileList` 导出 `QJ_MAX_ROWS` 与纯函数 `qjWindowStart(total, active, size)`；渲染时按 active 居中开窗，向 `QuickJump` 传窗口相对 `activeIndex`，`onHover`/`onActivate` 回映射为绝对下标——修复匹配数 >200 时 active 落在未渲染行的问题。
