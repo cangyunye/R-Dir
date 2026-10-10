@@ -28,3 +28,7 @@ src-tauri/target
 src-tauri/gen
 playwright-report
 test-results
+
+# Isolated worktrees / agent scratch
+.worktrees/
+.superpowers/
