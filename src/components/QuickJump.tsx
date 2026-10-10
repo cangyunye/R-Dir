@@ -101,6 +101,7 @@ export function QuickJump({
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === "ArrowDown") {
                 e.preventDefault();
                 e.stopPropagation();
