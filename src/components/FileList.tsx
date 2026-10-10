@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
-import { formatSize, formatTime, hideExtension } from "@/lib/format";
+import { formatSize, formatTime, hideExtension, extLabel } from "@/lib/format";
 import type { LinkSide } from "@/lib/sync-link";
 import { markColor, markTooltip } from "@/components/SyncDiffPanel";
 import { FileIcon } from "@/components/FileIcon";
@@ -74,12 +74,6 @@ const COLUMNS: { key: SortKey | null; label: string; width: string }[] = [
   { key: "type", label: "类型", width: "80px" },
   { key: null, label: "权限", width: "88px" },
 ];
-
-function extLabel(entry: FileEntry): string {
-  if (entry.is_dir) return "目录";
-  if (entry.extension) return entry.extension.toUpperCase();
-  return "文件";
-}
 
 /** 打开方式：只显示用户通过“选择其他应用…”注册的自定义工具。
  * 说明：内置工具与系统默认应用依赖跨平台路径探测（mac .app / win 注册表），
@@ -334,7 +328,7 @@ export function FileList({
   const suppressClickRef = useRef(false);
   /** 慢速双击重命名：记录上次单击的条目与时间 */
   const lastClickRef = useRef<{ path: string; time: number } | null>(null);
-  /** 键盘快速定位：输入缓冲 + 3 秒超时重置 */
+  /** 列表滚动容器 */
   const listScrollRef = useRef<HTMLDivElement>(null);
   /** v0.8.3 虚拟滚动：固定行高，只渲染可视区 +/- buffer 行（行高见 lib/virtual-scroll） */
   const [scrollTop, setScrollTop] = useState(0);

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatSize, formatTime } from "@/lib/format";
+import { formatSize, formatTime, extLabel } from "@/lib/format";
 import { FileIcon } from "./FileIcon";
 import type { FileEntry } from "@/lib/types";
 
@@ -101,7 +101,10 @@ export function QuickJump({
         onMouseDown={(e) => e.stopPropagation()}
         className="absolute left-1/2 top-[6%] flex w-[min(560px,calc(100%-2rem))] -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-white/15 bg-background/70 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl backdrop-saturate-150 animate-in fade-in-0 zoom-in-95 slide-in-from-top-2 duration-150 motion-reduce:animate-none dark:border-white/10 dark:ring-white/10"
       >
-        <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2">
+        <div
+          className="flex items-center gap-2 border-b border-border/50 px-3 py-2"
+          onMouseDown={(e) => e.preventDefault()}
+        >
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
             ref={inputRef}
@@ -109,6 +112,7 @@ export function QuickJump({
             aria-label="快速定位查询"
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
+            onBlur={onOutsideDown}
             onKeyDown={(e) => {
               if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === "ArrowDown") {
@@ -174,13 +178,19 @@ export function QuickJump({
                   <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
                     {formatTime(row.entry.modified)}
                   </span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {extLabel(row.entry)}
+                  </span>
                 </div>
               );
             })
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-border/50 px-3 py-1.5 text-[11px] text-muted-foreground">
+        <div
+          className="flex items-center justify-between border-t border-border/50 px-3 py-1.5 text-[11px] text-muted-foreground"
+          onMouseDown={(e) => e.preventDefault()}
+        >
           <span>{totalMatches} 项匹配</span>
           <span>↑↓ 选择 · ↵ 定位/进入 · Esc 取消</span>
         </div>

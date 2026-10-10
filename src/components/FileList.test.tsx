@@ -210,4 +210,24 @@ describe("FileList 快速定位集成", () => {
     expect(qjWindowStart(300, 150)).toBe(50);
     expect(qjWindowStart(300, 299)).toBe(100);
   });
+
+  it("输入框失焦（点到别处）→ 提交关闭且不还原", () => {
+    const { props, body } = renderList({ selection: ["/mock/dir/main.rs"] });
+    fireEvent.keyDown(body, { key: "p" });
+    expect(document.querySelector("[data-quickjump]")).toBeTruthy();
+    fireEvent.blur(screen.getByLabelText("快速定位查询"));
+    expect(document.querySelector("[data-quickjump]")).toBeNull();
+    expect(props.onSelectRange).not.toHaveBeenCalled();
+  });
+
+  it("↑ 从首项环绕到末项", () => {
+    const { props, body } = renderList();
+    // seed "o" 匹配 Documents 与 photo.png（input 顺序：Documents 在前）
+    fireEvent.keyDown(body, { key: "o" });
+    const first = (props.onSelect as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    fireEvent.keyDown(screen.getByLabelText("快速定位查询"), { key: "ArrowUp" });
+    const after = (props.onSelect as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(after).not.toEqual(first);
+    expect(after).toMatchObject({ name: "photo.png" });
+  });
 });

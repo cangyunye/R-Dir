@@ -51,3 +51,12 @@ export function hideExtension(name: string, isDir: boolean): string {
   if (i <= 0) return name;
   return name.slice(0, i);
 }
+
+import type { FileEntry } from "./types";
+
+/** 类型列文案：目录 / 扩展名大写 / 文件 */
+export function extLabel(entry: FileEntry): string {
+  if (entry.is_dir) return "目录";
+  if (entry.extension) return entry.extension.toUpperCase();
+  return "文件";
+}
