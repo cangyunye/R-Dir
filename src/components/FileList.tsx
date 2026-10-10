@@ -55,6 +55,8 @@ import type { DiffMarkMap } from "@/lib/sync-link";
 import { TagDots } from "@/components/TagView";
 import { MenuGroup } from "@/components/MenuGroup";
 import { openersForEntry } from "@/lib/openers";
+import { rank } from "@/lib/fuzzy";
+import { QuickJump, type QuickJumpRow } from "@/components/QuickJump";
 
 const COLUMNS: { key: SortKey | null; label: string; width: string }[] = [
   { key: "name", label: "名称", width: "minmax(0, 1fr)" },
@@ -352,10 +354,6 @@ export function FileList({
     onRenameTag(renameTagId, label);
     setRenameTagOpen(false);
   };
-  const typeAheadRef = useRef("");
-  const typeAheadTimer = useRef<number | null>(null);
-  const [typeAhead, setTypeAhead] = useState("");
-  const [typeAheadFading, setTypeAheadFading] = useState(false);
   /** v0.10 右键菜单二级折叠组当前展开项（null = 全收起） */
   const [expandedMenu, setExpandedMenu] = useState<string | null>(null);
   const toggleMenuGroup = (id: string) =>
@@ -367,42 +365,88 @@ export function FileList({
     if (zoomTipTimer.current) window.clearTimeout(zoomTipTimer.current);
     zoomTipTimer.current = window.setTimeout(() => setZoomTip(null), 1200);
   };
-  const handleTypeAhead = (e: React.KeyboardEvent) => {
+  // ---- v0.24 快速定位浮层（QuickJump）：直接键入开窗，模糊过滤当前目录 ----
+  const QJ_MAX_ROWS = 200;
+  const [qjOpen, setQjOpen] = useState(false);
+  const [qjQuery, setQjQuery] = useState("");
+  const [qjActive, setQjActive] = useState(0);
+  const qjRestoreRef = useRef<string[]>([]);
+
+  const qjMatches = useMemo(
+    () => (qjOpen ? rank(sorted, qjQuery, (e) => e.name) : []),
+    [qjOpen, sorted, qjQuery],
+  );
+  const qjRows: QuickJumpRow[] = useMemo(
+    () =>
+      qjMatches
+        .slice(0, QJ_MAX_ROWS)
+        .map((m) => ({ entry: m.item, positions: m.positions })),
+    [qjMatches],
+  );
+
+  const focusListBody = () => listScrollRef.current?.focus({ preventScroll: true });
+
+  const openQuickJump = (seed: string) => {
+    qjRestoreRef.current = propsRef.current.selection;
+    setQjQuery(seed);
+    setQjActive(0);
+    setQjOpen(true);
+  };
+
+  const closeQuickJump = () => {
+    setQjOpen(false);
+    setQjQuery("");
+  };
+
+  const handleListKeyDown = (e: React.KeyboardEvent) => {
+    if (qjOpen) return; // 浮层打开时按键由浮层内 input 处理
     if (e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key.length !== 1) return;
-    // 重命名/搜索输入框聚焦时不触发快速定位
     const t = e.target as HTMLElement;
     if (t.closest("input,textarea")) return;
-    const ch = e.key.toLowerCase();
-    if (typeAheadTimer.current) window.clearTimeout(typeAheadTimer.current);
-    typeAheadRef.current += ch;
-    const buf = typeAheadRef.current;
-    setTypeAhead(buf);
-    setTypeAheadFading(false);
-    // 1 秒未输入：重置缓冲并开始淡出提示
-    typeAheadTimer.current = window.setTimeout(() => {
-      typeAheadRef.current = "";
-      setTypeAheadFading(true);
-      window.setTimeout(() => setTypeAhead(""), 500);
-    }, 1000);
-    const idx = sorted.findIndex((x) => x.name.toLowerCase().startsWith(buf));
-    if (idx >= 0) {
-      onSelect(sorted[idx], false);
-      // 焦点收回列表容器：焦点若在行元素上，随后的滚动会让虚拟窗口卸载该行、
-      // 焦点掉到 body，后续按键就再也进不来（只吃得到首字母）
-      if (document.activeElement !== listScrollRef.current) {
-        listScrollRef.current?.focus({ preventScroll: true });
-      }
-      const el = listScrollRef.current;
-      if (el) {
-        const target = idx * ROW_HEIGHT;
-        const top = el.scrollTop;
-        const bottom = top + el.clientHeight - ROW_HEIGHT;
-        if (target < top) el.scrollTop = target;
-        else if (target > bottom) el.scrollTop = target - el.clientHeight + ROW_HEIGHT * 2;
-      }
-    }
+    e.preventDefault();
+    openQuickJump(e.key);
   };
+
+  const qjMove = (delta: 1 | -1) => {
+    setQjActive((a) => {
+      const n = qjMatches.length;
+      if (!n) return 0;
+      return (a + delta + n) % n;
+    });
+  };
+
+  // 最小确认/取消（完整语义见 Task 4）
+  const qjConfirm = (index: number) => {
+    const m = qjMatches[index];
+    closeQuickJump();
+    if (m && !m.item.is_dir) propsRef.current.onSelect(m.item, false);
+    focusListBody();
+  };
+
+  const qjCancel = () => {
+    closeQuickJump();
+    focusListBody();
+  };
+
+  // 高亮项变化即实时跟随（复用 primary 变化滚动 effect，不另写滚动）
+  useEffect(() => {
+    if (!qjOpen) return;
+    const m = qjMatches[qjActive];
+    if (m) propsRef.current.onSelect(m.item, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qjOpen, qjActive, qjMatches]);
+
+  // 结果变少时把高亮夹紧到有效范围
+  useEffect(() => {
+    setQjActive((a) => Math.min(a, Math.max(0, qjMatches.length - 1)));
+  }, [qjMatches.length]);
+
+  // 目录切换时关窗
+  useEffect(() => {
+    setQjOpen(false);
+    setQjQuery("");
+  }, [currentDir]);
   const [rubber, setRubber] = useState<{
     left: number;
     top: number;
@@ -683,16 +727,27 @@ export function FileList({
           }}
         />
       )}
-      {/* 键盘快速定位提示：面板中央大字号，输入后 2 秒淡出 */}
-      {typeAhead && (
-        <div
-          className={cn(
-            "pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-primary/25 bg-background/85 px-5 py-3 text-3xl font-bold text-primary shadow-lg backdrop-blur-sm transition-opacity duration-500",
-            typeAheadFading ? "opacity-0" : "opacity-100",
-          )}
-        >
-          定位：{typeAhead}
-        </div>
+      {/* v0.24 快速定位玻璃浮层 */}
+      {qjOpen && (
+        <QuickJump
+          query={qjQuery}
+          rows={qjRows}
+          activeIndex={qjActive}
+          totalMatches={qjMatches.length}
+          onQueryChange={(q) => {
+            setQjQuery(q);
+            setQjActive(0);
+          }}
+          onMove={qjMove}
+          onConfirm={() => qjConfirm(qjActive)}
+          onHover={setQjActive}
+          onActivate={qjConfirm}
+          onCancel={qjCancel}
+          onOutsideDown={() => {
+            closeQuickJump();
+            focusListBody();
+          }}
+        />
       )}
       {/* v0.8 缩放百分比提示：面板中央，1.2s 淡出 */}
       {zoomTip !== null && (
@@ -762,13 +817,13 @@ export function FileList({
         className="min-h-0 flex-1 overflow-y-auto pb-8 outline-none select-none"
         onMouseDown={startRubber}
         onMouseDownCapture={(e) => {
-          // 地址栏聚焦时保持光标；点击输入框/文本域不抢焦点；否则聚焦列表以接收键盘快速定位
+          // 地址栏聚焦时保持光标；点击输入框/文本域不抢焦点；浮层内不抢焦点；否则聚焦列表
           const ae = document.activeElement as HTMLElement | null;
           if (ae?.id === "rdir-addr-input") return;
-          if ((e.target as HTMLElement).closest("input,textarea")) return;
+          if ((e.target as HTMLElement).closest("input,textarea,[data-quickjump]")) return;
           listScrollRef.current?.focus({ preventScroll: true });
         }}
-        onKeyDown={handleTypeAhead}
+        onKeyDown={handleListKeyDown}
         onScroll={onListScroll}
       >
         {dragTarget && (
