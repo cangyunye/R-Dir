@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
-import { FileList } from "./FileList";
+import { FileList, qjWindowStart, QJ_MAX_ROWS } from "./FileList";
 import type { FileEntry } from "@/lib/types";
 
 type FileListProps = ComponentProps<typeof FileList>;
@@ -140,5 +140,74 @@ describe("FileList 快速定位集成", () => {
     expect(document.querySelectorAll("[data-quickjump]").length).toBe(before);
     // 查询串未变（仍是 "p"，由浮层展示）
     expect(document.querySelector("[data-quickjump]")!.textContent).toContain("p");
+  });
+
+  it("目录上回车 → 调 onOpen 进入目录并关窗", () => {
+    const { props, body } = renderList();
+    fireEvent.keyDown(body, { key: "d" });
+    fireEvent.change(screen.getByLabelText("快速定位查询"), { target: { value: "doc" } });
+    fireEvent.keyDown(screen.getByLabelText("快速定位查询"), { key: "Enter" });
+    expect(props.onOpen).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Documents", is_dir: true }),
+    );
+    expect(document.querySelector("[data-quickjump]")).toBeNull();
+  });
+
+  it("文件上回车 → onSelect 定位并关窗", () => {
+    const { props, body } = renderList();
+    fireEvent.keyDown(body, { key: "p" });
+    fireEvent.keyDown(screen.getByLabelText("快速定位查询"), { key: "Enter" });
+    expect(props.onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "photo.png" }),
+      false,
+    );
+    expect(document.querySelector("[data-quickjump]")).toBeNull();
+  });
+
+  it("Esc → 还原打开前的选中并关窗", () => {
+    const { props, body } = renderList({ selection: ["/mock/dir/main.rs"] });
+    fireEvent.keyDown(body, { key: "p" });
+    fireEvent.keyDown(screen.getByLabelText("快速定位查询"), { key: "Escape" });
+    expect(props.onSelectRange).toHaveBeenCalledWith(["/mock/dir/main.rs"]);
+    expect(document.querySelector("[data-quickjump]")).toBeNull();
+  });
+
+  it("打开前无选中时 Esc → onClearSelection", () => {
+    const { props, body } = renderList({ selection: [] });
+    fireEvent.keyDown(body, { key: "p" });
+    fireEvent.keyDown(screen.getByLabelText("快速定位查询"), { key: "Escape" });
+    expect(props.onClearSelection).toHaveBeenCalled();
+  });
+
+  it("点窗外（遮罩）→ 提交关闭且不还原", () => {
+    const { props, body } = renderList({ selection: ["/mock/dir/main.rs"] });
+    fireEvent.keyDown(body, { key: "p" });
+    fireEvent.mouseDown(document.querySelector("[data-quickjump-backdrop]")!);
+    expect(document.querySelector("[data-quickjump]")).toBeNull();
+    expect(props.onSelectRange).not.toHaveBeenCalled();
+  });
+
+  it("退格删空 query → 显示全量条目", () => {
+    const { body } = renderList();
+    fireEvent.keyDown(body, { key: "p" });
+    const input = screen.getByLabelText("快速定位查询");
+    fireEvent.change(input, { target: { value: "" } });
+    expect(document.querySelector("[data-quickjump]")!.textContent).toContain("3 项匹配");
+  });
+
+  it("currentDir 变化 → 自动关窗", () => {
+    const { body, rerender } = renderList();
+    fireEvent.keyDown(body, { key: "p" });
+    expect(document.querySelector("[data-quickjump]")).toBeTruthy();
+    rerender(<FileList {...makeProps({ currentDir: "/mock/other" })} />);
+    expect(document.querySelector("[data-quickjump]")).toBeNull();
+  });
+
+  it("qjWindowStart：小集合恒为 0，大集合让 active 居中且不越界", () => {
+    expect(qjWindowStart(10, 5)).toBe(0);
+    expect(qjWindowStart(QJ_MAX_ROWS, 100)).toBe(0);
+    expect(qjWindowStart(300, 0)).toBe(0);
+    expect(qjWindowStart(300, 150)).toBe(50);
+    expect(qjWindowStart(300, 299)).toBe(100);
   });
 });

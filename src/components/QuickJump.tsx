@@ -75,11 +75,20 @@ export function QuickJump({
   onOutsideDown,
 }: QuickJumpProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   // 打开即聚焦隐藏输入：获得退格 / 粘贴 / 中文 IME 的原生支持
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // ↑↓ 移动时把活动行滚入可视区
+  useEffect(() => {
+    const el = listRef.current?.querySelector<HTMLElement>(
+      `[data-quickjump-row="${activeIndex}"]`,
+    );
+    el?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
 
   return (
     <div
@@ -127,7 +136,7 @@ export function QuickJump({
           </span>
         </div>
 
-        <div className="max-h-[min(60vh,392px)] overflow-y-auto py-1">
+        <div ref={listRef} className="max-h-[min(60vh,392px)] overflow-y-auto py-1">
           {rows.length === 0 ? (
             <div className="px-3 py-8 text-center text-sm text-muted-foreground">
               无匹配项

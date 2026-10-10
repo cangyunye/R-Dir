@@ -101,4 +101,25 @@ describe("QuickJump 玻璃浮层", () => {
     expect(screen.getByText("无匹配项")).toBeInTheDocument();
     expect(screen.getByText("0 项匹配")).toBeInTheDocument();
   });
+
+  it("activeIndex 变化时把活动行滚入可视区", () => {
+    const spy = vi.spyOn(Element.prototype, "scrollIntoView");
+    const { rerender } = render(
+      <QuickJump
+        query="ma" rows={rows} activeIndex={0} totalMatches={2}
+        onQueryChange={vi.fn()} onMove={vi.fn()} onConfirm={vi.fn()}
+        onHover={vi.fn()} onActivate={vi.fn()} onCancel={vi.fn()} onOutsideDown={vi.fn()}
+      />,
+    );
+    spy.mockClear();
+    rerender(
+      <QuickJump
+        query="ma" rows={rows} activeIndex={1} totalMatches={2}
+        onQueryChange={vi.fn()} onMove={vi.fn()} onConfirm={vi.fn()}
+        onHover={vi.fn()} onActivate={vi.fn()} onCancel={vi.fn()} onOutsideDown={vi.fn()}
+      />,
+    );
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
 });

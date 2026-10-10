@@ -58,6 +58,15 @@ import { openersForEntry } from "@/lib/openers";
 import { rank } from "@/lib/fuzzy";
 import { QuickJump, type QuickJumpRow } from "@/components/QuickJump";
 
+/** 快速定位结果窗口大小。 */
+export const QJ_MAX_ROWS = 200;
+
+/** >QJ_MAX_ROWS 时，结果窗口的起始下标（尽量让 active 居中） */
+export function qjWindowStart(total: number, active: number, size = QJ_MAX_ROWS): number {
+  if (total <= size) return 0;
+  return Math.min(Math.max(0, active - Math.floor(size / 2)), total - size);
+}
+
 const COLUMNS: { key: SortKey | null; label: string; width: string }[] = [
   { key: "name", label: "名称", width: "minmax(0, 1fr)" },
   { key: "size", label: "大小", width: "84px" },
@@ -366,7 +375,6 @@ export function FileList({
     zoomTipTimer.current = window.setTimeout(() => setZoomTip(null), 1200);
   };
   // ---- v0.24 快速定位浮层（QuickJump）：直接键入开窗，模糊过滤当前目录 ----
-  const QJ_MAX_ROWS = 200;
   const [qjOpen, setQjOpen] = useState(false);
   const [qjQuery, setQjQuery] = useState("");
   const [qjActive, setQjActive] = useState(0);
@@ -376,12 +384,16 @@ export function FileList({
     () => (qjOpen ? rank(sorted, qjQuery, (e) => e.name) : []),
     [qjOpen, sorted, qjQuery],
   );
+  const qjWindowStartIndex = useMemo(
+    () => qjWindowStart(qjMatches.length, qjActive),
+    [qjMatches.length, qjActive],
+  );
   const qjRows: QuickJumpRow[] = useMemo(
     () =>
       qjMatches
-        .slice(0, QJ_MAX_ROWS)
+        .slice(qjWindowStartIndex, qjWindowStartIndex + QJ_MAX_ROWS)
         .map((m) => ({ entry: m.item, positions: m.positions })),
-    [qjMatches],
+    [qjMatches, qjWindowStartIndex],
   );
 
   const focusListBody = () => listScrollRef.current?.focus({ preventScroll: true });
@@ -416,16 +428,21 @@ export function FileList({
     });
   };
 
-  // 最小确认/取消（完整语义见 Task 4）
   const qjConfirm = (index: number) => {
     const m = qjMatches[index];
     closeQuickJump();
-    if (m && !m.item.is_dir) propsRef.current.onSelect(m.item, false);
+    if (m) {
+      if (m.item.is_dir) propsRef.current.onOpen(m.item);
+      else propsRef.current.onSelect(m.item, false);
+    }
     focusListBody();
   };
 
   const qjCancel = () => {
     closeQuickJump();
+    const restore = qjRestoreRef.current;
+    if (restore.length) propsRef.current.onSelectRange(restore);
+    else propsRef.current.onClearSelection();
     focusListBody();
   };
 
@@ -464,11 +481,12 @@ export function FileList({
     onClearSelection,
     onSelectRange,
     onSelect,
+    onOpen,
     selection,
     selectionSet,
     paneId,
   });
-  propsRef.current = { onDropPaths, onDragOverChange, onClearSelection, onSelectRange, onSelect, selection, selectionSet, paneId };
+  propsRef.current = { onDropPaths, onDragOverChange, onClearSelection, onSelectRange, onSelect, onOpen, selection, selectionSet, paneId };
 
   const cleanupDrag = () => {
     window.removeEventListener("mousemove", onWinMouseMove);
@@ -732,7 +750,7 @@ export function FileList({
         <QuickJump
           query={qjQuery}
           rows={qjRows}
-          activeIndex={qjActive}
+          activeIndex={qjActive - qjWindowStartIndex}
           totalMatches={qjMatches.length}
           onQueryChange={(q) => {
             setQjQuery(q);
@@ -740,8 +758,8 @@ export function FileList({
           }}
           onMove={qjMove}
           onConfirm={() => qjConfirm(qjActive)}
-          onHover={setQjActive}
-          onActivate={qjConfirm}
+          onHover={(i) => setQjActive(qjWindowStartIndex + i)}
+          onActivate={(i) => qjConfirm(qjWindowStartIndex + i)}
           onCancel={qjCancel}
           onOutsideDown={() => {
             closeQuickJump();
