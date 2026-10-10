@@ -231,3 +231,42 @@ describe("FileList 快速定位集成", () => {
     expect(after).toMatchObject({ name: "photo.png" });
   });
 });
+
+describe("鼠标侧键（后退/前进）", () => {
+  const paneOf = (container: HTMLElement) =>
+    container.querySelector("[data-pane-id]") as HTMLElement;
+
+  it("mouseup 侧键 3 → onBack；侧键 4 → onForward（不依赖 auxclick）", () => {
+    const onBack = vi.fn();
+    const onForward = vi.fn();
+    const { container } = renderList({ onBack, onForward });
+    const pane = paneOf(container);
+    fireEvent.mouseDown(pane, { button: 3 });
+    fireEvent.mouseUp(pane, { button: 3 });
+    expect(onBack).toHaveBeenCalledTimes(1);
+    fireEvent.mouseDown(pane, { button: 4 });
+    fireEvent.mouseUp(pane, { button: 4 });
+    expect(onForward).toHaveBeenCalledTimes(1);
+  });
+
+  it("左键 mouseup 不触发前进/后退", () => {
+    const onBack = vi.fn();
+    const onForward = vi.fn();
+    const { container } = renderList({ onBack, onForward });
+    const pane = paneOf(container);
+    fireEvent.mouseDown(pane, { button: 0 });
+    fireEvent.mouseUp(pane, { button: 0 });
+    expect(onBack).not.toHaveBeenCalled();
+    expect(onForward).not.toHaveBeenCalled();
+  });
+
+  it("同一手势 mouseup + auxclick 只触发一次（Chromium 会双发，避免前进两次）", () => {
+    const onForward = vi.fn();
+    const { container } = renderList({ onForward });
+    const pane = paneOf(container);
+    fireEvent.mouseDown(pane, { button: 4 });
+    fireEvent.mouseUp(pane, { button: 4 });
+    fireEvent(pane, new MouseEvent("auxclick", { button: 4, bubbles: true }));
+    expect(onForward).toHaveBeenCalledTimes(1);
+  });
+});

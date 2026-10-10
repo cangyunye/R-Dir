@@ -701,8 +701,11 @@ export function FileList({
             showZoomTip(next);
           }
         }}
-        onAuxClick={(e) => {
-          // v0.8 鼠标侧键：后退(3) / 前进(4)，行为同浏览器
+        onMouseUp={(e) => {
+          // v0.24 鼠标侧键：后退(3) / 前进(4)。
+          // 改用 mouseup 而非 auxclick——WKWebView（Tauri macOS）对侧键不发 auxclick
+          // （auxclick 2024 才 Baseline，旧 WebKit 完全没有），而 mousedown/mouseup
+          // 任何引擎都会发；只监听 mouseup 也避免 Chromium 上两者双发导致前进两次。
           if (e.button === 3) {
             e.preventDefault();
             onBack();
