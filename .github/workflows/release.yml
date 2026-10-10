@@ -145,20 +145,9 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "${{ github.ref_name }}"
-          releaseBody: |
-            **R-Dir** — 跨平台文件管理器（macOS / Windows）
-
-            功能：
-            - 菜单栏 / 标签页（可拖拽排序）/ 地址栏补全 / 左侧导航与磁盘
-            - 详情列表（lsd 字段、扩展名图标、排序、隐藏文件开关）
-            - 文件操作：复制 / 剪切 / 粘贴 / 重命名 / 删除(回收站) / 新建文件夹与文本文件 / 复制到当前目录 / 复制路径 / 撤销与重做
-            - 多选（Shift 范围 / ⌘·Ctrl 追加 / 矩形框选）与跨窗格拖拽（默认复制，Option/Alt 移动）
-            - 分屏（VSCode 式拖拽分割条，左右 / 上下 / 四宫格）
-            - 搜索：文件名（当前层 / fd 引擎递归检索）+ 内容搜索（VSCode 风格，默认当前层）
-            - 搜索结果右键定位 / 打开 / 复制相对与绝对路径；双击按扩展名用系统关联程序打开
-            - 标签视图右键菜单（加标签 + 文件夹操作），标签内文件夹/文件正确区分
-            - 主题切换（右上角日 / 月）、右键空白菜单、快捷键系统（⌘,/F1 查看一览）
-            - 帮助菜单：GitHub 仓库 + 基于 Releases 的更新检测
+          # 不再使用固定功能清单模板：正文在 publish 阶段由 CHANGELOG.md 的本版本段落整体生成。
+          # 这里只放占位，避免 Draft 阶段出现陈旧模板内容。
+          releaseBody: "_本版本变更见 CHANGELOG.md 对应段落（发布时自动注入）。_"
           releaseDraft: true
           prerelease: false
           # 显式指定 features：default 解析在 CI 环境不稳定（v0.7.0/v0.7.1 曾缺失 sftp/http 模块）
@@ -175,8 +164,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 把 CHANGELOG.md 里本版本的段落拼到 Release 说明顶部（保留 tauri-action 写入的通用功能清单）
-      - name: Prepend CHANGELOG to release notes
+      # Release 说明 = CHANGELOG.md 的本版本段落（整体替换，不再拼接旧的功能清单模板）
+      - name: Set release notes from CHANGELOG
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -191,18 +180,10 @@ jobs:
           if [ ! -s "$RUNNER_TEMP/changelog.md" ]; then
             echo "CHANGELOG.md 中无 v$VER 段落，保留默认 release notes"; exit 0
           fi
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/old.md"
-          if grep -qF "## $TAG" "$RUNNER_TEMP/old.md"; then
-            echo "release notes 已含 $TAG 变更，跳过（避免重复）"; exit 0
-          fi
           {
             echo "## $TAG 变更"
             echo
             cat "$RUNNER_TEMP/changelog.md"
-            echo
-            echo "---"
-            echo
-            cat "$RUNNER_TEMP/old.md"
           } > "$RUNNER_TEMP/body.md"
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/body.md"
 
