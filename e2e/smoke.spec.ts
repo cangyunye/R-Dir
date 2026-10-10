@@ -870,3 +870,30 @@ test.describe("24. 标签栏右键菜单（v0.23）", () => {
     await expect(page.locator("[data-tab-idx]")).toHaveCount(2);
   });
 });
+
+test.describe("25. 快速定位（QuickJump）", () => {
+  test("QJ1 键入弹出玻璃窗，回车定位到匹配文件", async ({ page }) => {
+    // 聚焦文件列表：单击一行
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    // 键入 "ph"：仅命中 photo.png（Projects 无 h）
+    await page.keyboard.press("p");
+    await page.keyboard.press("h");
+    const win = page.locator("[data-quickjump]");
+    await expect(win).toBeVisible();
+    await expect(win).toContainText("photo.png");
+    await page.keyboard.press("Enter");
+    await expect(win).toBeHidden();
+    // photo.png 行被主选中（ring 高亮）
+    await expect(page.locator(`[data-path="${HOME}/photo.png"]`)).toHaveClass(/ring-inset/);
+  });
+
+  test("QJ2 Esc 取消并还原选中", async ({ page }) => {
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    await page.keyboard.press("p");
+    await expect(page.locator("[data-quickjump]")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-quickjump]")).toBeHidden();
+    // Notes.txt 仍是选中项（Primary ring）
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toHaveClass(/ring-inset/);
+  });
+});
