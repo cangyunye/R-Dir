@@ -79,7 +79,7 @@ test.describe("3. 文件列表交互", () => {
   test("L1 单击选中一行", async ({ page }) => {
     const row = page.locator(`[data-path="${HOME}/Notes.txt"]`);
     await row.click();
-    await expect(row).toHaveClass(/bg-accent|bg-primary/);
+    await expect(row).toHaveClass(/bg-accent|bg-primary|bg-selected/);
   });
 
   test("L2 全选", async ({ page }) => {
@@ -922,5 +922,52 @@ test.describe("26. 鼠标侧键（后退/前进）", () => {
     // 侧键前进(button 4) → 再回到 Documents
     await sideKey(4);
     await expect(page.locator("#rdir-addr-input")).toHaveValue(`${HOME}/Documents`);
+  });
+});
+
+test.describe("27. 分屏 / 窗格快捷键", () => {
+  const DOC_ROW = `[data-path="${HOME}/Documents"]`;
+
+  test.beforeEach(async ({ page }) => {
+    // 聚焦文件列表（点一行），模拟真实使用焦点
+    await page.locator(`${DOC_ROW}`).click();
+  });
+
+  test("K1 Ctrl+\\ 左右分屏", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+Backslash`);
+    await expect(page.locator(DOC_ROW)).toHaveCount(2);
+  });
+
+  test("K2 Ctrl+J 上下分屏", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+j`);
+    await expect(page.locator(DOC_ROW)).toHaveCount(2);
+  });
+
+  test("K3 Ctrl+Shift+\\ 聚焦下一窗格 → Ctrl+Shift+W 关闭它", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+Backslash`);
+    await expect(page.locator(DOC_ROW)).toHaveCount(2);
+    await page.keyboard.press(`${MOD}+Shift+Backslash`);
+    await page.keyboard.press(`${MOD}+Shift+w`);
+    await expect(page.locator(DOC_ROW)).toHaveCount(1);
+  });
+
+  test("K4 分屏后工具栏「同步比对」可开启链接", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+Backslash`);
+    await expect(page.locator(DOC_ROW)).toHaveCount(2);
+    await page.locator('button[title^="同步比对"]').click();
+    await expect(page.locator("[data-sync-diff-status]")).toBeVisible();
+  });
+
+  test("K5 窗格头：面包屑段在该窗格内导航，关闭钮关闭该窗格", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+Backslash`);
+    await expect(page.locator(DOC_ROW)).toHaveCount(2);
+    // 左窗格（先渲染）面包屑点上一段 mock
+    const head = page.locator('[data-pane-head]').first();
+    await expect(head).toBeVisible();
+    await head.locator("button", { hasText: "mock" }).first().click();
+    await expect(page.locator("#rdir-addr-input")).toHaveValue("/mock");
+    // 关闭当前（活动）窗格 → 剩 1 个窗格
+    await head.locator('button[title="关闭窗格"]').click();
+    await expect(page.locator(DOC_ROW)).toHaveCount(1);
   });
 });

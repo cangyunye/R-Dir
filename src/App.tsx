@@ -2775,6 +2775,53 @@ useEffect(() => {
     );
   }, [activeTab, activePane]);
 
+  /** 窗格头面包屑导航：作用于指定窗格（不要求是活动窗格），并激活该窗格。
+   *  与 navigate 的差异：路径来自面包屑段（已是绝对路径，无需解析/补全），
+   *  sftp/tags 同样走 patchPane——连接中的会话内导航不涉及连接框分支。 */
+  const navigatePane = useCallback((paneId: number, path: string) => {
+    setTabs((ts) =>
+      ts.map((t) => {
+        const p = t.panes[paneId];
+        if (!p || p.path === path) return t;
+        const history = [...p.history.slice(0, p.histIndex + 1), path];
+        const m = path.match(VIRTUAL_TAG_RE);
+        return {
+          ...t,
+          activePane: paneId,
+          panes: {
+            ...t.panes,
+            [paneId]: {
+              ...p,
+              path,
+              title: m ? tagTitle(m[1]) : basename(path),
+              tagId: m ? m[1] : undefined,
+              history,
+              histIndex: history.length - 1,
+              selection: [],
+              error: null,
+            },
+          },
+        };
+      }),
+    );
+  }, []);
+
+  /** 关闭指定窗格（窗格头关闭钮）；单窗格时 removePane 返回空 → 无操作 */
+  const closePaneById = useCallback((paneId: number) => {
+    setTabs((ts) => {
+      const target = ts.find((t) => t.panes[paneId]);
+      if (!target) return ts;
+      const root = removePane(target.root, paneId);
+      if (!root) return ts;
+      const first = firstPaneId(root);
+      return ts.map((t) =>
+        t.id === target.id
+          ? { ...t, root, activePane: first, title: t.panes[first]?.title ?? t.title }
+          : t,
+      );
+    });
+  }, []);
+
   const focusNextPane = useCallback(() => {
     if (!activeTab) return;
     const ids = collectPaneIds(activeTab.root);
@@ -3102,6 +3149,8 @@ useEffect(() => {
     },
     onDiff: openDiff,
     onSyncDiff: toggleSyncDiff,
+    onNavigatePane: navigatePane,
+    onClosePane: closePaneById,
     onSetCompareBase: handleSetCompareBase,
     onCompareWithBase: handleCompareWithBase,
     onComparePick: (entry) => setComparePickFor(entry),
@@ -3121,6 +3170,8 @@ useEffect(() => {
     openEntry,
     openFileExternal,
     revealPath,
+    navigatePane,
+    closePaneById,
     newTab,
     handleOpenWith,
     handleOpenTerminal,

@@ -1,6 +1,7 @@
-﻿import { memo, useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+﻿import { Fragment, memo, useEffect, useState } from "react";
+import { ChevronRight, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { splitPathSegments } from "@/lib/path-segments";
 import type { PaneNode, PaneState, SplitDir } from "@/lib/types";
 import type { FileTags } from "@/lib/persist";
 import { FileList, type RenameState } from "@/components/FileList";
@@ -85,12 +86,75 @@ export interface PaneHandlers {
   onDiff: () => void;
   /** v0.18 空白处右键「同步比对（左右窗格）」：开启/断开链接 */
   onSyncDiff: () => void;
+  /** v0.25 窗格头面包屑：在指定窗格内导航（并激活该窗格） */
+  onNavigatePane: (paneId: number, path: string) => void;
+  /** v0.25 窗格头关闭钮：关闭指定窗格 */
+  onClosePane: (paneId: number) => void;
   /** v0.19 文本比较基准（跨窗格全局状态） */
   onSetCompareBase: (entry: FileEntry, paneId: number) => void;
   onCompareWithBase: (entry: FileEntry) => void;
   onComparePick: (entry: FileEntry) => void;
   onCompareSelected: (paths: [string, string]) => void;
   onViewPatch: (path: string) => void;
+}
+
+/** v0.25 窗格头：每窗格独立的路径面包屑（对齐升级原型 pane-head）。
+ * 点击段在该窗格内导航并激活；非活动窗格整条弱化；多窗格时右侧有关闭钮。
+ * 标签虚拟视图不渲染（TagView 自带带退出按钮的横幅）。 */
+function PaneHead({
+  path,
+  isActive,
+  closable,
+  onNavigate,
+  onClose,
+}: {
+  path: string;
+  isActive: boolean;
+  closable: boolean;
+  onNavigate: (path: string) => void;
+  onClose: () => void;
+}) {
+  const segs = splitPathSegments(path);
+  return (
+    <div
+      data-pane-head=""
+      className={cn(
+        "flex h-7 shrink-0 items-center gap-0.5 border-b bg-sidebar px-1.5 text-xs select-none",
+        isActive ? "text-foreground" : "text-muted-foreground",
+      )}
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
+        {segs.map((seg, i) => (
+          <Fragment key={`${seg.target}:${i}`}>
+            {i > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/60" />}
+            <button
+              type="button"
+              title={seg.target}
+              onClick={() => onNavigate(seg.target)}
+              className={cn(
+                "shrink-0 cursor-default rounded px-1 py-0.5 text-[11px] leading-none transition-colors hover:bg-muted",
+                i === 0
+                  ? "font-medium text-primary hover:text-primary"
+                  : "hover:text-foreground",
+              )}
+            >
+              <span className="max-w-40 truncate">{seg.label}</span>
+            </button>
+          </Fragment>
+        ))}
+      </div>
+      {closable && (
+        <button
+          type="button"
+          title="关闭窗格"
+          onClick={onClose}
+          className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
 }
 
 // memo：App 层的 handlers 已 useMemo 稳定，传输进度等无关状态更新不再重渲染窗格
@@ -167,7 +231,15 @@ const PaneView = memo(function PaneView({
           isActive={isActive}
         />
       ) : (
-        <FileList
+        <>
+          <PaneHead
+            path={pane.path}
+            isActive={isActive}
+            closable={highlight}
+            onNavigate={(p) => h.onNavigatePane(pane.id, p)}
+            onClose={() => h.onClosePane(pane.id)}
+          />
+          <FileList
         paneId={pane.id}
         entries={pane.entries}
         sortKey={pane.sortKey}
@@ -237,8 +309,9 @@ dragTarget={dragOver?.targetPaneId === pane.id}
         onCompareSelected={h.onCompareSelected}
         onViewPatch={h.onViewPatch}
         diffMarks={diffMarks}
-        linkBadge={linkBadge}
-      />
+          linkBadge={linkBadge}
+        />
+        </>
       )}
       {showProperties && <PropertiesBar entries={pane.entries} selection={pane.selection} />}
     </div>
