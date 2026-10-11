@@ -818,9 +818,10 @@ test.describe("23. 拖拽上传 + 全部标签下拉（v0.22.2）", () => {
     const panel = page.locator("[data-tabs-list-panel]");
     await expect(panel).toBeVisible();
     await expect(panel.locator("[data-tabs-list-item]")).toHaveCount(2);
-    // 点击第 1 项 → 切回第一个标签（活动标签高亮 bg-background）
+    // 点击第 1 项 → 切回第一个标签（活动标签由 data-tab-active 标记，
+    // 不用 CSS 类名断言，避免配色改动带崩测试）
     await panel.locator('[data-tabs-list-item="0"]').click();
-    await expect(page.locator('[data-tab-idx="0"]')).toHaveClass(/bg-background/);
+    await expect(page.locator('[data-tab-idx="0"]')).toHaveAttribute("data-tab-active", "true");
     // 再次打开，从下拉里关闭第 2 个标签
     await page.locator("[data-tabs-list]").click();
     await panel.locator('[data-tabs-close="1"]').click();

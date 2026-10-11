@@ -257,6 +257,7 @@ export function TabBar({
               role="button"
               tabIndex={0}
               data-tab-idx={idx}
+              data-tab-active={active ? "true" : undefined}
               onClick={() => onSelect(tab.id)}
               onDoubleClick={() => startRename(tab)}
               onContextMenu={(e) => openTabMenu(e, idx)}
