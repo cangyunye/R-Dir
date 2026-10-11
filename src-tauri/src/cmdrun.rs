@@ -9,34 +9,52 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
 /// 补全条目：命令名 + 命中的可执行文件完整路径
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandSuggest {
     pub name: String,
     pub path: String,
 }
 
-/// 扫描缓存条目
-#[derive(Clone)]
+/// 扫描缓存条目（含持久化：落盘到配置目录，启动直接加载免重扫）
+#[derive(Serialize, Deserialize, Clone)]
 struct ExecEntry {
     name: String,
     path: String,
 }
 
-/// 可执行扫描缓存（AppState 持有；目录签名或 TTL 失效时重建）
+/// 索引文件（app_config_dir/cmd-index.json）：{ 版本, PATH 签名, 条目 }。
+/// 启动时加载：签名与当前 PATH 一致 → 直接可用；不一致 → 后台重建并回写。
+#[derive(Serialize, Deserialize)]
+struct PersistedIndex {
+    version: u32,
+    sig: u64,
+    items: Vec<ExecEntry>,
+}
+
+/// 索引格式版本（结构变更时递增，旧文件按未命中处理）
+const INDEX_VERSION: u32 = 1;
+/// 索引文件名（app_config_dir 下）
+pub const INDEX_FILE: &str = "cmd-index.json";
+
+/// 可执行扫描缓存（AppState 持有 Arc；目录签名或 TTL 失效时**后台线程**重建，
+/// 重建期间返回现有条目——补全命令本身永远不阻塞主线程）
 #[derive(Default)]
 pub struct ExecCache {
     items: Vec<ExecEntry>,
     sig: u64,
     built_at: Option<Instant>,
+    rebuilding: bool,
 }
 
-/// 缓存有效期：PATH 不变也定期重扫（新安装的工具最迟 10 分钟后可见）
+/// 缓存有效期：PATH 不变也定期后台重扫（新安装的工具最迟 10 分钟后可见）
 const CACHE_TTL: Duration = Duration::from_secs(600);
 /// 单次补全返回上限
 const MAX_SUGGEST: usize = 20;
@@ -130,21 +148,37 @@ fn dedupe_key(name: &str) -> String {
     }
 }
 
-/// 扫描单目录：可执行文件 → 条目；同名命令先到先得（与 shell PATH 顺序一致）
+/// 扫描单目录：可执行文件 → 条目；同名命令先到先得（与 shell PATH 顺序一致）。
+/// Windows 用目录枚举自带的 file_type（零额外系统调用，实测全量 ~30ms），
+/// 仅软链接回退 metadata 跟随目标；unix 需 metadata 看执行位（homebrew bin 多为软链）。
 fn scan_dir(dir: &std::path::Path, out: &mut Vec<ExecEntry>, seen: &mut HashSet<String>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
+    #[cfg(windows)]
+    let exts = pathext_list();
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         if name.is_empty() || name.starts_with('.') {
             continue;
         }
-        // metadata 跟随软链（homebrew bin 里多为指向 Cellar 的链接）
-        let Ok(md) = std::fs::metadata(e.path()) else {
-            continue;
+        #[cfg(windows)]
+        let is_file = match e.file_type() {
+            Ok(ft) if ft.is_symlink() => {
+                std::fs::metadata(e.path()).map(|m| m.is_file()).unwrap_or(false)
+            }
+            Ok(ft) => ft.is_file(),
+            Err(_) => false,
+        } && pathext_match_list(&name, &exts);
+        #[cfg(not(windows))]
+        let is_file = {
+            // metadata 跟随软链（homebrew bin 里多为指向 Cellar 的链接）
+            match std::fs::metadata(e.path()) {
+                Ok(md) => is_executable(&md, &name),
+                Err(_) => false,
+            }
         };
-        if !is_executable(&md, &name) {
+        if !is_file {
             continue;
         }
         if seen.insert(dedupe_key(&name)) {
@@ -167,17 +201,96 @@ fn rebuild(dirs: &[PathBuf]) -> Vec<ExecEntry> {
     out
 }
 
-/// 取缓存条目（必要时重建）；加锁由调用方负责
-fn cached_items(cache: &mut ExecCache) -> &[ExecEntry] {
-    let dirs = search_dirs();
-    let sig = dir_sig(&dirs);
-    let fresh = cache.built_at.is_some_and(|t| t.elapsed() < CACHE_TTL);
-    if !fresh || cache.sig != sig {
-        cache.items = rebuild(&dirs);
-        cache.sig = sig;
-        cache.built_at = Some(Instant::now());
+/// 索引文件路径（app_config_dir/cmd-index.json）；解析失败返回 None（仅内存缓存）
+pub fn index_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join(INDEX_FILE))
+}
+
+/// 从磁盘加载索引：文件存在、格式正确、PATH 签名与当前一致才采用。
+/// 返回是否填充了缓存。
+fn load_index(cache: &mut ExecCache, file: &Option<PathBuf>) -> bool {
+    let Some(p) = file else { return false };
+    let Ok(s) = std::fs::read_to_string(p) else {
+        return false;
+    };
+    let Ok(idx) = serde_json::from_str::<PersistedIndex>(&s) else {
+        return false;
+    };
+    if idx.version != INDEX_VERSION || idx.sig != dir_sig(&search_dirs()) {
+        return false;
     }
-    &cache.items
+    cache.items = idx.items;
+    cache.sig = idx.sig;
+    cache.built_at = Some(Instant::now());
+    true
+}
+
+/// 写索引文件（tmp + rename 原子替换；失败静默——持久化只是加速，不可靠也能跑）
+fn save_index(cache: &ExecCache, file: &Option<PathBuf>) {
+    let Some(p) = file else { return };
+    let idx = PersistedIndex {
+        version: INDEX_VERSION,
+        sig: cache.sig,
+        items: cache.items.clone(),
+    };
+    if let Ok(s) = serde_json::to_string(&idx) {
+        let tmp = p.with_extension("json.tmp");
+        if std::fs::write(&tmp, s).is_ok() {
+            let _ = std::fs::rename(&tmp, p);
+        }
+    }
+}
+
+/// 重建收尾：写入缓存 + 落盘（调用方已持锁）
+fn commit_rebuild(cache: &mut ExecCache, dirs: &[PathBuf], file: &Option<PathBuf>) {
+    cache.items = rebuild(dirs);
+    cache.sig = dir_sig(dirs);
+    cache.built_at = Some(Instant::now());
+    cache.rebuilding = false;
+    save_index(cache, file);
+}
+
+/// 确保缓存新鲜：不新鲜且没有进行中的重建 → 交给后台线程重建，立即返回。
+/// 重建期间补全返回现有条目（可能为空/过期），永不阻塞调用方（主线程）。
+fn ensure_fresh(cache: &Arc<Mutex<ExecCache>>, file: &Option<PathBuf>) {
+    let Ok(mut c) = cache.lock() else { return };
+    let dirs_sig = dir_sig(&search_dirs());
+    let fresh = c.built_at.is_some_and(|t| t.elapsed() < CACHE_TTL);
+    if (fresh && c.sig == dirs_sig) || c.rebuilding {
+        return;
+    }
+    c.rebuilding = true;
+    drop(c);
+    let arc = Arc::clone(cache);
+    let file = file.clone();
+    std::thread::spawn(move || {
+        let dirs = search_dirs();
+        let Ok(mut c) = arc.lock() else { return };
+        commit_rebuild(&mut c, &dirs, &file);
+    });
+}
+
+/// 启动预热（后台线程）：优先加载磁盘索引（签名匹配 → 免扫描立即可用）；
+/// 不匹配/无文件 → 就地重建并回写。cmdrun 插件停用时跳过（补全本来就不出结果）。
+pub fn warm_cache_async(cache: Arc<Mutex<ExecCache>>, file: Option<PathBuf>, enabled: bool) {
+    if !enabled {
+        return;
+    }
+    std::thread::spawn(move || {
+        let dirs = search_dirs();
+        let Ok(mut c) = cache.lock() else { return };
+        if c.built_at.is_some() {
+            return; // 已有内存缓存（理论不可达，防御重复预热）
+        }
+        if load_index(&mut c, &file) {
+            return;
+        }
+        c.rebuilding = true;
+        commit_rebuild(&mut c, &dirs, &file);
+    });
 }
 
 /// 纯函数：条目按前缀过滤（大小写不敏感）+ 截断
@@ -249,17 +362,23 @@ pub fn tokenize(s: &str) -> Vec<String> {
     out
 }
 
-/// 地址栏命令补全：PATH 可执行前缀匹配（停用插件时返回空）
+/// 地址栏命令补全：PATH 可执行前缀匹配（停用插件时返回空）。
+/// 缓存不新鲜时只触发后台重建并立即返回现有条目——本命令永不阻塞主线程。
 #[tauri::command]
 pub fn complete_commands(
+    app: tauri::AppHandle,
     prefix: String,
     state: tauri::State<'_, crate::AppState>,
 ) -> Vec<CommandSuggest> {
     if !crate::plugins::plugin_enabled(&state.plugins, "cmdrun") {
         return Vec::new();
     }
-    let mut cache = state.cmd_cache.lock().unwrap();
-    filter_entries(cached_items(&mut cache), &prefix, MAX_SUGGEST)
+    let file = index_path(&app);
+    ensure_fresh(&state.cmd_cache, &file);
+    match state.cmd_cache.lock() {
+        Ok(c) => filter_entries(&c.items, &prefix, MAX_SUGGEST),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// 地址栏命令执行：在指定目录新开终端窗口执行用户命令串。
@@ -291,6 +410,44 @@ pub fn run_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 索引落盘往返：save → load 采用；签名不匹配（PATH 变更）→ 拒绝采用
+    #[test]
+    fn persist_roundtrip_and_sig_mismatch() {
+        let dir = std::env::temp_dir().join(format!("rdir-cmdtest-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = Some(dir.join("cmd-index.json"));
+
+        let mut c = ExecCache::default();
+        c.items = vec![ExecEntry {
+            name: "git.exe".into(),
+            path: "C:/tools/git.exe".into(),
+        }];
+        c.sig = dir_sig(&search_dirs());
+        c.built_at = Some(Instant::now());
+        save_index(&c, &file);
+
+        let mut loaded = ExecCache::default();
+        assert!(load_index(&mut loaded, &file), "签名一致应采用");
+        assert_eq!(loaded.items.len(), 1);
+        assert_eq!(loaded.items[0].name, "git.exe");
+
+        let bad = PersistedIndex {
+            version: INDEX_VERSION,
+            sig: 12345,
+            items: Vec::new(),
+        };
+        std::fs::write(
+            file.as_ref().unwrap(),
+            serde_json::to_string(&bad).unwrap(),
+        )
+        .unwrap();
+        let mut rejected = ExecCache::default();
+        assert!(!load_index(&mut rejected, &file), "签名不匹配应拒绝");
+        assert!(rejected.items.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn tokenize_splits_on_whitespace() {

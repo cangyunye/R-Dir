@@ -51,8 +51,9 @@ pub struct AppState {
     pub transfer_cancels: std::sync::Mutex<
         std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>,
     >,
-    /// 地址栏命令：PATH 可执行扫描缓存（v0.22.0）
-    pub cmd_cache: std::sync::Mutex<cmdrun::ExecCache>,
+    /// 地址栏命令：PATH 可执行扫描缓存（v0.22.0；Arc 供后台重建线程与启动预热共享，
+    /// 重建不阻塞补全调用——见 cmdrun::ensure_fresh）
+    pub cmd_cache: std::sync::Arc<std::sync::Mutex<cmdrun::ExecCache>>,
     /// v0.23 应用退出守卫：前端确认对话框放行后置位，下一次 ExitRequested 不再拦截
     pub exit_allowed: std::sync::atomic::AtomicBool,
     /// 窗口分享管理器（v0.7，feature = "share"）
@@ -1559,6 +1560,13 @@ pub fn run() {
             set_app_user_model_id("com.rfm.app");
             let state = app.state::<AppState>();
             plugins::init(app.handle(), &state.plugins);
+            // 命令补全索引预热（后台线程）：优先加载磁盘缓存，PATH 签名变化才重扫，
+            // 避免首次在地址栏输入裸词时全量扫描 PATH 卡住主线程
+            cmdrun::warm_cache_async(
+                state.cmd_cache.clone(),
+                cmdrun::index_path(app.handle()),
+                plugins::plugin_enabled(&state.plugins, "cmdrun"),
+            );
             Ok(())
         });
     // 注意：tauri Builder::invoke_handler 是“覆盖”语义（后调覆盖先调），
