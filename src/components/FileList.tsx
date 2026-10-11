@@ -732,8 +732,8 @@ export function FileList({
       }}
       className={cn(
         "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background transition-shadow",
-        isActive ? "shadow-[inset_0_0_0_1px_hsl(var(--ring)/0.35)]" : "shadow-[inset_0_0_0_1px_transparent]",
-        dragTarget && "shadow-[inset_0_0_0_2px_hsl(var(--primary)/0.7)]",
+        isActive ? "shadow-[inset_0_0_0_1px_var(--ring)]" : "shadow-[inset_0_0_0_1px_transparent]",
+        dragTarget && "shadow-[inset_0_0_0_2px_color-mix(in_oklch,var(--primary)_70%,transparent)]",
       )}
       onClick={onActivate}
       onContextMenu={onActivate}
@@ -775,7 +775,7 @@ export function FileList({
       )}
       {/* v0.8 缩放百分比提示：面板中央，1.2s 淡出 */}
       {zoomTip !== null && (
-        <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-primary/25 bg-background/85 px-4 py-1.5 text-xl font-semibold text-primary shadow-lg backdrop-blur-sm">
+        <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-primary/25 bg-background/85 px-4 py-1.5 text-xl font-semibold text-primary shadow-elevate backdrop-blur-sm">
           {Math.round(zoomTip * 100)}%
         </div>
       )}
@@ -790,14 +790,14 @@ export function FileList({
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {/* 表头 */}
       <div
-        className="grid shrink-0 items-center border-b bg-muted/30 text-xs font-medium text-muted-foreground select-none"
+        className="grid shrink-0 items-center border-b bg-background text-xs font-medium text-muted-foreground select-none"
         style={{ gridTemplateColumns: COLUMNS.map((c) => c.width).join(" ") }}
       >
         {COLUMNS.map((col) => (
           <button
             key={col.label}
             className={cn(
-              "flex h-7 items-center gap-1 px-2 text-left hover:bg-muted/60",
+              "flex h-7 items-center gap-1 px-2 text-left hover:bg-muted",
               col.key === null && "cursor-default hover:bg-transparent",
             )}
             onClick={() => col.key && onSort(col.key)}
@@ -973,7 +973,7 @@ export function FileList({
                   }}
                   className={cn(
                     "grid cursor-default items-center border-b text-[13px]",
-                    selected ? "bg-primary/10" : "hover:bg-muted/40",
+                    selected ? "bg-selected" : "hover:bg-muted",
                     isPrimary && "ring-1 ring-inset ring-primary/40",
                   )}
                   style={{
@@ -1004,6 +1004,7 @@ export function FileList({
                           "truncate",
                           entry.is_dir && "font-medium",
                           entry.is_symlink && "italic",
+                          selected && "font-semibold",
                         )}
                         title={entry.name}
                       >
@@ -1261,7 +1262,7 @@ export function FileList({
       {/* 拖拽幽灵标签（常驻 DOM，拖动时显示） */}
       <div
         ref={ghostRef}
-        className="pointer-events-none fixed left-0 top-0 z-50 rounded-md border bg-popover px-2 py-1 text-xs opacity-0 shadow-lg"
+        className="pointer-events-none fixed left-0 top-0 z-50 rounded-md border bg-popover px-2 py-1 text-xs opacity-0 shadow-elevate"
         style={{ transform: "translate(0px, 0px)" }}
       >
         复制 0 项

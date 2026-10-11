@@ -251,8 +251,8 @@ export function SettingsDialog({
                 className={cn(
                   "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors",
                   section === sec.id
-                    ? "bg-primary/10 font-medium text-primary"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                    ? "bg-accent font-medium text-accent-foreground"
+                    : "text-muted-foreground hover:bg-muted",
                 )}
               >
                 {sec.icon}

@@ -116,8 +116,8 @@ function ResultRow({
           onClick={onActivate}
           onDoubleClick={() => (isDir ? onReveal(path, true) : onOpenFile(path))}
           className={cn(
-            "w-full text-left hover:bg-accent/60",
-            selected && "bg-primary/10",
+            "w-full text-left hover:bg-muted",
+            selected && "bg-selected",
           )}
           title={path}
         >
@@ -323,7 +323,7 @@ export function SearchPanel({
   }, [cQuery, dir, recursive, caseSensitive]);
 
   return (
-    <div className="flex w-64 shrink-0 flex-col border-l bg-muted/15">
+    <div className="flex w-64 shrink-0 flex-col border-l bg-sidebar">
       {/* 标题 + 关闭（冻结的搜索目标目录随面板展示） */}
       <div className="flex items-center gap-1 px-2 pt-2">
         <span className="shrink-0 text-[11px] font-medium text-muted-foreground">搜索</span>
@@ -408,7 +408,7 @@ export function SearchPanel({
                   className={cn(
                     "flex items-center gap-0.5 rounded border px-1 py-0.5",
                     caseSensitive
-                      ? "border-primary/60 bg-primary/10 text-primary"
+                      ? "border-transparent bg-accent text-accent-foreground"
                       : "border-border text-muted-foreground",
                   )}
                   title="区分大小写"

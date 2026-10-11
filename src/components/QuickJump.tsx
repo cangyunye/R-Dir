@@ -44,7 +44,7 @@ function Highlight({
             key={i}
             className={cn(
               "font-semibold",
-              active ? "text-primary-foreground underline" : "text-primary",
+              active ? "text-accent-foreground underline" : "text-primary",
             )}
           >
             {ch}
@@ -99,7 +99,7 @@ export function QuickJump({
       <div
         data-quickjump=""
         onMouseDown={(e) => e.stopPropagation()}
-        className="absolute left-1/2 top-[6%] flex w-[min(560px,calc(100%-2rem))] -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-white/15 bg-background/70 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl backdrop-saturate-150 animate-in fade-in-0 zoom-in-95 slide-in-from-top-2 duration-150 motion-reduce:animate-none dark:border-white/10 dark:ring-white/10"
+        className="absolute left-1/2 top-[6%] flex w-[min(560px,calc(100%-2rem))] -translate-x-1/2 flex-col overflow-hidden rounded-xl border bg-popover shadow-elevate animate-in fade-in-0 zoom-in-95 slide-in-from-top-2 duration-150 motion-reduce:animate-none"
       >
         <div
           className="flex items-center gap-2 border-b border-border/50 px-3 py-2"
@@ -160,7 +160,7 @@ export function QuickJump({
                   }}
                   className={cn(
                     "flex cursor-default items-center gap-2 px-3 py-1.5 text-[13px]",
-                    active ? "bg-primary/90 text-primary-foreground" : "hover:bg-muted/60",
+                    active ? "bg-accent text-accent-foreground" : "hover:bg-muted",
                   )}
                 >
                   <FileIcon entry={row.entry} size={16} className="shrink-0" />

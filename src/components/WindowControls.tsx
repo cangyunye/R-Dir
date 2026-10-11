@@ -52,7 +52,7 @@ export function WindowControls() {
       <button
         title="关闭"
         onClick={() => void getCurrentWindow().close().catch(() => {})}
-        className="flex w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-red-600 hover:text-white"
+        className="flex w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
       >
         <X className="h-4 w-4" />
       </button>

@@ -186,7 +186,7 @@ export function Sidebar({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    <ScrollArea className="w-44 shrink-0 border-r bg-muted/20">
+    <ScrollArea className="w-44 shrink-0 border-r bg-sidebar">
       <div className="flex flex-col gap-4 p-2">
         {/* 快速访问（内置 + 用户自定义） */}
         <div>
@@ -206,7 +206,7 @@ export function Sidebar({
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
                   isActive(currentPath, item.path)
                     ? "bg-accent text-accent-foreground"
-                    : "text-foreground hover:bg-accent/50",
+                    : "text-foreground hover:bg-muted",
                 )}
               >
                 <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -232,10 +232,10 @@ export function Sidebar({
                         "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",
                         isActive(currentPath, p)
                           ? "bg-accent text-accent-foreground"
-                          : "text-foreground hover:bg-accent/50",
+                          : "text-foreground hover:bg-muted",
                       )}
                     >
-                      <Star className="h-4 w-4 shrink-0 text-amber-500/90" />
+                      <Star className="h-4 w-4 shrink-0 text-folder" />
                       <span className="min-w-0 truncate">{name}</span>
                     </button>
                     <button
@@ -275,8 +275,8 @@ export function Sidebar({
                   active
                     ? "bg-accent text-accent-foreground"
                     : count === 0
-                      ? "text-muted-foreground/70 hover:bg-accent/50"
-                      : "text-foreground hover:bg-accent/50",
+                      ? "text-muted-foreground/70 hover:bg-muted"
+                      : "text-foreground hover:bg-muted",
                 )}
               >
                 <span
@@ -308,7 +308,7 @@ export function Sidebar({
                 "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
                 isActive(currentPath, vol.path)
                   ? "bg-accent text-accent-foreground"
-                  : "text-foreground hover:bg-accent/50",
+                  : "text-foreground hover:bg-muted",
               )}
             >
                 <HardDrive className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -356,13 +356,13 @@ export function Sidebar({
                       "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",
                       isActive(currentPath, `sftp://${sv.user}@${sv.host}:${sv.port}/`)
                         ? "bg-accent text-accent-foreground"
-                        : "text-foreground hover:bg-accent/50",
+                        : "text-foreground hover:bg-muted",
                     )}
                   >
                     <span
                       className={cn(
                         "h-2 w-2 shrink-0 rounded-full",
-                        sv.connected ? "bg-emerald-500" : "bg-muted-foreground/40",
+                        sv.connected ? "bg-ok" : "bg-muted-foreground/40",
                       )}
                     />
                     <span className="min-w-0 truncate">{sv.name}</span>
@@ -387,7 +387,7 @@ export function Sidebar({
       {ctxMenu && (
         <div
           ref={ctxRef}
-          className="fixed z-50 min-w-[180px] rounded-md border bg-popover p-1 text-sm shadow-md"
+          className="fixed z-50 min-w-[180px] rounded-md border bg-popover p-1 text-sm shadow-elevate"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onMouseDown={(e) => e.stopPropagation()}
         >

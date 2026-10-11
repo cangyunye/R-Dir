@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   ChevronLeft,
@@ -25,12 +25,6 @@ import { completeCommands, completePath, resolvePath, runCommand, statPath } fro
 import { firstCommandToken, hasScheme, isCommandToken } from "@/lib/cmdline";
 import { splitPathSegments } from "@/lib/path-segments";
 import type { CommandSuggest } from "@/lib/types";
-
-/** 彩虹分段配色：固定色相环（低透明度着色，明暗主题自适应） */
-function segmentHue(i: number): number {
-  const HUES = [4, 28, 46, 88, 160, 200, 236, 276, 320];
-  return HUES[i % HUES.length];
-}
 
 export function Toolbar({
   canBack,
@@ -243,7 +237,7 @@ export function Toolbar({
   }, [draft, cwd, onNavigate, onRevealFile, closeCompletion, tryRunCommand]);
 
   return (
-    <div className="flex h-10 items-center gap-1 border-b bg-muted/20 px-2">
+    <div className="flex h-10 items-center gap-1 border-b bg-background px-2">
       <Button
         variant="ghost"
         size="icon"
@@ -378,7 +372,7 @@ export function Toolbar({
         </div>
 
         {compOpen && (completions.length > 0 || cmds.length > 0) && (
-          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-md border bg-popover p-1 shadow-lg">
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-md border bg-popover p-1 shadow-elevate">
             {completions.map((p, i) => (
               <button
                 key={p}
@@ -433,7 +427,7 @@ export function Toolbar({
         {pathError && (
           <div
             data-path-error=""
-            className="absolute left-0 right-0 top-full z-50 mt-1 rounded-md border border-destructive/40 bg-popover px-2 py-1.5 text-[11px] text-destructive shadow-lg"
+            className="absolute left-0 right-0 top-full z-50 mt-1 rounded-md border border-destructive/40 bg-popover px-2 py-1.5 text-[11px] text-destructive shadow-elevate"
           >
             {pathError}
           </div>
@@ -446,7 +440,7 @@ export function Toolbar({
           <div data-pathbar="" className="relative ml-1 flex min-w-0 flex-1 items-center">
             <div
               ref={crumbsRef}
-              className="flex min-w-0 flex-1 items-center overflow-x-auto py-0.5 [scrollbar-width:thin]"
+              className="flex h-7 min-w-0 flex-1 items-center gap-0.5 overflow-x-auto rounded-md border border-input bg-card px-1 [scrollbar-width:thin]"
               onMouseDown={(e) => {
                 // 点击空白处进入编辑模式（分段点击由按钮自身处理）
                 if (e.target === e.currentTarget) enterEdit();
@@ -454,34 +448,30 @@ export function Toolbar({
             >
               {splitPathSegments(path).map((seg, i, arr) => {
                 const isLast = i === arr.length - 1;
-                const hue = segmentHue(i);
                 return (
-                  <button
-                    key={`${seg.target}:${i}`}
-                    type="button"
-                    title={seg.target}
-                    onClick={() => {
-                      // 末段是单选文件时，点击回到其所在目录
-                      onNavigate(isLast && leafIsFile ? seg.target.slice(0, seg.target.length - seg.label.length - 1) || seg.target : seg.target);
-                      setEditing(false);
-                    }}
-                    className={cn(
-                      "mx-px flex h-[22px] shrink-0 cursor-default items-center text-[11px] leading-none text-foreground/90",
-                      "transition-[filter] hover:brightness-110",
-                      isLast && "font-semibold text-foreground",
+                  <Fragment key={`${seg.target}:${i}`}>
+                    {i > 0 && (
+                      <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/70" />
                     )}
-                    style={{
-                      background: `hsl(${hue} 65% 55% / ${isLast ? 0.3 : 0.16})`,
-                      clipPath:
+                    <button
+                      type="button"
+                      title={seg.target}
+                      onClick={() => {
+                        // 末段是单选文件时，点击回到其所在目录
+                        onNavigate(isLast && leafIsFile ? seg.target.slice(0, seg.target.length - seg.label.length - 1) || seg.target : seg.target);
+                        setEditing(false);
+                      }}
+                      className={cn(
+                        "flex h-5 shrink-0 cursor-default items-center rounded px-1.5 text-[11px] leading-none transition-colors",
                         i === 0
-                          ? "polygon(0 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 0 100%)"
-                          : "polygon(0 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 0 100%, 7px 50%)",
-                      paddingLeft: i === 0 ? 10 : 15,
-                      paddingRight: 10,
-                    }}
-                  >
-                    <span className="max-w-44 truncate">{seg.label}</span>
-                  </button>
+                          ? "bg-accent text-accent-foreground"
+                          : "text-foreground/90 hover:bg-muted",
+                        isLast && "font-semibold",
+                      )}
+                    >
+                      <span className="max-w-44 truncate">{seg.label}</span>
+                    </button>
+                  </Fragment>
                 );
               })}
             </div>

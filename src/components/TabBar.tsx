@@ -207,7 +207,7 @@ export function TabBar({
       onDoubleClick={(e) => {
         if (e.target === e.currentTarget) toggleWindowMaximize();
       }}
-      className="relative flex items-end gap-0.5 border-b bg-muted/20 px-1.5 pt-1 select-none"
+      className="relative flex items-end gap-0.5 border-b bg-sidebar px-1.5 pt-1 select-none"
     >
       {/* v0.22.2：标签区可收缩（Excel 式）——空间不足时标题截断为省略号而不挤走
           右侧按钮；全部标签经「全部标签」下拉访问。空白处仍属标题栏拖动区 */}
@@ -245,7 +245,7 @@ export function TabBar({
             className={cn(
               "group flex h-7 min-w-0 max-w-52 shrink cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-xs",
               tab.id === activeId
-                ? "border-border bg-background text-foreground"
+                ? "border-border bg-background text-foreground shadow-[inset_0_2px_0_var(--primary)]"
                 : "border-transparent text-muted-foreground hover:bg-muted/50",
               dragging && dragRef.current?.idx === idx && "opacity-60 ring-1 ring-inset ring-primary/50",
             )}
@@ -337,7 +337,7 @@ export function TabBar({
         <div
           ref={menuRef}
           data-tab-menu=""
-          className="absolute z-50 min-w-[168px] rounded-md border bg-popover p-1 text-sm shadow-md"
+          className="absolute z-50 min-w-[168px] rounded-md border bg-popover p-1 text-sm shadow-elevate"
           style={{ left: menu.left, top: menu.top }}
           onMouseDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
@@ -444,7 +444,7 @@ export function TabBar({
         <div
           ref={listRef}
           data-tabs-list-panel=""
-          className="absolute z-50 max-h-64 min-w-[220px] overflow-y-auto rounded-md border bg-popover p-1 text-sm shadow-md"
+          className="absolute z-50 max-h-64 min-w-[220px] overflow-y-auto rounded-md border bg-popover p-1 text-sm shadow-elevate"
           style={{ left: listPos.left, top: listPos.top }}
           onMouseDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}

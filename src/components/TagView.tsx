@@ -114,7 +114,7 @@ export function TagView({
     <div
       className={cn(
         "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
-        isActive && "shadow-[inset_0_0_0_1px_hsl(var(--ring)/0.35)]",
+        isActive && "shadow-[inset_0_0_0_1px_var(--ring)]",
       )}
     >
       {/* 横幅 */}

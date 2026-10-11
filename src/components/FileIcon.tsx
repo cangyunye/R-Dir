@@ -31,7 +31,7 @@ const SLIDE_EXTS = new Set(["ppt", "pptx", "odp"]);
 const TEXT_EXTS = new Set(["txt", "md", "log", "ini", "conf", "env", "gitignore"]);
 
 export function fileKindClass(entry: FileEntry): string {
-  if (entry.is_dir) return "text-amber-500";
+  if (entry.is_dir) return "text-folder";
   const ext = entry.extension;
   if (IMAGE_EXTS.has(ext)) return "text-emerald-600";
   if (VIDEO_EXTS.has(ext)) return "text-rose-500";

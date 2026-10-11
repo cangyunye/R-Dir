@@ -73,7 +73,7 @@ export function StatusBar({
           />
         </div>
       )}
-      <div className="flex h-6 items-center justify-between gap-4 border-t bg-muted/30 px-3 text-[11px] text-muted-foreground select-none">
+      <div className="flex h-6 items-center justify-between gap-4 border-t bg-sidebar px-3 text-[11px] text-muted-foreground select-none">
         <div className="flex min-w-0 items-center gap-2">
           {transfer ? (
             <span className="flex items-center gap-1 truncate">
