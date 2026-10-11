@@ -109,6 +109,7 @@ import {
   setSplitRatio,
 } from "@/lib/paneTree";
 import { ACTIONS, bindingOf, findAction, isMac, keyEventString } from "@/lib/keymap";
+import { getNativeDragOut, probeNativeDragOut, setNativeDragOut } from "@/lib/native-drag";
 import { fetchLatestRelease, REPO_URL } from "@/lib/update";
 import {
   loadCustomQuick,
@@ -2382,6 +2383,13 @@ useEffect(() => {
   // 下一次点击才触发投放。这里在 window 上接原生事件流修复：
   // dragover 实时驱动提示条与投放光标；drop 完成投放；dragend 兜底（Tauri
   // dragDropEnabled 拦截 DOM drop 的平台）；drag 越出窗口（OS 拖出）不触发内部投放。
+  // v0.24.x Windows 原生拖出（CF_HDROP）回落本窗口时事件里只有 Files 没有
+  // x-rdir-dnd 标记，用 nativeDragOut 会话标记区分"自己发起的拖拽"与"资源管理器拖入"。
+  // Windows 原生拖出能力探测：drag_out_files([]) 空列表 no-op。jsdom / e2e-mock（未桩化
+  // 命令 throw）/ 纯浏览器预览都会失败 → 回落 HTML5 拖出；真实 Windows 应用成功 → dragstart 走原生
+  useEffect(() => {
+    void probeNativeDragOut();
+  }, []);
   const droppedAtRef = useRef(0);
   useEffect(() => {
     const DND_TYPE = "application/x-rdir-dnd";
@@ -2400,7 +2408,26 @@ useEffect(() => {
       leftWindow = false;
     };
     const onDragOver = (e: DragEvent) => {
-      if (!isInternal(e)) return;
+      const native = getNativeDragOut();
+      if (native) {
+        if (!e.dataTransfer?.types.includes("Files")) return;
+        e.preventDefault(); // 投放光标从 🚫 变为 copy/move；非窗格区域松手也不至于让 WebView2 打开文件
+        const op: "copy" | "move" = e.altKey ? "move" : "copy";
+        e.dataTransfer.dropEffect = op === "move" ? "move" : "copy";
+        lastPos = { x: e.clientX, y: e.clientY };
+        const target = paneAt(e.clientX, e.clientY);
+        if (target !== lastTarget || op !== lastOp) {
+          lastTarget = target;
+          lastOp = op;
+          setDragOver(target !== null ? { targetPaneId: target, op } : null);
+        }
+        return;
+      }
+      if (!isInternal(e)) {
+        // 资源管理器拖入的文件：只拦默认行为（不拦的话 drop 会让 WebView2 直接导航打开文件），不做应用内投放
+        if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+        return;
+      }
       seenInternal = true;
       e.preventDefault(); // 投放光标从 🚫 变为 copy/move
       const op: "copy" | "move" = e.altKey ? "move" : "copy";
@@ -2421,7 +2448,21 @@ useEffect(() => {
       lastTarget = null;
     };
     const onDrop = (e: DragEvent) => {
-      if (!isInternal(e)) return;
+      const native = getNativeDragOut();
+      if (native) {
+        e.preventDefault();
+        finishDrag();
+        const target = paneAt(e.clientX, e.clientY);
+        if (target !== null && target !== native.sourcePaneId && native.paths.length > 0) {
+          void doDropPaths(native.sourcePaneId, native.paths, e.altKey ? "move" : "copy", target);
+        }
+        setNativeDragOut(null);
+        return;
+      }
+      if (!isInternal(e)) {
+        if (e.dataTransfer?.types.includes("Files")) e.preventDefault(); // 别让 WebView2 导航打开文件
+        return;
+      }
       e.preventDefault();
       droppedAtRef.current = Date.now();
       finishDrag();

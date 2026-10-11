@@ -63,6 +63,17 @@ objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = "5"
+# 原生拖出（拖到浏览器上传/资源管理器）：OLE DoDragDrop + Shell 数据对象（CF_HDROP）
+# windows-core 直接依赖：#[implement] 宏展开的代码引用 windows_core 路径
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_Ole",
+  "Win32_System_SystemServices",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+] }
+windows-core = "0.62"
 
 # 复制快速路径的系统调用（macOS clonefile / Linux FICLONE ioctl）
 [target.'cfg(unix)'.dependencies]

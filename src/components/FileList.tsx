@@ -56,6 +56,10 @@ import { TagDots } from "@/components/TagView";
 import { MenuGroup } from "@/components/MenuGroup";
 import { openersForEntry } from "@/lib/openers";
 import { rank } from "@/lib/fuzzy";
+import { isMac } from "@/lib/keymap";
+import { isSftpPath, isHttpPath } from "@/lib/sftp-path";
+import { dragOutFiles } from "@/lib/api";
+import { canNativeDragOut, setNativeDragOut } from "@/lib/native-drag";
 import { QuickJump, type QuickJumpRow } from "@/components/QuickJump";
 
 /** 快速定位结果窗口大小。 */
@@ -487,6 +491,11 @@ export function FileList({
     window.removeEventListener("mouseup", onWinMouseUp);
     document.body.style.userSelect = "";
     dragActiveRef.current = false;
+    // dragstart 接管（原生/HTML5 拖拽）时手势可能已画出橡皮筋选框或留下按压候选——
+    // 不清掉的话选框滞留整个拖拽过程，下一次空白框选还会被过期 dragCandRef 劫持成幽灵拖拽
+    dragCandRef.current = null;
+    rubberRef.current = null;
+    setRubber(null);
     lastTargetRef.current = null;
     lastOpRef.current = "copy";
     if (ghostRef.current) ghostRef.current.style.opacity = "0";
@@ -843,7 +852,7 @@ export function FileList({
       >
         {dragTarget && (
           <div className="sticky top-0 z-10 flex h-6 items-center justify-center bg-primary/10 text-[11px] font-medium text-primary">
-            {dragOp === "copy" ? "复制到此处（按住 Option 切换移动）" : "移动到此处"}
+            {dragOp === "copy" ? `复制到此处（按住 ${isMac ? "Option" : "Alt"} 切换移动）` : "移动到此处"}
           </div>
         )}
         {/* v0.8.3 虚拟滚动：只渲染可视区 +/- buffer 行 */}
@@ -872,10 +881,35 @@ export function FileList({
                   data-path={entry.path}
                   draggable="true"
                   onDragStart={(e) => {
-                    // 跨应用拖出：把文件路径传给 OS
-                    // 选中文本为空时拖当前项，否则拖选中项
                     const paths = selectionSet.has(entry.path) ? selection : [entry.path];
-                    // text/uri-list: file:///abs/path
+                    // 原生拖出仅支持真实文件系统路径；sftp://、http:// 等虚拟路径走 HTML5 文本拖拽
+                    // （应用内投放两条链路都由 App 的 window 监听完成，目标窗格类型无关）
+                    const canNative =
+                      canNativeDragOut() && paths.every((p) => !isSftpPath(p) && !isHttpPath(p));
+                    if (canNative) {
+                      // Windows 原生拖出（OLE 拖拽携带 CF_HDROP 文件引用）：浏览器上传
+                      // 投放区 / 资源管理器只认真实文件，HTML5 的 text/uri-list 文本
+                      // 格式一律被拒。preventDefault 后 HTML5 拖拽不会发生，拖回落到
+                      // 本窗口的 dragover/drop 由 App 的 window 监听按 nativeDragOut 会话驱动
+                      console.info("[rdir] drag-out: 原生 CF_HDROP 拖拽", paths.length, "项");
+                      e.preventDefault();
+                      cleanupDrag();
+                      setNativeDragOut({ sourcePaneId: paneId, paths });
+                      dragOutFiles(paths)
+                        .catch((err) => console.warn("[rdir] 原生拖出失败：", err))
+                        .finally(() => {
+                          setNativeDragOut(null);
+                          // 拖出窗外松手时 JS 收不到 drop/dragend，在此兜底清提示条
+                          cleanupDrag();
+                        });
+                      return;
+                    }
+                    console.info(
+                      "[rdir] drag-out: HTML5 文本拖拽",
+                      canNativeDragOut() ? "（sftp/http 路径）" : "（原生拖出不可用）",
+                    );
+                    // macOS / 非 Tauri 环境：HTML5 拖出（WKWebView 把 file:// uri-list 映射为 NSURL）
+                    // 选中文本为空时拖当前项，否则拖选中项
                     const uriList = paths.map(p => 'file://' + p.replace(/\\/g, '/')).join('\r\n');
                     e.dataTransfer.setData('text/uri-list', uriList);
                     e.dataTransfer.setData('text/plain', paths.join('\n'));

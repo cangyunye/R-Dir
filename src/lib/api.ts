@@ -79,6 +79,14 @@ export const clipboardWriteFiles = (paths: string[]) =>
 export const clipboardReadFiles = () =>
   invoke<string[]>("clipboard_read_files");
 
+/**
+ * 发起原生 OLE 拖拽（Windows：CF_HDROP 文件引用），阻塞到松手，
+ * 返回最终投放效果（0 = 无目标/取消，1 = copy，2 = move，4 = shortcut）。
+ * 空列表为 no-op（前端启动时的能力探测）。
+ */
+export const dragOutFiles = (paths: string[]) =>
+  invoke<number>("drag_out_files", { paths });
+
 export const renameEntry = (path: string, newName: string) =>
   invoke<string>("rename_entry", { path, newName });
 

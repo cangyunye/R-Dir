@@ -2,6 +2,7 @@ mod clipboard;
 mod cmdrun;
 mod compress;
 mod diff;
+mod drag_out;
 mod find;
 mod fs_ops;
 mod ops;
@@ -1441,6 +1442,14 @@ fn clipboard_read_files() -> Result<Vec<String>, String> {
     clipboard::read_file_list()
 }
 
+/// 原生拖出（Windows：OLE 拖拽携带 CF_HDROP，浏览器上传投放区/资源管理器可接收）。
+/// 阻塞到松手，返回投放效果（0 = 无目标/取消，1 = copy，2 = move，4 = 快捷方式）；
+/// 空列表为 no-op（前端启动时的能力探测）。必须保持同步命令以在主线程执行。
+#[tauri::command]
+fn drag_out_files(paths: Vec<String>) -> Result<u32, String> {
+    drag_out::start(paths)
+}
+
 /// 重命名条目，返回新路径。
 #[tauri::command]
 async fn rename_entry(path: String, new_name: String) -> Result<String, String> {
@@ -1574,6 +1583,7 @@ pub fn run() {
         move_entries_plan,
         clipboard_write_files,
         clipboard_read_files,
+        drag_out_files,
         rename_entry,
         delete_entries,
         permanent_delete_entries,

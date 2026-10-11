@@ -32,3 +32,6 @@ test-results
 # Isolated worktrees / agent scratch
 .worktrees/
 .superpowers/
+
+# 拖拽上传测试服务的接收目录（tools/upload_server.py）
+tools/uploads/
