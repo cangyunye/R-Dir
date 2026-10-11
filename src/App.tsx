@@ -1709,8 +1709,15 @@ useEffect(() => {
 
   // ==================== v0.18 同步浏览 + 实时比对面板 ====================
 
-  /** 链接状态（不随会话保存，D8）：开启即记录两侧锚点，随导航实时重算比对 */
-  const [syncLink, setSyncLink] = useState<SyncLink | null>(null);
+  /** 链接状态（不随会话保存，D8）：开启即记录两侧锚点，随导航实时重算比对。
+   *  v0.25.1 按标签保存：每个标签各自开关、互不影响，活动标签的链接驱动
+   *  镜像/比对/状态栏/结果模态。旧实现是全局单例 + tabId 锚定，切到其他标签后
+   *  开关仍显示开启但实际只对原标签生效（显示与行为不一致）。 */
+  const [syncLinks, setSyncLinks] = useState<Record<number, SyncLink>>({});
+  const syncLinksRef = useRef<Record<number, SyncLink>>({});
+  syncLinksRef.current = syncLinks;
+  /** 活动标签的链接 */
+  const syncLink = activeTab ? (syncLinks[activeTab.id] ?? null) : null;
   const syncLinkRef = useRef<SyncLink | null>(null);
   syncLinkRef.current = syncLink;
   /** 实时比对运行状态（seq 丢弃过期响应） */
@@ -1724,15 +1731,26 @@ useEffect(() => {
   /** v0.18.2 结果模态开关(状态栏段/Ctrl+Shift+X) */
   const [syncResultsOpen, setSyncResultsOpen] = useState(false);
 
-  /** v0.18 开启/断开同步比对：要求活动标签恰好两个路径窗格（排除 http 与标签视图） */
+  /** 断开指定标签的链接（toggle 的 off 分支与结果模态「断开链接」共用） */
+  const unlinkSync = useCallback((tabId: number) => {
+    setSyncLinks((ls) => {
+      if (!(tabId in ls)) return ls;
+      const next = { ...ls };
+      delete next[tabId];
+      return next;
+    });
+  }, []);
+
+  /** v0.18 开启/断开同步比对：要求活动标签恰好两个路径窗格（排除 http 与标签视图）。
+   *  v0.25.1 只影响当前标签，其他标签各自的链接不动 */
   const toggleSyncDiff = useCallback(() => {
-    if (syncLinkRef.current) {
-      setSyncLink(null);
+    if (!activeTab) return;
+    if (syncLinksRef.current[activeTab.id]) {
+      unlinkSync(activeTab.id);
       // v0.21.1 开/断开同步比对给中央提示（状态栏 pill 太小，新用户难发现）
       flashClipboardTip("已断开同步比对", 1200);
       return;
     }
-    if (!activeTab) return;
     const panes = collectPaneIds(activeTab.root)
       .map((id) => activeTab.panes[id])
       .filter((p): p is NonNullable<typeof p> => !!p && !p.tagId && !isHttpPath(p.path));
@@ -1740,18 +1758,21 @@ useEffect(() => {
       showError("同步比对需要当前标签恰好两个路径窗格");
       return;
     }
-    setSyncLink({
-      tabId: activeTab.id,
-      leftPaneId: panes[0].id,
-      rightPaneId: panes[1].id,
-      leftRoot: panes[0].path,
-      rightRoot: panes[1].path,
-    });
+    setSyncLinks((ls) => ({
+      ...ls,
+      [activeTab.id]: {
+        tabId: activeTab.id,
+        leftPaneId: panes[0].id,
+        rightPaneId: panes[1].id,
+        leftRoot: panes[0].path,
+        rightRoot: panes[1].path,
+      },
+    }));
     flashClipboardTip(
       `已开启同步比对：左右窗格联动导航（${isMac ? "⌘+⇧+X" : "Ctrl+Shift+X"} 查看结果）`,
       2400,
     );
-  }, [activeTab, showError, flashClipboardTip]);
+  }, [activeTab, unlinkSync, showError, flashClipboardTip]);
 
   /** 链接的两个窗格与其对齐状态（窗格被关闭时为 null，由下方 effect 断链） */
   const syncPanes = (() => {
@@ -1763,14 +1784,19 @@ useEffect(() => {
     return { tab, lp, rp, alignment: computeAlignment(syncLink, lp.path, rp.path) };
   })();
 
-  /** 任一链接窗格不存在（关窗格/关标签）→ 自动断链 */
+  /** 任一标签的链接窗格不存在（关窗格/关标签）→ 移除该标签的链接 */
   useEffect(() => {
-    if (!syncLink) return;
-    const exists = (pid: number) => tabs.some((t) => pid in t.panes);
-    if (!exists(syncLink.leftPaneId) || !exists(syncLink.rightPaneId)) {
-      setSyncLink(null);
-    }
-  }, [tabs, syncLink]);
+    const stale = Object.values(syncLinks).filter((l) => {
+      const t = tabs.find((x) => x.id === l.tabId);
+      return !t || !(l.leftPaneId in t.panes) || !(l.rightPaneId in t.panes);
+    });
+    if (stale.length === 0) return;
+    setSyncLinks((ls) => {
+      const next = { ...ls };
+      for (const l of stale) delete next[l.tabId];
+      return next;
+    });
+  }, [tabs, syncLinks]);
   /** 断链时取消在途比对、清空面板状态并关闭结果模态 */
   useEffect(() => {
     if (syncLink) return;
@@ -1817,19 +1843,11 @@ useEffect(() => {
     const candidate = mirrorPath(link, otherSide, rel);
     const otherPath = otherSide === "left" ? lp.path : rp.path;
     if (candidate === otherPath) return; // 已对齐（镜像回声自检，防自激）
-    void listDir(candidate)
-      .then((entries) => {
-        const cur = syncLinkRef.current;
-        if (
-          !cur ||
-          cur.leftRoot !== link.leftRoot ||
-          cur.rightRoot !== link.rightRoot ||
-          cur.leftPaneId !== link.leftPaneId ||
-          cur.rightPaneId !== link.rightPaneId
-        ) {
-          return;
-        }
-        const otherId = otherSide === "left" ? link.leftPaneId : link.rightPaneId;
+      void listDir(candidate)
+        .then((entries) => {
+          // 该标签的链接已被断开/交换/改锚（对象身份变化）→ 丢弃过期跟随
+          if (syncLinksRef.current[link.tabId] !== link) return;
+          const otherId = otherSide === "left" ? link.leftPaneId : link.rightPaneId;
         setTabs((ts) =>
           ts.map((t) => {
             if (!(otherId in t.panes)) return t;
@@ -1957,12 +1975,18 @@ useEffect(() => {
   const swapSyncSides = useCallback(() => {
     const link = syncLinkRef.current;
     if (!link) return;
-    setSyncLink({
-      tabId: link.tabId,
-      leftPaneId: link.rightPaneId,
-      rightPaneId: link.leftPaneId,
-      leftRoot: link.rightRoot,
-      rightRoot: link.leftRoot,
+    setSyncLinks((ls) => {
+      if (ls[link.tabId] !== link) return ls;
+      return {
+        ...ls,
+        [link.tabId]: {
+          tabId: link.tabId,
+          leftPaneId: link.rightPaneId,
+          rightPaneId: link.leftPaneId,
+          leftRoot: link.rightRoot,
+          rightRoot: link.leftRoot,
+        },
+      };
     });
   }, []);
 
@@ -3472,7 +3496,7 @@ useEffect(() => {
           onSwap={swapSyncSides}
           onCreateMissing={() => void createMissingAndEnter()}
           onReturnAlign={returnToAlignment}
-          onUnlink={() => setSyncLink(null)}
+          onUnlink={() => unlinkSync(activeId)}
           onCompare={(l, r, name) => openTextDiff(l, r, name, name)}
           onClose={() => setSyncResultsOpen(false)}
         />
