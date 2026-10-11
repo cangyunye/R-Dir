@@ -1,12 +1,21 @@
 ﻿import { Fragment, memo, useEffect, useState } from "react";
-import { ChevronRight, Loader2, X } from "lucide-react";
+import { ChevronRight, Copy, Info, Loader2, SquarePlus, TerminalSquare, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { hasScheme } from "@/lib/cmdline";
 import { splitPathSegments } from "@/lib/path-segments";
 import type { PaneNode, PaneState, SplitDir } from "@/lib/types";
 import type { FileTags } from "@/lib/persist";
 import { FileList, type RenameState } from "@/components/FileList";
 import { PropertiesBar } from "@/components/PropertiesBar";
 import { TagView } from "@/components/TagView";
+import { MenuGroup } from "@/components/MenuGroup";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import type { TagNames } from "@/lib/persist";
 import type { FileEntry, SortKey } from "@/lib/types";
 import type { DiffMarkMap, LinkSide } from "@/lib/sync-link";
@@ -100,60 +109,143 @@ export interface PaneHandlers {
 
 /** v0.25 窗格头：每窗格独立的路径面包屑（对齐升级原型 pane-head）。
  * 点击段在该窗格内导航并激活；非活动窗格整条弱化；多窗格时右侧有关闭钮。
- * 标签虚拟视图不渲染（TagView 自带带退出按钮的横幅）。 */
+ * 标签虚拟视图不渲染（TagView 自带带退出按钮的横幅）。
+ * v0.25.1 右键菜单：空白处=窗格级操作（复制路径/终端/属性/关闭窗格），
+ * 分段上=该层级操作（新标签页打开/复制此层级路径）。 */
 function PaneHead({
   path,
   isActive,
   closable,
   onNavigate,
   onClose,
+  handlers: h,
+  paneId,
 }: {
   path: string;
   isActive: boolean;
   closable: boolean;
   onNavigate: (path: string) => void;
   onClose: () => void;
+  handlers: PaneHandlers;
+  paneId: number;
 }) {
   const segs = splitPathSegments(path);
+  // 右键落在哪个分段上（null=空白处）；菜单关闭时复位
+  const [segmentTarget, setSegmentTarget] = useState<string | null>(null);
+  const [termOpen, setTermOpen] = useState(false);
+  const seg = splitPathSegments(segmentTarget ?? path).at(-1);
   return (
-    <div
-      data-pane-head=""
-      className={cn(
-        "flex h-7 shrink-0 items-center gap-0.5 border-b bg-sidebar px-1.5 text-xs select-none",
-        isActive ? "text-foreground" : "text-muted-foreground",
-      )}
+    <ContextMenu
+      onOpenChange={(open) => {
+        if (!open) {
+          setSegmentTarget(null);
+          setTermOpen(false);
+        }
+      }}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
-        {segs.map((seg, i) => (
-          <Fragment key={`${seg.target}:${i}`}>
-            {i > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/60" />}
+      <ContextMenuTrigger asChild>
+        <div
+          data-pane-head=""
+          className={cn(
+            "flex h-7 shrink-0 items-center gap-0.5 border-b bg-sidebar px-1.5 text-xs select-none",
+            isActive ? "text-foreground" : "text-muted-foreground",
+          )}
+          onContextMenu={(e) => {
+            // 右键落在分段上记录该层路径，其余（padding/空白/按钮）清空。
+            // 挂在根节点：padding 区的右键不经过面包屑容器，挂里面会残留上次状态
+            setSegmentTarget(
+              (e.target as HTMLElement).closest("[data-panehead-seg]")?.getAttribute("data-panehead-seg") ?? null,
+            );
+          }}
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
+            {segs.map((s, i) => (
+              <Fragment key={`${s.target}:${i}`}>
+                {i > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/60" />}
+                <button
+                  type="button"
+                  data-panehead-seg={s.target}
+                  title={s.target}
+                  onClick={() => onNavigate(s.target)}
+                  className={cn(
+                    "shrink-0 cursor-default rounded px-1 py-0.5 text-[11px] leading-none transition-colors hover:bg-muted",
+                    i === 0
+                      ? "font-medium text-primary hover:text-primary"
+                      : "hover:text-foreground",
+                  )}
+                >
+                  <span className="max-w-40 truncate">{s.label}</span>
+                </button>
+              </Fragment>
+            ))}
+          </div>
+          {closable && (
             <button
               type="button"
-              title={seg.target}
-              onClick={() => onNavigate(seg.target)}
-              className={cn(
-                "shrink-0 cursor-default rounded px-1 py-0.5 text-[11px] leading-none transition-colors hover:bg-muted",
-                i === 0
-                  ? "font-medium text-primary hover:text-primary"
-                  : "hover:text-foreground",
-              )}
+              title="关闭窗格"
+              onClick={onClose}
+              className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
-              <span className="max-w-40 truncate">{seg.label}</span>
+              <X className="h-3 w-3" />
             </button>
-          </Fragment>
-        ))}
-      </div>
-      {closable && (
-        <button
-          type="button"
-          title="关闭窗格"
-          onClick={onClose}
-          className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <X className="h-3 w-3" />
-        </button>
-      )}
-    </div>
+          )}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="min-w-48" collisionPadding={10}>
+        {segmentTarget && seg && (
+          <>
+            <ContextMenuItem onClick={() => h.onMiddleOpen(paneId, segmentTarget)}>
+              <SquarePlus className="mr-2 h-4 w-4" /> 在新标签页打开「{seg.label}」
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => h.onCopyPath(segmentTarget)}>
+              <Copy className="mr-2 h-4 w-4" /> 复制此层级路径
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
+        <ContextMenuItem onClick={() => h.onCopyPath(path)}>
+          <Copy className="mr-2 h-4 w-4" /> 复制窗格路径
+        </ContextMenuItem>
+        {h.pluginTerminal && h.shells.length > 0 && (
+          <>
+            <MenuGroup
+              id="terminal"
+              label="在此窗格打开终端"
+              icon={<TerminalSquare className="mr-2 h-4 w-4" />}
+              expanded={termOpen}
+              onToggle={() => setTermOpen((v) => !v)}
+            >
+              {h.shells.map((sh) => (
+                <ContextMenuItem
+                  key={sh.id}
+                  disabled={!sh.detected}
+                  onClick={() => h.onOpenTerminal(sh.id, path)}
+                >
+                  <span className="flex-1">{sh.name}</span>
+                  {!sh.detected && (
+                    <span className="text-[10px] text-muted-foreground">未安装</span>
+                  )}
+                </ContextMenuItem>
+              ))}
+            </MenuGroup>
+            <ContextMenuSeparator />
+          </>
+        )}
+        {!hasScheme(path) && (
+          <ContextMenuItem onClick={() => h.onPropertiesDir(path)}>
+            <Info className="mr-2 h-4 w-4" /> 属性（当前目录）
+          </ContextMenuItem>
+        )}
+        {closable && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={onClose}>
+              <X className="mr-2 h-4 w-4" /> 关闭窗格
+            </ContextMenuItem>
+          </>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -238,6 +330,8 @@ const PaneView = memo(function PaneView({
             closable={highlight}
             onNavigate={(p) => h.onNavigatePane(pane.id, p)}
             onClose={() => h.onClosePane(pane.id)}
+            handlers={h}
+            paneId={pane.id}
           />
           <FileList
         paneId={pane.id}

@@ -2541,6 +2541,20 @@ useEffect(() => {
     };
   }, [doDropPaths]);
 
+  // 右键兜底：桌面应用里 WebView2 默认菜单只允许出现在文本编辑上下文。
+  // 组件自己的右键菜单（Radix / 手写）已 preventDefault → defaultPrevented 放行；
+  // input/textarea/contenteditable 放行系统复制粘贴菜单；其余区域一律屏蔽。
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      if (e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("input, textarea, [contenteditable]")) return;
+      e.preventDefault();
+    };
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => window.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+
   const startRename = useCallback((paneId: number, entry: FileEntry) => {
     setRenaming({ paneId, path: entry.path, name: entry.name });
   }, []);
@@ -3380,6 +3394,7 @@ useEffect(() => {
         onForward={goForward}
         onUp={goUp}
         onRefresh={refresh}
+        onPropertiesDir={handlers.onPropertiesDir}
         path={addressPath}
         cwd={activePane?.path ?? homePath}
         isSftpConnected={isSftpConnectedPath}
@@ -3427,6 +3442,11 @@ useEffect(() => {
           onSftpDisconnect={sftp.disconnect}
           onSftpEdit={sftp.editServer}
           onSftpRemove={sftp.removeServer}
+          shells={shells}
+          pluginTerminal={plugins?.find((p) => p.id === "terminal")?.enabled ?? true}
+          onOpenTerminal={handleOpenTerminal}
+          onPropertiesDir={handlers.onPropertiesDir}
+          onCopyPath={copyPath}
         />
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">

@@ -4,8 +4,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Clipboard,
+  ClipboardPaste,
   CornerUpLeft,
   Folder,
+  Info,
   Link2,
   Pencil,
   RefreshCw,
@@ -18,6 +20,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
@@ -78,6 +81,7 @@ export function Toolbar({
   onRevealFile,
   trailing,
   isSftpConnected,
+  onPropertiesDir,
 }: {
   canBack: boolean;
   canForward: boolean;
@@ -102,6 +106,8 @@ export function Toolbar({
   trailing?: React.ReactNode;
   /** v0.25 scheme 门控：sftp:// 输入仅在对应服务器已连接时做远程补全 */
   isSftpConnected?: (path: string) => boolean;
+  /** v0.25.1 右键菜单「属性（当前目录）」：本地路径时展示 */
+  onPropertiesDir?: (dir: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [pathError, setPathError] = useState<string | null>(null);
@@ -487,7 +493,9 @@ export function Toolbar({
               ref={crumbsRef}
               className="flex min-w-0 flex-1 items-center overflow-x-auto py-0.5 [scrollbar-width:thin]"
               onMouseDown={(e) => {
-                // 点击空白处进入编辑模式（分段点击由按钮自身处理）
+                // 点击空白处进入编辑模式（分段点击由按钮自身处理）；
+                // 仅左键——右键要留给右键菜单，否则 mousedown 先切编辑态把菜单卸载掉
+                if (e.button !== 0) return;
                 if (e.target === e.currentTarget) enterEdit();
               }}
             >
@@ -529,7 +537,9 @@ export function Toolbar({
               data-pathbar-edit=""
               onMouseDown={(e) => {
                 // 用 mousedown 而非 click：click 是组合事件，若中途 React 重渲染替换了
-                // 按钮节点，click 不会派发，导致偶发点铅笔没反应
+                // 按钮节点，click 不会派发，导致偶发点铅笔没反应；
+                // 仅左键——右键留给地址栏右键菜单
+                if (e.button !== 0) return;
                 e.preventDefault();
                 enterEdit();
               }}
@@ -551,6 +561,35 @@ export function Toolbar({
           >
             <Clipboard className="mr-2 h-4 w-4" /> 复制路径
           </ContextMenuItem>
+          <ContextMenuItem
+            onClick={() => {
+              void navigator.clipboard
+                ?.readText()
+                .then((text) => {
+                  const v = text.trim();
+                  if (v) {
+                    onNavigate(v);
+                    setEditing(false);
+                  }
+                })
+                .catch(() => {});
+            }}
+          >
+            <ClipboardPaste className="mr-2 h-4 w-4" /> 粘贴并转到
+          </ContextMenuItem>
+          {!hasScheme(path) && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={onRefresh}>
+                <RefreshCw className="mr-2 h-4 w-4" /> 刷新
+              </ContextMenuItem>
+              {onPropertiesDir && (
+                <ContextMenuItem onClick={() => onPropertiesDir(cwd)}>
+                  <Info className="mr-2 h-4 w-4" /> 属性（当前目录）
+                </ContextMenuItem>
+              )}
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
       )}

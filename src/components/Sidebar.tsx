@@ -1,25 +1,41 @@
 import {
+  Copy,
   Download,
   Film,
   Folder,
   FolderHeart,
+  FolderOpen,
   HardDrive,
   Home,
   Image,
+  Info,
   MonitorSmartphone,
   Music,
   Pencil,
+  Plug,
+  SquarePlus,
   Star,
   Tag,
+  TerminalSquare,
   Trash2,
   Unplug,
   User,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { hasScheme } from "@/lib/cmdline";
 import type { QuickAccessItem, SftpServerView, VolumeInfo } from "@/lib/types";
+import type { ShellItem } from "@/lib/openerApi";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { MenuGroup } from "@/components/MenuGroup";
 import { TAG_DEFS, tagLabel, type TagNames } from "@/lib/persist";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -86,6 +102,11 @@ export function Sidebar({
   onSftpDisconnect,
   onSftpEdit,
   onSftpRemove,
+  shells,
+  pluginTerminal = true,
+  onOpenTerminal,
+  onPropertiesDir,
+  onCopyPath,
 }: {
   quickAccess: QuickAccessItem[];
   volumes: VolumeInfo[];
@@ -93,7 +114,7 @@ export function Sidebar({
   onNavigate: (path: string) => void;
   /** 鼠标中键点击项：在新建标签页中打开该路径 */
   onMiddleOpen: (path: string) => void;
-  /** 用户自定义快捷访问（右键文件 → 添加到快捷访问） */
+  /** 用户自定义快捷访问（右键文件 → 添加到快速访问） */
   customQuick: string[];
   onRemoveQuick: (path: string) => void;
   /** 每个标签下的文件数量 */
@@ -108,8 +129,16 @@ export function Sidebar({
   onSftpDisconnect: (id: string) => void;
   onSftpEdit: (sv: SftpServerView) => void;
   onSftpRemove: (sv: SftpServerView) => void;
+  /** v0.25.1 侧边栏右键菜单：在此路径打开终端（可选，缺省不展示终端组） */
+  shells?: ShellItem[];
+  pluginTerminal?: boolean;
+  onOpenTerminal?: (shellId: string, path: string) => void;
+  onPropertiesDir?: (dir: string) => void;
+  onCopyPath?: (path: string) => void;
 }) {
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; sv: SftpServerView } | null>(null);
+  const copyPath = onCopyPath ?? ((p: string) => navigator.clipboard?.writeText(p).catch(() => {}));
+  // 右键菜单里「在此打开终端」折叠组的展开状态（同一时刻只有一个菜单打开）
+  const [expandedMenu, setExpandedMenu] = useState<string | null>(null);
   // 标签重命名（v0.6.4 右键侧边栏标签）
   const [renameTagOpen, setRenameTagOpen] = useState(false);
   const [renameTagId, setRenameTagId] = useState<string>("red");
@@ -126,20 +155,65 @@ export function Sidebar({
     onRenameTag(renameTagId, label);
     setRenameTagOpen(false);
   };
-  const ctxRef = useRef<HTMLDivElement | null>(null);
-
-  // 点击外部 / 滚动时关闭右键菜单
-  useEffect(() => {
-    if (!ctxMenu) return;
-    const close = () => setCtxMenu(null);
-    window.addEventListener("mousedown", close);
-    window.addEventListener("blur", close);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("blur", close);
-    };
-  }, [ctxMenu]);
   const groupedServers = groupServers(sftpServers);
+
+  // 侧边栏路径项共用的右键菜单段：终端折叠组（词汇表与文件列表空白菜单一致）
+  const termGroup = (path: string) =>
+    pluginTerminal && shells && shells.length > 0 && onOpenTerminal ? (
+      <>
+        <MenuGroup
+          id="terminal"
+          label="在此打开终端"
+          icon={<TerminalSquare className="mr-2 h-4 w-4" />}
+          expanded={expandedMenu === "terminal"}
+          onToggle={(id) => setExpandedMenu(expandedMenu === id ? null : id)}
+        >
+          {shells.map((sh) => (
+            <ContextMenuItem
+              key={sh.id}
+              disabled={!sh.detected}
+              onClick={() => onOpenTerminal(sh.id, path)}
+            >
+              <span className="flex-1">{sh.name}</span>
+              {!sh.detected && (
+                <span className="text-[10px] text-muted-foreground">未安装</span>
+              )}
+            </ContextMenuItem>
+          ))}
+        </MenuGroup>
+        <ContextMenuSeparator />
+      </>
+    ) : null;
+
+  // 路径项通用菜单：打开 / 新标签页打开 / 复制路径 / 终端 / 属性（自定义项多一个移除）
+  const dirMenuItems = (path: string, remove?: () => void) => (
+    <>
+      <ContextMenuItem onClick={() => onNavigate(path)}>
+        <FolderOpen className="mr-2 h-4 w-4" /> 打开
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => onMiddleOpen(path)}>
+        <SquarePlus className="mr-2 h-4 w-4" /> 在新标签页打开
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={() => copyPath(path)}>
+        <Copy className="mr-2 h-4 w-4" /> 复制路径
+      </ContextMenuItem>
+      {!hasScheme(path) && termGroup(path)}
+      {onPropertiesDir && !hasScheme(path) && (
+        <ContextMenuItem onClick={() => onPropertiesDir(path)}>
+          <Info className="mr-2 h-4 w-4" /> 属性
+        </ContextMenuItem>
+      )}
+      {remove && (
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" onClick={remove}>
+            <X className="mr-2 h-4 w-4" /> 从快速访问移除
+          </ContextMenuItem>
+        </>
+      )}
+    </>
+  );
   return (
     <>
     <Dialog open={renameTagOpen} onOpenChange={setRenameTagOpen}>
@@ -197,21 +271,27 @@ export function Sidebar({
             const Icon = QUICK_ICONS[item.key] ?? Folder;
             const label = QUICK_LABELS[item.key] ?? item.path;
             return (
-              <button
-                key={item.key}
-                onClick={() => onNavigate(item.path)}
-                onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(item.path))}
-                title={item.path}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
-                  isActive(currentPath, item.path)
-                    ? "bg-accent text-accent-foreground"
-                    : "text-foreground hover:bg-muted",
-                )}
-              >
-                <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 truncate">{label}</span>
-              </button>
+              <ContextMenu key={item.key} onOpenChange={(o) => !o && setExpandedMenu(null)}>
+                <ContextMenuTrigger asChild>
+                  <button
+                    onClick={() => onNavigate(item.path)}
+                    onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(item.path))}
+                    title={item.path}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
+                      isActive(currentPath, item.path)
+                        ? "bg-accent text-accent-foreground"
+                        : "text-foreground hover:bg-muted",
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">{label}</span>
+                  </button>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="min-w-44" collisionPadding={10}>
+                  {dirMenuItems(item.path)}
+                </ContextMenuContent>
+              </ContextMenu>
             );
           })}
           {/* 用户自定义快捷访问（在快捷访问下方） */}
@@ -224,20 +304,27 @@ export function Sidebar({
                     key={p}
                     className="group relative"
                   >
-                    <button
-                      onClick={() => onNavigate(p)}
-                      onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(p))}
-                      title={p}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",
-                        isActive(currentPath, p)
-                          ? "bg-accent text-accent-foreground"
-                          : "text-foreground hover:bg-muted",
-                      )}
-                    >
-                      <Star className="h-4 w-4 shrink-0 text-folder" />
-                      <span className="min-w-0 truncate">{name}</span>
-                    </button>
+                    <ContextMenu onOpenChange={(o) => !o && setExpandedMenu(null)}>
+                      <ContextMenuTrigger asChild>
+                        <button
+                          onClick={() => onNavigate(p)}
+                          onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(p))}
+                          title={p}
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",
+                            isActive(currentPath, p)
+                              ? "bg-accent text-accent-foreground"
+                              : "text-foreground hover:bg-muted",
+                          )}
+                        >
+                          <Star className="h-4 w-4 shrink-0 text-folder" />
+                          <span className="min-w-0 truncate">{name}</span>
+                        </button>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="min-w-44" collisionPadding={10}>
+                        {dirMenuItems(p, () => onRemoveQuick(p))}
+                      </ContextMenuContent>
+                    </ContextMenu>
                     <button
                       onClick={() => onRemoveQuick(p)}
                       title="从快捷访问移除"
@@ -261,35 +348,43 @@ export function Sidebar({
             const count = tagCounts[t.id] ?? 0;
             const active = activeTagId === t.id;
             return (
-              <button
-                key={t.id}
-                onClick={() => onSelectTag(t.id)}
-                onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(`tags://${t.id}`))}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  openRenameTag(t.id);
-                }}
-                title={`查看「${tagLabel(t, tagNames)}」标签的文件${count > 0 ? `（${count} 项）` : ""}`}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
-                  active
-                    ? "bg-accent text-accent-foreground"
-                    : count === 0
-                      ? "text-muted-foreground/70 hover:bg-muted"
-                      : "text-foreground hover:bg-muted",
-                )}
-              >
-                <span
-                  className="h-3 w-3 shrink-0 rounded-full"
-                  style={{ background: t.color }}
-                />
-                <span className="min-w-0 flex-1 truncate">{tagLabel(t, tagNames)}</span>
-                {count > 0 && (
-                  <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">
-                    {count}
-                  </span>
-                )}
-              </button>
+              <ContextMenu key={t.id}>
+                <ContextMenuTrigger asChild>
+                  <button
+                    onClick={() => onSelectTag(t.id)}
+                    onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(`tags://${t.id}`))}
+                    title={`查看「${tagLabel(t, tagNames)}」标签的文件${count > 0 ? `（${count} 项）` : ""}`}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
+                      active
+                        ? "bg-accent text-accent-foreground"
+                        : count === 0
+                          ? "text-muted-foreground/70 hover:bg-muted"
+                          : "text-foreground hover:bg-muted",
+                    )}
+                  >
+                    <span
+                      className="h-3 w-3 shrink-0 rounded-full"
+                      style={{ background: t.color }}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{tagLabel(t, tagNames)}</span>
+                    {count > 0 && (
+                      <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="min-w-44" collisionPadding={10}>
+                  <ContextMenuItem onClick={() => onMiddleOpen(`tags://${t.id}`)}>
+                    <SquarePlus className="mr-2 h-4 w-4" /> 在新标签页打开
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onClick={() => openRenameTag(t.id)}>
+                    <Pencil className="mr-2 h-4 w-4" /> 重命名…
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             );
           })}
         </div>
@@ -299,21 +394,27 @@ export function Sidebar({
             <HardDrive className="h-3.5 w-3.5" /> 磁盘 / 卷
           </div>
           {volumes.map((vol) => (
-            <button
-              key={vol.path}
-              onClick={() => onNavigate(vol.path)}
-              onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(vol.path))}
-              title={vol.path}
-              className={cn(
-                "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
-                isActive(currentPath, vol.path)
-                  ? "bg-accent text-accent-foreground"
-                  : "text-foreground hover:bg-muted",
-              )}
-            >
-                <HardDrive className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 truncate">{vol.name}</span>
-            </button>
+            <ContextMenu key={vol.path} onOpenChange={(o) => !o && setExpandedMenu(null)}>
+              <ContextMenuTrigger asChild>
+                <button
+                  onClick={() => onNavigate(vol.path)}
+                  onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(vol.path))}
+                  title={vol.path}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
+                    isActive(currentPath, vol.path)
+                      ? "bg-accent text-accent-foreground"
+                      : "text-foreground hover:bg-muted",
+                  )}
+                >
+                    <HardDrive className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">{vol.name}</span>
+                </button>
+              </ContextMenuTrigger>
+              <ContextMenuContent className="min-w-44" collisionPadding={10}>
+                {dirMenuItems(vol.path)}
+              </ContextMenuContent>
+            </ContextMenu>
           ))}
           {volumes.length === 0 && (
             <div className="px-2 py-1 text-xs text-muted-foreground">未检测到磁盘</div>
@@ -340,33 +441,51 @@ export function Sidebar({
               </div>
               {servers.map((sv) => (
                 <div key={sv.id} className="group relative">
-                  <button
-                    onClick={() => onSftpOpen(sv)}
-                    onAuxClick={(e) =>
-                      e.button === 1 &&
-                      (e.preventDefault(), onMiddleOpen(`sftp://${sv.user}@${sv.host}:${sv.port}/`))
-                    }
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setCtxMenu({ x: e.clientX, y: e.clientY, sv });
-                    }}
-                    title={`${sv.user}@${sv.host}:${sv.port}${sv.connected ? "（已连接）" : ""} · 右键编辑`}
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",
-                      isActive(currentPath, `sftp://${sv.user}@${sv.host}:${sv.port}/`)
-                        ? "bg-accent text-accent-foreground"
-                        : "text-foreground hover:bg-muted",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "h-2 w-2 shrink-0 rounded-full",
-                        sv.connected ? "bg-ok" : "bg-muted-foreground/40",
+                  <ContextMenu onOpenChange={(o) => !o && setExpandedMenu(null)}>
+                    <ContextMenuTrigger asChild>
+                      <button
+                        onClick={() => onSftpOpen(sv)}
+                        onAuxClick={(e) =>
+                          e.button === 1 &&
+                          (e.preventDefault(), onMiddleOpen(`sftp://${sv.user}@${sv.host}:${sv.port}/`))
+                        }
+                        title={`${sv.user}@${sv.host}:${sv.port}${sv.connected ? "（已连接）" : ""} · 右键操作`}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",
+                          isActive(currentPath, `sftp://${sv.user}@${sv.host}:${sv.port}/`)
+                            ? "bg-accent text-accent-foreground"
+                            : "text-foreground hover:bg-muted",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "h-2 w-2 shrink-0 rounded-full",
+                            sv.connected ? "bg-ok" : "bg-muted-foreground/40",
+                          )}
+                        />
+                        <span className="min-w-0 truncate">{sv.name}</span>
+                      </button>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="min-w-44" collisionPadding={10}>
+                      {!sv.connected && (
+                        <ContextMenuItem onClick={() => onSftpOpen(sv)}>
+                          <Plug className="mr-2 h-4 w-4" /> 连接
+                        </ContextMenuItem>
                       )}
-                    />
-                    <span className="min-w-0 truncate">{sv.name}</span>
-                  </button>
+                      {sv.connected && (
+                        <ContextMenuItem onClick={() => onSftpDisconnect(sv.id)}>
+                          <Unplug className="mr-2 h-4 w-4" /> 断开连接
+                        </ContextMenuItem>
+                      )}
+                      <ContextMenuItem onClick={() => onSftpEdit(sv)}>
+                        <Pencil className="mr-2 h-4 w-4" /> 编辑…
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem variant="destructive" onClick={() => onSftpRemove(sv)}>
+                        <Trash2 className="mr-2 h-4 w-4" /> 删除服务器配置
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
                   {sv.connected && (
                     <button
                       onClick={() => onSftpDisconnect(sv.id)}
@@ -382,46 +501,6 @@ export function Sidebar({
           ))}
         </div>
       </div>
-
-      {/* 远程服务器右键菜单：编辑 / 断开 / 删除配置 */}
-      {ctxMenu && (
-        <div
-          ref={ctxRef}
-          className="fixed z-50 min-w-[180px] rounded-md border bg-popover p-1 text-sm shadow-elevate"
-          style={{ left: ctxMenu.x, top: ctxMenu.y }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <button
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent"
-            onClick={() => {
-              onSftpEdit(ctxMenu.sv);
-              setCtxMenu(null);
-            }}
-          >
-            <Pencil className="h-3.5 w-3.5 text-muted-foreground" /> 编辑…
-          </button>
-          {ctxMenu.sv.connected && (
-            <button
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent"
-              onClick={() => {
-                onSftpDisconnect(ctxMenu.sv.id);
-                setCtxMenu(null);
-              }}
-            >
-              <Unplug className="h-3.5 w-3.5 text-muted-foreground" /> 断开连接
-            </button>
-          )}
-          <button
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-destructive hover:bg-destructive/10"
-            onClick={() => {
-              onSftpRemove(ctxMenu.sv);
-              setCtxMenu(null);
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" /> 删除服务器配置
-          </button>
-        </div>
-      )}
     </ScrollArea>
     </>
   );
