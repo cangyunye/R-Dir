@@ -35,3 +35,13 @@ test-results
 
 # 拖拽上传测试服务的接收目录（tools/upload_server.py）
 tools/uploads/
+
+# E2E 验证截图产物（脚本 verify-*.mjs 入库，截图不入）
+e2e-shots/*.png
+
+# dts 问题档案（用户级插件，含大量截图）
+dts/
+
+# ZCode 会话产物
+.zcode/
+.zcodeignore
