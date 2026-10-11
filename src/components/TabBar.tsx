@@ -10,25 +10,34 @@ export interface TabItem {
   title: string;
 }
 
-/** OneNote 风格标签色块：按 tab.id 稳定取色（会话恢复后同一标签颜色不变）。
- *  活动标签 = 实色块，非活动 = 同色系淡块；亮度钳住保证叠字可读，
- *  黄色系饱和度高、白字发飘，单独配深色前景。 */
-const TAB_COLORS: { bg: string; fg: string }[] = [
-  { bg: "oklch(0.58 0.13 250)", fg: "white" }, // 蓝
-  { bg: "oklch(0.62 0.12 195)", fg: "white" }, // 青
-  { bg: "oklch(0.62 0.13 155)", fg: "white" }, // 绿
-  { bg: "oklch(0.68 0.12 128)", fg: "oklch(0.28 0.05 130)" }, // 黄绿
-  { bg: "oklch(0.72 0.12 95)", fg: "oklch(0.30 0.06 90)" }, // 黄
-  { bg: "oklch(0.64 0.15 60)", fg: "white" }, // 橙
-  { bg: "oklch(0.60 0.18 28)", fg: "white" }, // 红
-  { bg: "oklch(0.60 0.18 350)", fg: "white" }, // 玫红
-  { bg: "oklch(0.58 0.15 310)", fg: "white" }, // 紫
-  { bg: "oklch(0.56 0.11 275)", fg: "white" }, // 靛
+/** OneNote 风格标签色相环：按 tab.id 稳定取色（会话恢复后同一标签颜色不变）。
+ *  实色明度钳在 ≤0.72 保证深色模式白字可读；黄色系饱和度高、白字发飘，单独配深色前景。
+ *  浅色模式不做实色块——改走面包屑同款洗色方案（同色相深字 + 底部实色条），
+ *  轻重策略集中在 index.css 的 .rdirtab 复合变量里，这里只注入色相派生色。 */
+const TAB_HUES: { l: number; c: number; h: number; darkFg?: string }[] = [
+  { l: 0.58, c: 0.13, h: 250 }, // 蓝
+  { l: 0.62, c: 0.12, h: 195 }, // 青
+  { l: 0.62, c: 0.13, h: 155 }, // 绿
+  { l: 0.68, c: 0.12, h: 128, darkFg: "oklch(0.28 0.05 130)" }, // 黄绿
+  { l: 0.72, c: 0.12, h: 95, darkFg: "oklch(0.30 0.06 90)" }, // 黄
+  { l: 0.64, c: 0.15, h: 60 }, // 橙
+  { l: 0.6, c: 0.18, h: 28 }, // 红
+  { l: 0.6, c: 0.18, h: 350 }, // 玫红
+  { l: 0.58, c: 0.15, h: 310 }, // 紫
+  { l: 0.56, c: 0.11, h: 275 }, // 靛
 ];
 
-/** 标签身份 → 调色板颜色（tab.id 连续自增，新标签自然轮换色相） */
+/** 标签身份 → 色相派生色（tab.id 连续自增，新标签自然轮换色相） */
 export function tabColorOf(id: number) {
-  return TAB_COLORS[id % TAB_COLORS.length];
+  const t = TAB_HUES[id % TAB_HUES.length];
+  return {
+    /** 实色：深色模式活动块 / 浅色模式底部色条 / 下拉圆点 */
+    solid: `oklch(${t.l} ${t.c} ${t.h})`,
+    /** 深色模式活动块文字 */
+    darkFg: t.darkFg ?? "white",
+    /** 浅色模式活动块文字（同色相深色，压住洗色底） */
+    lightFg: `oklch(0.32 0.07 ${t.h})`,
+  };
 }
 
 export function TabBar({
@@ -266,14 +275,22 @@ export function TabBar({
                 dragRef.current = { idx, x: e.clientX };
                 setDragging(true);
               }}
-              style={{ "--tab-c": color.bg, "--tab-fg": color.fg } as React.CSSProperties}
+              style={
+                {
+                  "--tab-c": color.solid,
+                  "--tab-fg": color.darkFg,
+                  "--tab-deep": color.lightFg,
+                } as React.CSSProperties
+              }
               className={cn(
-                // OneNote 式色块标签：活动标签实色且更高（items-end 底对齐，向上长出），
-                // 非活动标签为同色淡块；color-mix 随明暗主题自动折算
-                "group flex min-w-0 max-w-52 shrink cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-xs",
+                // OneNote 式色块标签：活动标签更高（items-end 底对齐，向上长出）。
+                // 轻重随主题折算：深色=实色块+白字，浅色=面包屑同款洗色+同色相深字
+                // （复合变量定义见 index.css .rdirtab）；底部 2px 实色条是"贴住内容"
+                // 的锚，深色下与活动块同色自然隐形
+                "rdirtab group relative flex min-w-0 max-w-52 shrink cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-xs",
                 active
-                  ? "h-[30px] border-transparent bg-[var(--tab-c)] text-[var(--tab-fg)]"
-                  : "h-[26px] border-transparent bg-[color-mix(in_oklab,var(--tab-c)_38%,var(--sidebar))] text-muted-foreground hover:bg-[color-mix(in_oklab,var(--tab-c)_55%,var(--sidebar))]",
+                  ? "h-[30px] border-transparent bg-[var(--tab-active-bg)] text-[var(--tab-active-fg)]"
+                  : "h-[26px] border-transparent bg-[var(--tab-idle-bg)] text-muted-foreground hover:bg-[var(--tab-idle-hover-bg)]",
                 dragging && dragRef.current?.idx === idx && "opacity-60 ring-1 ring-inset ring-primary/50",
               )}
               title={editingId === tab.id ? undefined : tab.title}
@@ -314,11 +331,19 @@ export function TabBar({
                 }}
                 className={cn(
                   "shrink-0 rounded p-0.5",
-                  active ? "hover:bg-white/25" : "opacity-0 hover:bg-muted group-hover:opacity-60",
+                  active
+                    ? "hover:bg-[var(--tab-x-hover)]"
+                    : "opacity-0 hover:bg-muted group-hover:opacity-60",
                 )}
               >
                 <X className="h-3 w-3" />
               </span>
+              {active && (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-[var(--tab-c)]"
+                />
+              )}
             </div>
           );
         })}
@@ -499,7 +524,7 @@ export function TabBar({
                     "h-1.5 w-1.5 shrink-0 rounded-full",
                     tab.id !== activeId && "opacity-60",
                   )}
-                  style={{ background: tabColorOf(tab.id).bg }}
+                  style={{ background: tabColorOf(tab.id).solid }}
                 />
                 <span className="truncate">{`${idx + 1}. ${tab.title || "新建标签"}`}</span>
               </button>

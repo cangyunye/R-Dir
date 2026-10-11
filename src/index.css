@@ -115,6 +115,29 @@
   display: block !important;
 }
 
+/* 标签色块的配色策略（TabBar 只注入色相派生色：--tab-c 实色 / --tab-fg 深色模式文字 /
+   --tab-deep 浅色模式文字），轻重随主题走——
+   - 深色：沿用实色块 + 白字（背景 L0.15 上，中明度实色与 --primary 同带，读作强调色）；
+   - 浅色：改走地址栏彩虹面包屑同款洗色方案（活动 58%、非活动 20% 混入侧栏底色）+
+     同色相深字，避免实色块成为全屏最重元素；活动标签底部 2px 实色条（TabBar 渲染）
+     保住 OneNote"贴住内容"的色块感，深色下与活动块同色自然隐形。
+   变量必须挂在标签元素本身（.rdirtab）上：--tab-c 是元素内联变量，
+   复合变量若定义在 :root 会在根上先行求值、取不到内联值。 */
+.rdirtab {
+  --tab-active-bg: color-mix(in oklab, var(--tab-c) 58%, var(--sidebar));
+  --tab-idle-bg: color-mix(in oklab, var(--tab-c) 20%, var(--sidebar));
+  --tab-idle-hover-bg: color-mix(in oklab, var(--tab-c) 32%, var(--sidebar));
+  --tab-active-fg: var(--tab-deep);
+  --tab-x-hover: rgb(0 0 0 / 0.1);
+}
+.dark .rdirtab {
+  --tab-active-bg: var(--tab-c);
+  --tab-idle-bg: color-mix(in oklab, var(--tab-c) 38%, var(--sidebar));
+  --tab-idle-hover-bg: color-mix(in oklab, var(--tab-c) 55%, var(--sidebar));
+  --tab-active-fg: var(--tab-fg);
+  --tab-x-hover: rgb(255 255 255 / 0.25);
+}
+
 /* 根元素 CSS `zoom`（界面字体缩放）会让 Radix/Floating UI 的 portal 定位整体按
    zoom 倍率偏移（视口未缩放、内容被缩放）——锚定弹层被推到触发点右下方
    坐标×(zoom−1) 处：⋮ 应用菜单在右上角离原点最远，最大化时整体出视口，
