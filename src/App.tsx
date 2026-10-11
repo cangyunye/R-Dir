@@ -903,6 +903,12 @@ useEffect(() => {
   );
   navigateRef.current = navigate;
 
+  /** 地址栏 scheme 门控（v0.25）：sftp:// 输入仅在对应服务器已连接时做远程补全 */
+  const isSftpConnectedPath = useCallback((path: string) => {
+    const au = parseSftpAuthority(path);
+    return !!au && sftp.connectedRef.current.has(au.id);
+  }, [sftp]);
+
   const restoreSession = useCallback(
     async (layout: SessionLayout) => {
       const remap = new Map<number, number>();
@@ -3352,6 +3358,7 @@ useEffect(() => {
         onRefresh={refresh}
         path={addressPath}
         cwd={activePane?.path ?? homePath}
+        isSftpConnected={isSftpConnectedPath}
         leafIsFile={
           !!activePane &&
           activePane.selection.length === 1 &&

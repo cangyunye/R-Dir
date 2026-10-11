@@ -21,10 +21,36 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
-import { completeCommands, completePath, resolvePath, runCommand, statPath } from "@/lib/api";
+import { completeCommands, completePath, listDir, resolvePath, runCommand, statPath } from "@/lib/api";
 import { firstCommandToken, hasScheme, isCommandToken } from "@/lib/cmdline";
 import { splitPathSegments } from "@/lib/path-segments";
 import type { CommandSuggest } from "@/lib/types";
+
+/** 远程（sftp 已连接）目录补全：列举父目录后本地前缀过滤。
+ *  语义对齐后端 complete_path：仅目录、大小写不敏感、排除全等项、排序截断 50。
+ *  仅在输入含 "authority/" 之后的层级时生效（裸 authority 不做主机名补全）。 */
+async function completeRemotePath(input: string): Promise<string[]> {
+  const m = input.match(/^(sftp:\/\/[^/]*\/)(.*)$/);
+  if (!m) return [];
+  const base = m[1];
+  const rest = m[2];
+  const sep = rest.lastIndexOf("/");
+  const parent = sep === -1 ? base : base + rest.slice(0, sep + 1);
+  const partial = (sep === -1 ? rest : rest.slice(sep + 1)).toLowerCase();
+  try {
+    const entries = await listDir(parent);
+    return entries
+      .filter((e) => {
+        const lower = e.name.toLowerCase();
+        return e.is_dir && lower.startsWith(partial) && lower !== partial;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 50)
+      .map((e) => parent + e.name);
+  } catch {
+    return [];
+  }
+}
 
 export function Toolbar({
   canBack,
@@ -45,6 +71,7 @@ export function Toolbar({
   leafIsFile = false,
   onRevealFile,
   trailing,
+  isSftpConnected,
 }: {
   canBack: boolean;
   canForward: boolean;
@@ -67,6 +94,8 @@ export function Toolbar({
   onRevealFile?: (filePath: string) => void;
   /** 搜索按钮右侧的插槽（如「已连接窗格」下拉） */
   trailing?: React.ReactNode;
+  /** v0.25 scheme 门控：sftp:// 输入仅在对应服务器已连接时做远程补全 */
+  isSftpConnected?: (path: string) => boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [pathError, setPathError] = useState<string | null>(null);
@@ -120,21 +149,31 @@ export function Toolbar({
         return;
       }
       timerRef.current = window.setTimeout(async () => {
-        // 裸词 + 本地窗格：目录补全之外并行请求 PATH 命令补全（v0.22.0）
-        const wantCmds = isCommandToken(value) && !hasScheme(cwd);
-        const [dirs, cmdItems] = await Promise.all([
-          completePath(value, cwd).catch(() => [] as string[]),
-          wantCmds
-            ? completeCommands(value.trim()).catch(() => [] as CommandSuggest[])
-            : Promise.resolve([] as CommandSuggest[]),
-        ]);
+        // v0.25 scheme 门控：http(s)/tags 完全未知 → 不补全；sftp:// 仅在已连接时
+        // 远程补全（列父目录本地过滤），未连接不补全；命令补全仍仅限裸词。
+        let dirs: string[] = [];
+        let cmdItems: CommandSuggest[] = [];
+        if (value.startsWith("sftp://")) {
+          if (isSftpConnected?.(value)) {
+            dirs = await completeRemotePath(value);
+          }
+        } else if (!/^https?:\/\//.test(value) && !value.startsWith("tags://")) {
+          // 裸词 + 本地窗格：目录补全之外并行请求 PATH 命令补全（v0.22.0）
+          const wantCmds = isCommandToken(value) && !hasScheme(cwd);
+          [dirs, cmdItems] = await Promise.all([
+            completePath(value, cwd).catch(() => [] as string[]),
+            wantCmds
+              ? completeCommands(value.trim()).catch(() => [] as CommandSuggest[])
+              : Promise.resolve([] as CommandSuggest[]),
+          ]);
+        }
         setCompletions(dirs);
         setCmds(cmdItems);
         setCompIndex(-1);
         setCompOpen(dirs.length + cmdItems.length > 0);
       }, 120);
     },
-    [cwd],
+    [cwd, isSftpConnected],
   );
 
   const closeCompletion = useCallback(() => {
