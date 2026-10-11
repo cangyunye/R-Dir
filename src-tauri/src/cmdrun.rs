@@ -1,8 +1,12 @@
 //! 地址栏命令执行（v0.22.0）。
 //! 设计：
 //! - 扫描范围 = 进程 env PATH ∪（macOS）常见兜底目录——GUI 应用从 launchd 拿到的
-//!   PATH 常缺 /opt/homebrew/bin 等；进程内缓存，PATH 变化或超时自动重建；
-//! - 补全只做前缀匹配（大小写不敏感、同名先到先得，与 shell PATH 语义一致）；
+//!   PATH 常缺 /opt/homebrew/bin 等；索引持久化到配置目录，启动签名一致直接加载；
+//! - 新鲜度 = 维护线程（后台/Windows 空闲优先级）每 TTL 一轮**哨兵抽查**：
+//!   逐目录比对 mtime + 条目数 + 字母桶首尾名（纯枚举零 metadata，首个不一致
+//!   短路）——无漂移零重建；有漂移后台全量重建（30ms 级），期间按旧记录补全；
+//! - 补全只做前缀匹配（大小写不敏感、同名先到先得，与 shell PATH 语义一致），
+//!   永不阻塞主线程（重建在后台线程，重建期间返回现有条目）；
 //! - 执行 = 新开终端窗口 cd 到当前目录后执行用户输入的命令串（opener::launch），
 //!   执行前先在 PATH 中校验首 token，未命中就地报错而不是开一个报错的终端；
 //! - 插件注册表 gating（id = "cmdrun"）。
@@ -30,17 +34,18 @@ struct ExecEntry {
     path: String,
 }
 
-/// 索引文件（app_config_dir/cmd-index.json）：{ 版本, PATH 签名, 条目 }。
-/// 启动时加载：签名与当前 PATH 一致 → 直接可用；不一致 → 后台重建并回写。
+/// 索引文件（app_config_dir/cmd-index.json）：{ 版本, PATH 签名, 条目, 哨兵表 }。
+/// 启动时加载：签名与当前 PATH 一致 → 直接可用；之后由维护线程按哨兵漂移检测。
 #[derive(Serialize, Deserialize)]
 struct PersistedIndex {
     version: u32,
     sig: u64,
     items: Vec<ExecEntry>,
+    sentinels: Vec<DirSentinel>,
 }
 
 /// 索引格式版本（结构变更时递增，旧文件按未命中处理）
-const INDEX_VERSION: u32 = 1;
+const INDEX_VERSION: u32 = 2;
 /// 索引文件名（app_config_dir 下）
 pub const INDEX_FILE: &str = "cmd-index.json";
 
@@ -49,9 +54,86 @@ pub const INDEX_FILE: &str = "cmd-index.json";
 #[derive(Default)]
 pub struct ExecCache {
     items: Vec<ExecEntry>,
+    /// 各 PATH 目录的变更哨兵（mtime/条目数/字母桶首尾名），供空闲期漂移检测
+    sentinels: Vec<DirSentinel>,
     sig: u64,
     built_at: Option<Instant>,
     rebuilding: bool,
+}
+
+/// 单目录变更哨兵：目录 mtime + 条目总数 + 按首字母分桶（a-z + 其他）的
+/// 排序首/尾文件名。纯枚举零 metadata（一次全表抽查 ≈ 只读遍历）；目录内
+/// 增/删/改名必然改变其中至少一项。文件内容变化不感知也不需要感知。
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
+struct DirSentinel {
+    path: String,
+    /// 目录最后写入时间（epoch 毫秒；目录不可读为 None）
+    mtime_ms: Option<i64>,
+    /// 条目总数（含非可执行——哨兵只关心名字层面的变化）
+    count: u32,
+    /// 27 个桶（0=特殊字符，1..=26=a-z）各自排序后的 [首名, 尾名]
+    bounds: Vec<(Option<String>, Option<String>)>,
+}
+
+/// 哨兵桶数：0 = 特殊字符，1..=26 = a-z（大小写不敏感取首字符）
+const SENTINEL_BUCKETS: usize = 27;
+
+fn bucket_of(name_lower: &str) -> usize {
+    match name_lower.chars().next() {
+        Some(c @ 'a'..='z') => c as usize - 'a' as usize + 1,
+        _ => 0,
+    }
+}
+
+/// 枚举目录全部条目名（小写排序）→ 每桶首/尾名
+fn bounds_of(names_lower_sorted: &[String]) -> Vec<(Option<String>, Option<String>)> {
+    let mut bounds: Vec<(Option<String>, Option<String>)> =
+        (0..SENTINEL_BUCKETS).map(|_| (None, None)).collect();
+    for n in names_lower_sorted {
+        let b = bucket_of(n);
+        if bounds[b].0.is_none() {
+            bounds[b].0 = Some(n.clone());
+        }
+        bounds[b].1 = Some(n.clone());
+    }
+    bounds
+}
+
+/// 单目录哨兵：一次 read_dir 枚举（无逐文件 metadata）+ 一次目录 mtime
+fn sentinel_of(dir: &std::path::Path) -> DirSentinel {
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            names.push(e.file_name().to_string_lossy().to_lowercase());
+        }
+    }
+    names.sort();
+    let mtime_ms = std::fs::metadata(dir)
+        .ok()
+        .and_then(|md| md.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64);
+    DirSentinel {
+        path: dir.to_string_lossy().to_string(),
+        mtime_ms,
+        count: names.len() as u32,
+        bounds: bounds_of(&names),
+    }
+}
+
+/// 漂移检测：逐目录比对哨兵（读一个比对一个，首个不一致即短路返回 true）。
+/// 目录数/路径/顺序变化也算漂移。
+fn drift(dirs: &[PathBuf], sentinels: &[DirSentinel]) -> bool {
+    if dirs.len() != sentinels.len() {
+        return true;
+    }
+    for (d, old) in dirs.iter().zip(sentinels) {
+        let fresh = sentinel_of(d);
+        if fresh.path != old.path || fresh != *old {
+            return true;
+        }
+    }
+    false
 }
 
 /// 缓存有效期：PATH 不变也定期后台重扫（新安装的工具最迟 10 分钟后可见）
@@ -235,6 +317,7 @@ fn save_index(cache: &ExecCache, file: &Option<PathBuf>) {
         version: INDEX_VERSION,
         sig: cache.sig,
         items: cache.items.clone(),
+        sentinels: cache.sentinels.clone(),
     };
     if let Ok(s) = serde_json::to_string(&idx) {
         let tmp = p.with_extension("json.tmp");
@@ -244,9 +327,10 @@ fn save_index(cache: &ExecCache, file: &Option<PathBuf>) {
     }
 }
 
-/// 重建收尾：写入缓存 + 落盘（调用方已持锁）
+/// 重建收尾：写入缓存 + 哨兵表 + 落盘（调用方已持锁）
 fn commit_rebuild(cache: &mut ExecCache, dirs: &[PathBuf], file: &Option<PathBuf>) {
     cache.items = rebuild(dirs);
+    cache.sentinels = dirs.iter().map(|d| sentinel_of(d)).collect();
     cache.sig = dir_sig(dirs);
     cache.built_at = Some(Instant::now());
     cache.rebuilding = false;
@@ -273,23 +357,93 @@ fn ensure_fresh(cache: &Arc<Mutex<ExecCache>>, file: &Option<PathBuf>) {
     });
 }
 
-/// 启动预热（后台线程）：优先加载磁盘索引（签名匹配 → 免扫描立即可用）；
-/// 不匹配/无文件 → 就地重建并回写。cmdrun 插件停用时跳过（补全本来就不出结果）。
+/// Windows 空闲优先级：维护线程只在 CPU 空闲时被调度，不与前台争抢
+#[cfg(windows)]
+fn set_idle_priority() {
+    use windows::Win32::System::Threading::{
+        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_IDLE,
+    };
+    unsafe {
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE);
+    }
+}
+
+#[cfg(not(windows))]
+fn set_idle_priority() {}
+
+/// 启动预热 + 常驻维护（后台线程，Windows 下空闲优先级）：
+/// 1. 启动即校验一次——优先加载磁盘索引（PATH 签名一致 → 免扫描），无索引/签名
+///    变化 → 重建并回写；
+/// 2. 此后每 CACHE_TTL 一轮**哨兵抽查**：逐目录比对 mtime/条目数/字母桶首尾名
+///    （纯枚举零 metadata，首个不一致即短路）——无漂移则顺延 TTL，零重建；
+///    有漂移（PATH 下文件增删/改名/挪动）→ 后台重建并回写，期间补全按旧记录出结果。
+/// 用户输入路径的 ensure_fresh 仅作为兜底（正常情况下维护线程已保持缓存新鲜）。
 pub fn warm_cache_async(cache: Arc<Mutex<ExecCache>>, file: Option<PathBuf>, enabled: bool) {
     if !enabled {
         return;
     }
     std::thread::spawn(move || {
-        let dirs = search_dirs();
-        let Ok(mut c) = cache.lock() else { return };
-        if c.built_at.is_some() {
-            return; // 已有内存缓存（理论不可达，防御重复预热）
+        set_idle_priority();
+        loop {
+            let dirs = search_dirs();
+            let sig = dir_sig(&dirs);
+            // 锁内只读状态做决策；哨兵枚举/重建的枚举阶段在锁外做,
+            // 仅落缓存与写盘短暂持锁——补全调用的锁等待始终亚毫秒级
+            enum Check {
+                LoadOrRebuild,
+                Rebuild,
+                Extend(Vec<DirSentinel>),
+                Skip,
+            }
+            let check = match cache.lock() {
+                Ok(c) => {
+                    if c.built_at.is_none() {
+                        Check::LoadOrRebuild
+                    } else if c.rebuilding {
+                        Check::Skip
+                    } else if c.sig != sig {
+                        Check::Rebuild
+                    } else {
+                        Check::Extend(c.sentinels.clone())
+                    }
+                }
+                Err(_) => Check::Skip,
+            };
+            match check {
+                Check::Skip => {}
+                Check::LoadOrRebuild => {
+                    if let Ok(mut c) = cache.lock() {
+                        if c.built_at.is_none() && !load_index(&mut c, &file) {
+                            c.rebuilding = true;
+                            commit_rebuild(&mut c, &dirs, &file);
+                        }
+                    }
+                }
+                Check::Rebuild => {
+                    if let Ok(mut c) = cache.lock() {
+                        if !c.rebuilding {
+                            c.rebuilding = true;
+                            commit_rebuild(&mut c, &dirs, &file);
+                        }
+                    }
+                }
+                Check::Extend(sentinels) => {
+                    if drift(&dirs, &sentinels) {
+                        if let Ok(mut c) = cache.lock() {
+                            // ensure_fresh 兜底可能已先开重建：已在重建则跳过，防重复
+                            if !c.rebuilding {
+                                c.rebuilding = true;
+                                commit_rebuild(&mut c, &dirs, &file);
+                            }
+                        }
+                    } else if let Ok(mut c) = cache.lock() {
+                        // 无漂移：顺延 TTL，本轮零重建
+                        c.built_at = Some(Instant::now());
+                    }
+                }
+            }
+            std::thread::sleep(CACHE_TTL);
         }
-        if load_index(&mut c, &file) {
-            return;
-        }
-        c.rebuilding = true;
-        commit_rebuild(&mut c, &dirs, &file);
     });
 }
 
@@ -436,6 +590,7 @@ mod tests {
             version: INDEX_VERSION,
             sig: 12345,
             items: Vec::new(),
+            sentinels: Vec::new(),
         };
         std::fs::write(
             file.as_ref().unwrap(),
@@ -446,6 +601,62 @@ mod tests {
         assert!(!load_index(&mut rejected, &file), "签名不匹配应拒绝");
         assert!(rejected.items.is_empty());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 哨兵：目录内增/删/改名 → 至少一项变化；重扫未变更目录可跳过
+    #[test]
+    fn sentinel_detects_changes() {
+        let base = std::env::temp_dir().join(format!("rdir-sentinel-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        let write = |names: &[&str]| {
+            for n in names {
+                std::fs::write(base.join(n), b"x").unwrap();
+            }
+        };
+        write(&["apple.exe", "banana.exe", "0tool.exe"]);
+        let s1 = sentinel_of(&base);
+
+        // 无变化：哨兵稳定（mtime 精度内的立即重读应一致）
+        let s1b = sentinel_of(&base);
+        assert_eq!(s1, s1b, "未变更目录哨兵应一致");
+        assert_eq!(s1.count, 3);
+        // 'a' 桶首尾=apple.exe（banana 落 b 桶）；'0' 开头落特殊字符桶
+        assert_eq!(s1.bounds[1].0.as_deref(), Some("apple.exe"));
+        assert_eq!(s1.bounds[1].1.as_deref(), Some("apple.exe"));
+        assert_eq!(s1.bounds[2].0.as_deref(), Some("banana.exe"));
+        assert_eq!(s1.bounds[0].0.as_deref(), Some("0tool.exe"));
+
+        // 新增文件 → count 与所在桶尾变化
+        write(&["cherry.exe"]);
+        let s2 = sentinel_of(&base);
+        assert_ne!(s1, s2);
+        assert_eq!(s2.count, 4);
+        assert_eq!(s2.bounds[3].1.as_deref(), Some("cherry.exe"));
+
+        // 删除 → count 变化
+        std::fs::remove_file(base.join("cherry.exe")).unwrap();
+        assert_ne!(s1, sentinel_of(&base));
+
+        // 重命名（数量不变、mtime 可能精度内相同）：字母桶首/尾必须抓住
+        std::fs::rename(base.join("banana.exe"), base.join("banana2.exe")).unwrap();
+        let s3 = sentinel_of(&base);
+        assert_ne!(s1, s3, "重命名应被哨兵捕获");
+        assert_eq!(s3.count, 3);
+        assert_eq!(s3.bounds[2].1.as_deref(), Some("banana2.exe"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 漂移检测：目录数变化 → true；全部一致 → false
+    #[test]
+    fn drift_on_dir_count_change() {
+        let dir = std::env::temp_dir().join(format!("rdir-drift-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dirs = vec![dir.clone()];
+        let sents = dirs.iter().map(|d| sentinel_of(d)).collect::<Vec<_>>();
+        assert!(!drift(&dirs, &sents));
+        assert!(drift(&dirs, &[]), "目录数变化应判漂移");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
