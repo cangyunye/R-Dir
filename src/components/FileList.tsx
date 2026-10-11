@@ -377,6 +377,11 @@ export function FileList({
   const [qjQuery, setQjQuery] = useState("");
   const [qjActive, setQjActive] = useState(0);
   const qjRestoreRef = useRef<string[]>([]);
+  /** QJ 会话开关的同步镜像：跟随选中 effect / hover 回调读它做早退。
+   *  只看 qjOpen state 不够——hover 改 active 的渲染其 effect 可能被推迟到
+   *  取消之后才刷新（React 18 批处理交错），过期闭包里 qjOpen 仍是 true，
+   *  会把选中又跟到高亮项上、覆盖 Esc 取消还原的结果。 */
+  const qjOpenRef = useRef(false);
 
   const qjMatches = useMemo(
     () => (qjOpen ? rank(sorted, qjQuery, (e) => e.name) : []),
@@ -398,18 +403,29 @@ export function FileList({
 
   const openQuickJump = (seed: string) => {
     qjRestoreRef.current = propsRef.current.selection;
+    qjOpenRef.current = true;
     setQjQuery(seed);
     setQjActive(0);
     setQjOpen(true);
   };
 
   const closeQuickJump = () => {
+    qjOpenRef.current = false;
     setQjOpen(false);
     setQjQuery("");
   };
 
   const handleListKeyDown = (e: React.KeyboardEvent) => {
-    if (qjOpen) return; // 浮层打开时按键由浮层内 input 处理
+    if (qjOpen) {
+      // 浮层打开时按键由浮层内 input 处理；但若 input 失焦（焦点竞态），
+      // Esc 会落到这里——按取消语义收口，否则冒泡到全局 esc → 清空选中
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        qjCancel();
+      }
+      return;
+    }
     if (e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key.length !== 1) return;
     const t = e.target as HTMLElement;
@@ -446,7 +462,7 @@ export function FileList({
 
   // 高亮项变化即实时跟随（复用 primary 变化滚动 effect，不另写滚动）
   useEffect(() => {
-    if (!qjOpen) return;
+    if (!qjOpen || !qjOpenRef.current) return;
     const m = qjMatches[qjActive];
     if (m) propsRef.current.onSelect(m.item, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -764,7 +780,10 @@ export function FileList({
           }}
           onMove={qjMove}
           onConfirm={() => qjConfirm(qjActive)}
-          onHover={(i) => setQjActive(qjWindowStartIndex + i)}
+          onHover={(i) => {
+            if (!qjOpenRef.current) return;
+            setQjActive(qjWindowStartIndex + i);
+          }}
           onActivate={(i) => qjConfirm(qjWindowStartIndex + i)}
           onCancel={qjCancel}
           onOutsideDown={() => {
