@@ -10,6 +10,27 @@ export interface TabItem {
   title: string;
 }
 
+/** OneNote 风格标签色块：按 tab.id 稳定取色（会话恢复后同一标签颜色不变）。
+ *  活动标签 = 实色块，非活动 = 同色系淡块；亮度钳住保证叠字可读，
+ *  黄色系饱和度高、白字发飘，单独配深色前景。 */
+const TAB_COLORS: { bg: string; fg: string }[] = [
+  { bg: "oklch(0.58 0.13 250)", fg: "white" }, // 蓝
+  { bg: "oklch(0.62 0.12 195)", fg: "white" }, // 青
+  { bg: "oklch(0.62 0.13 155)", fg: "white" }, // 绿
+  { bg: "oklch(0.68 0.12 128)", fg: "oklch(0.28 0.05 130)" }, // 黄绿
+  { bg: "oklch(0.72 0.12 95)", fg: "oklch(0.30 0.06 90)" }, // 黄
+  { bg: "oklch(0.64 0.15 60)", fg: "white" }, // 橙
+  { bg: "oklch(0.60 0.18 28)", fg: "white" }, // 红
+  { bg: "oklch(0.60 0.18 350)", fg: "white" }, // 玫红
+  { bg: "oklch(0.58 0.15 310)", fg: "white" }, // 紫
+  { bg: "oklch(0.56 0.11 275)", fg: "white" }, // 靛
+];
+
+/** 标签身份 → 调色板颜色（tab.id 连续自增，新标签自然轮换色相） */
+export function tabColorOf(id: number) {
+  return TAB_COLORS[id % TAB_COLORS.length];
+}
+
 export function TabBar({
   tabs,
   activeId,
@@ -218,82 +239,89 @@ export function TabBar({
         }}
         className="flex min-w-0 flex-1 items-end overflow-hidden"
       >
-        {tabs.map((tab, idx) => (
-          <div
-            key={tab.id}
-            role="button"
-            tabIndex={0}
-            data-tab-idx={idx}
-            onClick={() => onSelect(tab.id)}
-            onDoubleClick={() => startRename(tab)}
-            onContextMenu={(e) => openTabMenu(e, idx)}
-            onAuxClick={(e) => {
-              // 鼠标中键关闭标签页（阻止默认自动滚动）
-              if (e.button === 1) {
-                e.preventDefault();
-                onClose(tab.id);
-              }
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") onSelect(tab.id);
-            }}
-            onMouseDown={(e) => {
-              if (e.button !== 0) return;
-              dragRef.current = { idx, x: e.clientX };
-              setDragging(true);
-            }}
-            className={cn(
-              "group flex h-7 min-w-0 max-w-52 shrink cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-xs",
-              tab.id === activeId
-                ? "border-border bg-background text-foreground shadow-[inset_0_2px_0_var(--primary)]"
-                : "border-transparent text-muted-foreground hover:bg-muted/50",
-              dragging && dragRef.current?.idx === idx && "opacity-60 ring-1 ring-inset ring-primary/50",
-            )}
-            title={editingId === tab.id ? undefined : tab.title}
-          >
-            {editingId === tab.id ? (
-              <Input
-                value={draft}
-                autoFocus
-                onChange={(e) => setDraft(e.target.value)}
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-                onDoubleClick={(e) => e.stopPropagation()}
-                onBlur={commitRename}
-                onKeyDown={(e) => {
-                  e.stopPropagation();
-                  if (e.key === "Enter") commitRename();
-                  else if (e.key === "Escape") setEditingId(null);
-                }}
-                className="h-5 w-28 px-1 text-xs"
-                placeholder="标签名"
-              />
-            ) : (
-              <span className="truncate">{tab.title || "新建标签"}</span>
-            )}
-            <span
+        {tabs.map((tab, idx) => {
+          const color = tabColorOf(tab.id);
+          const active = tab.id === activeId;
+          return (
+            <div
+              key={tab.id}
               role="button"
               tabIndex={0}
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose(tab.id);
-              }}
-              onDoubleClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.stopPropagation();
+              data-tab-idx={idx}
+              onClick={() => onSelect(tab.id)}
+              onDoubleClick={() => startRename(tab)}
+              onContextMenu={(e) => openTabMenu(e, idx)}
+              onAuxClick={(e) => {
+                // 鼠标中键关闭标签页（阻止默认自动滚动）
+                if (e.button === 1) {
+                  e.preventDefault();
                   onClose(tab.id);
                 }
               }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onSelect(tab.id);
+              }}
+              onMouseDown={(e) => {
+                if (e.button !== 0) return;
+                dragRef.current = { idx, x: e.clientX };
+                setDragging(true);
+              }}
+              style={{ "--tab-c": color.bg, "--tab-fg": color.fg } as React.CSSProperties}
               className={cn(
-                "shrink-0 rounded p-0.5 hover:bg-muted",
-                tab.id === activeId ? "opacity-60" : "opacity-0 group-hover:opacity-60",
+                // OneNote 式色块标签：活动标签实色且更高（items-end 底对齐，向上长出），
+                // 非活动标签为同色淡块；color-mix 随明暗主题自动折算
+                "group flex min-w-0 max-w-52 shrink cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 text-xs",
+                active
+                  ? "h-[30px] border-transparent bg-[var(--tab-c)] text-[var(--tab-fg)]"
+                  : "h-[26px] border-transparent bg-[color-mix(in_oklab,var(--tab-c)_38%,var(--sidebar))] text-muted-foreground hover:bg-[color-mix(in_oklab,var(--tab-c)_55%,var(--sidebar))]",
+                dragging && dragRef.current?.idx === idx && "opacity-60 ring-1 ring-inset ring-primary/50",
               )}
+              title={editingId === tab.id ? undefined : tab.title}
             >
-              <X className="h-3 w-3" />
-            </span>
-          </div>
-        ))}
+              {editingId === tab.id ? (
+                <Input
+                  value={draft}
+                  autoFocus
+                  onChange={(e) => setDraft(e.target.value)}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") commitRename();
+                    else if (e.key === "Escape") setEditingId(null);
+                  }}
+                  className="h-5 w-28 px-1 text-xs"
+                  placeholder="标签名"
+                />
+              ) : (
+                <span className="truncate">{tab.title || "新建标签"}</span>
+              )}
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose(tab.id);
+                }}
+                onDoubleClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.stopPropagation();
+                    onClose(tab.id);
+                  }
+                }}
+                className={cn(
+                  "shrink-0 rounded p-0.5",
+                  active ? "hover:bg-white/25" : "opacity-0 hover:bg-muted group-hover:opacity-60",
+                )}
+              >
+                <X className="h-3 w-3" />
+              </span>
+            </div>
+          );
+        })}
       </div>
       <button
         type="button"
@@ -469,8 +497,9 @@ export function TabBar({
                 <span
                   className={cn(
                     "h-1.5 w-1.5 shrink-0 rounded-full",
-                    tab.id === activeId ? "bg-primary" : "bg-transparent",
+                    tab.id !== activeId && "opacity-60",
                   )}
+                  style={{ background: tabColorOf(tab.id).bg }}
                 />
                 <span className="truncate">{`${idx + 1}. ${tab.title || "新建标签"}`}</span>
               </button>
