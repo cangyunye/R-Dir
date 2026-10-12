@@ -5,6 +5,7 @@ mod diff;
 mod drag_out;
 mod find;
 mod fs_ops;
+mod fs_watch;
 mod ops;
 mod progress;
 mod search;
@@ -1567,6 +1568,10 @@ pub fn run() {
                 cmdrun::index_path(app.handle()),
                 plugins::plugin_enabled(&state.plugins, "cmdrun"),
             );
+            // 磁盘/卷热插拔监视（v0.27）：挂载/卸载/推出后推送最新列表，侧边栏即时刷新
+            volumes::spawn_watcher(app.handle().clone());
+            // 打开目录内容监视（v0.26.1）：程序外新增/删除文件推送 fs://changed，窗体即时刷新
+            fs_watch::spawn_fs_watcher(app.handle().clone());
             Ok(())
         });
     // 注意：tauri Builder::invoke_handler 是“覆盖”语义（后调覆盖先调），
@@ -1586,6 +1591,7 @@ pub fn run() {
         move_entries,
         cancel_transfer,
         allow_exit,
+        fs_watch::fs_watch_set,
         scan_conflicts,
         copy_entries_plan,
         move_entries_plan,

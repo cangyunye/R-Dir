@@ -360,7 +360,27 @@ fn map_trash_error(msg: String) -> String {
 }
 
 /// 删除条目（进回收站）。
-/// IFileOperation 偶发瞬时中止（目录句柄被占用、回收站忙等），重试一次再报错。
+/// IFileOperation 偶发瞬时中止（目录句柄被占用、回收站忙等），非 macOS 重试一次再报错。
+/// macOS：trash 默认经 osascript 让访达删除，依赖「自动化」TCC 授权——未授权/被拒时
+/// （adhoc 签名的开发版几乎必被拒）每次必报 -1743，表现为“完全无法删除”。
+/// 故先走 Finder（已授权时保留“放回原处”与提示音），失败即回退 NSFileManager 的
+/// `trashItemAtURL`（无需任何授权）；两者都败才报错，以 NSFileManager 的错误为准
+/// （更贴近真实失败原因，如只读卷的 "Read-only file system"）。
+#[cfg(target_os = "macos")]
+pub fn delete_entries(paths: &[String]) -> Result<(), String> {
+    use trash::macos::{DeleteMethod, TrashContextExtMacos};
+    use trash::TrashContext;
+    let paths: Vec<&Path> = paths.iter().map(|s| Path::new(s)).collect();
+    if trash::delete_all(&paths).is_ok() {
+        return Ok(());
+    }
+    let mut ctx = TrashContext::new();
+    ctx.set_delete_method(DeleteMethod::NsFileManager);
+    ctx.delete_all(&paths)
+        .map_err(|e| map_trash_error(e.to_string()))
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn delete_entries(paths: &[String]) -> Result<(), String> {
     let paths: Vec<&Path> = paths.iter().map(|s| Path::new(s)).collect();
     let attempt = || trash::delete_all(&paths).map_err(|e| map_trash_error(e.to_string()));

@@ -104,6 +104,9 @@ export const restoreFromTrash = (paths: string[]) =>
 /** 取消进行中的本地复制/移动（id 来自 transfer-progress 事件载荷） */
 export const cancelTransfer = (id: string) => invoke<void>("cancel_transfer", { id });
 
+/** 全量替换目录内容监视集合（本地窗格当前目录；变化经 fs://changed 事件回推） */
+export const fsWatchSet = (dirs: string[]) => invoke<void>("fs_watch_set", { dirs });
+
 export const createDir = (parent: string, name: string) =>
   invoke<string>("create_dir", { parent, name });
 

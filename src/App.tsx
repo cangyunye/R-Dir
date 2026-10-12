@@ -76,6 +76,7 @@ import {
   permanentDeleteEntries,
   restoreFromTrash,
   cancelTransfer,
+  fsWatchSet,
   renameEntry,
   resolvePath,
   sftpConnect,
@@ -407,6 +408,67 @@ export default function App() {
       un = u;
     });
     return () => un?.();
+  }, []);
+
+  // v0.27 磁盘/卷热插拔：后端监视 /Volumes，挂载/卸载/推出后推送最新列表，
+  // 侧边栏即时刷新，无需重启（此前仅在启动时读取一次）。
+  useEffect(() => {
+    let disposed = false;
+    let un: (() => void) | undefined;
+    void listen<VolumeInfo[]>("volumes://changed", (e) => {
+      if (!disposed) setVolumes(e.payload);
+    }).then((u) => {
+      if (disposed) u();
+      else un = u;
+    });
+    return () => {
+      disposed = true;
+      un?.();
+    };
+  }, []);
+
+  // v0.26.1 打开目录内容监视：把所有标签里本地窗格的当前目录全量上报后端（fs_watch_set），
+  // 后台轮询发现「程序外新增/删除/改名」即推送 fs://changed，这里把对应窗格 refreshKey +1
+  // 触发重读。对 keep-alive 的非活动标签同样生效（激活时按 key 失配自动重读），修掉
+  // 「外部改了文件、已打开窗体不刷新 / 切回旧标签还显示旧列表」。sftp/http/tags 非本地后端不监视。
+  // 上报键取集合的稳定字符串：选中/排序等 tabs 更新不改变集合时不重发 IPC。
+  const watchDirsKey = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of tabs)
+      for (const p of Object.values(t.panes))
+        if (backendKind(p.path) === "local") set.add(p.path);
+    return [...set].sort().join("\u{1}");
+  }, [tabs]);
+  useEffect(() => {
+    void fsWatchSet(watchDirsKey ? watchDirsKey.split("\u{1}") : []);
+  }, [watchDirsKey]);
+  useEffect(() => {
+    let disposed = false;
+    let un: (() => void) | undefined;
+    void listen<string[]>("fs://changed", (e) => {
+      if (disposed || !e.payload?.length) return;
+      const dirs = new Set(e.payload);
+      setTabs((ts) =>
+        ts.map((t) => {
+          let hit = false;
+          const panes = Object.fromEntries(
+            Object.entries(t.panes).map(([id, pane]) => {
+              if (!dirs.has(pane.path)) return [id, pane];
+              hit = true;
+              return [id, { ...pane, refreshKey: pane.refreshKey + 1 }];
+            }),
+          );
+          return hit ? { ...t, panes } : t;
+        }),
+      );
+    }).then((u) => {
+      if (disposed) u();
+      else un = u;
+    });
+    return () => {
+      disposed = true;
+      un?.();
+    };
   }, []);
 
 useEffect(() => {

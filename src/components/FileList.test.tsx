@@ -270,3 +270,110 @@ describe("鼠标侧键（后退/前进）", () => {
     expect(onForward).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("FileList 行内重命名提交（v0.26.1 macOS 回车/失焦不生效修复）", () => {
+  it("回车提交重命名", () => {
+    const onRenameCommit = vi.fn();
+    renderList({
+      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      onRenameCommit,
+    });
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-path="/mock/dir/main.rs"] input',
+    )!;
+    expect(input).toBeTruthy();
+    fireEvent.change(input, { target: { value: "renamed.rs" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onRenameCommit).toHaveBeenCalledWith("/mock/dir/main.rs", "renamed.rs");
+  });
+
+  it("失焦（点击其他地方）提交重命名", () => {
+    const onRenameCommit = vi.fn();
+    const onRenameCancel = vi.fn();
+    renderList({
+      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      onRenameCommit,
+      onRenameCancel,
+    });
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-path="/mock/dir/main.rs"] input',
+    )!;
+    fireEvent.change(input, { target: { value: "renamed.rs" } });
+    input.focus();
+    fireEvent.blur(input);
+    expect(onRenameCommit).toHaveBeenCalledWith("/mock/dir/main.rs", "renamed.rs");
+    expect(onRenameCancel).not.toHaveBeenCalled();
+  });
+
+  it("未改名失焦 = 取消（对齐访达点空白关闭）", () => {
+    const onRenameCommit = vi.fn();
+    const onRenameCancel = vi.fn();
+    renderList({
+      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      onRenameCommit,
+      onRenameCancel,
+    });
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-path="/mock/dir/main.rs"] input',
+    )!;
+    input.focus();
+    fireEvent.blur(input);
+    expect(onRenameCommit).not.toHaveBeenCalled();
+    expect(onRenameCancel).toHaveBeenCalled();
+  });
+
+  it("macOS 中文 IME：组合中的回车（isComposing）不提交，由输入法上屏", () => {
+    const onRenameCommit = vi.fn();
+    const onRenameCancel = vi.fn();
+    renderList({
+      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      onRenameCommit,
+      onRenameCancel,
+    });
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-path="/mock/dir/main.rs"] input',
+    )!;
+    fireEvent.change(input, { target: { value: "笔记" } });
+    // 组合中的回车（isComposing=true，候选词确认）交给输入法
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(onRenameCommit).not.toHaveBeenCalled();
+    expect(onRenameCancel).not.toHaveBeenCalled();
+    // 上屏后再按回车才提交
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onRenameCommit).toHaveBeenCalledWith("/mock/dir/main.rs", "笔记");
+  });
+
+  it("回车/Escape 不冒泡到行（行的 Enter = 打开条目）", () => {
+    const onOpen = vi.fn();
+    const onRenameCommit = vi.fn();
+    renderList({
+      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      onRenameCommit,
+      onOpen,
+    });
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-path="/mock/dir/main.rs"] input',
+    )!;
+    fireEvent.change(input, { target: { value: "renamed.rs" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("起手从未持焦的 blur（焦点竞争）不提交也不取消，等重聚焦", () => {
+    const onRenameCommit = vi.fn();
+    const onRenameCancel = vi.fn();
+    renderList({
+      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      onRenameCommit,
+      onRenameCancel,
+    });
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-path="/mock/dir/main.rs"] input',
+    )!;
+    fireEvent.change(input, { target: { value: "renamed.rs" } });
+    // 未先 focus 直接 blur（radix 回焦抢走时 input 从未持焦）
+    fireEvent.blur(input);
+    expect(onRenameCommit).not.toHaveBeenCalled();
+    expect(onRenameCancel).not.toHaveBeenCalled();
+  });
+});
