@@ -34,6 +34,12 @@ fn ql_ext(ext: &str) -> bool {
     )
 }
 
+/// 非 macOS：无 QuickLook 路径，仅图片格式出缩略图（与 ql_thumb 桩对称）
+#[cfg(not(target_os = "macos"))]
+fn ql_ext(_ext: &str) -> bool {
+    false
+}
+
 /// 缓存文件名：64 位哈希（路径|mtime|尺寸）。哈希碰撞只导致缩略图串图
 /// （同目录同尺寸概率极低），不影响数据安全。
 fn cache_path(dir: &PathBuf, path: &str, mtime: i64, size: u32) -> PathBuf {
