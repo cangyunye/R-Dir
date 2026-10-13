@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { Sidebar } from "./Sidebar";
+import { TAG_DEFS } from "@/lib/persist";
 
 const base = {
   quickAccess: [],
@@ -11,8 +12,11 @@ const base = {
   customQuick: [],
   onRemoveQuick: vi.fn(),
   tagCounts: {} as Record<string, number>,
+  tags: TAG_DEFS,
   tagNames: {} as Record<string, string>,
   onRenameTag: vi.fn(),
+  onAddTag: vi.fn(() => true),
+  onTagsFullHint: vi.fn(),
   activeTagId: null as string | null,
   onSelectTag: vi.fn(),
   sftpServers: [],

@@ -35,7 +35,8 @@ test.describe("1. 启动", () => {
 
   test("W2 目录排在文件前面", async ({ page }) => {
     const names = await page.locator("[data-path]").allInnerTexts();
-    expect(names.length).toBe(5);
+    // v0.28 起夹具含 Pictures（预览/浏览模式用），家目录共 6 项
+    expect(names.length).toBe(6);
     const firstFile = names.findIndex((t) => t.includes("Notes.txt"));
     const lastDir = names.findLastIndex((t) => t.includes("Documents") || t.includes("Projects"));
     expect(lastDir).toBeLessThan(firstFile);
@@ -85,7 +86,8 @@ test.describe("3. 文件列表交互", () => {
   test("L2 全选", async ({ page }) => {
     await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
     await page.keyboard.press(`${MOD}+KeyA`);
-    await expect(page.locator("[data-path]")).toHaveCount(5);
+    // v0.28 起夹具含 Pictures，家目录共 6 项
+    await expect(page.locator("[data-path]")).toHaveCount(6);
   });
 });
 
@@ -984,7 +986,7 @@ test.describe("28. 视图模式：大图标 / 画廊（v0.27.0）", () => {
     await expect(page.locator(DOC_ROW)).toBeVisible();
     await page.locator(switchBtn("icons")).click();
     await expect(page.locator(DOC_ROW)).toHaveCount(0);
-    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    await expect(page.locator("[data-grid-item]")).toHaveCount(6);
     await expect(page.locator(DOC_GRID)).toBeVisible();
     await expect(page.locator(PHOTO_GRID)).toBeVisible();
     // 切回详情
@@ -996,7 +998,7 @@ test.describe("28. 视图模式：大图标 / 画廊（v0.27.0）", () => {
   test("V2 Alt+2 / Alt+1 快捷键切换视图（画廊暂未开放，仅两段）", async ({ page }) => {
     await expect(page.locator('[data-view-switch] button[data-view-mode="gallery"]')).toHaveCount(0);
     await page.keyboard.press("Alt+2");
-    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    await expect(page.locator("[data-grid-item]")).toHaveCount(6);
     await page.keyboard.press("Alt+1");
     await expect(page.locator("[data-grid-item]")).toHaveCount(0);
   });
@@ -1009,7 +1011,7 @@ test.describe("28. 视图模式：大图标 / 画廊（v0.27.0）", () => {
 
   test("V4 大图标模式：网格内拖动条目 → 位置表写入（icon_positions_save 被调用）", async ({ page }) => {
     await page.locator(switchBtn("icons")).click();
-    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    await expect(page.locator("[data-grid-item]")).toHaveCount(6);
     const saved: unknown[] = [];
     await page.exposeFunction("__rdirIconSaved", (v: unknown) => saved.push(v));
     await page.evaluate(() => {
@@ -1041,7 +1043,7 @@ test.describe("28. 视图模式：大图标 / 画廊（v0.27.0）", () => {
 
   test("V5 整理图标：右键空白 → 整理后位置表清空（该目录）", async ({ page }) => {
     await page.locator(switchBtn("icons")).click();
-    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    await expect(page.locator("[data-grid-item]")).toHaveCount(6);
     // 先制造一个摆放记录（按下未选中图标直接拖）
     const item = page.locator(`[data-grid-item][data-path="${HOME}/Notes.txt"]`);
     const box = await item.boundingBox();
@@ -1052,7 +1054,7 @@ test.describe("28. 视图模式：大图标 / 画廊（v0.27.0）", () => {
     // 空白处右键 → 整理图标
     await page.locator("[data-icongrid-body]").click({ button: "right", position: { x: 20, y: 300 } });
     await page.getByRole("menuitem", { name: "整理图标" }).click();
-    await expect(page.locator("[data-grid-item]")).toHaveCount(5); // 视图不崩，布局回自动
+    await expect(page.locator("[data-grid-item]")).toHaveCount(6); // 视图不崩，布局回自动
   });
 
 });
@@ -1063,7 +1065,7 @@ test.describe("28A. 大图标自动排列（v0.27.1）", () => {
 
   test("V7 空白右键「自动排列」：勾选后拖动不再改变位置表", async ({ page }) => {
     await page.locator(switchBtn("icons")).click();
-    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    await expect(page.locator("[data-grid-item]")).toHaveCount(6);
     // 先制造一个摆放记录
     const item = page.locator(`[data-grid-item][data-path="${HOME}/Notes.txt"]`);
     let box = await item.boundingBox();
@@ -1080,7 +1082,7 @@ test.describe("28A. 大图标自动排列（v0.27.1）", () => {
     await page.mouse.down();
     await page.mouse.move(box.x + box.width / 2 - 30, box.y + box.height / 2 + 120, { steps: 6 });
     await page.mouse.up();
-    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    await expect(page.locator("[data-grid-item]")).toHaveCount(6);
     // 菜单勾选态回显
     await page.locator("[data-icongrid-body]").click({ button: "right", position: { x: 20, y: 300 } });
     await expect(page.getByRole("menuitem", { name: /自动排列 ✓/ })).toBeVisible();

@@ -8,7 +8,7 @@ import {
   Tag,
   X,
 } from "lucide-react";
-import { tagById, tagLabel, TAG_DEFS, type FileTags, type TagNames } from "@/lib/persist";
+import { tagLabel, TAG_DEFS, type FileTags, type TagDef, type TagNames } from "@/lib/persist";
 import { FileIcon } from "@/components/FileIcon";
 import { statPaths } from "@/lib/api";
 import { MenuGroup } from "@/components/MenuGroup";
@@ -30,6 +30,7 @@ import { hideExtension } from "@/lib/format";
 export function TagView({
   tagId,
   fileTags,
+  tags: tagsProp,
   tagNames,
   currentPath,
   showExtensions,
@@ -45,6 +46,8 @@ export function TagView({
 }: {
   tagId: string;
   fileTags: FileTags;
+  /** 全量标签 = 预设 + 自定义（v0.28.0；缺省回落预设） */
+  tags?: TagDef[];
   tagNames: TagNames;
   currentPath: string;
   /** v0.14 显示文件扩展名 */
@@ -59,7 +62,10 @@ export function TagView({
   onExit: () => void;
   isActive: boolean;
 }) {
-  const def = tagById(tagId);
+  // v0.28.0 自定义标签也在查找范围（否则新标签视图横幅回落原始 id）
+  const allTagDefs = tagsProp ?? TAG_DEFS;
+  const findTag = (id: string) => allTagDefs.find((t) => t.id === id);
+  const def = findTag(tagId);
   const files = useMemo(
     () =>
       Object.entries(fileTags)
@@ -215,7 +221,7 @@ export function TagView({
                       setExpandedMenu((cur) => (cur === id ? null : id))
                     }
                   >
-                    {TAG_DEFS.map((t) => {
+                    {(tagsProp ?? TAG_DEFS).map((t) => {
                       const checked = (fileTags[p] ?? []).includes(t.id);
                       return (
                         <ContextMenuItem
@@ -257,20 +263,24 @@ export function TagView({
   );
 }
 
-/** 文件行上显示的标签色点（Finder 风格，最多显示全部标签） */
+/** 文件行上显示的标签色点（Finder 风格，最多显示全部标签；自定义标签经 tags 下发） */
 export function TagDots({
   path,
   fileTags,
+  tags: tagsProp,
 }: {
   path: string;
   fileTags: FileTags;
+  /** 全量标签 = 预设 + 自定义（v0.28.0；缺省回落预设） */
+  tags?: TagDef[];
 }) {
-  const tags = fileTags[path] ?? [];
-  if (tags.length === 0) return null;
+  const tagIds = fileTags[path] ?? [];
+  if (tagIds.length === 0) return null;
+  const defs = tagsProp ?? TAG_DEFS;
   return (
     <span className="flex shrink-0 items-center gap-0.5">
-      {tags
-        .map((id) => tagById(id))
+      {tagIds
+        .map((id) => defs.find((t) => t.id === id))
         .filter((d): d is NonNullable<typeof d> => !!d)
         .map((d) => (
           <span

@@ -14,6 +14,8 @@ export interface PrefsDisk {
   tagNames?: TagNames;
   fileTags?: FileTags;
   customQuick?: string[];
+  /** v0.28.0 用户新增的自定义标签 */
+  customTags?: TagDef[];
 }
 
 /** 当前 localStorage 中的标签配置快照 */
@@ -22,6 +24,7 @@ function prefsSnapshot(): PrefsDisk {
     tagNames: loadTagNames(),
     fileTags: loadFileTags(),
     customQuick: loadCustomQuick(),
+    customTags: loadCustomTags(),
   };
 }
 
@@ -63,6 +66,15 @@ export function mergeDiskPrefs(disk: PrefsDisk): void {
       JSON.stringify([...new Set([...loadCustomQuick(), ...disk.customQuick])]),
     );
   }
+  if (disk.customTags && disk.customTags.length > 0) {
+    // 按磁盘优先合并去重（id 相同以磁盘为准），并收敛到总数上限内
+    const byId = new Map<string, TagDef>();
+    for (const t of [...loadCustomTags(), ...disk.customTags]) byId.set(t.id, t);
+    localStorage.setItem(
+      CUSTOM_TAGS_KEY,
+      JSON.stringify([...byId.values()].slice(0, Math.max(0, MAX_TAGS - TAG_DEFS.length))),
+    );
+  }
 }
 
 /** 预设标签（参照 macOS Finder 彩色标签） */
@@ -82,8 +94,74 @@ export const TAG_DEFS: TagDef[] = [
   { id: "gray", label: "灰色", color: "#8e8e93" },
 ];
 
+/** 标签总数上限（预设 + 自定义；v0.28.0） */
+export const MAX_TAGS = 10;
+
 export function tagById(id: string): TagDef | undefined {
   return TAG_DEFS.find((t) => t.id === id);
+}
+
+/** 全量标签 = 预设 + 用户自定义（自定义追加在预设后） */
+export function allTags(custom: TagDef[]): TagDef[] {
+  return [...TAG_DEFS, ...custom];
+}
+
+// ---- v0.28.0 用户新增的自定义标签 ----
+
+const CUSTOM_TAGS_KEY = "rfm.custom-tags";
+
+function isTagDef(v: unknown): v is TagDef {
+  return (
+    !!v &&
+    typeof v === "object" &&
+    typeof (v as TagDef).id === "string" &&
+    typeof (v as TagDef).label === "string" &&
+    typeof (v as TagDef).color === "string"
+  );
+}
+
+/** 读自定义标签；损坏数据过滤，越界收敛到剩余可配额 */
+export function loadCustomTags(): TagDef[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_TAGS_KEY);
+    const arr = raw ? (JSON.parse(raw) as unknown) : [];
+    const list = Array.isArray(arr) ? arr.filter(isTagDef) : [];
+    return list.slice(0, Math.max(0, MAX_TAGS - TAG_DEFS.length));
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomTags(tags: TagDef[]): void {
+  try {
+    localStorage.setItem(CUSTOM_TAGS_KEY, JSON.stringify(tags));
+  } catch {
+    /* ignore */
+  }
+  flushPrefsToDisk();
+}
+
+/** 新增标签可选色板：预设 7 色之外的补充色（新增对话框用，同饱和度语言） */
+export const TAG_COLOR_PALETTE: string[] = [
+  "#ff3b30",
+  "#ff9500",
+  "#ffcc00",
+  "#34c759",
+  "#007aff",
+  "#af52de",
+  "#8e8e93",
+  "#00c7be",
+  "#ff2d55",
+  "#5e5ce6",
+  "#bf5af2",
+  "#ac8e68",
+  "#30b0c7",
+  "#8bc34a",
+];
+
+/** 自定义标签 id：时间戳 + 随机段，避免与预设/既有自定义冲突 */
+export function makeTagId(): string {
+  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 /** 用户自定义标签名（颜色 id → 显示名），v0.6.4 起支持右键重命名标签 */
@@ -139,8 +217,10 @@ export function saveFileTags(t: FileTags): void {
   flushPrefsToDisk();
 }
 
-/** 用户自定义快捷访问路径列表（追加在内置快捷访问下方） */
+/** 用户自定义快捷访问路径列表（追加在内置快捷访问下方）；上限 MAX_QUICK（v0.28.0） */
 export type CustomQuick = string[];
+
+export const MAX_QUICK = 10;
 
 export function loadCustomQuick(): CustomQuick {
   try {
@@ -431,6 +511,48 @@ export function loadDiffMtimeTolerance(): number {
 export function saveDiffMtimeTolerance(seconds: number): void {
   try {
     localStorage.setItem(DIFF_MTIME_KEY, String(seconds));
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---- v0.28 预览栏（右侧拉门）：开关 / 展开 / 宽度 ----
+const PREVIEW_KEY = "rfm.preview";
+
+export interface PreviewPrefs {
+  /** 设置 → 预览 总开关（默认关：点文件不直接预览，需显式开启） */
+  enabled: boolean;
+  /** 拉门当前是否展开（false = 收起为贴边把手） */
+  expanded: boolean;
+  /** 拉门宽度（px，280–720） */
+  width: number;
+}
+
+export const PREVIEW_WIDTH_MIN = 280;
+export const PREVIEW_WIDTH_MAX = 720;
+export const PREVIEW_WIDTH_DEFAULT = 360;
+
+export function loadPreviewPrefs(): PreviewPrefs {
+  try {
+    const raw = localStorage.getItem(PREVIEW_KEY);
+    if (!raw) return { enabled: false, expanded: true, width: PREVIEW_WIDTH_DEFAULT };
+    const o = JSON.parse(raw) as Partial<PreviewPrefs>;
+    const width = Number(o.width);
+    return {
+      enabled: o.enabled === true,
+      expanded: o.expanded !== false,
+      width: Number.isFinite(width)
+        ? Math.min(PREVIEW_WIDTH_MAX, Math.max(PREVIEW_WIDTH_MIN, width))
+        : PREVIEW_WIDTH_DEFAULT,
+    };
+  } catch {
+    return { enabled: false, expanded: true, width: PREVIEW_WIDTH_DEFAULT };
+  }
+}
+
+export function savePreviewPrefs(p: PreviewPrefs): void {
+  try {
+    localStorage.setItem(PREVIEW_KEY, JSON.stringify(p));
   } catch {
     /* ignore */
   }

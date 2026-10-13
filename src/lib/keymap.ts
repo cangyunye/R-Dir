@@ -76,6 +76,9 @@ export const ACTIONS: KeyAction[] = [
   A({ id: "openSettings", label: "打开设置（快捷键一览）", group: "视图 / 全局", win: "mod+,", mac: "mod+," }),
   A({ id: "openHelp", label: "帮助 / 快捷键一览", group: "视图 / 全局", win: "f1", mac: "f1" }),
   A({ id: "toggleSyncResults", label: "同步比对结果（开关）", group: "视图 / 全局", win: "mod+shift+x", mac: "mod+shift+x" }),
+  // v0.28 预览栏（设置 → 预览 总开关默认关，开启后空格开/收起）
+  A({ id: "togglePreview", label: "预览栏（展开 / 收起）", group: "视图 / 全局", win: "space", mac: "space" }),
+  A({ id: "toggleBrowse", label: "图文浏览模式", group: "视图 / 全局", win: "mod+shift+e", mac: "mod+shift+e" }),
   A({ id: "commandPalette", label: "命令面板", group: "视图 / 全局", win: "mod+k / mod+shift+p", mac: "mod+k / mod+shift+p" }),
 ];
 

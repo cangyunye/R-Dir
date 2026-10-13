@@ -57,6 +57,14 @@ export const moveEntries = (paths: string[], dest: string) =>
 export const scanConflicts = (paths: string[], dest: string) =>
   invoke<import("./types").TransferConflict[]>("scan_conflicts", { paths, dest });
 
+/** v0.28.0 目录复制语义：顶层同名目录重复检测 + `name (2)` 建议名 */
+export interface DirDuplicate {
+  src: string;
+  suggest: string;
+}
+export const scanDirDuplicates = (paths: string[], dest: string) =>
+  invoke<DirDuplicate[]>("scan_dir_duplicates", { paths, dest });
+
 /** 按冲突裁决表复制，返回实际创建路径（供撤销记录） */
 export const copyEntriesPlan = (
   paths: string[],
@@ -290,3 +298,8 @@ export const iconPositionsSave = (positions: IconPositionMap) =>
 
 export const thumbGet = (path: string, size: number) =>
   invoke<string | null>("thumb_get", { path, size });
+
+// ---- v0.28 预览原图（预览栏；原字节 data URL，GIF 保动画；不支持/过大返回 null） ----
+
+export const previewData = (path: string) =>
+  invoke<string | null>("preview_data", { path });

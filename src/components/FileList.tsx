@@ -47,7 +47,7 @@ import {
 import { RenameInput } from "@/components/RenameInput";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { TAG_DEFS, tagLabel, type FileTags, type TagNames } from "@/lib/persist";
+import { TAG_DEFS, tagLabel, type FileTags, type TagDef, type TagNames } from "@/lib/persist";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { OpenerItem, ShellItem } from "@/lib/openerApi";
 import { ROW_HEIGHT, visibleRange } from "@/lib/virtual-scroll";
@@ -123,6 +123,7 @@ export function FileList({
   onSelectAll,
   onInvertSelection,
   fileTags,
+  tags: tagsProp,
   tagNames,
   onRenameTag,
   customQuick,
@@ -140,6 +141,7 @@ export function FileList({
   dragOp,
   showHidden,
   showExtensions,
+  spaceTogglesPreview,
   renaming,
   onRenameCommit,
   onRenameCancel,
@@ -203,6 +205,8 @@ export function FileList({
   onSelectAll: () => void;
   onInvertSelection: () => void;
   fileTags: FileTags;
+  /** 全量标签 = 预设 + 自定义（v0.28.0；缺省回落预设） */
+  tags?: TagDef[];
   tagNames: TagNames;
   onRenameTag: (tagId: string, label: string) => void;
   customQuick: string[];
@@ -223,6 +227,8 @@ export function FileList({
   showHidden: boolean;
   /** v0.14 显示文件扩展名（false 时列表隐藏扩展名） */
   showExtensions: boolean;
+  /** v0.28 预览栏启用时空格让位给「切换预览」，行内不再用空格切换选中 */
+  spaceTogglesPreview?: boolean;
   renaming: RenameState | null;
   onRenameCommit: (path: string, name: string) => void;
   onRenameCancel: () => void;
@@ -355,6 +361,9 @@ export function FileList({
   const [renameTagOpen, setRenameTagOpen] = useState(false);
   const [renameTagId, setRenameTagId] = useState<string>("red");
   const [renameTagInput, setRenameTagInput] = useState("");
+  // v0.28.0 全量标签（预设 + 自定义）；未下发时回落预设
+  const tags = tagsProp ?? TAG_DEFS;
+  const renameTagInputRef = useRef<HTMLInputElement>(null);
   const submitRenameTag = () => {
     const label = renameTagInput.trim();
     if (!label) return;
@@ -428,6 +437,8 @@ export function FileList({
     }
     if (e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key.length !== 1) return;
+    // 空格不作首字母：它是「选中切换/预览开关」的键，误拉起搜索浮层会与预览冲突
+    if (e.key === " ") return;
     const t = e.target as HTMLElement;
     if (t.closest("input,textarea")) return;
     e.preventDefault();
@@ -668,13 +679,21 @@ export function FileList({
   return (
     <>
       <Dialog open={renameTagOpen} onOpenChange={setRenameTagOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent
+          className="max-w-sm"
+          onOpenAutoFocus={(e) => {
+            // 焦点必须落在输入框：裸 autoFocus 会输给 radix 的初始焦点（色块按钮）
+            e.preventDefault();
+            renameTagInputRef.current?.focus();
+            renameTagInputRef.current?.select();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>重命名标签</DialogTitle>
             <DialogDescription>自定义标签显示名称（不影响已标记的文件）</DialogDescription>
           </DialogHeader>
           <div className="flex items-center gap-1.5">
-            {TAG_DEFS.map((t) => (
+            {tags.map((t) => (
               <button
                 key={t.id}
                 type="button"
@@ -692,10 +711,10 @@ export function FileList({
             ))}
           </div>
           <Input
+            ref={renameTagInputRef}
             value={renameTagInput}
             onChange={(e) => setRenameTagInput(e.target.value)}
             placeholder="标签名称"
-            autoFocus
             onKeyDown={(e) => {
               if (e.key === "Enter") submitRenameTag();
               if (e.key === "Escape") setRenameTagOpen(false);
@@ -986,6 +1005,8 @@ export function FileList({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") onOpen(entry);
                     if (e.key === " ") {
+                      // v0.28 预览栏启用时空格归「切换预览」（App 全局分发），行内放行
+                      if (spaceTogglesPreview) return;
                       e.preventDefault();
                       onSelect(entry, e.metaKey || e.ctrlKey);
                     }
@@ -1010,7 +1031,7 @@ export function FileList({
                       />
                     )}
                     <FileIcon entry={entry} size={16} className="shrink-0" />
-                    <TagDots path={entry.path} fileTags={fileTags} />
+                    <TagDots path={entry.path} fileTags={fileTags} tags={tags} />
                     {isRenaming ? (
                       <RenameInput
                         initial={renaming.name}
@@ -1213,7 +1234,7 @@ export function FileList({
                   expanded={expandedMenu === "tags"}
                   onToggle={toggleMenuGroup}
                 >
-                  {TAG_DEFS.map((t) => {
+                  {tags.map((t) => {
                     const checked = (fileTags[entry.path] ?? []).includes(t.id);
                     return (
                       <ContextMenuItem

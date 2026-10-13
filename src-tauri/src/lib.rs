@@ -8,6 +8,7 @@ mod fs_ops;
 mod fs_watch;
 mod iconpos;
 mod ops;
+mod preview;
 mod progress;
 mod search;
 mod sizestat;
@@ -1310,6 +1311,14 @@ async fn scan_conflicts(paths: Vec<String>, dest: String) -> Result<Vec<ops::Con
         .map_err(|e| e.to_string())?
 }
 
+/// v0.28.0 目录复制语义：顶层同名目录重复检测 + `name (2)` 建议名。
+#[tauri::command]
+async fn scan_dir_duplicates(paths: Vec<String>, dest: String) -> Result<Vec<ops::DupDir>, String> {
+    tauri::async_runtime::spawn_blocking(move || ops::scan_dir_duplicates(&paths, &dest))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// 按冲突裁决表复制，返回实际创建路径（供撤销记录）。
 #[tauri::command]
 async fn copy_entries_plan(
@@ -1611,7 +1620,9 @@ pub fn run() {
         iconpos::icon_positions_load,
         iconpos::icon_positions_save,
         thumbs::thumb_get,
+        preview::preview_data,
         scan_conflicts,
+        scan_dir_duplicates,
         copy_entries_plan,
         move_entries_plan,
         clipboard_write_files,

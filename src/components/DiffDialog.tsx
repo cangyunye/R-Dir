@@ -128,6 +128,18 @@ export function DiffDialog({
   /** 当前比对任务 id（取消与进度过滤用） */
   const idRef = useRef<string>("");
 
+  // F11 全屏切换：仅在比对窗口打开期间注册，天然限定生效范围
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "F11") {
+        e.preventDefault();
+        setMaximized((m) => !m);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // 监听比对进度（常驻监听，按 id 过滤）
   useEffect(() => {
     let un: (() => void) | undefined;
@@ -352,7 +364,7 @@ export function DiffDialog({
         style={
           maximized
             ? { width: "calc((100vw - 24px) / var(--rdir-zoom, 1))", height: "calc((100vh - 24px) / var(--rdir-zoom, 1))" }
-            : { width: "calc(min(960px, 95vw) / var(--rdir-zoom, 1))", height: "calc(80vh / var(--rdir-zoom, 1))" }
+            : { width: "calc(min(1280px, 96vw) / var(--rdir-zoom, 1))", height: "calc(80vh / var(--rdir-zoom, 1))" }
         }
       >
         {/* 标题栏 */}
@@ -362,7 +374,7 @@ export function DiffDialog({
             <button
               onClick={() => setMaximized((m) => !m)}
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title={maximized ? "还原窗口" : "最大化"}
+              title={maximized ? "还原窗口（F11）" : "最大化（F11）"}
             >
               {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </button>

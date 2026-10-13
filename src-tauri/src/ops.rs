@@ -77,6 +77,57 @@ pub fn scan_conflicts(paths: &[String], dest: &str) -> Result<Vec<Conflict>, Str
     Ok(out)
 }
 
+/// v0.28.0 目录复制语义：顶层**目录**复制到某目录时，若目标已有同名目录，
+/// 单独报出（scan_conflicts 对目录 vs 目录走合并不报），并给出 `name (2)`
+/// 风格的唯一建议名，供「同目录复制 → 询问是否新增目录」一键改名。
+pub fn scan_dir_duplicates(paths: &[String], dest: &str) -> Result<Vec<DupDir>, String> {
+    let dest = Path::new(dest);
+    if !dest.is_dir() {
+        return Err(format!("目标不是目录：{}", dest.display()));
+    }
+    let mut out = Vec::new();
+    for p in paths {
+        let src = Path::new(p);
+        if !src.is_dir() {
+            continue;
+        }
+        let name = src.file_name().ok_or_else(|| format!("非法路径：{}", p))?;
+        let target = dest.join(name);
+        if target.is_dir() {
+            out.push(DupDir {
+                src: src.to_string_lossy().to_string(),
+                suggest: suggest_dir_name(&target),
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// 一条顶层同名目录重复（仅复制语义用）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DupDir {
+    pub src: String,
+    /// 目标父目录下不冲突的新名字（`name (2)` 递增）
+    pub suggest: String,
+}
+
+/// `name (2)` 风格递增（对齐资源管理器「副本」命名），直到不冲突。
+fn suggest_dir_name(target: &Path) -> String {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let fname = target
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    for i in 2..10000u32 {
+        let cand = format!("{} ({})", fname, i);
+        if !parent.join(&cand).exists() {
+            return cand;
+        }
+    }
+    fname
+}
+
 fn scan_into(src: &Path, dst: &Path, out: &mut Vec<Conflict>) {
     if !dst.exists() {
         return;
@@ -1121,5 +1172,76 @@ mod tests {
         assert_eq!(ev.starts, 1);
         assert_eq!(ev.entry_dones, 1);
     }
-}
 
+    // ---- v0.28.0 目录复制语义：顶层同名目录重复检测 ----
+
+    #[test]
+    fn scan_dir_duplicates_reports_only_top_level_dir_clashes() {
+        let base = tmp("dup-dirs");
+        let dest = base.join("dest");
+        fs::create_dir_all(dest.join("A")).unwrap();
+        fs::create_dir_all(dest.join("B")).unwrap();
+        fs::write(dest.join("f.txt"), "x").unwrap();
+        // 源：A 同名目录、B 同名目录、C 新目录、f.txt 同名文件
+        fs::create_dir_all(base.join("s/A")).unwrap();
+        fs::create_dir_all(base.join("s/B")).unwrap();
+        fs::create_dir_all(base.join("s/C")).unwrap();
+        fs::write(base.join("s/f.txt"), "y").unwrap();
+        fs::write(base.join("s/A/inner.txt"), "i").unwrap();
+
+        let dups = scan_dir_duplicates(
+            &[
+                base.join("s/A").to_string_lossy().to_string(),
+                base.join("s/B").to_string_lossy().to_string(),
+                base.join("s/C").to_string_lossy().to_string(),
+                base.join("s/f.txt").to_string_lossy().to_string(),
+            ],
+            &dest.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        assert_eq!(dups.len(), 2, "只报 A/B 两个顶层目录重复: {dups:?}");
+        let names: Vec<&str> = dups
+            .iter()
+            .map(|d| d.src.rsplit(['/', '\\']).next().unwrap())
+            .collect();
+        assert!(names.contains(&"A") && names.contains(&"B"));
+        // 建议名 = "name (2)" 且不冲突
+        for d in &dups {
+            assert!(d.suggest.ends_with(" (2)"), "建议名应为 name (2): {}", d.suggest);
+            assert!(!dest.join(&d.suggest).exists());
+        }
+    }
+
+    #[test]
+    fn scan_dir_duplicates_suggest_increments_past_taken() {
+        let base = tmp("dup-suggest");
+        let dest = base.join("dest");
+        fs::create_dir_all(dest.join("A")).unwrap();
+        fs::create_dir_all(dest.join("A (2)")).unwrap();
+        fs::create_dir_all(base.join("s/A")).unwrap();
+
+        let dups = scan_dir_duplicates(
+            &[base.join("s/A").to_string_lossy().to_string()],
+            &dest.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        assert_eq!(dups.len(), 1);
+        assert_eq!(dups[0].suggest, "A (3)", "被占用时顺延: {}", dups[0].suggest);
+    }
+
+    #[test]
+    fn scan_dir_duplicates_ignores_files_and_same_path() {
+        let base = tmp("dup-skip");
+        let dest = base.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("same.txt"), "x").unwrap();
+        fs::write(base.join("same.txt"), "y").unwrap();
+
+        let dups = scan_dir_duplicates(
+            &[base.join("same.txt").to_string_lossy().to_string()],
+            &dest.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        assert!(dups.is_empty(), "同名文件不是目录重复: {dups:?}");
+    }
+}

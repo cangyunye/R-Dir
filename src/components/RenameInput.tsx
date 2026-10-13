@@ -71,7 +71,9 @@ export function RenameInput({
         // macOS 中文输入法：按回车确认候选词时 keydown 带 isComposing=true，
         // 此时提交会带着未上屏的拼音（或空串）提前结束会话——表现为"回车无法重命名"。
         // 组合中的 Enter/Esc 属输入法操作，交给 IME；上屏后再按 Enter 才提交。
-        if (e.nativeEvent.isComposing) return;
+        // keyCode 229 = IME 处理中（WKWebView 等引擎确认候选的 Enter 可能 isComposing=false
+        // 但仍带 229），一并交给 IME，避免组合确认回车被误当提交。
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
         if (e.key === "Enter") finishRef.current(true);
         if (e.key === "Escape") finishRef.current(false);
       }}

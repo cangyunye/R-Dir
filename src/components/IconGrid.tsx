@@ -52,7 +52,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { MenuGroup } from "@/components/MenuGroup";
-import type { FileTags, TagNames } from "@/lib/persist";
+import type { FileTags, TagDef, TagNames } from "@/lib/persist";
 import type { LinkSide } from "@/lib/sync-link";
 import type { OpenerItem, ShellItem } from "@/lib/openerApi";
 
@@ -145,6 +145,7 @@ export function IconGrid({
   onSelectAll,
   onInvertSelection,
   fileTags,
+  tags: tagsProp,
   tagNames,
   customQuick,
   onToggleTag,
@@ -161,6 +162,7 @@ export function IconGrid({
   dragOp,
   showHidden,
   showExtensions,
+  spaceTogglesPreview,
   renaming,
   isActive,
   onActivate,
@@ -227,6 +229,8 @@ export function IconGrid({
   onSelectAll: () => void;
   onInvertSelection: () => void;
   fileTags: FileTags;
+  /** 全量标签 = 预设 + 自定义（v0.28.0；缺省回落预设） */
+  tags?: TagDef[];
   tagNames: TagNames;
   customQuick: string[];
   onToggleTag: (path: string, tagId: string) => void;
@@ -243,6 +247,8 @@ export function IconGrid({
   dragOp: "copy" | "move";
   showHidden: boolean;
   showExtensions: boolean;
+  /** v0.28 预览栏启用时空格让位给「切换预览」，网格不再用空格加选 */
+  spaceTogglesPreview?: boolean;
   renaming: RenameState | null;
   isActive: boolean;
   onActivate: () => void;
@@ -679,6 +685,8 @@ export function IconGrid({
         break;
       }
       case " ": {
+        // v0.28 预览栏启用时空格归「切换预览」（App 全局分发），网格放行
+        if (spaceTogglesPreview) break;
         const p = sorted.find((x) => x.path === primary);
         if (p) {
           e.preventDefault();
@@ -777,6 +785,7 @@ export function IconGrid({
                   const kind = fileKindOf(entry);
                   const showThumb = mode === "gallery" && THUMBNAIL_KINDS.has(kind) && !entry.is_dir;
                   const targets = selectionSet.has(entry.path) ? selection : [entry.path];
+                  const gridLabel = showExtensions ? entry.name : hideExtension(entry.name, entry.is_dir);
                   return (
                     <ContextMenu
                       key={entry.path}
@@ -841,7 +850,7 @@ export function IconGrid({
                             if (e.key === "Enter") onOpen(entry);
                           }}
                           className={cn(
-                            "absolute flex cursor-default flex-col items-center gap-1 rounded-lg p-2",
+                            "group absolute flex cursor-default flex-col items-center gap-1 rounded-lg p-2",
                             selected ? "bg-selected" : "hover:bg-muted",
                             isPrimary && "ring-1 ring-inset ring-primary/40",
                             folderHover === entry.path &&
@@ -880,19 +889,33 @@ export function IconGrid({
                               />
                             </div>
                           ) : (
-                            <span
-                              className={cn(
-                                "w-full line-clamp-2 break-words text-center text-[11px] leading-tight",
-                                entry.is_dir && "font-medium",
-                                entry.is_symlink && "italic",
-                                selected && "font-semibold",
-                              )}
-                              title={entry.name}
-                            >
-                              {showExtensions ? entry.name : hideExtension(entry.name, entry.is_dir)}
-                            </span>
+                            <>
+                              <span
+                                className={cn(
+                                  "w-full line-clamp-2 break-words text-center text-[11px] leading-tight",
+                                  entry.is_dir && "font-medium",
+                                  entry.is_symlink && "italic",
+                                  selected && "font-semibold",
+                                )}
+                                title={entry.name}
+                              >
+                                {gridLabel}
+                              </span>
+                              {/* 选中/悬停展开全名浮层：绝对定位盖到下方内容上，
+                                  最多 4 行（长哈希名两行内放不下的兜底，悬停 title 仍在） */}
+                              <span
+                                data-testid="grid-label-full"
+                                className={cn(
+                                  "absolute inset-x-1 top-full z-20 hidden rounded-md border bg-background px-1.5 py-1 text-center text-[11px] leading-snug break-words shadow-lg",
+                                  isPrimary ? "block" : "group-hover:block",
+                                )}
+                                aria-hidden
+                              >
+                                {gridLabel}
+                              </span>
+                            </>
                           )}
-                          <TagDots path={entry.path} fileTags={fileTags} />
+                          <TagDots path={entry.path} fileTags={fileTags} tags={tagsProp} />
                         </div>
                       </ContextMenuTrigger>
                       <EntryContextMenuContent
@@ -905,6 +928,7 @@ export function IconGrid({
                         openers={openers}
                         shells={shells}
                         fileTags={fileTags}
+                        tags={tagsProp}
                         tagNames={tagNames}
                         customQuick={customQuick}
                         compareBase={compareBase}

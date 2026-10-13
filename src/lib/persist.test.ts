@@ -6,6 +6,12 @@ import {
   saveTagNames,
   loadFileTags,
   saveFileTags,
+  loadCustomTags,
+  saveCustomTags,
+  allTags,
+  makeTagId,
+  MAX_TAGS,
+  TAG_DEFS,
   parentOf,
   loadShareAllowParent,
   loadUiFontFamily,
@@ -26,6 +32,8 @@ import {
   loadPrefsFromDisk,
   saveCustomQuick,
   loadCustomQuick,
+  loadPreviewPrefs,
+  savePreviewPrefs,
 } from "./persist";
 
 beforeEach(() => {
@@ -232,5 +240,80 @@ describe("autoUiFontSize", () => {
   it("超大屏 (>2000) 返回 16", () => {
     Object.defineProperty(window, "innerWidth", { value: 2560, configurable: true });
     expect(autoUiFontSize()).toBe(16);
+  });
+});
+
+// ---- v0.28 预览栏偏好 ----
+describe("preview prefs（rfm.preview）", () => {
+  it("默认：关闭 + 展开 + 360px", () => {
+    const p = loadPreviewPrefs();
+    expect(p.enabled).toBe(false);
+    expect(p.expanded).toBe(true);
+    expect(p.width).toBe(360);
+  });
+  it("保存后读回一致", () => {
+    savePreviewPrefs({ enabled: true, expanded: false, width: 480 });
+    const p = loadPreviewPrefs();
+    expect(p.enabled).toBe(true);
+    expect(p.expanded).toBe(false);
+    expect(p.width).toBe(480);
+  });
+  it("宽度越界收敛到 280–720", () => {
+    savePreviewPrefs({ enabled: true, expanded: true, width: 100 });
+    expect(loadPreviewPrefs().width).toBe(280);
+    savePreviewPrefs({ enabled: true, expanded: true, width: 9999 });
+    expect(loadPreviewPrefs().width).toBe(720);
+  });
+  it("损坏数据回落默认", () => {
+    localStorage.setItem("rfm.preview", "{oops");
+    const p = loadPreviewPrefs();
+    expect(p.enabled).toBe(false);
+    expect(p.width).toBe(360);
+  });
+});
+
+// ---- v0.28.0 自定义标签 ----
+describe("自定义标签（v0.28.0）", () => {
+  it("默认无自定义标签；allTags = 预设 + 自定义", () => {
+    expect(loadCustomTags()).toEqual([]);
+    expect(allTags([])).toHaveLength(TAG_DEFS.length);
+    const custom = [{ id: "c1", label: "紧急", color: "#00c7be" }];
+    expect(allTags(custom)).toHaveLength(TAG_DEFS.length + 1);
+    expect(allTags(custom).slice(-1)[0].label).toBe("紧急");
+  });
+  it("保存后读回一致", () => {
+    saveCustomTags([{ id: "c1", label: "工作", color: "#ff2d55" }]);
+    expect(loadCustomTags()).toEqual([{ id: "c1", label: "工作", color: "#ff2d55" }]);
+  });
+  it("越界收敛到 MAX_TAGS - 预设数", () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      id: `c${i}`,
+      label: `标签${i}`,
+      color: "#888888",
+    }));
+    saveCustomTags(many);
+    expect(loadCustomTags()).toHaveLength(MAX_TAGS - TAG_DEFS.length);
+  });
+  it("损坏数据过滤非法条目", () => {
+    localStorage.setItem("rfm.custom-tags", JSON.stringify([{ id: "ok", label: "好", color: "#111111" }, { id: 3 }, "x", null]));
+    const tags = loadCustomTags();
+    expect(tags).toHaveLength(1);
+    expect(tags[0].id).toBe("ok");
+  });
+  it("makeTagId 唯一", () => {
+    const ids = new Set(Array.from({ length: 50 }, () => makeTagId()));
+    expect(ids.size).toBe(50);
+  });
+  it("mergeDiskPrefs 自定义标签按 id 去重合并并收敛上限", () => {
+    saveCustomTags([{ id: "c1", label: "本地", color: "#111111" }]);
+    mergeDiskPrefs({
+      customTags: [
+        { id: "c1", label: "磁盘", color: "#222222" },
+        { id: "c2", label: "新增", color: "#333333" },
+      ],
+    });
+    const tags = loadCustomTags();
+    expect(tags.map((t) => t.id)).toEqual(["c1", "c2"]);
+    expect(tags[0].label).toBe("磁盘");
   });
 });

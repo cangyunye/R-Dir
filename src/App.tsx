@@ -70,6 +70,8 @@ import {
   moveEntries,
   moveEntriesPlan,
   scanConflicts,
+  scanDirDuplicates,
+  type DirDuplicate,
   clipboardWriteFiles,
   clipboardReadFiles,
   clipboardClearFiles,
@@ -99,6 +101,7 @@ import {
 } from "@/lib/api";
 import { ConnectDialog } from "@/components/ConnectDialog";
 import { ConflictDialog } from "@/components/ConflictDialog";
+import { AppConfirmDialog, type AppConfirmRequest } from "@/components/AppConfirmDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
 import { basename, isAbsolutePath } from "@/lib/format";
 import { normalizeExts } from "@/lib/openers";
@@ -126,6 +129,11 @@ import {
   loadTagNames,
   saveTagNames,
   TAG_DEFS,
+  allTags,
+  loadCustomTags,
+  saveCustomTags,
+  MAX_TAGS,
+  MAX_QUICK,
   loadUiFontSize,
   saveUiFontSize,
   uiFontZoom,
@@ -141,6 +149,7 @@ import {
   mergeDiskPrefs,
   flushPrefsToDisk,
   type FileTags,
+  type TagDef,
   type TagNames,
 } from "@/lib/persist";
 import { shareStopByDir, shareList, type IconPositionMap } from "@/lib/api";
@@ -158,6 +167,15 @@ import { GitDiffDialog } from "@/components/GitDiffDialog";
 import { SyncDiffModal } from "@/components/SyncDiffPanel";
 import { AppMenu } from "@/components/AppMenu";
 import { CommandPalette, type CommandItem } from "@/components/CommandPalette";
+import { PreviewDrawer } from "@/components/PreviewDrawer";
+import { BrowseMode } from "@/components/BrowseMode";
+import { sortEntries } from "@/lib/entry-sort";
+import { isPreviewable } from "@/lib/preview";
+import {
+  loadPreviewPrefs,
+  savePreviewPrefs,
+  type PreviewPrefs,
+} from "@/lib/persist";
 
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
 const VIRTUAL_TAG_RE = /^tags:\/\/([a-z0-9_-]+)$/;
@@ -312,6 +330,23 @@ export default function App() {
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
   /** 同名冲突裁决：非空时显示 ConflictDialog，resolve 存 ref 供异步等待 */
   const [conflictReq, setConflictReq] = useState<TransferConflict[] | null>(null);
+  /** v0.28.0 应用内确认框（替代原生 confirm：Windows 原生是经典样式弹窗） */
+  const [appConfirmReq, setAppConfirmReq] = useState<AppConfirmRequest | null>(null);
+  const appConfirmResolver = useRef<((v: boolean) => void) | null>(null);
+  const appConfirm = useCallback(
+    (req: AppConfirmRequest) =>
+      new Promise<boolean>((resolve) => {
+        appConfirmResolver.current = resolve;
+        setAppConfirmReq(req);
+      }),
+    [],
+  );
+  const settleAppConfirm = useCallback((v: boolean) => {
+    setAppConfirmReq(null);
+    const resolve = appConfirmResolver.current;
+    appConfirmResolver.current = null;
+    resolve?.(v);
+  }, []);
   const conflictResolver = useRef<((plan: ResolutionPlan | null) => void) | null>(null);
   const [renaming, setRenaming] = useState<{
     paneId: number;
@@ -343,6 +378,17 @@ export default function App() {
   const [addressFocusTick, setAddressFocusTick] = useState(0);
   /** 属性栏显隐（Alt+Enter / ⌘+I） */
   const [showProperties, setShowProperties] = useState(true);
+  /** v0.28 预览栏（右侧拉门）：开关/展开/宽度（rfm.preview 持久化，默认关） */
+  const [previewPrefs, setPreviewPrefs] = useState<PreviewPrefs>(() => loadPreviewPrefs());
+  /** v0.28 图文浏览模式（沉浸覆盖内容区） */
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const updatePreviewPrefs = useCallback((patch: Partial<PreviewPrefs>) => {
+    setPreviewPrefs((prev) => {
+      const next = { ...prev, ...patch };
+      savePreviewPrefs(next);
+      return next;
+    });
+  }, []);
   /** 设置 / 快捷键一览对话框 */
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 应用名 / 版本：Tauri 运行时识别（Windows 任务栏与应用内一致，均为 productName） */
@@ -506,6 +552,23 @@ useEffect(() => {
 
   const activeTab = tabs.find((t) => t.id === activeId) ?? null;
   const activePane = activeTab?.panes[activeTab.activePane] ?? null;
+
+  // ---- v0.28 预览栏 / 图文浏览模式：内容跟随焦点窗格的选中项 ----
+  /** 预览目标 = 焦点窗格主选中对应的条目（目录/列表刷新窗口期缺失 → 占位提示） */
+  const previewEntry: FileEntry | null = useMemo(() => {
+    const sel = activePane?.selection;
+    if (!sel || sel.length === 0) return null;
+    const e = activePane?.entries.find((x) => x.path === sel[0]);
+    return e && !e.is_dir ? e : null;
+  }, [activePane?.selection, activePane?.entries]);
+  /** 浏览模式清单 = 焦点窗格条目按列表同序排序后过滤可预览类型 */
+  const browseList = useMemo(() => {
+    if (!activePane) return [];
+    return sortEntries(activePane.entries, activePane.sortKey, activePane.sortDir, showHidden).filter(
+      isPreviewable,
+    );
+  }, [activePane?.entries, activePane?.sortKey, activePane?.sortDir, showHidden]);
+
   /** 搜索面板冻结的窗格（被关闭时回落到活动窗格） */
   const searchPane = (() => {
     if (searchPaneId === null) return activePane;
@@ -1652,6 +1715,12 @@ useEffect(() => {
   /**
    * 带冲突裁决的复制/移动。先扫描同名冲突，弹窗收集裁决，再执行。
    * 返回 null 表示用户「停止」或无需操作。
+   *
+   * v0.28.0 目录复制语义（仅 copy）：
+   * - 跨目录（目标 ≠ 源父目录，如另一窗格/另一文件夹）复制目录 → 同名冲突一律**覆盖**，不再逐条询问；
+   * - 同目录复制（目标 = 源父目录，含 Ctrl+D 原位副本）遇同名目录 → 询问「是否新增目录」，
+   *   确认后按 `name (2)` 建议名新建副本，取消则跳过这些目录（其余条目照常）。
+   * 文件冲突（含目录 vs 文件类型冲突）仍走冲突裁决弹窗。
    */
   const runTransfer = useCallback(
     async (
@@ -1659,19 +1728,83 @@ useEffect(() => {
       paths: string[],
       dest: string,
     ): Promise<{ created?: string[]; moved?: [string, string][] } | null> => {
-      const conflicts = await scanConflicts(paths, dest);
+      const [conflicts, dups] = await Promise.all([
+        scanConflicts(paths, dest),
+        op === "copy" && paths.every((p) => !isSftpPath(p))
+          ? scanDirDuplicates(paths, dest).catch(() => [] as DirDuplicate[])
+          : Promise.resolve([] as DirDuplicate[]),
+      ]);
       let plan: ResolutionPlan = {};
-      if (conflicts.length > 0) {
+      let execPaths = paths;
+      if (op === "copy") {
+        const scheme = pathScheme(dest);
+        /** 冲突条目所属的顶层源路径（conflict.src 在某顶层 src 的子树内） */
+        const topOf = (src: string): string => {
+          let best = src;
+          let bestLen = -1;
+          for (const p of paths) {
+            if (p === src || scheme.under(src, p) !== null) {
+              if (p.length > bestLen) {
+                best = p;
+                bestLen = p.length;
+              }
+            }
+          }
+          return best;
+        };
+        const dupTops = new Set(dups.map((d) => d.src));
+        /** 冲突分拣：目录复制覆盖 / 其余进裁决弹窗 / 同名目录重复由「新增目录」接管 */
+        const remaining: TransferConflict[] = [];
+        for (const c of conflicts) {
+          const top = topOf(c.src);
+          if (dupTops.has(top)) continue; // 顶层同名目录 → 新增目录问题统一接管（改名后子树无冲突）
+          const topDest = scheme.join(dest, basename(top));
+          const drilled = (scheme.under(c.dest, topDest) ?? "") !== "";
+          const isSameDir = scheme.under(parentPath(top), dest) === "";
+          if (!isSameDir && (drilled || c.srcKind === "dir")) {
+            // 跨目录复制目录 → 覆盖
+            plan[c.dest] = { action: "overwrite" };
+          } else {
+            remaining.push(c);
+          }
+        }
+        // 同目录复制遇同名目录 → 询问是否新增目录
+        if (dups.length > 0) {
+          const names = dups.map((d) => basename(d.src));
+          const preview =
+            names.slice(0, 5).join("、") + (names.length > 5 ? ` 等 ${dups.length} 项` : "");
+          const ok = await appConfirm({
+            title: "新增目录",
+            message: `当前目录已存在同名文件夹：${preview}\n\n是否新增目录？将复制为自动命名的新文件夹（如「xx (2)」）；取消则跳过这些文件夹。`,
+            confirmLabel: "新增目录",
+          });
+          if (ok) {
+            for (const d of dups) {
+              plan[scheme.join(dest, basename(d.src))] = { action: "rename", name: d.suggest };
+            }
+          } else {
+            // 取消 → 整体跳过这些同名目录（连同其子树）
+            const skip = new Set(dups.map((d) => d.src));
+            execPaths = paths.filter((p) => !skip.has(p));
+          }
+        }
+        if (remaining.length > 0) {
+          const decision = await promptConflicts(remaining);
+          if (!decision) return null;
+          plan = { ...plan, ...decision };
+        }
+      } else if (conflicts.length > 0) {
         const decision = await promptConflicts(conflicts);
         if (!decision) return null;
         plan = decision;
       }
       if (op === "move") {
-        return { moved: await moveEntriesPlan(paths, dest, plan) };
+        return { moved: await moveEntriesPlan(execPaths, dest, plan) };
       }
-      return { created: await copyEntriesPlan(paths, dest, plan) };
+      if (execPaths.length === 0) return { created: [] };
+      return { created: await copyEntriesPlan(execPaths, dest, plan) };
     },
-    [promptConflicts],
+    [promptConflicts, appConfirm],
   );
 
   /** 删除文件夹确认弹窗 */
@@ -2219,8 +2352,46 @@ useEffect(() => {
       return next;
     });
   }, []);
-  /** 自定义快捷访问（持久化） */
+  // v0.28.0 用户新增的自定义标签（预设之上，总数上限 MAX_TAGS）
+  const [customTags, setCustomTags] = useState<TagDef[]>(() => loadCustomTags());
+  const tags = useMemo(() => allTags(customTags), [customTags]);
+  const addTag = useCallback(
+    (def: TagDef): boolean => {
+      if (customTags.length + TAG_DEFS.length >= MAX_TAGS) {
+        showError(`标签最多 ${MAX_TAGS} 个（含预设），已达上限`);
+        return false;
+      }
+      setCustomTags((prev) => {
+        const next = [...prev, def];
+        saveCustomTags(next);
+        return next;
+      });
+      return true;
+    },
+    [customTags, showError],
+  );
+  const tagsFullHint = useCallback(
+    () => showError(`标签最多 ${MAX_TAGS} 个（含预设），已达上限`),
+    [showError],
+  );
+  /** 自定义快捷访问（持久化）；上限 10 个（v0.28.0），加满后提醒 */
   const [customQuick, setCustomQuick] = useState<string[]>(() => loadCustomQuick());
+  const toggleQuick = useCallback(
+    (path: string) => {
+      setCustomQuick((prev) => {
+        if (!prev.includes(path) && prev.length >= MAX_QUICK) {
+          showError(`快速访问最多添加 ${MAX_QUICK} 个，已达上限`);
+          return prev;
+        }
+        const next = prev.includes(path)
+          ? prev.filter((p) => p !== path)
+          : [...prev, path];
+        saveCustomQuick(next);
+        return next;
+      });
+    },
+    [showError],
+  );
   /** v0.14 显示文件扩展名（默认显示，持久化） */
   const [showExtensions, setShowExtensions] = useState<boolean>(() => loadShowExtensions());
   const toggleExtensions = useCallback(() => {
@@ -2241,16 +2412,6 @@ useEffect(() => {
       if (next.length === 0) delete t[path];
       saveFileTags(t);
       return t;
-    });
-  }, []);
-
-  const toggleQuick = useCallback((path: string) => {
-    setCustomQuick((prev) => {
-      const next = prev.includes(path)
-        ? prev.filter((p) => p !== path)
-        : [...prev, path];
-      saveCustomQuick(next);
-      return next;
     });
   }, []);
 
@@ -2447,7 +2608,12 @@ useEffect(() => {
           if (clashes.length > 0) {
             const preview =
               clashes.slice(0, 5).join("、") + (clashes.length > 5 ? ` 等 ${clashes.length} 项` : "");
-            const ok = await confirmDialog(`目标目录已有同名条目：${preview}\n覆盖下载？`);
+            // v0.28.0 应用内确认框（Windows 原生 confirm 是经典样式弹窗）
+            const ok = await appConfirm({
+              title: "覆盖下载",
+              message: `目标目录已有同名条目：${preview}`,
+              confirmLabel: "覆盖",
+            });
             if (!ok) return;
             overwrite = true;
           }
@@ -2467,7 +2633,13 @@ useEffect(() => {
           if (clashes.length > 0) {
             const preview =
               clashes.slice(0, 5).join("、") + (clashes.length > 5 ? ` 等 ${clashes.length} 项` : "");
-            const ok = await confirmDialog(`目标目录已有同名条目：${preview}\n覆盖上传？`);
+            // v0.28.0 应用内确认框（Windows 原生 confirm 是经典样式弹窗）
+            const ok = await appConfirm({
+              title: "覆盖上传",
+              message: `目标目录已有同名条目：${preview}`,
+              confirmLabel: "覆盖",
+              danger: true,
+            });
             if (!ok) return;
           }
           for (const p of paths) {
@@ -2702,12 +2874,16 @@ useEffect(() => {
             // 回收站删除可撤销：记录进撤销栈
             pushOp({ kind: "delete", paths: list, paneId: p });
           } catch (trashErr) {
-            // 回收站失败（被占用/权限/回收站不可用）：对齐资源管理器，给永久删除退路
-            const ok = await confirmDialog(
-              `移入回收站失败：${trashErr}
+            // 回收站失败（被占用/权限/回收站不可用）：对齐资源管理器，给永久删除退路。
+            // v0.28.0 应用内确认框（原 Tauri 原生 confirm 在 Windows 是经典样式弹窗）
+            const ok = await appConfirm({
+              title: "移入回收站失败",
+              message: `${trashErr}
 
 要永久删除所选 ${list.length} 项吗？此操作不可恢复。`,
-            );
+              confirmLabel: "永久删除",
+              danger: true,
+            });
             if (!ok) return;
             await permanentDeleteEntries(list);
           }
@@ -2727,7 +2903,7 @@ useEffect(() => {
         showError(String(e));
       }
     },
-    [refreshPane, showError, isSftpPath, pushOp],
+    [refreshPane, showError, isSftpPath, pushOp, appConfirm],
   );
 
   const doDelete = useCallback(
@@ -2774,7 +2950,16 @@ useEffect(() => {
       showError("远程删除直接生效（服务器无回收站），请使用删除");
       return;
     }
-    if (!(await confirmDialog(`永久删除 ${list.length} 项？此操作不可恢复。`))) return;
+    // v0.28.0 应用内确认框（原 Tauri 原生 confirm 在 Windows 是经典样式弹窗）
+    if (
+      !(await appConfirm({
+        title: "永久删除",
+        message: `永久删除 ${list.length} 项？此操作不可恢复。`,
+        confirmLabel: "永久删除",
+        danger: true,
+      }))
+    )
+      return;
     try {
       await permanentDeleteEntries(list);
       setTabs((ts) =>
@@ -2788,7 +2973,7 @@ useEffect(() => {
     } catch (e) {
       showError(String(e));
     }
-  }, [activePane, refreshPane, showError, isSftpPath]);
+  }, [activePane, refreshPane, showError, isSftpPath, appConfirm]);
 
   const createAndRename = useCallback(
     async (paneId: number, kind: "dir" | "file") => {
@@ -3222,6 +3407,25 @@ useEffect(() => {
       }
       setSyncResultsOpen((v) => !v);
     },
+    // v0.28 预览栏：总开关关闭时按空格不直接预览，提示去设置开启（点文件同理不预览）
+    togglePreview: () => {
+      if (!previewPrefs.enabled) {
+        showError("预览栏未开启：设置 → 预览 → 启用预览栏");
+        return;
+      }
+      updatePreviewPrefs({ expanded: !previewPrefs.expanded });
+    },
+    toggleBrowse: () => {
+      if (browseOpen) {
+        setBrowseOpen(false);
+        return;
+      }
+      if (browseList.length === 0) {
+        showError("当前目录没有可预览的图片或文档");
+        return;
+      }
+      setBrowseOpen(true);
+    },
     // v0.20 命令面板 + 无默认键位的应用命令（面板 / ⋮ 菜单共用此分发表）
     commandPalette: () => setPaletteOpen((v) => !v),
     // v0.23 「退出」统一走确认对话框（与窗口 X 一致），不再静默保存退出
@@ -3628,7 +3832,7 @@ useEffect(() => {
         }
       />
 
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         <Sidebar
           quickAccess={quickAccess}
           volumes={volumes}
@@ -3637,9 +3841,12 @@ useEffect(() => {
           onMiddleOpen={(path) => newTab(path)}
           customQuick={customQuick}
           onRemoveQuick={toggleQuick}
-          tagCounts={Object.fromEntries(TAG_DEFS.map((t) => [t.id, tagPaths(t.id).length]))}
+          tagCounts={Object.fromEntries(tags.map((t) => [t.id, tagPaths(t.id).length]))}
+          tags={tags}
           tagNames={tagNames}
           onRenameTag={renameTag}
+          onAddTag={addTag}
+          onTagsFullHint={tagsFullHint}
           activeTagId={activePane?.tagId ?? null}
           onSelectTag={(tagId) => navigate(`tags://${tagId}`)}
           sftpServers={plugins?.find((p) => p.id === "sftp")?.enabled === false ? [] : sftp.servers}
@@ -3669,10 +3876,12 @@ useEffect(() => {
                       showHidden={showHidden}
                       showExtensions={showExtensions}
                       showProperties={showProperties}
+                      previewSpace={previewPrefs.enabled}
                       canPaste={!!t.panes[t.activePane]}
                       renaming={renaming}
                       dragOver={dragOver}
                       fileTags={fileTags}
+                      tags={tags}
                       tagNames={tagNames}
                       onRenameTag={renameTag}
                       customQuick={customQuick}
@@ -3701,6 +3910,34 @@ useEffect(() => {
             onCopyPath={copyPath}
             onRenamed={handleSearchRenamed}
             onError={showError}
+          />
+        )}
+
+        {/* v0.28 预览栏：右侧覆盖式拉门（悬浮在侧边栏+文件区上方，工具栏/状态栏保留） */}
+        <PreviewDrawer
+          entry={previewEntry}
+          enabled={previewPrefs.enabled}
+          expanded={previewPrefs.expanded}
+          width={previewPrefs.width}
+          canBrowse={browseList.length > 0}
+          onExpand={() => updatePreviewPrefs({ expanded: true })}
+          onCollapse={() => updatePreviewPrefs({ expanded: false })}
+          onWidthChange={(w) => updatePreviewPrefs({ width: w })}
+          onBrowse={() => actionsRef.current.toggleBrowse?.()}
+          onOpenExternal={openFileExternal}
+        />
+
+        {/* v0.28 图文浏览模式：沉浸覆盖内容区，导航即选中（与列表/预览栏三方同步） */}
+        {browseOpen && (
+          <BrowseMode
+            entries={activePane?.entries ?? []}
+            sortKey={activePane?.sortKey ?? "name"}
+            sortDir={activePane?.sortDir ?? "asc"}
+            showHidden={showHidden}
+            primaryPath={activePane?.selection[0] ?? null}
+            onNavigate={(path) => activePane && selectRange(activePane.id, [path])}
+            onClose={() => setBrowseOpen(false)}
+            onOpenExternal={openFileExternal}
           />
         )}
       </div>
@@ -3801,6 +4038,10 @@ useEffect(() => {
         dark={dark}
         onToggleTheme={toggleTheme}
         onBindingsChanged={() => setKeymapVer((v) => v + 1)}
+        previewEnabled={previewPrefs.enabled}
+        onPreviewEnabledChange={(v) => updatePreviewPrefs({ enabled: v })}
+        previewWidth={previewPrefs.width}
+        onPreviewWidthChange={(n) => updatePreviewPrefs({ width: n })}
         plugins={plugins}
         onTogglePlugin={handleTogglePlugin}
         uiFontSize={uiFontSize}
@@ -3852,6 +4093,14 @@ useEffect(() => {
       {/* 同名冲突裁决弹窗 */}
       {conflictReq && (
         <ConflictDialog conflicts={conflictReq} onDone={finishConflicts} />
+      )}
+      {/* v0.28.0 应用内确认框（永久删除 / 回收站失败转永久删除等） */}
+      {appConfirmReq && (
+        <AppConfirmDialog
+          req={appConfirmReq}
+          onConfirm={() => settleAppConfirm(true)}
+          onCancel={() => settleAppConfirm(false)}
+        />
       )}
 
       {/* 删除确认弹窗（一律确认；目录内部统计与右键「属性」同一套引擎） */}

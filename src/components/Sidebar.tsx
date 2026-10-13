@@ -13,6 +13,7 @@ import {
   Music,
   Pencil,
   Plug,
+  Plus,
   SquarePlus,
   Star,
   Tag,
@@ -22,7 +23,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { hasScheme } from "@/lib/cmdline";
 import type { QuickAccessItem, SftpServerView, VolumeInfo } from "@/lib/types";
@@ -36,7 +37,14 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { MenuGroup } from "@/components/MenuGroup";
-import { TAG_DEFS, tagLabel, type TagNames } from "@/lib/persist";
+import {
+  MAX_TAGS,
+  TAG_COLOR_PALETTE,
+  makeTagId,
+  tagLabel,
+  type TagDef,
+  type TagNames,
+} from "@/lib/persist";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -93,8 +101,11 @@ export function Sidebar({
   customQuick,
   onRemoveQuick,
   tagCounts,
+  tags,
   tagNames,
   onRenameTag,
+  onAddTag,
+  onTagsFullHint,
   activeTagId,
   onSelectTag,
   sftpServers,
@@ -119,8 +130,14 @@ export function Sidebar({
   onRemoveQuick: (path: string) => void;
   /** 每个标签下的文件数量 */
   tagCounts: Record<string, number>;
+  /** 全量标签 = 预设 + 用户自定义（v0.28.0 起支持新增） */
+  tags: TagDef[];
   tagNames: TagNames;
   onRenameTag: (tagId: string, label: string) => void;
+  /** 新增自定义标签（App 侧校验上限并提醒；返回 false = 已达上限，对话框保持打开） */
+  onAddTag: (def: TagDef) => boolean;
+  /** 悬停「+」时已达上限：App 弹提醒 */
+  onTagsFullHint: () => void;
   activeTagId: string | null;
   onSelectTag: (tagId: string) => void;
   /** SFTP 远程服务器（v0.2） */
@@ -143,8 +160,33 @@ export function Sidebar({
   const [renameTagOpen, setRenameTagOpen] = useState(false);
   const [renameTagId, setRenameTagId] = useState<string>("red");
   const [renameTagInput, setRenameTagInput] = useState("");
+  // v0.28.0 重命名对话框输入框要稳拿焦点：radix 打开时的焦点管理会把焦点给色块按钮，
+  // 裸 autoFocus 输了竞争——打字毫无反应（表现为「重命名失效」）。
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  // 新增标签对话框（v0.28.0 悬停「+」）
+  const [addTagOpen, setAddTagOpen] = useState(false);
+  const [addTagName, setAddTagName] = useState("");
+  const [addTagColor, setAddTagColor] = useState(TAG_COLOR_PALETTE[0]);
+  const addTagInputRef = useRef<HTMLInputElement>(null);
+  const openAddTag = () => {
+    if (tags.length >= MAX_TAGS) {
+      onTagsFullHint();
+      return;
+    }
+    // 默认取一个未被占用的色
+    const used = new Set(tags.map((t) => t.color));
+    setAddTagColor(TAG_COLOR_PALETTE.find((c) => !used.has(c)) ?? TAG_COLOR_PALETTE[0]);
+    setAddTagName("");
+    setAddTagOpen(true);
+  };
+  const submitAddTag = () => {
+    const label = addTagName.trim();
+    if (!label) return;
+    const ok = onAddTag({ id: makeTagId(), label, color: addTagColor });
+    if (ok) setAddTagOpen(false);
+  };
   const openRenameTag = (id: string) => {
-    const def = TAG_DEFS.find((t) => t.id === id) ?? TAG_DEFS[0];
+    const def = tags.find((t) => t.id === id) ?? tags[0];
     setRenameTagId(id);
     setRenameTagInput(tagLabel(def, tagNames));
     setRenameTagOpen(true);
@@ -155,6 +197,17 @@ export function Sidebar({
     onRenameTag(renameTagId, label);
     setRenameTagOpen(false);
   };
+  // 对话框每次打开稳拿焦点（radix 焦点竞争后重试一次兜底）
+  useEffect(() => {
+    if (!renameTagOpen) return;
+    const t = window.setTimeout(() => renameInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [renameTagOpen]);
+  useEffect(() => {
+    if (!addTagOpen) return;
+    const t = window.setTimeout(() => addTagInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [addTagOpen]);
   const groupedServers = groupServers(sftpServers);
 
   // 侧边栏路径项共用的右键菜单段：终端折叠组（词汇表与文件列表空白菜单一致）
@@ -217,13 +270,21 @@ export function Sidebar({
   return (
     <>
     <Dialog open={renameTagOpen} onOpenChange={setRenameTagOpen}>
-      <DialogContent className="max-w-sm">
+      <DialogContent
+        className="max-w-sm"
+        onOpenAutoFocus={(e) => {
+          // 焦点必须落在输入框：交给本回调而非裸 autoFocus（radix 会把焦点给色块按钮）
+          e.preventDefault();
+          renameInputRef.current?.focus();
+          renameInputRef.current?.select();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>重命名标签</DialogTitle>
           <DialogDescription>自定义标签显示名称（不影响已标记的文件）</DialogDescription>
         </DialogHeader>
         <div className="flex items-center gap-1.5">
-          {TAG_DEFS.map((t) => (
+          {tags.map((t) => (
             <button
               key={t.id}
               type="button"
@@ -241,10 +302,10 @@ export function Sidebar({
           ))}
         </div>
         <Input
+          ref={renameInputRef}
           value={renameTagInput}
           onChange={(e) => setRenameTagInput(e.target.value)}
           placeholder="标签名称"
-          autoFocus
           onKeyDown={(e) => {
             if (e.key === "Enter") submitRenameTag();
             if (e.key === "Escape") setRenameTagOpen(false);
@@ -256,6 +317,56 @@ export function Sidebar({
           </Button>
           <Button size="sm" onClick={submitRenameTag} disabled={!renameTagInput.trim()}>
             保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={addTagOpen} onOpenChange={setAddTagOpen}>
+      <DialogContent
+        className="max-w-sm"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          addTagInputRef.current?.focus();
+          addTagInputRef.current?.select();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>新增标签</DialogTitle>
+          <DialogDescription>
+            最多 {MAX_TAGS} 个标签（含预设），自定义标签可标记任意文件
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {TAG_COLOR_PALETTE.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setAddTagColor(c)}
+              className={cn(
+                "h-5 w-5 rounded-full transition-transform",
+                addTagColor === c && "scale-125 ring-2 ring-ring ring-offset-2",
+              )}
+              style={{ background: c }}
+              title={c}
+            />
+          ))}
+        </div>
+        <Input
+          ref={addTagInputRef}
+          value={addTagName}
+          onChange={(e) => setAddTagName(e.target.value)}
+          placeholder="标签名称"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submitAddTag();
+            if (e.key === "Escape") setAddTagOpen(false);
+          }}
+        />
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={() => setAddTagOpen(false)}>
+            取消
+          </Button>
+          <Button size="sm" onClick={submitAddTag} disabled={!addTagName.trim()}>
+            新增
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -339,12 +450,22 @@ export function Sidebar({
           )}
         </div>
 
-        {/* 标签（Finder 风格，位于快捷访问下方、磁盘上方） */}
+        {/* 标签（Finder 风格，位于快捷访问下方、磁盘上方；悬停分组名显示「+」新增） */}
         <div>
-          <div className="flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground">
+          <div
+            data-sidebar-tags-header=""
+            className="group flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground"
+          >
             <Tag className="h-3.5 w-3.5" /> 标签
+            <button
+              onClick={openAddTag}
+              title={tags.length >= MAX_TAGS ? `最多 ${MAX_TAGS} 个标签` : "新增标签"}
+              className="ml-auto hidden rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
           </div>
-          {TAG_DEFS.map((t) => {
+          {tags.map((t) => {
             const count = tagCounts[t.id] ?? 0;
             const active = activeTagId === t.id;
             return (

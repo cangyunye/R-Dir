@@ -14,6 +14,14 @@ import type { Page } from "@playwright/test";
 export async function installTauriMock(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const HOME = "/mock/home";
+    // 1x1 透明 PNG（preview_data 桩用）
+    const PREVIEW_PNG =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    // 文本预览内容（read_text_file 桩用）
+    const TEXTS: Record<string, string> = {
+      [`${HOME}/Notes.txt`]: "R-Dir 预览文本第一行\n第二行",
+      [`${HOME}/Documents/readme.md`]: "# readme",
+    };
 
     type Fake = { name: string; dir?: boolean; size?: number; symlink?: boolean };
 
@@ -22,9 +30,18 @@ export async function installTauriMock(page: Page): Promise<void> {
       [HOME]: [
         { name: "Documents", dir: true },
         { name: "Projects", dir: true },
+        { name: "Pictures", dir: true },
         { name: "Notes.txt", size: 1234 },
         { name: "photo.png", size: 204800 },
         { name: "link-to-docs", dir: true, symlink: true },
+      ],
+      // v0.28 预览/图文浏览模式夹具：多图 + 文档混排
+      [`${HOME}/Pictures`]: [
+        { name: "a.png", size: 100 },
+        { name: "b.png", size: 200 },
+        { name: "c.jpg", size: 300 },
+        { name: "doc.pdf", size: 4096 },
+        { name: "skip.zip", size: 500 },
       ],
       [`${HOME}/Documents`]: [
         { name: "readme.md", size: 42 },
@@ -118,6 +135,19 @@ export async function installTauriMock(page: Page): Promise<void> {
       icon_positions_load: () => ({}),
       icon_positions_save: () => null,
       thumb_get: () => null,
+      // v0.28 预览原图：回 1x1 PNG（e2e 只断言预览区出现 <img>，不校验像素）
+      preview_data: (a) => {
+        const p = String(a.path ?? "");
+        if (!p.startsWith("/mock/") || !/\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg)$/i.test(p)) {
+          return null;
+        }
+        return PREVIEW_PNG;
+      },
+      // v0.28 文本预览：虚拟 FS 内置内容（只覆盖夹具文件，其余回空串）
+      read_text_file: (a) => {
+        const p = String(a.path ?? "");
+        return { path: p, localPath: p, isTemp: false, lossy: false, text: TEXTS[p] ?? "" };
+      },
       // 未知路径报错（与真实后端一致）：同步浏览的镜像探测依赖"列目录失败 = 对侧无此目录"
       list_dir: (a) => {
         const p = String(a.path);
@@ -142,10 +172,11 @@ export async function installTauriMock(page: Page): Promise<void> {
         dir[idx] = { ...dir[idx], name: newName };
         return `${parent}/${newName}`;
       },
-      // 按裁决表复制（粘贴用）：虚拟 FS 内追加条目，返回创建路径
+      // 按裁决表复制（粘贴用）：虚拟 FS 内追加条目，返回创建路径（rename 裁决改用新名）
       copy_entries_plan: (a) => {
         const paths = (a.paths as string[]) ?? [];
         const dest = String(a.dest);
+        const resolutions = (a.resolutions as Record<string, { action: string; name?: string }>) ?? {};
         const d = FS[dest];
         if (!d) throw new Error(`ENOENT: ${dest}`);
         const created: string[] = [];
@@ -153,13 +184,30 @@ export async function installTauriMock(page: Page): Promise<void> {
           const parent = parentOf(p);
           const f = FS[parent]?.find((x) => `${parent}/${x.name}` === p);
           if (!f) continue;
-          d.push({ ...f });
-          created.push(`${dest}/${f.name}`);
+          const resolution = resolutions[`${dest}/${f.name}`];
+          const name =
+            resolution?.action === "rename" && resolution.name ? resolution.name : f.name;
+          d.push({ ...f, name });
+          created.push(`${dest}/${name}`);
         }
         return created;
       },
-      // 无同名冲突（夹具固定不冲突）
-      scan_conflicts: () => [],
+      // 无同名冲突（夹具固定不冲突）；用例可经 __rdirConflicts 注入
+      scan_conflicts: (a) => {
+        const w = (
+          window as unknown as {
+            __rdirConflicts?: (a: { paths: string[]; dest: string }) => unknown[];
+          }
+        );
+        return w.__rdirConflicts?.(a as { paths: string[]; dest: string }) ?? [];
+      },
+      // v0.28 顶层同名目录重复检测：默认无重复；用例经 __rdirDirDups 注入
+      scan_dir_duplicates: (a) => {
+        const paths = (a.paths as string[]) ?? [];
+        const dest = String(a.dest);
+        const w = (window as unknown as { __rdirDirDups?: (p: string[], d: string) => { src: string; suggest: string }[] });
+        return w.__rdirDirDups?.(paths, dest) ?? [];
+      },
       // 回收站删除：直接从虚拟 FS 移除（删除确认弹窗回归用）
       delete_entries: (a) => {
         const paths = (a.paths as string[]) ?? [];

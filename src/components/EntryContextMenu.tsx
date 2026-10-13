@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import type { FileEntry } from "@/lib/types";
 import type { FileTags, TagNames } from "@/lib/persist";
-import { TAG_DEFS, tagLabel } from "@/lib/persist";
+import { TAG_DEFS, tagLabel, type TagDef } from "@/lib/persist";
 import type { OpenerItem, ShellItem } from "@/lib/openerApi";
 import { openersForEntry } from "@/lib/openers";
 import {
@@ -56,6 +56,8 @@ export interface EntryMenuProps {
   openers: OpenerItem[];
   shells: ShellItem[];
   fileTags: FileTags;
+  /** 全量标签 = 预设 + 自定义（v0.28.0；缺省回落预设） */
+  tags?: TagDef[];
   tagNames: TagNames;
   customQuick: string[];
   compareBase?: { path: string; name: string } | null;
@@ -101,6 +103,7 @@ export function EntryContextMenuContent({
   openers,
   shells,
   fileTags,
+  tags: tagsProp,
   tagNames,
   customQuick,
   compareBase,
@@ -293,7 +296,7 @@ export function EntryContextMenuContent({
         expanded={expandedMenu === "tags"}
         onToggle={onToggleGroup}
       >
-        {TAG_DEFS.map((t) => {
+        {(tagsProp ?? TAG_DEFS).map((t) => {
           const checked = (fileTags[entry.path] ?? []).includes(t.id);
           return (
             <ContextMenuItem key={t.id} onSelect={() => onToggleTag(entry.path, t.id)}>

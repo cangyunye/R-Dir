@@ -15,7 +15,7 @@ import { hasScheme } from "@/lib/cmdline";
 import { splitPathSegments } from "@/lib/path-segments";
 import type { IconSize, PaneNode, PaneState, SplitDir, ViewMode } from "@/lib/types";
 import type { IconPositionMap } from "@/lib/api";
-import type { FileTags } from "@/lib/persist";
+import type { FileTags, TagDef } from "@/lib/persist";
 import { FileList, type RenameState } from "@/components/FileList";
 import { IconGrid } from "@/components/IconGrid";
 import { PropertiesBar } from "@/components/PropertiesBar";
@@ -328,11 +328,13 @@ const PaneView = memo(function PaneView({
   showHidden,
   showExtensions,
   showProperties,
+  previewSpace,
   renaming,
   isActive,
   dragOver,
   canPaste,
   fileTags,
+  tags,
   tagNames,
   onRenameTag,
   customQuick,
@@ -351,11 +353,15 @@ const PaneView = memo(function PaneView({
   /** 多窗格时给活动窗格加立体感描边（单窗格不需要） */
   highlight: boolean;
   showProperties: boolean;
+  /** v0.28 预览栏启用时空格让位给「切换预览」（列表/网格不再用空格切换选中） */
+  previewSpace: boolean;
   renaming: RenameState | null;
   isActive: boolean;
   dragOver: { targetPaneId: number; op: "copy" | "move" } | null;
   canPaste: boolean;
   fileTags: FileTags;
+  /** 全量标签 = 预设 + 自定义（v0.28.0） */
+  tags: TagDef[];
   tagNames: TagNames;
   onRenameTag: (tagId: string, label: string) => void;
   customQuick: string[];
@@ -381,6 +387,7 @@ const PaneView = memo(function PaneView({
         <TagView
           tagId={showingTag}
           fileTags={fileTags}
+          tags={tags}
           tagNames={tagNames}
           currentPath={pane.path}
           showExtensions={showExtensions}
@@ -448,15 +455,17 @@ const PaneView = memo(function PaneView({
         onSelectAll={() => h.onSelectAll(pane.id)}
         onInvertSelection={() => h.onInvertSelection(pane.id)}
         fileTags={fileTags}
+        tags={tags}
         tagNames={tagNames}
         onRenameTag={onRenameTag}
         customQuick={customQuick}
         onToggleTag={h.onToggleTag}
         onToggleQuick={h.onToggleQuick}
-dragTarget={dragOver?.targetPaneId === pane.id}
+        dragTarget={dragOver?.targetPaneId === pane.id}
         dragOp={dragOver?.targetPaneId === pane.id ? dragOver.op : "copy"}
         showHidden={showHidden}
         showExtensions={showExtensions}
+        spaceTogglesPreview={previewSpace}
         renaming={renaming}
         onRenameCommit={h.onRenameCommit}
         onRenameCancel={h.onRenameCancel}
@@ -519,6 +528,7 @@ dragTarget={dragOver?.targetPaneId === pane.id}
             onSelectAll={() => h.onSelectAll(pane.id)}
             onInvertSelection={() => h.onInvertSelection(pane.id)}
             fileTags={fileTags}
+            tags={tags}
             tagNames={tagNames}
             customQuick={customQuick}
             onToggleTag={h.onToggleTag}
@@ -535,6 +545,7 @@ dragTarget={dragOver?.targetPaneId === pane.id}
             dragOp={dragOver?.targetPaneId === pane.id ? dragOver.op : "copy"}
             showHidden={showHidden}
             showExtensions={showExtensions}
+            spaceTogglesPreview={previewSpace}
             renaming={renaming}
             isActive={isActive}
             onActivate={() => h.onActivate(pane.id)}
@@ -632,10 +643,12 @@ export function SplitView({
   showHidden,
   showExtensions,
   showProperties,
+  previewSpace,
   canPaste,
   renaming,
   dragOver,
   fileTags,
+  tags,
   tagNames,
   onRenameTag,
   customQuick,
@@ -653,10 +666,14 @@ export function SplitView({
   showHidden: boolean;
   showExtensions: boolean;
   showProperties: boolean;
+  /** v0.28 预览栏启用时空格让位给「切换预览」 */
+  previewSpace: boolean;
   canPaste: boolean;
   renaming: RenameState | null;
   dragOver: { targetPaneId: number; op: "copy" | "move" } | null;
   fileTags: FileTags;
+  /** 全量标签 = 预设 + 自定义（v0.28.0） */
+  tags: TagDef[];
   tagNames: TagNames;
   onRenameTag: (tagId: string, label: string) => void;
   customQuick: string[];
@@ -679,11 +696,13 @@ export function SplitView({
         showHidden={showHidden}
         showExtensions={showExtensions}
         showProperties={showProperties}
+        previewSpace={previewSpace}
         renaming={renaming}
         isActive={pane.id === activePaneId}
         dragOver={dragOver}
         canPaste={canPaste}
         fileTags={fileTags}
+        tags={tags}
         tagNames={tagNames}
         onRenameTag={onRenameTag}
         customQuick={customQuick}
@@ -711,10 +730,12 @@ export function SplitView({
           showHidden={showHidden}
           showExtensions={showExtensions}
           showProperties={showProperties}
+          previewSpace={previewSpace}
           canPaste={canPaste}
           renaming={renaming}
           dragOver={dragOver}
           fileTags={fileTags}
+          tags={tags}
           tagNames={tagNames}
           onRenameTag={onRenameTag}
           customQuick={customQuick}
@@ -744,10 +765,12 @@ export function SplitView({
           showHidden={showHidden}
           showExtensions={showExtensions}
           showProperties={showProperties}
+          previewSpace={previewSpace}
           canPaste={canPaste}
           renaming={renaming}
           dragOver={dragOver}
           fileTags={fileTags}
+          tags={tags}
           tagNames={tagNames}
           onRenameTag={onRenameTag}
           customQuick={customQuick}

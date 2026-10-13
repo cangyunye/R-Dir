@@ -206,6 +206,22 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
     expect(screen.getByText("此目录为空")).toBeTruthy();
   });
 
+  it("选中项展开全名浮层（grid-label-full），未选中不显示", () => {
+    const { container } = render(
+      <IconGrid {...makeProps({ selection: ["/mock/dir/main.rs"] })} />,
+    );
+    // 三个条目都有浮层节点，但只有主选中的可见（未选中的带 hidden，由 group-hover 接管）
+    const chips = [...container.querySelectorAll('[data-testid="grid-label-full"]')];
+    const visible = chips.filter((el) => !el.className.includes("hidden"));
+    expect(visible.length).toBe(1);
+    expect(visible[0].className).toContain("block");
+    // 未选中态：浮层隐藏（group-hover 由 CSS 接管）
+    const { container: c2 } = render(<IconGrid {...makeProps()} />);
+    for (const el of c2.querySelectorAll('[data-testid="grid-label-full"]')) {
+      expect(el.className).toContain("hidden");
+    }
+  });
+
   it("内联重命名：renaming 匹配的条目渲染输入框", () => {
     const { container } = render(
       <IconGrid

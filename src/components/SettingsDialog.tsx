@@ -3,6 +3,7 @@ import {
   Check,
   Download,
   ExternalLink,
+  Eye,
   Globe,
   Info,
   Keyboard,
@@ -32,6 +33,8 @@ import { cn } from "@/lib/utils";
 import type { OpenerItem, PluginInfo } from "@/lib/openerApi";
 import { normalizeExts } from "@/lib/openers";
 import {
+  PREVIEW_WIDTH_MAX,
+  PREVIEW_WIDTH_MIN,
   loadShareAllowParent,
   saveShareAllowParent,
   loadShareDefaultExpires,
@@ -40,10 +43,11 @@ import {
 } from "@/lib/persist";
 
 /** 设置分区标识（左栏导航 + 右栏锚点共用） */
-type SectionId = "appearance" | "keys" | "openers" | "share" | "plugins" | "about";
+type SectionId = "appearance" | "preview" | "keys" | "openers" | "share" | "plugins" | "about";
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
   { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
+  { id: "preview", label: "预览", icon: <Eye className="h-4 w-4" /> },
   { id: "keys", label: "快捷键", icon: <Keyboard className="h-4 w-4" /> },
   { id: "openers", label: "打开方式", icon: <ExternalLink className="h-4 w-4" /> },
   { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
@@ -62,6 +66,10 @@ export function SettingsDialog({
   dark,
   onToggleTheme,
   onBindingsChanged,
+  previewEnabled,
+  onPreviewEnabledChange,
+  previewWidth,
+  onPreviewWidthChange,
   plugins,
   onTogglePlugin,
   uiFontSize,
@@ -83,6 +91,11 @@ export function SettingsDialog({
   dark: boolean;
   onToggleTheme: () => void;
   onBindingsChanged: () => void;
+  /** v0.28 预览栏总开关（默认关）与默认宽度 */
+  previewEnabled: boolean;
+  onPreviewEnabledChange: (v: boolean) => void;
+  previewWidth: number;
+  onPreviewWidthChange: (n: number) => void;
   /** v0.5 插件清单（设置 → 插件分区） */
   plugins: PluginInfo[] | null;
   onTogglePlugin: (id: string, enabled: boolean) => void;
@@ -365,6 +378,124 @@ export function SettingsDialog({
                       )}
                     </div>
                   </div>
+                </div>
+            </div>
+
+            {/* v0.28 预览：右侧拉门总开关 + 键位 + 默认宽度（总开关默认关，点文件不直接预览） */}
+            <div
+              ref={(el) => { sectionRefs.current.preview = el; }}
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
+                <div className="mb-4">
+                  <div className="mb-1.5 text-xs font-semibold text-primary">预览栏</div>
+                  <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
+                    开启后右侧滑出预览栏（悬浮拉门，不挤压布局；全应用共用，跟随焦点窗格的选中项）。
+                    点文件不会直接预览；图片/文本/PDF/Office 可预览，其余类型显示信息卡。
+                  </div>
+                  <div className="space-y-2">
+                    <label
+                      role="switch"
+                      aria-checked={previewEnabled}
+                      data-testid="preview-toggle"
+                      className="flex cursor-pointer items-center justify-between rounded-md border px-3 py-2 text-xs"
+                      onClick={() => onPreviewEnabledChange(!previewEnabled)}
+                    >
+                      <span>启用预览栏</span>
+                      <span
+                        className={cn(
+                          "relative h-4.5 w-8 shrink-0 rounded-full transition-colors",
+                          previewEnabled ? "bg-primary" : "bg-muted",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "absolute top-0.5 h-3.5 w-3.5 rounded-full bg-background shadow transition-all",
+                            previewEnabled ? "left-4" : "left-0.5",
+                          )}
+                        />
+                      </span>
+                    </label>
+                    <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs">
+                      <span>预览栏默认宽度</span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min={PREVIEW_WIDTH_MIN}
+                          max={PREVIEW_WIDTH_MAX}
+                          step={8}
+                          value={previewWidth}
+                          onChange={(e) => onPreviewWidthChange(Number(e.target.value))}
+                          className="w-32"
+                          title={`${PREVIEW_WIDTH_MIN}–${PREVIEW_WIDTH_MAX}px`}
+                        />
+                        <span className="w-12 rounded border bg-muted px-1 py-0.5 text-center font-mono text-[11px]">
+                          {previewWidth}px
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-1.5 text-xs font-semibold text-primary">预览键位</div>
+                  <div className="overflow-hidden rounded-md border">
+                    {["togglePreview", "toggleBrowse"].map((id, i, arr) => {
+                      const a = ACTIONS.find((x) => x.id === id);
+                      if (!a) return null;
+                      const custom = hasCustomBinding(a.id);
+                      const recording = recordingId === a.id;
+                      return (
+                        <div
+                          key={a.id}
+                          className={
+                            "flex items-center justify-between gap-3 px-3 py-1.5 text-xs " +
+                            (i < arr.length - 1 ? "border-b " : "") +
+                            (i % 2 === 0 ? "bg-muted/30" : "")
+                          }
+                        >
+                          <span className="flex min-w-0 items-center gap-1.5 text-foreground">
+                            {custom && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title="已自定义" />}
+                            <span className="truncate">{a.label}</span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-1.5">
+                            <kbd
+                              className={cn(
+                                "rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground",
+                                recording && "animate-pulse border-primary/60",
+                              )}
+                            >
+                              {formatBinding(bindingOf(a))}
+                            </kbd>
+                            {recording ? (
+                              <span className="px-1 text-[11px] text-primary">按下组合键…</span>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => startRecording(a.id)}
+                                  className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                  title="录制新键位"
+                                >
+                                  录制
+                                </button>
+                                {custom && (
+                                  <button
+                                    onClick={() => handleResetOne(a.id)}
+                                    className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                                    title="恢复此动作默认键位"
+                                  >
+                                    ×
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1 pl-1 text-[11px] text-muted-foreground">
+                    图文浏览模式：在图片/文档为主的目录进入沉浸浏览（中央大图 + 底部缩略图条）。
+                  </p>
                 </div>
             </div>
 

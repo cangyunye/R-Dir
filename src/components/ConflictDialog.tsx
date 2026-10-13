@@ -47,6 +47,7 @@ export function ConflictDialog({
 
   return (
     <div
+      data-conflict-dialog=""
       className="fixed inset-0 z-[65] flex items-center justify-center bg-black/40"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onDone(null);

@@ -24,6 +24,10 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
       dark={false}
       onToggleTheme={() => {}}
       onBindingsChanged={() => {}}
+      previewEnabled={false}
+      onPreviewEnabledChange={() => {}}
+      previewWidth={360}
+      onPreviewWidthChange={() => {}}
       plugins={[]}
       onTogglePlugin={() => {}}
       uiFontSize={15}

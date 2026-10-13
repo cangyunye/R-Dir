@@ -84,6 +84,7 @@ export function TextDiffDialog({
   /** 两侧行尾格式（files 模式，来自后端 TextSide.eol） */
   const [eols, setEols] = useState<{ left?: string; right?: string }>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  console.info("[txtdiff MOUNT] render, source=", source.kind);
 
   useEffect(() => {
     let alive = true;
@@ -144,7 +145,13 @@ export function TextDiffDialog({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      console.info("[txtdiff onKey]", e.key, "trusted=", e.isTrusted);
       if (e.key === "Escape") onClose();
+      // F11 全屏切换：仅在比对窗口打开期间注册，天然限定生效范围
+      if (e.key === "F11") {
+        e.preventDefault();
+        setMaximized((m) => !m);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -208,6 +215,7 @@ export function TextDiffDialog({
 
   return (
     <div
+      data-text-diff=""
       className="fixed inset-0 z-[85] flex items-center justify-center bg-black/40"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -218,7 +226,7 @@ export function TextDiffDialog({
         style={
           maximized
             ? { width: "calc((100vw - 24px) / var(--rdir-zoom, 1))", height: "calc((100vh - 24px) / var(--rdir-zoom, 1))" }
-            : { width: "calc(min(1080px, 95vw) / var(--rdir-zoom, 1))", height: "calc(80vh / var(--rdir-zoom, 1))" }
+            : { width: "calc(min(1400px, 96vw) / var(--rdir-zoom, 1))", height: "calc(80vh / var(--rdir-zoom, 1))" }
         }
       >
         {/* 标题栏 */}
@@ -256,7 +264,7 @@ export function TextDiffDialog({
             <button
               onClick={() => setMaximized((m) => !m)}
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title={maximized ? "还原窗口" : "最大化"}
+              title={maximized ? "还原窗口（F11）" : "最大化（F11）"}
             >
               {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </button>
