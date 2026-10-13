@@ -72,6 +72,7 @@ import {
   scanConflicts,
   clipboardWriteFiles,
   clipboardReadFiles,
+  clipboardClearFiles,
   parentDir,
   permanentDeleteEntries,
   restoreFromTrash,
@@ -91,6 +92,8 @@ import {
   sessionSave,
   allowExit,
   statPath,
+  iconPositionsLoad,
+  iconPositionsSave,
   statEntry,
   compressItems,
 } from "@/lib/api";
@@ -140,7 +143,9 @@ import {
   type FileTags,
   type TagNames,
 } from "@/lib/persist";
-import { shareStopByDir, shareList } from "@/lib/api";
+import { shareStopByDir, shareList, type IconPositionMap } from "@/lib/api";
+import { loadAutoArrangeDirs, saveAutoArrangeDirs } from "@/lib/persist";
+import { type IconSize, type ViewMode } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Bird } from "lucide-react";
 import { PaneListMenu } from "@/components/PaneListMenu";
@@ -189,11 +194,13 @@ function serializeSession(tabs: TabState[], activeId: number): SessionLayout {
             kind: "sftp",
             serverId: sftpAuthorityId(p.path) ?? undefined,
             zoom: p.zoom,
+            viewMode: p.viewMode,
+            iconSize: p.iconSize,
           };
         }
         if (p.tagId)
-          return { id: p.id, path: p.path, kind: "tag", tagId: p.tagId, zoom: p.zoom };
-        return { id: p.id, path: p.path, kind: "local", zoom: p.zoom };
+          return { id: p.id, path: p.path, kind: "tag", tagId: p.tagId, zoom: p.zoom, viewMode: p.viewMode, iconSize: p.iconSize };
+        return { id: p.id, path: p.path, kind: "local", zoom: p.zoom, viewMode: p.viewMode, iconSize: p.iconSize };
       }),
     })),
   };
@@ -262,6 +269,8 @@ function makePane(path: string): PaneState {
     sortKey: "name",
     sortDir: "asc",
     zoom: 1,
+    viewMode: "details",
+    iconSize: 64,
     selection: [],
     refreshKey: 0,
   };
@@ -982,6 +991,15 @@ useEffect(() => {
         for (const sp of st.panes) {
           const p = makePane(sp.path);
           if (typeof sp.zoom === "number" && sp.zoom >= 0.5 && sp.zoom <= 2) p.zoom = sp.zoom;
+          // v0.27 视图模式与图标档位（旧会话缺省 details/64；越界值回默认）
+          if (sp.viewMode === "icons" || sp.viewMode === "details") {
+            p.viewMode = sp.viewMode;
+          }
+          // 画廊 v0.27 暂不开放：旧会话里的 gallery 归化为 icons（代码保留，放开即用）
+          if (sp.viewMode === "gallery") p.viewMode = "icons";
+          if ([48, 64, 96, 128].includes(sp.iconSize as 48)) {
+            p.iconSize = sp.iconSize as PaneState["iconSize"];
+          }
           remap.set(sp.id, p.id);
           if (sp.kind === "tag" && sp.tagId) p.tagId = sp.tagId;
           if (sp.kind === "sftp" && sp.serverId) {
@@ -1596,7 +1614,7 @@ useEffect(() => {
       setClipboard({ op: "copy", paths: list });
       flashClipboardTip("已复制");
       // 跨应用：同时写入系统剪贴板文件列表（best-effort，失败不影响应用内粘贴）
-      void clipboardWriteFiles(list).catch(() => {});
+      void clipboardWriteFiles(list, false).catch(() => {});
     },
     [activePane, flashClipboardTip],
   );
@@ -1608,7 +1626,8 @@ useEffect(() => {
       if (p === undefined || list.length === 0) return;
       setClipboard({ op: "cut", paths: list });
       flashClipboardTip("已剪切");
-      void clipboardWriteFiles(list).catch(() => {});
+      // cut=true：写 Windows DropEffect 剪切标志，资源管理器粘贴时按移动处理
+      void clipboardWriteFiles(list, true).catch(() => {});
     },
     [activePane, flashClipboardTip],
   );
@@ -2262,10 +2281,14 @@ useEffect(() => {
       // 优先应用内剪贴板；为空则读系统剪贴板文件列表（跨应用粘贴）
       let op: "copy" | "cut" = clipboard?.op ?? "copy";
       let srcs = clipboard?.paths ?? [];
+      // 剪切数据是否来自系统剪贴板：移动成功后需清空，避免残留失效剪切项
+      let fromSystem = false;
       if (srcs.length === 0) {
-        srcs = await clipboardReadFiles().catch(() => []);
-        op = "copy";
-        if (srcs.length === 0) return;
+        const sys = await clipboardReadFiles().catch(() => null);
+        if (!sys || sys.paths.length === 0) return;
+        srcs = sys.paths;
+        op = sys.cut ? "cut" : "copy";
+        fromSystem = sys.cut;
       }
       const isCut = op === "cut";
       const localSrcs = srcs.filter((p) => !isSftpPath(p));
@@ -2300,6 +2323,8 @@ useEffect(() => {
           if (r.moved) {
             pushOp({ kind: "move", pairs: r.moved, dest, srcPane: pid, destPane: pid });
             pasted.push(...r.moved.map(([, to]) => to));
+            // 消费外部剪切：源已移走，清空系统剪贴板（与资源管理器行为一致）
+            if (isCut && fromSystem) void clipboardClearFiles().catch(() => {});
           } else if (r.created) {
             pushOp({
               kind: "copy",
@@ -2369,13 +2394,17 @@ useEffect(() => {
   }, [activePane, refreshPane, showError, pushOp, runTransfer]);
 
   /** 跨窗格拖拽落盘：目标 pane 的路径执行复制/移动，源、目标均刷新 */
-  const doDropPaths = useCallback(
-    async (sourcePaneId: number, paths: string[], op: "copy" | "move", targetPaneId: number) => {
-      const target = tabs
-        .flatMap((t) => Object.values(t.panes))
-        .find((p) => p.id === targetPaneId);
-      if (!target || target.path === "") return;
-      const dest = target.path;
+  /** 拖拽落盘核心（v0.27 从 doDropPaths 抽出）：dest 显式给定——跨窗格投放 =
+   * 目标窗格当前目录；大图标「拖到文件夹上」= 被投放的文件夹路径。 */
+  const transferPaths = useCallback(
+    async (
+      sourcePaneId: number,
+      paths: string[],
+      op: "copy" | "move",
+      dest: string,
+      refreshIds: number[],
+      destPaneId: number,
+    ) => {
       const srcIsSftp = paths.some(isSftpPath);
       const destIsSftp = isSftpPath(dest);
       const srcIsHttp = paths.some(isHttpPath);
@@ -2399,7 +2428,7 @@ useEffect(() => {
           for (const p of paths) {
             await httpDownloadTo(dest, p);
           }
-          refreshPanes([targetPaneId, sourcePaneId]);
+          refreshPanes(refreshIds);
           return;
         }
         // 远程 ⇄ 远程：暂不支持（方案已评估保留）
@@ -2425,7 +2454,7 @@ useEffect(() => {
           for (const p of paths) {
             await sftpDownloadTo(dest, p, overwrite);
           }
-          refreshPanes([targetPaneId, sourcePaneId]);
+          refreshPanes(refreshIds);
           return;
         }
         // 本地 → 远程：上传。SFTP 写入用 FXF_TRUNC 会静默覆盖同名远程文件，
@@ -2444,14 +2473,14 @@ useEffect(() => {
           for (const p of paths) {
             await sftpUpload(p, dest, basename(p));
           }
-          refreshPanes([targetPaneId, sourcePaneId]);
+          refreshPanes(refreshIds);
           return;
         }
         // 本地 ⇄ 本地：带冲突裁决
         const r = await runTransfer(op, paths, dest);
         if (r === null) return; // 用户「停止」
         if (r.moved) {
-          pushOp({ kind: "move", pairs: r.moved, dest, srcPane: sourcePaneId, destPane: targetPaneId });
+          pushOp({ kind: "move", pairs: r.moved, dest, srcPane: sourcePaneId, destPane: destPaneId });
         } else if (r.created) {
           pushOp({
             kind: "copy",
@@ -2459,15 +2488,34 @@ useEffect(() => {
             created: r.created,
             dest,
             srcPane: sourcePaneId,
-            destPane: targetPaneId,
+            destPane: destPaneId,
           });
         }
-        refreshPanes([targetPaneId, sourcePaneId]);
+        refreshPanes(refreshIds);
       } catch (e) {
         showError(String(e));
       }
     },
-    [tabs, refreshPanes, showError, pushOp, isSftpPath, isHttpPath, runTransfer],
+    [refreshPanes, showError, pushOp, runTransfer],
+  );
+
+  const doDropPaths = useCallback(
+    async (sourcePaneId: number, paths: string[], op: "copy" | "move", targetPaneId: number) => {
+      const target = tabs
+        .flatMap((t) => Object.values(t.panes))
+        .find((p) => p.id === targetPaneId);
+      if (!target || target.path === "") return;
+      await transferPaths(sourcePaneId, paths, op, target.path, [targetPaneId, sourcePaneId], targetPaneId);
+    },
+    [tabs, transferPaths],
+  );
+
+  /** v0.27 大图标模式「拖到文件夹图标上」：目标为任意目录路径（含同窗格内文件夹） */
+  const doDropIntoDir = useCallback(
+    async (sourcePaneId: number, paths: string[], op: "copy" | "move", destDir: string) => {
+      await transferPaths(sourcePaneId, paths, op, destDir, [sourcePaneId], sourcePaneId);
+    },
+    [transferPaths],
   );
 
   // v0.22.2 原生（HTML5）拖拽投放：行 onDragStart 后由浏览器接管拖动，mousemove/mouseup
@@ -3008,6 +3056,74 @@ useEffect(() => {
     );
   }, []);
 
+  // ---- v0.27 视图模式 / 图标档位（每窗格独立，随会话保存） ----
+  const setPaneViewMode = useCallback((paneId: number, mode: ViewMode) => {
+    setTabs((ts) =>
+      ts.map((t) => {
+        const pane = t.panes[paneId];
+        if (!pane) return t;
+        return { ...t, panes: { ...t.panes, [paneId]: { ...pane, viewMode: mode } } };
+      }),
+    );
+  }, []);
+  const setPaneIconSize = useCallback((paneId: number, size: IconSize) => {
+    setTabs((ts) =>
+      ts.map((t) => {
+        const pane = t.panes[paneId];
+        if (!pane) return t;
+        return { ...t, panes: { ...t.panes, [paneId]: { ...pane, iconSize: size } } };
+      }),
+    );
+  }, []);
+
+  // ---- v0.27 图标自由摆放位置表（应用数据目录集中存储，防抖整表写回） ----
+  const [iconPositions, setIconPositions] = useState<IconPositionMap>({});
+  const iconPosTimer = useRef<number | null>(null);
+  useEffect(() => {
+    iconPositionsLoad()
+      .then((m) => setIconPositions(m ?? {}))
+      .catch((e) => console.warn("[rdir] 图标位置表读取失败：", e));
+  }, []);
+  const persistIconPositions = useCallback((next: IconPositionMap) => {
+    if (iconPosTimer.current) window.clearTimeout(iconPosTimer.current);
+    iconPosTimer.current = window.setTimeout(() => {
+      iconPositionsSave(next).catch((e) => console.warn("[rdir] 图标位置表保存失败：", e));
+    }, 600);
+  }, []);
+  const setIconPosition = useCallback(
+    (dir: string, name: string, slot: [number, number]) => {
+      setIconPositions((prev) => {
+        const dirMap = { ...(prev[dir] ?? {}), [name]: slot };
+        const next = { ...prev, [dir]: dirMap };
+        persistIconPositions(next);
+        return next;
+      });
+    },
+    [persistIconPositions],
+  );
+  const clearIconPositions = useCallback(
+    (dir: string) => {
+      setIconPositions((prev) => {
+        if (!(dir in prev)) return prev;
+        const next = { ...prev };
+        delete next[dir];
+        persistIconPositions(next);
+        return next;
+      });
+    },
+    [persistIconPositions],
+  );
+
+  // ---- v0.27.1 大图标「自动排列」目录集合（localStorage，访达「保持排列方式」语义） ----
+  const [autoArrangeDirs, setAutoArrangeDirs] = useState<string[]>(() => loadAutoArrangeDirs());
+  const toggleAutoArrangeDir = useCallback((dir: string) => {
+    setAutoArrangeDirs((prev) => {
+      const next = prev.includes(dir) ? prev.filter((d) => d !== dir) : [...prev, dir];
+      saveAutoArrangeDirs(next);
+      return next;
+    });
+  }, []);
+
   /** v0.8 压缩选中项（zip / tar / tgz，仅打包，进度走 transfer-progress） */
   const doCompress = useCallback(
     async (paneId: number, paths: string[], format: "zip" | "tar" | "tgz") => {
@@ -3087,6 +3203,15 @@ useEffect(() => {
     focusSearch: () => openSearch("name"),
     focusSearchContent: () => openSearch("content"),
     toggleHidden: () => setShowHidden((v) => !v),
+    viewDetails: () => {
+      if (activePane) setPaneViewMode(activePane.id, "details");
+    },
+    viewIcons: () => {
+      if (activePane) setPaneViewMode(activePane.id, "icons");
+    },
+    viewGallery: () => {
+      if (activePane) setPaneViewMode(activePane.id, "gallery");
+    },
     toggleTheme: () => toggleTheme(),
     openSettings: () => setSettingsOpen(true),
     openHelp: () => setSettingsOpen(true),
@@ -3243,6 +3368,14 @@ useEffect(() => {
     onToggleTag: toggleTag,
     onToggleQuick: toggleQuick,
     onZoomChange: setPaneZoom,
+    onViewModeChange: setPaneViewMode,
+    onIconSizeChange: setPaneIconSize,
+    onSetIconPosition: setIconPosition,
+    onClearIconPositions: clearIconPositions,
+    iconPositions,
+    autoArrangeDirs,
+    onToggleAutoArrange: toggleAutoArrangeDir,
+    onDropIntoDir: doDropIntoDir,
     onBack: goBack,
     onForward: goForward,
     onCompress: (paneId, paths, fmt) => void doCompress(paneId, paths, fmt),
@@ -3290,6 +3423,14 @@ useEffect(() => {
     copyPath,
     refreshPane,
     doDropPaths,
+    doDropIntoDir,
+    setPaneViewMode,
+    setPaneIconSize,
+    setIconPosition,
+    clearIconPositions,
+    iconPositions,
+    autoArrangeDirs,
+    toggleAutoArrangeDir,
     createAndRename,
     doPaste,
     undo,
@@ -3420,6 +3561,8 @@ useEffect(() => {
             showHidden={showHidden}
             onToggleExtensions={toggleExtensions}
             showExtensions={showExtensions}
+            viewMode={activePane?.viewMode ?? "details"}
+            onViewModeChange={(mode) => activePane && setPaneViewMode(activePane.id, mode)}
             onToggleSearch={toggleSearchPanel}
             onRefresh={refresh}
             onBack={goBack}

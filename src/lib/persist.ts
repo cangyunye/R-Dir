@@ -330,6 +330,27 @@ export function saveUiFontFamilyCustom(name: string): void {
   }
 }
 
+// ---- v0.27 大图标「自动排列」目录集合（开启后忽略自由摆放记录） ----
+const AUTO_ARRANGE_KEY = "rfm.icon-auto-arrange";
+
+export function loadAutoArrangeDirs(): string[] {
+  try {
+    const raw = localStorage.getItem(AUTO_ARRANGE_KEY);
+    const arr = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveAutoArrangeDirs(dirs: string[]): void {
+  try {
+    localStorage.setItem(AUTO_ARRANGE_KEY, JSON.stringify(dirs));
+  } catch {
+    /* ignore */
+  }
+}
+
 // ---- v0.14 显示文件扩展名（默认显示；关闭后文件列表隐藏扩展名） ----
 const SHOW_EXTENSIONS_KEY = "rfm.show-extensions";
 

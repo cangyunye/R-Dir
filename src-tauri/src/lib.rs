@@ -6,11 +6,13 @@ mod drag_out;
 mod find;
 mod fs_ops;
 mod fs_watch;
+mod iconpos;
 mod ops;
 mod progress;
 mod search;
 mod sizestat;
 mod text_diff;
+mod thumbs;
 mod volumes;
 
 #[cfg(feature = "sftp")]
@@ -1432,16 +1434,30 @@ async fn move_entries_plan(
     result
 }
 
-/// 把文件列表写入系统剪贴板（跨应用复制）。
+/// 把文件列表写入系统剪贴板（跨应用复制/剪切；cut=true 资源管理器粘贴时按移动处理）。
 #[tauri::command]
-fn clipboard_write_files(paths: Vec<String>) -> Result<(), String> {
-    clipboard::write_file_list(&paths)
+fn clipboard_write_files(paths: Vec<String>, cut: Option<bool>) -> Result<(), String> {
+    clipboard::write_file_list(&paths, cut.unwrap_or(false))
 }
 
-/// 从系统剪贴板读取文件列表（跨应用粘贴）。
+/// 系统剪贴板文件列表（跨应用粘贴）：paths + 剪切标志
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipboardFilesPayload {
+    paths: Vec<String>,
+    cut: bool,
+}
+
+/// 从系统剪贴板读取文件列表（跨应用粘贴），含剪切/移动语义标志。
 #[tauri::command]
-fn clipboard_read_files() -> Result<Vec<String>, String> {
-    clipboard::read_file_list()
+fn clipboard_read_files() -> Result<ClipboardFilesPayload, String> {
+    clipboard::read_file_list().map(|f| ClipboardFilesPayload { paths: f.paths, cut: f.cut })
+}
+
+/// 清空系统剪贴板：消费外部剪切（移动粘贴完成）后调用，避免残留失效的剪切项。
+#[tauri::command]
+fn clipboard_clear_files() {
+    clipboard::clear()
 }
 
 /// 原生拖出（Windows：OLE 拖拽携带 CF_HDROP，浏览器上传投放区/资源管理器可接收）。
@@ -1592,11 +1608,15 @@ pub fn run() {
         cancel_transfer,
         allow_exit,
         fs_watch::fs_watch_set,
+        iconpos::icon_positions_load,
+        iconpos::icon_positions_save,
+        thumbs::thumb_get,
         scan_conflicts,
         copy_entries_plan,
         move_entries_plan,
         clipboard_write_files,
         clipboard_read_files,
+        clipboard_clear_files,
         drag_out_files,
         rename_entry,
         delete_entries,

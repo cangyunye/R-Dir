@@ -1,11 +1,23 @@
 ﻿import { Fragment, memo, useEffect, useState } from "react";
-import { ChevronRight, Copy, Info, Loader2, SquarePlus, TerminalSquare, X } from "lucide-react";
+import {
+  ChevronRight,
+  Copy,
+  Info,
+  LayoutGrid,
+  List,
+  Loader2,
+  SquarePlus,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { hasScheme } from "@/lib/cmdline";
 import { splitPathSegments } from "@/lib/path-segments";
-import type { PaneNode, PaneState, SplitDir } from "@/lib/types";
+import type { IconSize, PaneNode, PaneState, SplitDir, ViewMode } from "@/lib/types";
+import type { IconPositionMap } from "@/lib/api";
 import type { FileTags } from "@/lib/persist";
 import { FileList, type RenameState } from "@/components/FileList";
+import { IconGrid } from "@/components/IconGrid";
 import { PropertiesBar } from "@/components/PropertiesBar";
 import { TagView } from "@/components/TagView";
 import { MenuGroup } from "@/components/MenuGroup";
@@ -99,6 +111,22 @@ export interface PaneHandlers {
   onNavigatePane: (paneId: number, path: string) => void;
   /** v0.25 窗格头关闭钮：关闭指定窗格 */
   onClosePane: (paneId: number) => void;
+  /** v0.27 视图模式切换（每窗格独立，随会话保存） */
+  onViewModeChange: (paneId: number, mode: ViewMode) => void;
+  /** v0.27 大图标/画廊图标档位 */
+  onIconSizeChange: (paneId: number, size: IconSize) => void;
+  /** v0.27 大图标自由摆放：设置当前目录条目槽位 */
+  onSetIconPosition: (dir: string, name: string, slot: [number, number]) => void;
+  /** v0.27 整理图标：清空当前目录摆放记录 */
+  onClearIconPositions: (dir: string) => void;
+  /** v0.27 图标位置表（全部目录） */
+  iconPositions: IconPositionMap;
+  /** v0.27.1 自动排列目录集合（开启后忽略自由摆放） */
+  autoArrangeDirs: string[];
+  /** v0.27.1 切换目录的自动排列 */
+  onToggleAutoArrange: (dir: string) => void;
+  /** v0.27 拖到文件夹图标上：移入/复制该目录 */
+  onDropIntoDir: (sourcePaneId: number, paths: string[], op: "copy" | "move", destDir: string) => void;
   /** v0.19 文本比较基准（跨窗格全局状态） */
   onSetCompareBase: (entry: FileEntry, paneId: number) => void;
   onCompareWithBase: (entry: FileEntry) => void;
@@ -116,6 +144,8 @@ function PaneHead({
   path,
   isActive,
   closable,
+  viewMode,
+  onViewModeChange,
   onNavigate,
   onClose,
   handlers: h,
@@ -124,6 +154,8 @@ function PaneHead({
   path: string;
   isActive: boolean;
   closable: boolean;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
   onNavigate: (path: string) => void;
   onClose: () => void;
   handlers: PaneHandlers;
@@ -177,6 +209,46 @@ function PaneHead({
                   <span className="max-w-40 truncate">{s.label}</span>
                 </button>
               </Fragment>
+            ))}
+          </div>
+          {/* v0.27 视图切换（详情/大图标，访达式段钮）。
+              画廊模式代码已就绪但 v0.27 暂不开放（缩略图覆盖面尚不足以与
+              大图标拉开差距），放开时把 gallery 项加回数组即可。 */}
+          <div
+            className="mr-1 flex shrink-0 items-center gap-0.5 rounded-md border border-transparent p-0.5"
+            role="group"
+            aria-label="视图模式"
+            data-view-switch=""
+          >
+            {(
+              (
+                [
+                  ["details", <List key="l" className="h-3.5 w-3.5" />, "详情列表"],
+                  ["icons", <LayoutGrid key="g" className="h-3.5 w-3.5" />, "大图标"],
+                  // ["gallery", <GalleryVerticalEnd key="v" className="h-3.5 w-3.5" />, "画廊"],
+                ] as [ViewMode, React.ReactNode, string][]
+              ).filter(([mode]) => mode !== "gallery")
+            ).map(([mode, icon, label]) => (
+              <button
+                key={mode}
+                type="button"
+                title={`${label}（Alt+${mode === "details" ? 1 : mode === "icons" ? 2 : 3}）`}
+                aria-pressed={viewMode === mode}
+                data-view-mode={mode}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onViewModeChange(mode);
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                className={cn(
+                  "rounded p-0.5 transition-colors",
+                  viewMode === mode
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                {icon}
+              </button>
             ))}
           </div>
           {closable && (
@@ -328,11 +400,14 @@ const PaneView = memo(function PaneView({
             path={pane.path}
             isActive={isActive}
             closable={highlight}
+            viewMode={pane.viewMode}
+            onViewModeChange={(mode) => h.onViewModeChange(pane.id, mode)}
             onNavigate={(p) => h.onNavigatePane(pane.id, p)}
             onClose={() => h.onClosePane(pane.id)}
             handlers={h}
             paneId={pane.id}
           />
+          {pane.viewMode === "details" ? (
           <FileList
         paneId={pane.id}
         entries={pane.entries}
@@ -405,6 +480,85 @@ dragTarget={dragOver?.targetPaneId === pane.id}
         diffMarks={diffMarks}
           linkBadge={linkBadge}
         />
+          ) : (
+          <IconGrid
+            paneId={pane.id}
+            mode={pane.viewMode === "gallery" ? "gallery" : "icons"}
+            iconSize={pane.iconSize}
+            onIconSizeChange={(size) => h.onIconSizeChange(pane.id, size)}
+            entries={pane.entries}
+            sortKey={pane.sortKey}
+            sortDir={pane.sortDir}
+            onSort={(key) => h.onSort(pane.id, key)}
+            selection={pane.selection}
+            onSelect={(e, a) => h.onSelect(pane.id, e, a)}
+            onSelectRange={(paths) => h.onSelectRange(pane.id, paths)}
+            onClearSelection={() => h.onClearSelection(pane.id)}
+            onOpen={(e) => h.onOpen(pane.id, e)}
+            onMiddleOpen={(p) => h.onMiddleOpen(pane.id, p)}
+            onCopy={(p) => h.onCopy(pane.id, p)}
+            onCut={(p) => h.onCut(pane.id, p)}
+            onDelete={(p) => h.onDelete(pane.id, p)}
+            onRename={(e) => h.onRename(pane.id, e)}
+            onRenameCommit={h.onRenameCommit}
+            onRenameCancel={h.onRenameCancel}
+            onCopyPath={h.onCopyPath}
+            onRefresh={() => h.onRefresh(pane.id)}
+            onShareDir={(dir) => h.onShareDir(dir)}
+            onDropPaths={(src, paths, op, target) => h.onDropPaths(src, paths, op, target)}
+            onDropIntoDir={(paths, op, dir) => h.onDropIntoDir(pane.id, paths, op, dir)}
+            onDragOverChange={h.onDragOverChange}
+            onNewFolder={() => h.onNewFolder(pane.id)}
+            onNewFile={() => h.onNewFile(pane.id)}
+            onPaste={() => h.onPaste(pane.id)}
+            canPaste={canPaste}
+            onUndo={h.onUndo}
+            onRedo={h.onRedo}
+            canUndo={h.canUndo}
+            canRedo={h.canRedo}
+            onSelectAll={() => h.onSelectAll(pane.id)}
+            onInvertSelection={() => h.onInvertSelection(pane.id)}
+            fileTags={fileTags}
+            tagNames={tagNames}
+            customQuick={customQuick}
+            onToggleTag={h.onToggleTag}
+            onToggleQuick={h.onToggleQuick}
+            currentDir={pane.path}
+            pluginOpener={h.pluginOpener}
+            pluginTerminal={h.pluginTerminal}
+            openers={h.openers}
+            shells={h.shells}
+            onOpenWith={(toolId, p) => h.onOpenWith(toolId, p)}
+            onOpenTerminal={(shellId, p) => h.onOpenTerminal(shellId, p)}
+            onAddCustomOpener={h.onAddCustomOpener}
+            dragTarget={dragOver?.targetPaneId === pane.id}
+            dragOp={dragOver?.targetPaneId === pane.id ? dragOver.op : "copy"}
+            showHidden={showHidden}
+            showExtensions={showExtensions}
+            renaming={renaming}
+            isActive={isActive}
+            onActivate={() => h.onActivate(pane.id)}
+            zoom={pane.zoom}
+            onBack={h.onBack}
+            onForward={h.onForward}
+            onCompress={(paths, fmt) => h.onCompress(pane.id, paths, fmt)}
+            onProperties={h.onProperties}
+            onPropertiesDir={h.onPropertiesDir}
+            onDiff={h.onDiff}
+            compareBase={compareBase}
+            onSetCompareBase={h.onSetCompareBase}
+            onCompareWithBase={h.onCompareWithBase}
+            onComparePick={h.onComparePick}
+            onCompareSelected={h.onCompareSelected}
+            onViewPatch={h.onViewPatch}
+            iconPositions={h.iconPositions[pane.path] ?? {}}
+            onSetIconPosition={(name, slot) => h.onSetIconPosition(pane.path, name, slot)}
+            onClearIconPositions={() => h.onClearIconPositions(pane.path)}
+            autoArrange={h.autoArrangeDirs.includes(pane.path)}
+            onToggleAutoArrange={() => h.onToggleAutoArrange(pane.path)}
+            linkBadge={linkBadge}
+          />
+          )}
         </>
       )}
       {showProperties && <PropertiesBar entries={pane.entries} selection={pane.selection} />}

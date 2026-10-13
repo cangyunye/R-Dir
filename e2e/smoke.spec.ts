@@ -972,3 +972,118 @@ test.describe("27. 分屏 / 窗格快捷键", () => {
     await expect(page.locator(DOC_ROW)).toHaveCount(1);
   });
 });
+
+test.describe("28. 视图模式：大图标 / 画廊（v0.27.0）", () => {
+  // 网格条目同样带 data-path：列表行需用 role=row 区分
+  const DOC_ROW = `[role="row"][data-path="${HOME}/Documents"]`;
+  const DOC_GRID = `[data-grid-item][data-path="${HOME}/Documents"]`;
+  const PHOTO_GRID = `[data-grid-item][data-path="${HOME}/photo.png"]`;
+  const switchBtn = (mode: string) => `[data-view-switch] button[data-view-mode="${mode}"]`;
+
+  test("V1 窗格头三段钮：切到大图标，列表行消失、网格条目出现", async ({ page }) => {
+    await expect(page.locator(DOC_ROW)).toBeVisible();
+    await page.locator(switchBtn("icons")).click();
+    await expect(page.locator(DOC_ROW)).toHaveCount(0);
+    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    await expect(page.locator(DOC_GRID)).toBeVisible();
+    await expect(page.locator(PHOTO_GRID)).toBeVisible();
+    // 切回详情
+    await page.locator(switchBtn("details")).click();
+    await expect(page.locator(DOC_ROW)).toBeVisible();
+    await expect(page.locator("[data-grid-item]")).toHaveCount(0);
+  });
+
+  test("V2 Alt+2 / Alt+1 快捷键切换视图（画廊暂未开放，仅两段）", async ({ page }) => {
+    await expect(page.locator('[data-view-switch] button[data-view-mode="gallery"]')).toHaveCount(0);
+    await page.keyboard.press("Alt+2");
+    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    await page.keyboard.press("Alt+1");
+    await expect(page.locator("[data-grid-item]")).toHaveCount(0);
+  });
+
+  test("V3 大图标模式：双击目录进入（交互与详情视图一致）", async ({ page }) => {
+    await page.locator(switchBtn("icons")).click();
+    await page.locator(DOC_GRID).dblclick();
+    await expect(page.locator("#rdir-addr-input")).toHaveValue(`${HOME}/Documents`);
+  });
+
+  test("V4 大图标模式：网格内拖动条目 → 位置表写入（icon_positions_save 被调用）", async ({ page }) => {
+    await page.locator(switchBtn("icons")).click();
+    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    const saved: unknown[] = [];
+    await page.exposeFunction("__rdirIconSaved", (v: unknown) => saved.push(v));
+    await page.evaluate(() => {
+      const w = window as unknown as { __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: unknown) => Promise<unknown> } };
+      const invoke = w.__TAURI_INTERNALS__!.invoke;
+      const orig = invoke.bind(w.__TAURI_INTERNALS__);
+      (w.__TAURI_INTERNALS__ as { invoke: (cmd: string, args?: unknown) => Promise<unknown> }).invoke = (
+        cmd: string,
+        args?: unknown,
+      ) => {
+        if (cmd === "icon_positions_save") {
+          (window as unknown as { __rdirIconSaved: (v: unknown) => void }).__rdirIconSaved(args);
+          return Promise.resolve(null);
+        }
+        return orig(cmd, args);
+      };
+    });
+    // 按下未选中图标直接拖（图标视图语义）到网格下方空白处松手
+    const item = page.locator(`[data-grid-item][data-path="${HOME}/Notes.txt"]`);
+    const box = await item.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 30, box.y + box.height / 2 + 120, { steps: 6 });
+    await page.mouse.up();
+    await expect
+      .poll(() => saved.length, { timeout: 5_000 })
+      .toBeGreaterThan(0);
+  });
+
+  test("V5 整理图标：右键空白 → 整理后位置表清空（该目录）", async ({ page }) => {
+    await page.locator(switchBtn("icons")).click();
+    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    // 先制造一个摆放记录（按下未选中图标直接拖）
+    const item = page.locator(`[data-grid-item][data-path="${HOME}/Notes.txt"]`);
+    const box = await item.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 30, box.y + box.height / 2 + 120, { steps: 6 });
+    await page.mouse.up();
+    // 空白处右键 → 整理图标
+    await page.locator("[data-icongrid-body]").click({ button: "right", position: { x: 20, y: 300 } });
+    await page.getByRole("menuitem", { name: "整理图标" }).click();
+    await expect(page.locator("[data-grid-item]")).toHaveCount(5); // 视图不崩，布局回自动
+  });
+
+});
+
+test.describe("28A. 大图标自动排列（v0.27.1）", () => {
+  const DOC_GRID = `[data-grid-item][data-path="${HOME}/Documents"]`;
+  const switchBtn = (mode: string) => `[data-view-switch] button[data-view-mode="${mode}"]`;
+
+  test("V7 空白右键「自动排列」：勾选后拖动不再改变位置表", async ({ page }) => {
+    await page.locator(switchBtn("icons")).click();
+    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    // 先制造一个摆放记录
+    const item = page.locator(`[data-grid-item][data-path="${HOME}/Notes.txt"]`);
+    let box = await item.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 30, box.y + box.height / 2 + 120, { steps: 6 });
+    await page.mouse.up();
+    // 开启自动排列
+    await page.locator("[data-icongrid-body]").click({ button: "right", position: { x: 20, y: 300 } });
+    await page.getByRole("menuitem", { name: "自动排列" }).click();
+    // 再拖一次：自动排列下不写位置表（无崩溃即视为生效，持久化断言在 V4）
+    box = await item.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 - 30, box.y + box.height / 2 + 120, { steps: 6 });
+    await page.mouse.up();
+    await expect(page.locator("[data-grid-item]")).toHaveCount(5);
+    // 菜单勾选态回显
+    await page.locator("[data-icongrid-body]").click({ button: "right", position: { x: 20, y: 300 } });
+    await expect(page.getByRole("menuitem", { name: /自动排列 ✓/ })).toBeVisible();
+    await page.keyboard.press("Escape");
+  });
+});

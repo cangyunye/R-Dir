@@ -71,13 +71,23 @@ export const moveEntriesPlan = (
   resolutions: import("./types").ResolutionPlan,
 ) => invoke<[string, string][]>("move_entries_plan", { paths, dest, resolutions });
 
-/** 把文件列表写入系统剪贴板（跨应用复制，best-effort） */
-export const clipboardWriteFiles = (paths: string[]) =>
-  invoke<void>("clipboard_write_files", { paths });
+/** 系统剪贴板中的文件列表（跨应用粘贴）；cut=true 表示剪切/移动语义 */
+export interface ClipboardFiles {
+  paths: string[];
+  cut: boolean;
+}
 
-/** 从系统剪贴板读取文件列表（跨应用粘贴，无文件时返回空数组） */
+/** 把文件列表写入系统剪贴板（跨应用复制/剪切，best-effort；cut=true 资源管理器按移动处理） */
+export const clipboardWriteFiles = (paths: string[], cut = false) =>
+  invoke<void>("clipboard_write_files", { paths, cut });
+
+/** 从系统剪贴板读取文件列表（跨应用粘贴，无文件时 paths 为空） */
 export const clipboardReadFiles = () =>
-  invoke<string[]>("clipboard_read_files");
+  invoke<ClipboardFiles>("clipboard_read_files");
+
+/** 清空系统剪贴板：消费外部剪切（移动粘贴完成）后调用，避免残留失效的剪切项 */
+export const clipboardClearFiles = () =>
+  invoke<void>("clipboard_clear_files");
 
 /**
  * 发起原生 OLE 拖拽（Windows：CF_HDROP 文件引用），阻塞到松手，
@@ -264,3 +274,19 @@ export const shareStop = (id: string) =>
 
 export const shareStopByDir = (dir: string) =>
   invoke<number>("share_stop_by_dir", { dir });
+
+// ---- v0.27 图标自由摆放位置（应用数据目录集中存储，按目录路径索引） ----
+
+/** 槽位坐标（列, 行），分辨率无关；目录 → 条目名 → 槽位 */
+export type IconPositionMap = Record<string, Record<string, [number, number]>>;
+
+export const iconPositionsLoad = () =>
+  invoke<IconPositionMap>("icon_positions_load");
+
+export const iconPositionsSave = (positions: IconPositionMap) =>
+  invoke<void>("icon_positions_save", { positions });
+
+// ---- v0.27 缩略图（画廊模式；本地图片文件，PNG base64 data URL 返回） ----
+
+export const thumbGet = (path: string, size: number) =>
+  invoke<string | null>("thumb_get", { path, size });

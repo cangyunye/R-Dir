@@ -26,6 +26,12 @@ export interface QuickAccessItem {
 export type SortKey = "name" | "size" | "modified" | "type";
 export type SortDir = "asc" | "desc";
 
+/** 窗格视图模式（v0.27.0）：详情列表 / 大图标（可自由摆放）/ 画廊（缩略图墙） */
+export type ViewMode = "details" | "icons" | "gallery";
+/** 大图标/画廊模式的图标档位（px） */
+export const ICON_SIZES = [48, 64, 96, 128] as const;
+export type IconSize = (typeof ICON_SIZES)[number];
+
 /** 单个窗格（pane）的独立浏览状态 */
 export interface PaneState {
   id: number;
@@ -40,6 +46,10 @@ export interface PaneState {
   sortDir: SortDir;
   /** v0.8 窗口级缩放（0.5–2.0，Ctrl+滚轮，随会话保存） */
   zoom: number;
+  /** v0.27 视图模式（每窗格独立，随会话保存） */
+  viewMode: ViewMode;
+  /** v0.27 大图标/画廊图标档位（随会话保存） */
+  iconSize: IconSize;
   /** 选中条目路径，首项为主选中 */
   selection: string[];
   /** 自增计数，用于触发刷新 */
@@ -182,6 +192,10 @@ export interface SessionPane {
   tagId?: string;
   /** v0.8 窗口缩放（旧会话缺省 1） */
   zoom?: number;
+  /** v0.27 视图模式（旧会话缺省 details） */
+  viewMode?: ViewMode;
+  /** v0.27 图标档位（旧会话缺省 64） */
+  iconSize?: number;
 }
 
 /** 会话保存：标签页快照（root 为分屏树 JSON） */

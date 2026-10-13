@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 
-/** 行内重命名输入框（FileList 行 / 搜索结果行共用） */
+/** 行内重命名输入框（FileList 行 / 搜索结果行 / 图标网格共用） */
 export function RenameInput({
   initial,
   onCommit,
@@ -15,6 +15,21 @@ export function RenameInput({
   const ref = useRef<HTMLInputElement>(null);
   /** 是否真正持过焦：起手焦点竞争（radix 菜单关闭回焦等）期间 input 可能从未拿到焦点 */
   const everFocusedRef = useRef(false);
+  /** 最新值（window mousedown 监听只注册一次，经此读取当前值） */
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  /** 会话只结束一次：失焦与全局 mousedown 可能先后到达，也可能只来其一 */
+  const doneRef = useRef(false);
+  const finishRef = useRef<(commit: boolean) => void>(() => {});
+  useEffect(() => {
+    finishRef.current = (commit: boolean) => {
+      if (doneRef.current) return;
+      doneRef.current = true;
+      if (commit) onCommit(valueRef.current);
+      else onCancel();
+    };
+  });
+
   useEffect(() => {
     // 右键菜单关闭时 radix 会把焦点恢复到触发行，若晚于本输入框聚焦就会把焦点抢走
     // （onBlur 以未修改的名字提交 → 静默关闭，看起来"重命名失败"）。
@@ -28,6 +43,20 @@ export function RenameInput({
     );
     return () => attempts.forEach((t) => window.clearTimeout(t));
   }, []);
+
+  useEffect(() => {
+    // 仅靠失焦结束会话有盲区：Tauri 拖拽区（标签栏空白）的 mousedown 被 preventDefault
+    // 走原生拖动、滚动条交互不产生 DOM 事件——两者都不触发 blur，编辑框会一直挂着。
+    // 资源管理器/Finder 语义是"点哪里都结束重命名"，故在 window 捕获阶段直接收口。
+    const onWinMouseDown = (e: MouseEvent) => {
+      if (!everFocusedRef.current) return; // 起手焦点竞争窗口，交给重试聚焦
+      if (e.target instanceof Node && ref.current?.contains(e.target)) return;
+      finishRef.current(valueRef.current !== initial);
+    };
+    window.addEventListener("mousedown", onWinMouseDown, true);
+    return () => window.removeEventListener("mousedown", onWinMouseDown, true);
+  }, [initial]);
+
   return (
     <Input
       ref={ref}
@@ -43,15 +72,14 @@ export function RenameInput({
         // 此时提交会带着未上屏的拼音（或空串）提前结束会话——表现为"回车无法重命名"。
         // 组合中的 Enter/Esc 属输入法操作，交给 IME；上屏后再按 Enter 才提交。
         if (e.nativeEvent.isComposing) return;
-        if (e.key === "Enter") onCommit(value);
-        if (e.key === "Escape") onCancel();
+        if (e.key === "Enter") finishRef.current(true);
+        if (e.key === "Escape") finishRef.current(false);
       }}
       onBlur={() => {
         // 从未持过焦的 blur 是起手焦点竞争（重试聚焦会再拿），不提交也不结束会话；
         // 正常失焦：改过名 → 提交；没改过 → 取消（对齐访达"点空白关闭"）
         if (!everFocusedRef.current) return;
-        if (value !== initial) onCommit(value);
-        else onCancel();
+        finishRef.current(valueRef.current !== initial);
       }}
       className="h-6 min-w-0 flex-1 px-1.5 text-[13px]"
       spellCheck={false}

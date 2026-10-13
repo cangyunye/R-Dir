@@ -114,6 +114,10 @@ export async function installTauriMock(page: Page): Promise<void> {
       allow_exit: () => null,
       // 目录内容监视集合上报（v0.26.1）：真实后端轮询后回推 fs://changed；浏览器 e2e 无后端
       fs_watch_set: () => null,
+      // v0.27 图标自由摆放位置表 + 画廊缩略图（e2e 环境无应用数据目录/图像解码）
+      icon_positions_load: () => ({}),
+      icon_positions_save: () => null,
+      thumb_get: () => null,
       // 未知路径报错（与真实后端一致）：同步浏览的镜像探测依赖"列目录失败 = 对侧无此目录"
       list_dir: (a) => {
         const p = String(a.path);

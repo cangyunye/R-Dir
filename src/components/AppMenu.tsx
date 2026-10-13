@@ -77,6 +77,9 @@ export interface AppMenuActions {
   showHidden: boolean;
   onToggleExtensions: () => void;
   showExtensions: boolean;
+  // v0.27 视图模式（当前活动窗格）
+  viewMode: "details" | "icons" | "gallery";
+  onViewModeChange: (mode: "details" | "icons" | "gallery") => void;
   onToggleSearch: () => void;
   onRefresh: () => void;
   // 转到
@@ -265,6 +268,8 @@ export function AppMenu(actions: AppMenuActions) {
           <GroupLabel>查看</GroupLabel>
           <Item icon={null} label="显示隐藏文件" shortcutId="toggleHidden" checked={actions.showHidden} onClick={actions.onToggleHidden} />
           <Item icon={null} label="显示文件扩展名" checked={actions.showExtensions} onClick={actions.onToggleExtensions} />
+          <Item icon={null} label="视图：详情列表" shortcutId="viewDetails" checked={actions.viewMode === "details"} onClick={() => actions.onViewModeChange("details")} />
+          <Item icon={null} label="视图：大图标" shortcutId="viewIcons" checked={actions.viewMode === "icons"} onClick={() => actions.onViewModeChange("icons")} />
           <Item icon={<Search />} label="切换搜索面板" shortcutId="focusSearch" onClick={actions.onToggleSearch} />
           <DropdownMenuSeparator />
           <Item icon={<RefreshCw />} label="刷新" shortcutId="refresh" onClick={actions.onRefresh} />

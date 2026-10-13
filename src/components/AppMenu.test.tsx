@@ -35,6 +35,8 @@ function makeActions(overrides: Partial<AppMenuActions> = {}): AppMenuActions {
     showHidden: false,
     onToggleExtensions: () => {},
     showExtensions: false,
+  viewMode: "details" as const,
+  onViewModeChange: () => {},
     onToggleSearch: () => {},
     onRefresh: () => {},
     onBack: () => {},

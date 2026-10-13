@@ -1,6 +1,6 @@
 [package]
 name = "rust-file-manager"
-version = "0.26.1"
+version = "0.27.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -35,6 +35,8 @@ regex = "1"
 ignore = "0.4"
 # v0.21.1 文本比较编码切换（GBK/Big5/Shift_JIS 等 WhatWG 标准编码解码）
 encoding_rs = "0.8"
+# v0.27 画廊模式缩略图（本地图片解码缩放；按需特性裁掉不需要的格式）
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 # v0.9 压缩改为调用系统命令（ditto / powershell / tar / zip），不再依赖 Rust crate
 # HTTP autoindex 插件：轻量同步 HTTP 客户端（rustls，无系统依赖）
 ureq = { version = "2", default-features = false, features = ["rustls", "gzip"] }
@@ -52,14 +54,21 @@ tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", 
 # 密码加密存储（master-key，AES-256-GCM；密钥仅存内存）
 aes-gcm = { version = "0.10", optional = true }
 sha2 = { version = "0.10", optional = true }
-base64 = { version = "0.22", optional = true }
+# v0.27 缩略图 base64 data URL（画廊模式）；sftp 也复用
+base64 = "0.22"
 rand = { version = "0.8", optional = true }
 
 # 系统剪贴板文件格式（跨应用复制粘贴文件）：平台特定，仅编译对应平台
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL"] }
+block2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSImage", "NSBitmapImageRep"] }
+# v0.27 画廊模式：PDF/视频/Office 文档缩略图走系统 QuickLook（系统能预览的都能出图）
+objc2-quick-look-thumbnailing = { version = "0.3", features = ["QLThumbnailGenerator", "QLThumbnailReply", "QLThumbnailGenerationRequest", "objc2-uniform-type-identifiers", "objc2-core-foundation", "block2"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL", "NSError", "NSGeometry"] }
+objc2-core-graphics = "0.3"
+objc2-core-foundation = "0.3"
+objc2-uniform-type-identifiers = { version = "0.3", features = ["UTType"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = "5"
@@ -82,7 +91,7 @@ libc = "0.2"
 
 [features]
 default = ["sftp", "share"]
-sftp = ["dep:russh", "dep:russh-keys", "dep:tokio", "dep:aes-gcm", "dep:sha2", "dep:base64", "dep:rand"]
+sftp = ["dep:russh", "dep:russh-keys", "dep:tokio", "dep:aes-gcm", "dep:sha2", "dep:rand"]
 # v0.7 窗口分享（内置插件）：去掉 share 即不编译分享服务
 share = ["dep:axum", "dep:tokio", "dep:local-ip-address", "dep:futures-util"]
 

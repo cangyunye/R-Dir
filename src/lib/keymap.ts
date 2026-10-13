@@ -70,6 +70,8 @@ export const ACTIONS: KeyAction[] = [
   A({ id: "focusSearchContent", label: "切换内容搜索", group: "搜索", win: "mod+shift+f", mac: "mod+shift+f" }),
   // 视图 / 全局
   A({ id: "toggleHidden", label: "显示/隐藏隐藏文件", group: "视图 / 全局", win: "mod+shift+.", mac: "mod+shift+." }),
+  A({ id: "viewDetails", label: "视图：详情列表", group: "视图 / 全局", win: "alt+1", mac: "alt+1" }),
+  A({ id: "viewIcons", label: "视图：大图标", group: "视图 / 全局", win: "alt+2", mac: "alt+2" }),
   A({ id: "toggleTheme", label: "切换主题", group: "视图 / 全局", win: "mod+alt+t", mac: "mod+alt+t" }),
   A({ id: "openSettings", label: "打开设置（快捷键一览）", group: "视图 / 全局", win: "mod+,", mac: "mod+," }),
   A({ id: "openHelp", label: "帮助 / 快捷键一览", group: "视图 / 全局", win: "f1", mac: "f1" }),
