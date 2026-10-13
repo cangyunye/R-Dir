@@ -760,10 +760,14 @@ test.describe("23. 拖拽上传 + 全部标签下拉（v0.22.2）", () => {
     );
     await expect(page.locator(`[data-path="${remote}/Notes.txt"]`)).toBeVisible();
     expect((await uploads()).at(-1)).toMatchObject({ name: "Notes.txt", dest: remote });
-    // 再拖一次：远程已有同名 → 覆盖确认（mock 的 dialog|confirm 恒 true）→ 继续上传
+    // 再拖一次：远程已有同名 → 应用内覆盖确认（v0.28.0 弃用原生 confirm）→ 点「覆盖」继续上传
     await page.locator(`[data-path="${HOME}/Notes.txt"]`).dragTo(
       page.locator(`[data-path="${remote}/deploy.sh"]`),
     );
+    const overwriteDialog = page.locator("[data-app-confirm]");
+    await expect(overwriteDialog).toBeVisible();
+    await expect(overwriteDialog).toContainText("覆盖上传");
+    await overwriteDialog.getByRole("button", { name: "覆盖" }).click();
     await expect
       .poll(async () => (await uploads()).length, { timeout: 5000 })
       .toBe(2);
@@ -801,6 +805,11 @@ test.describe("23. 拖拽上传 + 全部标签下拉（v0.22.2）", () => {
         dstSel: `[data-path="${HOME}/photo.png"]`,
       },
     );
+    // 本地已有同名 → 应用内覆盖确认（v0.28.0 弃用原生 confirm）→ 点「覆盖」继续下载
+    const dlDialog = page.locator("[data-app-confirm]");
+    await expect(dlDialog).toBeVisible();
+    await expect(dlDialog).toContainText("覆盖下载");
+    await dlDialog.getByRole("button", { name: "覆盖" }).click();
     await expect
       .poll(async () => (await downloads()).length, { timeout: 5000 })
       .toBe(1);

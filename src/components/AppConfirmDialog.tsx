@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -25,17 +25,22 @@ export function AppConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  // 键位监听只订阅一次（回调走 ref）：onConfirm/onCancel 每次 App 渲染都是新引用，
+  // 若作 effect 依赖会反复退订/重订，与真实按键派发撞车时按键被跳过。
+  const actionRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  actionRef.current = (e: KeyboardEvent) => {
+    if (e.key === "Escape") onCancel();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      onConfirm();
+    }
+  };
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
-      if (e.key === "Enter") {
-        e.preventDefault();
-        onConfirm();
-      }
-    };
+    const onKey = (e: KeyboardEvent) => actionRef.current(e);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onConfirm, onCancel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div

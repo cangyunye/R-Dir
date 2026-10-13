@@ -84,7 +84,6 @@ export function TextDiffDialog({
   /** 两侧行尾格式（files 模式，来自后端 TextSide.eol） */
   const [eols, setEols] = useState<{ left?: string; right?: string }>({});
   const scrollRef = useRef<HTMLDivElement>(null);
-  console.info("[txtdiff MOUNT] render, source=", source.kind);
 
   useEffect(() => {
     let alive = true;
@@ -143,19 +142,23 @@ export function TextDiffDialog({
     };
   }, [source, encoding]);
 
+  // Esc 关闭 + F11 全屏切换：仅在比对窗口打开期间注册（组件卸载即失效）。
+  // 监听器只订阅一次（回调走 ref），避免 [onClose] 依赖在每次渲染时反复退订/重订——
+  // 重订阅窗口期与事件派发撞车时，真实按键会被跳过（表现为 Esc/F11 偶发不响应）。
+  const keyActionRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyActionRef.current = (e: KeyboardEvent) => {
+    if (e.key === "Escape") onClose();
+    if (e.key === "F11") {
+      e.preventDefault();
+      setMaximized((m) => !m);
+    }
+  };
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      console.info("[txtdiff onKey]", e.key, "trusted=", e.isTrusted);
-      if (e.key === "Escape") onClose();
-      // F11 全屏切换：仅在比对窗口打开期间注册，天然限定生效范围
-      if (e.key === "F11") {
-        e.preventDefault();
-        setMaximized((m) => !m);
-      }
-    };
+    const onKey = (e: KeyboardEvent) => keyActionRef.current(e);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 视口高度（虚拟滚动窗口）
   useEffect(() => {

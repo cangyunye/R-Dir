@@ -63,6 +63,22 @@ test.describe("29A. 侧边栏标签新增（上限 10）", () => {
     await expect(page.getByText("标签：紧急")).toBeVisible();
   });
 
+  test("T2A 大图标网格内重命名：逐键输入生效（v0.28 重命名回归）", async ({ page }) => {
+    await page.keyboard.press("Alt+2");
+    const item = page.locator(`[data-grid-item][data-path="${HOME}/Notes.txt"]`);
+    await expect(item).toBeVisible();
+    await item.click({ button: "right" });
+    await page.getByRole("menu").getByText("重命名").click();
+    const input = item.locator("input");
+    await expect(input).toBeVisible();
+    await page.waitForTimeout(400);
+    await expect(input).toBeFocused();
+    await page.keyboard.press(`${MOD}+KeyA`);
+    await page.keyboard.type("Grid.txt", { delay: 30 });
+    await page.keyboard.press("Enter");
+    await expect(page.locator(`[data-grid-item][data-path="${HOME}/Grid.txt"]`)).toBeVisible();
+  });
+
   test("T3 拉满：7 预设 + 3 自定义 = 10，再点 + 提醒上限", async ({ page }) => {
     const header = page.locator("[data-sidebar-tags-header]");
     for (let i = 1; i <= 3; i++) {
