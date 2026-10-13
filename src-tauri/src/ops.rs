@@ -337,12 +337,11 @@ pub fn rename_entry(path: &str, new_name: &str) -> Result<String, String> {
     Ok(target.to_string_lossy().to_string())
 }
 
-/// 将 trash crate 的错误转为人话提示（分支跨平台：Windows IFileOperation / macOS Finder AppleScript）。
+/// 将 trash crate 的错误转为人话提示（分支跨平台：Windows IFileOperation / macOS NSFileManager）。
 fn map_trash_error(msg: String) -> String {
-    if msg.contains("-5000") || msg.contains("没有必要的权限") || msg.contains("Read-only") {
-        // macOS：外置克隆系统盘的系统卷为 sealed 只读挂载，卷上无法写入 .Trashes，
-        // 访达移入废纸篓必报 -5000「没有必要的权限」——与自动化授权/管理员身份无关，
-        // 只能永久删除或先把文件移到可写卷。osascript 报错尾缀的错误码与系统语言无关，故以 "-5000" 为准。
+    if msg.contains("Read-only") || msg.contains("只读") {
+        // 只读卷（如外置克隆系统盘的 sealed 系统卷）无法写入其废纸篓——与授权/管理员身份
+        // 无关，只能永久删除或先把文件移到可写卷。NSError 文案随系统语言本地化，故中英文都匹配。
         format!("删除失败：该磁盘可能为只读（如外置系统盘的系统卷，无法写入其废纸篓），无法移入回收站；可改用永久删除，或先把文件移到可写磁盘。
 详情：{}", msg)
     } else if msg.contains("拒绝访问") || msg.contains("Permission denied") || msg.contains("access") {
@@ -361,19 +360,16 @@ fn map_trash_error(msg: String) -> String {
 
 /// 删除条目（进回收站）。
 /// IFileOperation 偶发瞬时中止（目录句柄被占用、回收站忙等），非 macOS 重试一次再报错。
-/// macOS：trash 默认经 osascript 让访达删除，依赖「自动化」TCC 授权——未授权/被拒时
-/// （adhoc 签名的开发版几乎必被拒）每次必报 -1743，表现为“完全无法删除”。
-/// 故先走 Finder（已授权时保留“放回原处”与提示音），失败即回退 NSFileManager 的
-/// `trashItemAtURL`（无需任何授权）；两者都败才报错，以 NSFileManager 的错误为准
-/// （更贴近真实失败原因，如只读卷的 "Read-only file system"）。
+/// macOS：统一走 `NSFileManager.trashItemAtURL`（无需任何 TCC 授权，跨卷 / `.Trashes`
+/// 等边界由系统自处理）。不采用 trash 默认的访达 AppleScript 路径——那依赖「自动化」
+/// 授权，adhoc 签名构建几乎必被拒（-1743），表现为完全无法删除；访达路径唯一的增益是
+/// 访达右键的「放回原处」，不值得为此背上授权依赖。应用内撤销（restore_from_trash 读
+/// `~/.Trash`）不受影响。
 #[cfg(target_os = "macos")]
 pub fn delete_entries(paths: &[String]) -> Result<(), String> {
     use trash::macos::{DeleteMethod, TrashContextExtMacos};
     use trash::TrashContext;
     let paths: Vec<&Path> = paths.iter().map(|s| Path::new(s)).collect();
-    if trash::delete_all(&paths).is_ok() {
-        return Ok(());
-    }
     let mut ctx = TrashContext::new();
     ctx.set_delete_method(DeleteMethod::NsFileManager);
     ctx.delete_all(&paths)
@@ -1027,15 +1023,16 @@ mod tests {
 
     #[test]
     fn trash_error_readonly_volume_maps_to_actionable_hint() {
-        // macOS 真实报错：外置克隆系统盘（sealed 只读系统卷）上访达移废纸篓 -5000
-        let raw = r#"Error during a `trash` operation: Os { code: 1, description: "The AppleScript exited with error. stderr: 29:96: execution error: “Finder”遇到一个错误：无法完成此操作，因为你没有必要的权限。 (-5000)\n" }"#;
-        let mapped = map_trash_error(raw.to_string());
-        assert!(mapped.contains("只读"), "应提示只读卷: {mapped}");
-        assert!(mapped.contains("永久删除"), "应给出永久删除出口: {mapped}");
-        assert!(mapped.contains(raw), "详情应保留原始报错: {mapped}");
-        // 英文环境同一错误：osascript 尾缀错误码与系统语言无关
-        let en = "The AppleScript exited with error. stderr: 1:1: execution error: “Finder” got an error: Operation not permitted. (-5000)";
-        assert!(map_trash_error(en.to_string()).contains("只读"));
+        // NSFileManager.trashItemAtURL 在只读卷（外置克隆系统盘的 sealed 系统卷）上的
+        // 两种真实形态：英文 errno 文案 / 中文本地化 NSError
+        let en = r#"While deleting '"/Volumes/Sys/a.txt"', `trashItemAtURL` failed: Error Domain=NSCocoaErrorDomain Code=6402 ""a.txt" couldn't be moved to the Trash because the volume is Read-only.""#;
+        let zh = "While deleting '/Volumes/Sys/a.txt', `trashItemAtURL` failed: 只读文件系统 (os error 30)";
+        for raw in [en, zh] {
+            let mapped = map_trash_error(raw.to_string());
+            assert!(mapped.contains("只读"), "应提示只读卷: {mapped}");
+            assert!(mapped.contains("永久删除"), "应给出永久删除出口: {mapped}");
+            assert!(mapped.contains(raw), "详情应保留原始报错: {mapped}");
+        }
     }
 
     #[test]
