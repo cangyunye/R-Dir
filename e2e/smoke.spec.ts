@@ -246,9 +246,11 @@ test.describe("9. 设置对话框滑动分区", () => {
     const height0 = (await dialog.boundingBox())!.height;
 
     // 点「快捷键」→ 滚动到该分区，且分区标题不被顶边裁掉
+    // （v0.28.1 修复：原断言用 nth(1) 定位分区——「预览」分区插入后 nth(1) 变成预览，
+    //   快捷键点过去后预览必然顶到容器上方，断言恒错且表现为偶发；改语义化锚点定位，
+    //   并等平滑滚动停稳后再采样，避免动画中段瞬时位置的随机通过/失败）
     await page.getByRole("button", { name: "快捷键", exact: true }).click();
     await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
-    // 等滚动动画停稳再采样：平滑滚动进行中/迟到重排的瞬时位置会偶发偏移（CI flake）
     await expect
       .poll(async () => {
         const before = await scroller.evaluate((el) => el.scrollTop);
@@ -258,7 +260,7 @@ test.describe("9. 设置对话框滑动分区", () => {
       })
       .toBeLessThan(1);
     const scrollerTop = (await scroller.boundingBox())!.y;
-    const keysTop = (await scroller.locator(":scope > div").nth(1).boundingBox())!.y;
+    const keysTop = (await scroller.locator('[data-settings-section="keys"]').boundingBox())!.y;
     expect(keysTop).toBeGreaterThanOrEqual(scrollerTop);
 
     // 点「关于」→ 继续向下滚动；对话框高度保持恒定（不再随分区跳动）

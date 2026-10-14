@@ -130,10 +130,7 @@ impl SftpSession {
 
     /// 发送一个请求并等待对应 id 的回复，返回 (type, body)
     async fn exchange(&mut self, packet: &[u8]) -> Result<(u8, Vec<u8>), String> {
-        self.channel
-            .data(&packet[..])
-            .await
-            .map_err(|e| format!("发送失败：{e}"))?;
+        self.send_packet(packet).await?;
         loop {
             let (ty, body) = self.receive_packet().await?;
             if ty == proto::STATUS {
@@ -150,8 +147,16 @@ impl SftpSession {
         }
     }
 
-    /// 接收并组装一个完整 SFTP 包（处理跨 Data 报文），返回 (type, body owned)
-    async fn receive_packet(&mut self) -> Result<(u8, Vec<u8>), String> {
+    /// 发送一个 SFTP 包（不等待应答；流水线上传用）
+    async fn send_packet(&mut self, packet: &[u8]) -> Result<(), String> {
+        self.channel
+            .data(&packet[..])
+            .await
+            .map_err(|e| format!("发送失败：{e}"))
+    }
+
+    /// 接收并组装一个完整 SFTP 包（处理跨 Data 报文），返回 (type, request-id, body owned)
+    async fn receive_packet_id(&mut self) -> Result<(u8, u32, Vec<u8>), String> {
         loop {
             if self.buf.len() >= 4 {
                 let len = u32::from_be_bytes(self.buf[0..4].try_into().unwrap()) as usize;
@@ -162,8 +167,9 @@ impl SftpSession {
                         return Err("SFTP 包过短".into());
                     }
                     let ty = packet[0];
+                    let id = u32::from_be_bytes(packet[1..5].try_into().unwrap());
                     let body = packet[5..].to_vec();
-                    return Ok((ty, body));
+                    return Ok((ty, id, body));
                 }
             }
             match self.channel.wait().await {
@@ -174,6 +180,12 @@ impl SftpSession {
                 _ => {}
             }
         }
+    }
+
+    /// 接收并组装一个完整 SFTP 包，返回 (type, body owned)
+    async fn receive_packet(&mut self) -> Result<(u8, Vec<u8>), String> {
+        let (ty, _id, body) = self.receive_packet_id().await?;
+        Ok((ty, body))
     }
 
     /// 构造请求并等待回复（自动 id）
@@ -288,15 +300,23 @@ impl SftpSession {
         Ok(total_done)
     }
 
-    /// 上传本地文件到远程路径（覆盖）
-    /// cb(done, total)：已上传字节 / 本地文件总字节；返回 false 中止上传
-    /// （关闭远程句柄并尽力删除远端半成品，返回「已取消」）
+    /// 上传本地文件到远程路径（覆盖）。
+    /// **流水线并发写**：此前逐包停等（32KB/RTT，一条 50ms RTT 链路顶天 ~0.6MB/s，
+    /// 不如命令行 sftp 的并发窗口）；现一次发出至多 WINDOW 个写请求、按 request-id
+    /// 对账应答（应答可乱序），配合 128KB 大包，吞吐 ≈ 窗口×包长/RTT，受链路带宽约束。
+    /// cb(done, total)：已确认字节 / 本地文件总字节；返回 false 中止上传
+    /// （排空在途应答后关闭远程句柄并尽力删除远端半成品，返回「已取消」）
     pub async fn upload(
         &mut self,
         local: &Path,
         remote: &str,
         mut cb: impl FnMut(u64, u64) -> bool,
     ) -> Result<u64, String> {
+        /// 单包载荷：SFTP 常见服务器（OpenSSH）单包上限 256KB，取一半留余量
+        const CHUNK: usize = 128 * 1024;
+        /// 在途写请求数（并发窗口）：窗口×包长 = 4MB 在途数据，量级对齐 OpenSSH sftp 客户端
+        const WINDOW: usize = 32;
+
         let total = std::fs::metadata(local).map(|m| m.len()).unwrap_or(0);
         let mut f = std::fs::File::open(local).map_err(|e| format!("读取本地失败：{e}"))?;
         let (_ty, body) = self
@@ -308,32 +328,58 @@ impl SftpSession {
             })
             .await?;
         let handle = read_handle(&body)?;
-        let mut offset: u64 = 0;
-        let mut buf = vec![0u8; 32 * 1024];
-        let mut total_done: u64 = 0;
-        loop {
-            let n = f.read(&mut buf).map_err(|e| format!("读取本地失败：{e}"))?;
-            if n == 0 {
-                break;
+        let mut offset = 0u64; // 已发出的写偏移
+        let mut acked = 0u64; // 已确认的写偏移（进度按确认字节上报）
+        let mut eof = false;
+        let mut cancel = false;
+        let mut in_flight: std::collections::VecDeque<(u32, usize)> =
+            std::collections::VecDeque::new(); // (request-id, 字节)
+        while !eof || !in_flight.is_empty() {
+            if !eof && in_flight.len() < WINDOW {
+                let mut buf = vec![0u8; CHUNK];
+                let n = f.read(&mut buf).map_err(|e| format!("读取本地失败：{e}"))?;
+                if n == 0 {
+                    eof = true;
+                } else {
+                    let id = self.next_id();
+                    let mut b = Buf::new();
+                    b.u8(proto::WRITE);
+                    b.u32(id);
+                    b.str(&handle);
+                    b.u64(offset);
+                    b.u32(n as u32);
+                    b.raw(&buf[..n]);
+                    self.send_packet(&b.finalize()).await?;
+                    in_flight.push_back((id, n));
+                    offset += n as u64;
+                }
+                continue; // 先把窗口填满，再收应答
             }
-            let chunk = buf[..n].to_vec();
-            self.request(proto::WRITE, |b| {
-                b.str(&handle);
-                b.u64(offset);
-                b.u32(chunk.len() as u32);
-                b.raw(&chunk);
-            })
-            .await?;
-            offset += n as u64;
-            total_done += n as u64;
-            if !cb(total_done, total) {
-                let _ = self.request(proto::CLOSE, |b| b.str(&handle)).await;
-                let _ = self.remove(remote).await;
-                return Err("已取消".into());
+            // 窗口已满（或文件读完）：收一个应答并按 id 对账（应答顺序不保证）
+            let (ty, id, body) = self.receive_packet_id().await?;
+            let Some(pos) = in_flight.iter().position(|(i, _)| *i == id) else {
+                return Err("write 应答 id 不匹配".into());
+            };
+            let (_, n) = in_flight.remove(pos).unwrap();
+            if ty != proto::STATUS {
+                return Err("write 意外回复".into());
+            }
+            if let Some(msg) = proto::parse_status(&body)? {
+                return Err(msg);
+            }
+            acked += n as u64;
+            if !cancel && !cb(acked, total) {
+                // 取消：停发新包，排空在途应答后关闭句柄并删除远端半成品
+                cancel = true;
+                eof = true;
             }
         }
         self.request(proto::CLOSE, |b| b.str(&handle)).await?;
-        Ok(total_done)
+        if cancel {
+            let _ = self.remove(remote).await;
+            return Err("已取消".into());
+        }
+        Ok(acked)
     }
 
     /// 新建空文件（open write+creat 后立即关闭）

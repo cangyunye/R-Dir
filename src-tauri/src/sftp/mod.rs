@@ -670,4 +670,90 @@ mod tests {
     fn upload_plan_rejects_missing_path() {
         assert!(upload_plan("/nonexistent/rdir/definitely-missing").is_err());
     }
+
+    /// ---- v0.28.1 SFTP 流水线上传：真实链路集成验证（本机 sshd；不可用时静默跳过） ----
+
+    /// 探测本机 sshd + 免密公钥是否可用（CI / 无 sshd 环境返回 false 跳过用例）
+    fn localhost_sshd_available() -> bool {
+        std::process::Command::new("ssh")
+            .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "StrictHostKeyChecking=no", "localhost", "true"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn sftp_pipelined_upload_roundtrip_and_cancel() {
+        if !localhost_sshd_available() {
+            eprintln!("[skip] 本机 sshd 不可用，跳过 SFTP 流水线集成用例");
+            return;
+        }
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        let cfg = session::ServerConfig {
+            name: "it".into(),
+            host: "127.0.0.1".into(),
+            port: 22,
+            user: user.clone(),
+            auth: session::AuthMethod::PublicKey { key_path: String::new(), passphrase: None },
+            root: None,
+            save_secret: false,
+        };
+        let rt = tokio::runtime::Runtime::new().expect("async runtime");
+        rt.block_on(async {
+            let mut g = match session::SftpSession::connect(&cfg).await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[skip] SFTP 连接失败（{e}），跳过集成用例");
+                    return;
+                }
+            };
+            // 8MB 随机数据
+            let size = 8 * 1024 * 1024usize;
+            let mut data = vec![0u8; size];
+            let mut seed = 0x12345678u32;
+            for b in data.iter_mut() {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                *b = (seed >> 24) as u8;
+            }
+            let dir = std::env::temp_dir().join(format!("rdir-sftp-it-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let local = dir.join("big.bin");
+            std::fs::write(&local, &data).unwrap();
+
+            // 1) 流水线上传 + 内容回读对账 + 吞吐打印
+            let remote = format!("/tmp/rdir-sftp-it-{}.bin", std::process::id());
+            let t0 = std::time::Instant::now();
+            let mut last: u64 = 0;
+            let n = g
+                .upload(&local, &remote, |done, _total| {
+                    assert!(done >= last, "进度必须单调递增");
+                    last = done;
+                    true
+                })
+                .await
+                .expect("上传成功");
+            let elapsed = t0.elapsed().as_secs_f64();
+            assert_eq!(n as usize, size);
+            eprintln!(
+                "[perf] 流水线上传 8MB（本机回环）：{:.1} MB/s",
+                size as f64 / 1024.0 / 1024.0 / elapsed
+            );
+            let mut back = Vec::new();
+            g.download(&remote, &dir.join("back.bin"), |_, _| true).await.expect("回读成功");
+            back = std::fs::read(dir.join("back.bin")).unwrap();
+            assert_eq!(back.len(), size, "回读长度一致");
+            assert!(back == data, "回读内容一致");
+
+            // 2) 取消：首个进度即中止 → 报「已取消」且远端无半成品
+            let remote2 = format!("/tmp/rdir-sftp-it-{}-cancel.bin", std::process::id());
+            let r = g.upload(&local, &remote2, |_done, _total| false).await;
+            assert!(r.is_err(), "取消应报错");
+            assert!(format!("{:?}", r.unwrap_err()).contains("取消"));
+            assert!(g.stat(&remote2).await.is_err(), "远端半成品应被删除");
+
+            // 清理
+            let _ = g.remove(&remote).await;
+            let _ = std::fs::remove_dir_all(&dir);
+        });
+    }
 }

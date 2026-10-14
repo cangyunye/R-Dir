@@ -282,6 +282,7 @@ export function SettingsDialog({
           >
             <div
               ref={(el) => { sectionRefs.current.appearance = el; }}
+              data-settings-section="appearance"
               className="scroll-mt-3 mb-6 border-b pb-5"
             >
                 {/* 外观：主题 */}
@@ -384,6 +385,7 @@ export function SettingsDialog({
             {/* v0.28 预览：右侧拉门总开关 + 键位 + 默认宽度（总开关默认关，点文件不直接预览） */}
             <div
               ref={(el) => { sectionRefs.current.preview = el; }}
+              data-settings-section="preview"
               className="scroll-mt-3 mb-6 border-b pb-5"
             >
                 <div className="mb-4">
@@ -501,6 +503,7 @@ export function SettingsDialog({
 
             <div
               ref={(el) => { sectionRefs.current.keys = el; }}
+              data-settings-section="keys"
               className="scroll-mt-3 mb-6 border-b pb-5"
             >
                 <div className="mb-2 flex items-center justify-between">
@@ -603,6 +606,7 @@ export function SettingsDialog({
 
             <div
               ref={(el) => { sectionRefs.current.openers = el; }}
+              data-settings-section="openers"
               className="scroll-mt-3 mb-6 border-b pb-5"
             >
                 <div className="mb-2 flex items-center justify-between">
@@ -714,6 +718,7 @@ export function SettingsDialog({
 
             <div
               ref={(el) => { sectionRefs.current.share = el; }}
+              data-settings-section="share"
               className="scroll-mt-3 mb-6 border-b pb-5"
             >
                 <div className="mb-4">
@@ -763,6 +768,7 @@ export function SettingsDialog({
 
             <div
               ref={(el) => { sectionRefs.current.plugins = el; }}
+              data-settings-section="plugins"
               className="scroll-mt-3 mb-6 border-b pb-5"
             >
                 <div className="mb-4">
@@ -842,6 +848,7 @@ export function SettingsDialog({
 
             <div
               ref={(el) => { sectionRefs.current.about = el; }}
+              data-settings-section="about"
               className="scroll-mt-3"
             >
               <div className="space-y-3">
