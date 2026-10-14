@@ -36,6 +36,12 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
       onUiFontFamilyChange={() => {}}
       fontFamilies={[{ id: "system", label: "系统默认" }]}
       openers={[zed]}
+      quickTools={[]}
+      editorSuggestions={[]}
+      onAddQuickTool={() => {}}
+      onAddSuggestedTool={() => {}}
+      onRemoveQuickTool={() => {}}
+      onMoveQuickTool={() => {}}
       onAddOpener={onAddOpener}
       onRemoveOpener={onRemoveOpener}
       onSetOpenerExtensions={onSetOpenerExtensions}

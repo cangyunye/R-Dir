@@ -400,6 +400,52 @@ export async function installTauriMock(page: Page): Promise<void> {
         })),
       list_openers: () => [],
       list_shells: () => [],
+      // ---- 文本比较（v0.29.1 双栏同屏回归用）：超长行 + 正常行混合 ----
+      diff_text_files: () => ({
+        left: { path: "/mock/home/Notes.txt", localPath: "", isTemp: false, lossy: false, bytes: 100, lines: 6, eol: "lf" },
+        right: { path: "/mock/home/Notes.txt", localPath: "", isTemp: false, lossy: false, bytes: 120, lines: 6, eol: "lf" },
+        segments: [
+          { kind: "eq", leftStart: 1, rightStart: 1, lines: ['const config = {', "  name: 'rdir',"] },
+          {
+            kind: "del",
+            leftStart: 3,
+            rightStart: null,
+            lines: [
+              '  url: "https://example.com/api/v2/endpoint?with=a&very=long&query=string&that=overflows&any=column&width=constraint"',
+            ],
+          },
+          {
+            kind: "add",
+            leftStart: null,
+            rightStart: 3,
+            lines: [
+              '  url: "https://example.com/api/v3/endpoint?with=a&very=long&query=string&that=overflows&any=column&width=constraint&v=3"',
+            ],
+          },
+          { kind: "eq", leftStart: 4, rightStart: 4, lines: ["}"] },
+        ],
+        additions: 1,
+        deletions: 1,
+        same: false,
+        coarse: false,
+      }),
+      // ---- v0.29.0 右键 VSCode / Git 打开（mock 环境一律未安装，仅验证菜单渲染） ----
+      vscode_detected: () => false,
+      open_vscode: () => {},
+      list_git_tools: () => [],
+      open_git_tool: () => {},
+      // ---- v0.29.0 常用工具条：固定两项（VSCode 借稳定 slug 验证固定行去重） ----
+      list_quick_tools: () => [
+        { id: "vscode", name: "Visual Studio Code", exec: "/mock/Applications/Visual Studio Code.app", detected: true },
+        { id: "zed", name: "Zed", exec: "/mock/Applications/Zed.app", detected: true },
+      ],
+      open_quick_tool: (a) => {
+        opened.push(String(a.path));
+      },
+      add_quick_tool: () => [],
+      remove_quick_tool: () => [],
+      move_quick_tool: () => [],
+      detect_editors: () => [],
       // ---- 地址栏命令（v0.22.0）：PATH 补全桩 + 执行记录（供用例断言） ----
       complete_commands: (a) => {
         const prefix = String(a.prefix ?? "").toLowerCase();

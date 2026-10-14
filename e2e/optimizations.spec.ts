@@ -266,19 +266,30 @@ test.describe("29D. 文本比较窗口 F11 全屏", () => {
     return dialog;
   }
 
-  test("D1 F11 切换最大化 / 还原；关闭后 F11 不再被窗口吞掉", async ({ page }) => {
+  // v0.29.1：打开即最大化；F11 与 mod+shift+F（mac ⌘⇧F，绕开系统「显示桌面」吃 F11）双键位切换
+  test("D1 打开即最大化；F11 与 mod+shift+F 切换还原；关闭后不再拦截", async ({ page }) => {
     const dialog = await openTextDiff(page);
-    // 最大化按钮提示含 F11
-    await expect(dialog.locator('button[title="最大化（F11）"]')).toBeVisible();
-    await page.keyboard.press("F11");
-    await expect(dialog.locator('button[title="还原窗口（F11）"]')).toBeVisible();
-    // 全屏态宽度撑满视口（100vw - 24px）
-    const box = await dialog.boundingBox();
+    // 量内层卡片（[data-text-diff] 是 fixed inset-0 遮罩，恒等于视口宽）
+    const card = dialog.locator("> div");
+    // 打开即最大化：宽度撑满视口（100vw - 24px）
+    const box = await card.boundingBox();
     expect(box!.width).toBeGreaterThan(page.viewportSize()!.width - 40);
-    await page.keyboard.press("F11");
-    await expect(dialog.locator('button[title="最大化（F11）"]')).toBeVisible();
+    // 标题前缀两平台一致（F11 / ⌘⇧F 或 F11 / Ctrl+Shift+F）
+    await expect(dialog.locator('button[title^="还原窗口（F11"]').first()).toBeVisible();
 
-    // 关闭后：全局无 F11 拦截（此处仅断言窗口已关，F11 生效范围由组件挂载期保证）
+    // F11 → 还原（宽度回落到 min(1400px, 96vw)）
+    await page.keyboard.press("F11");
+    await expect(dialog.locator('button[title^="最大化（F11"]').first()).toBeVisible();
+    const box2 = await card.boundingBox();
+    expect(box2!.width).toBeLessThan(page.viewportSize()!.width - 40);
+
+    // mod+shift+F → 再最大化（macOS 上 F11 到不了页面，靠这路键位）
+    await page.keyboard.press(`${MOD}+Shift+F`);
+    await expect(dialog.locator('button[title^="还原窗口（F11"]').first()).toBeVisible();
+    const box3 = await card.boundingBox();
+    expect(box3!.width).toBeGreaterThan(page.viewportSize()!.width - 40);
+
+    // 关闭后：全局无按键拦截（此处仅断言窗口已关，生效范围由组件挂载期保证）
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
   });

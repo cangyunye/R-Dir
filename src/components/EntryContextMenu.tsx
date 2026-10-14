@@ -11,6 +11,7 @@ import {
   FileArchive,
   FileDiff,
   FolderInput,
+  GitBranch,
   GitCompare,
   Crosshair,
   ExternalLink,
@@ -21,6 +22,7 @@ import {
   RefreshCw,
   Scissors,
   Share2,
+  SquareCode,
   Star,
   TerminalSquare,
   Trash2,
@@ -31,7 +33,8 @@ import {
 import type { FileEntry } from "@/lib/types";
 import type { FileTags, TagNames } from "@/lib/persist";
 import { TAG_DEFS, tagLabel, type TagDef } from "@/lib/persist";
-import type { OpenerItem, ShellItem } from "@/lib/openerApi";
+import type { OpenerItem, ShellItem, GitToolItem, QuickToolItem } from "@/lib/openerApi";
+import { isSftpPath, isHttpPath } from "@/lib/sftp-path";
 import { openersForEntry } from "@/lib/openers";
 import {
   ContextMenuContent,
@@ -39,7 +42,88 @@ import {
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
 import { MenuGroup } from "@/components/MenuGroup";
+import { cn } from "@/lib/utils";
 import type { RenameState } from "@/components/FileList";
+
+// ───────────────── v0.29.0 常用工具条 ─────────────────
+
+/** 色板：按应用名哈希取底色（同名恒定同色；阶段一字母色块，真图标提取留待后续版本） */
+const QT_TILE_COLORS = [
+  "#2563eb", "#0d9488", "#b45309", "#7c3aed",
+  "#dc2626", "#0369a1", "#4d7c0f", "#be185d",
+];
+
+export function quickTileColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return QT_TILE_COLORS[h % QT_TILE_COLORS.length];
+}
+
+/** 图标缩写：两个词取词首字母（Visual Studio Code → VS），单词取前两个字母 */
+export function quickInitials(name: string): string {
+  const words = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  const letters = name.replace(/[^A-Za-z0-9]/g, "");
+  if (letters.length >= 2) return letters.slice(0, 2).toUpperCase();
+  return (name.slice(0, 2) || "?").toUpperCase();
+}
+
+/**
+ * 常用工具条（右键菜单第一行，横排小图标，Word 粘贴选项式交互）。
+ * 点击 = 用该工具打开当前条目（目录=作为工作区，文件=打开文件）；
+ * 尾部虚线「＋」跳转设置 → 常用工具。每个图标包一层 ContextMenuItem
+ * 以获得 radix 的点击自动关菜单与键盘导航。
+ * FileList 内联菜单与 IconGrid 共享组件共用本条。
+ */
+export function QuickToolsStrip({
+  path,
+  tools,
+  onOpen,
+  onConfigure,
+}: {
+  path: string;
+  tools: QuickToolItem[];
+  onOpen: (id: string, path: string) => void;
+  onConfigure: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 border-b px-1.5 py-1.5">
+      {tools.map((t) => (
+        <ContextMenuItem
+          key={t.id}
+          disabled={!t.detected}
+          onSelect={() => onOpen(t.id, path)}
+          title={t.detected ? `用 ${t.name} 打开` : `${t.name}（未找到可执行文件）`}
+          className="h-auto w-auto min-w-0 gap-0 rounded-md p-0.5 focus:bg-transparent data-[highlighted]:bg-accent"
+        >
+          <span
+            className={cn(
+              "flex h-5 w-5 items-center justify-center rounded text-[9px] font-bold tracking-tight text-white",
+              !t.detected && "opacity-40",
+            )}
+            style={{ background: quickTileColor(t.name) }}
+          >
+            {quickInitials(t.name)}
+          </span>
+        </ContextMenuItem>
+      ))}
+      <ContextMenuItem
+        onSelect={onConfigure}
+        title="配置常用工具…"
+        className="h-auto w-auto min-w-0 gap-0 rounded-md p-0.5"
+      >
+        <span className="flex h-5 w-5 items-center justify-center rounded border border-dashed text-muted-foreground">
+          <Plus className="h-3 w-3" />
+        </span>
+      </ContextMenuItem>
+    </div>
+  );
+}
+
+/** 常用条可见性：仅本地路径（工具只能开本地），受「打开方式」插件开关控制 */
+export function quickStripVisible(pluginOpener: boolean, path: string): boolean {
+  return pluginOpener && !isSftpPath(path) && !isHttpPath(path);
+}
 
 export interface EntryMenuProps {
   entry: FileEntry;
@@ -55,6 +139,17 @@ export interface EntryMenuProps {
   pluginTerminal: boolean;
   openers: OpenerItem[];
   shells: ShellItem[];
+  /** v0.29.0 右键「用 VSCode 打开」（文件/目录均可；未探测到置灰） */
+  vscodeDetected: boolean;
+  onOpenVscode: (path: string) => void;
+  /** v0.29.0 右键「Git 打开」折叠组（仅目录） */
+  gitTools: GitToolItem[];
+  onOpenGitTool: (toolId: string, path: string) => void;
+  /** v0.29.0 常用工具条（菜单第一行横排图标；目录=工作区、文件=打开文件） */
+  quickTools: QuickToolItem[];
+  onOpenQuickTool: (id: string, path: string) => void;
+  /** 常用条尾部的「＋」：打开设置 → 常用工具 */
+  onConfigureQuickTools: () => void;
   fileTags: FileTags;
   /** 全量标签 = 预设 + 自定义（v0.28.0；缺省回落预设） */
   tags?: TagDef[];
@@ -102,6 +197,13 @@ export function EntryContextMenuContent({
   pluginTerminal,
   openers,
   shells,
+  vscodeDetected,
+  onOpenVscode,
+  gitTools,
+  onOpenGitTool,
+  quickTools,
+  onOpenQuickTool,
+  onConfigureQuickTools,
   fileTags,
   tags: tagsProp,
   tagNames,
@@ -135,6 +237,8 @@ export function EntryContextMenuContent({
   onRefresh,
   onProperties,
 }: EntryMenuProps) {
+  // VSCode 已进常用条 → 固定行去重隐藏（稳定 slug id "vscode"）
+  const vscodeInQuick = quickTools.some((t) => t.id === "vscode");
   return (
     <ContextMenuContent
       className="min-w-48"
@@ -145,10 +249,30 @@ export function EntryContextMenuContent({
         if (renaming?.path === entry.path) e.preventDefault();
       }}
     >
+      {quickStripVisible(pluginOpener, entry.path) && (
+        <QuickToolsStrip
+          path={entry.path}
+          tools={quickTools}
+          onOpen={onOpenQuickTool}
+          onConfigure={onConfigureQuickTools}
+        />
+      )}
       {headerExtras}
       <ContextMenuItem onClick={() => onOpen(entry)}>
         <FolderInput className="mr-2 h-4 w-4" /> 打开
       </ContextMenuItem>
+      {pluginOpener && !vscodeInQuick && (
+        // v0.29.0 内置直启：文件=VSCode 打开该文件，目录=作为工作区打开；未安装置灰
+        <ContextMenuItem
+          disabled={!vscodeDetected}
+          onClick={() => onOpenVscode(entry.path)}
+        >
+          <SquareCode className="mr-2 h-4 w-4" /> 用 Visual Studio Code 打开
+          {!vscodeDetected && (
+            <span className="ml-1 text-[10px] text-muted-foreground">未安装</span>
+          )}
+        </ContextMenuItem>
+      )}
       {!entry.is_dir && pluginOpener && (
         <MenuGroup
           id="openWith"
@@ -196,6 +320,33 @@ export function EntryContextMenuContent({
               {!sh.detected && <span className="text-[10px] text-muted-foreground">未安装</span>}
             </ContextMenuItem>
           ))}
+        </MenuGroup>
+      )}
+      {entry.is_dir && pluginTerminal && (
+        // v0.29.0「Git 打开」：Git Bash / Git GUI / 常见 GUI 客户端（探测到才可点）
+        <MenuGroup
+          id="git"
+          label="Git 打开"
+          icon={<GitBranch className="mr-2 h-4 w-4" />}
+          expanded={expandedMenu === "git"}
+          onToggle={onToggleGroup}
+        >
+          {gitTools.length === 0 ? (
+            <ContextMenuItem disabled>未检测到 Git 工具</ContextMenuItem>
+          ) : (
+            gitTools.map((t) => (
+              <ContextMenuItem
+                key={t.id}
+                disabled={!t.detected}
+                onClick={() => onOpenGitTool(t.id, entry.path)}
+              >
+                <span className="flex-1">{t.name}</span>
+                {!t.detected && (
+                  <span className="text-[10px] text-muted-foreground">未安装</span>
+                )}
+              </ContextMenuItem>
+            ))
+          )}
         </MenuGroup>
       )}
       {entry.is_dir && (

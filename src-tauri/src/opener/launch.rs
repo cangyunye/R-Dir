@@ -33,6 +33,79 @@ pub fn launch_terminal(shell_id: &str, path: &str) -> Result<(), String> {
     }
 }
 
+/// 用 VSCode 打开文件或目录（v0.29.0 右键）
+pub fn launch_vscode(path: &str) -> Result<(), String> {
+    let v = detect::find_vscode();
+    if let Some(app) = v.app_name {
+        // .app：open -a（文件/目录都接受）
+        return launch(
+            &Command::new("open").arg("-a").arg(app).arg("--").arg(path),
+            None,
+        );
+    }
+    let exec = v.exec.ok_or("未找到 Visual Studio Code（可安装后重试，或把 code 加入 PATH）")?;
+    launch(&Command::new(&exec).arg(path), None)
+}
+
+/// 用指定 Git 工具打开目录（v0.29.0 右键「Git 打开」折叠组）
+pub fn launch_git_tool(tool_id: &str, dir: &str) -> Result<(), String> {
+    if is_mac() {
+        mac_git_tool(tool_id, dir)
+    } else {
+        win_git_tool(tool_id, dir)
+    }
+}
+
+/// macOS：GUI Git 客户端以目录为参数 `open -a`（客户端自身会按仓库/目录打开）
+fn mac_git_tool(tool_id: &str, dir: &str) -> Result<(), String> {
+    let app = match tool_id {
+        "github-desktop" => "GitHub Desktop",
+        "fork" => "Fork",
+        "tower" => "Tower",
+        "sourcetree" => "Sourcetree",
+        "sublime-merge" => "Sublime Merge",
+        "gitkraken" => "GitKraken",
+        _ => return Err(format!("未知 Git 工具：{tool_id}")),
+    };
+    launch(
+        &Command::new("open").arg("-a").arg(app).arg("--").arg(dir),
+        None,
+    )
+    .map_err(|e| format!("打开 {app} 失败：{e}"))
+}
+
+/// Windows：Git Bash / Git GUI（git 自带）+ 常见 GUI 客户端
+fn win_git_tool(tool_id: &str, dir: &str) -> Result<(), String> {
+    match tool_id {
+        // git-bash.exe 的「Git Bash Here」即 --cd= 参数；cwd 双保险
+        "gitbash" => {
+            let exe = detect::find_git_bash().ok_or("未找到 Git Bash")?;
+            launch(
+                &Command::new(&exe).arg(format!("--cd={dir}")),
+                Some(dir),
+            )
+        }
+        // `git gui`：git.exe 是控制台程序，用 CREATE_NO_WINDOW 承载不弹黑框
+        "gitgui" => {
+            let git = detect::find_win_cli("git").ok_or("未找到 git")?;
+            launch(&Command::new(&git).arg("gui"), Some(dir))
+        }
+        "github-desktop" => {
+            let exe = detect::find_github_desktop().ok_or("未找到 GitHub Desktop")?;
+            launch(&Command::new(&exe).arg(dir), None)
+        }
+        "sublime-merge" => {
+            let exe = detect::find_sublime_merge().ok_or("未找到 Sublime Merge")?;
+            launch(&Command::new(&exe).arg(dir), None)
+        }
+        "gitkraken" => {
+            let exe = detect::find_win_cli("gitkraken").ok_or("未找到 GitKraken")?;
+            launch(&Command::new(&exe).arg(dir), None)
+        }
+        _ => Err(format!("未知 Git 工具：{tool_id}")),
+    }
+}
+
 /// 在指定目录新开终端窗口执行命令串（v0.22.0 地址栏命令执行）。
 /// 唯一例外于"不拼 shell 字符串"原则：命令串本身就是用户要交给 shell 的输入
 /// （含参数/管道等），按原样传递；路径部分（cd 目录）仍走转义，不经拼接注入。

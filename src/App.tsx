@@ -22,9 +22,22 @@ import {
   setOpenerExtensions as apiSetOpenerExtensions,
   listShells as apiListShells,
   openTerminal as apiOpenTerminal,
+  vscodeDetected as apiVscodeDetected,
+  openVscode as apiOpenVscode,
+  listGitTools as apiListGitTools,
+  openGitTool as apiOpenGitTool,
+  listQuickTools as apiListQuickTools,
+  addQuickTool as apiAddQuickTool,
+  removeQuickTool as apiRemoveQuickTool,
+  moveQuickTool as apiMoveQuickTool,
+  openQuickTool as apiOpenQuickTool,
+  detectEditors as apiDetectEditors,
   type OpenerItem,
   type PluginInfo,
   type ShellItem,
+  type GitToolItem,
+  type QuickToolItem,
+  type EditorCandidate,
 } from "@/lib/openerApi";
 import type {
   ClipboardState,
@@ -100,6 +113,7 @@ import {
   compressItems,
 } from "@/lib/api";
 import { ConnectDialog } from "@/components/ConnectDialog";
+import type { SectionId as SettingsSectionId } from "@/components/SettingsDialog";
 import { ConflictDialog } from "@/components/ConflictDialog";
 import { AppConfirmDialog, type AppConfirmRequest } from "@/components/AppConfirmDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
@@ -391,6 +405,12 @@ export default function App() {
   }, []);
   /** 设置 / 快捷键一览对话框 */
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // v0.29.0 设置分区跳转：非 null 时打开设置并滚动到该分区（常用条「＋」入口）
+  const [settingsJump, setSettingsJump] = useState<SettingsSectionId | null>(null);
+  const openQuickToolsSettings = useCallback(() => {
+    setSettingsJump("quickTools");
+    setSettingsOpen(true);
+  }, []);
   /** 应用名 / 版本：Tauri 运行时识别（Windows 任务栏与应用内一致，均为 productName） */
   const [appName, setAppName] = useState("R-Dir");
   const [appVersion, setAppVersion] = useState("");
@@ -717,6 +737,28 @@ useEffect(() => {
       .then(setShells)
       .catch((e) => showError(`检测终端失败：${e}`));
   }, [showError]);
+  // v0.29.0 右键「用 VSCode 打开」/「Git 打开」：探测结果（与终端同批首帧空闲后加载）
+  const [vscodeOk, setVscodeOk] = useState(false);
+  const [gitTools, setGitTools] = useState<GitToolItem[]>([]);
+  const refreshGitTools = useCallback(() => {
+    void apiVscodeDetected()
+      .then(setVscodeOk)
+      .catch(() => setVscodeOk(false));
+    void apiListGitTools()
+      .then(setGitTools)
+      .catch(() => setGitTools([]));
+  }, []);
+  // v0.29.0 常用工具条：清单 + 本机编辑器检测建议（设置页改动后经 refreshQuickTools 刷新）
+  const [quickTools, setQuickTools] = useState<QuickToolItem[]>([]);
+  const [editorSugs, setEditorSugs] = useState<EditorCandidate[]>([]);
+  const refreshQuickTools = useCallback(() => {
+    void apiListQuickTools()
+      .then(setQuickTools)
+      .catch(() => setQuickTools([]));
+    void apiDetectEditors()
+      .then(setEditorSugs)
+      .catch(() => setEditorSugs([]));
+  }, []);
   const refreshPlugins = useCallback(() => {
     void apiListPlugins()
       .then(setPlugins)
@@ -735,15 +777,80 @@ useEffect(() => {
     const t = window.setTimeout(() => {
       refreshOpeners();
       refreshShells();
+      refreshGitTools();
+      refreshQuickTools();
       refreshPlugins();
     }, 300);
     return () => window.clearTimeout(t);
-  }, [refreshOpeners, refreshShells, refreshPlugins]);
+  }, [refreshOpeners, refreshShells, refreshGitTools, refreshQuickTools, refreshPlugins]);
   const handleOpenWith = useCallback(
     (toolId: string, path: string) => {
       void apiOpenWith(toolId, path).catch((e) => showError(`打开失败：${e}`));
     },
     [showError],
+  );
+  // v0.29.0 右键「用 Visual Studio Code 打开」
+  const handleOpenVscode = useCallback(
+    (path: string) => {
+      void apiOpenVscode(path).catch((e) => showError(`用 VSCode 打开失败：${e}`));
+    },
+    [showError],
+  );
+  // v0.29.0 右键「Git 打开」折叠组
+  const handleOpenGitTool = useCallback(
+    (toolId: string, path: string) => {
+      void apiOpenGitTool(toolId, path).catch((e) => showError(`打开 Git 工具失败：${e}`));
+    },
+    [showError],
+  );
+  // v0.29.0 常用工具条：菜单图标点击 / 设置页增删排序
+  const handleOpenQuickTool = useCallback(
+    (id: string, path: string) => {
+      void apiOpenQuickTool(id, path).catch((e) => showError(`打开失败：${e}`));
+    },
+    [showError],
+  );
+  const handleAddQuickTool = useCallback(async () => {
+    try {
+      const picked = await openDialog({
+        title: "选择应用程序",
+        multiple: false,
+        directory: false,
+      });
+      if (!picked || Array.isArray(picked)) return;
+      const name = basename(picked).replace(/\.app$/i, "");
+      await apiAddQuickTool(null, name, picked);
+      refreshQuickTools();
+    } catch (e) {
+      showError(`添加常用工具失败：${e}`);
+    }
+  }, [showError, refreshQuickTools]);
+  const handleAddSuggestedTool = useCallback(
+    async (c: EditorCandidate) => {
+      try {
+        await apiAddQuickTool(c.id, c.name, c.exec);
+        refreshQuickTools();
+      } catch (e) {
+        showError(`添加常用工具失败：${e}`);
+      }
+    },
+    [showError, refreshQuickTools],
+  );
+  const handleRemoveQuickTool = useCallback(
+    (id: string) => {
+      void apiRemoveQuickTool(id)
+        .then(refreshQuickTools)
+        .catch((e) => showError(`移除常用工具失败：${e}`));
+    },
+    [showError, refreshQuickTools],
+  );
+  const handleMoveQuickTool = useCallback(
+    (id: string, up: boolean) => {
+      void apiMoveQuickTool(id, up)
+        .then(refreshQuickTools)
+        .catch((e) => showError(`调整顺序失败：${e}`));
+    },
+    [showError, refreshQuickTools],
   );
   const handleOpenTerminal = useCallback(
     (shellId: string, path: string) => {
@@ -1003,11 +1110,18 @@ useEffect(() => {
             return;
           }
         } else if (au) {
-          // 有 authority 但未连接：记住目标路径，弹连接框预填，连上后直达该路径
+          // 有 authority 但未连接：记住目标路径，弹连接框预填，连上后直达该路径。
+          // v0.29.0：host 之后的部分（sftp://u@h:/home/myuser 的 /home/myuser）
+          // 同时预填进连接框「根目录」（默认为 home 的那个输入框），连接后随配置保存
           sftp.rememberPendingPath(
             au.remotePath && au.remotePath !== "/" ? au.remotePath : null,
           );
-          sftp.openConnect({ host: au.host, port: au.port, user: au.user });
+          sftp.openConnect({
+            host: au.host,
+            port: au.port,
+            user: au.user,
+            root: au.remotePath && au.remotePath !== "/" ? au.remotePath : undefined,
+          });
           return;
         } else {
           // 只有 "sftp://" 没有 host/user：弹空白连接框
@@ -3527,10 +3641,17 @@ useEffect(() => {
     onMiddleOpen: (_paneId, path) => newTab(path),
     openers,
     shells,
+    vscodeDetected: vscodeOk,
+    gitTools,
     pluginOpener: plugins?.find((p) => p.id === "opener")?.enabled ?? true,
     pluginTerminal: plugins?.find((p) => p.id === "terminal")?.enabled ?? true,
     onOpenWith: handleOpenWith,
     onOpenTerminal: handleOpenTerminal,
+    onOpenVscode: handleOpenVscode,
+    onOpenGitTool: handleOpenGitTool,
+    quickTools,
+    onOpenQuickTool: handleOpenQuickTool,
+    onConfigureQuickTools: openQuickToolsSettings,
     onAddCustomOpener: handleAddCustomOpener,
     onCopy: (paneId, paths) => doCopy(paneId, paths),
     onCut: (paneId, paths) => doCut(paneId, paths),
@@ -3603,6 +3724,8 @@ useEffect(() => {
     // 值依赖（对象/数组仅低频变化；长度是原始值）
     openers,
     shells,
+    vscodeOk,
+    gitTools,
     plugins,
     undoStack.length,
     redoStack.length,
@@ -3618,6 +3741,10 @@ useEffect(() => {
     newTab,
     handleOpenWith,
     handleOpenTerminal,
+    handleOpenVscode,
+    handleOpenGitTool,
+    quickTools,
+    openQuickToolsSettings,
     handleAddCustomOpener,
     doCopy,
     doCut,
@@ -3782,6 +3909,7 @@ useEffect(() => {
             onOpenSyncDiff={toggleSyncDiff}
             syncDiffActive={!!syncLink}
             onOpenGitDiff={() => setGitDiffOpen(true)}
+            onAddSftp={() => sftp.openConnect({})}
             onMasterKey={() => sftp.setMasterKeyOpen(true)}
             onOpenSettings={() => setSettingsOpen(true)}
             onCheckUpdate={() => void checkUpdate(false)}
@@ -3854,6 +3982,7 @@ useEffect(() => {
           onSftpDisconnect={sftp.disconnect}
           onSftpEdit={sftp.editServer}
           onSftpRemove={sftp.removeServer}
+          onSftpAdd={() => sftp.openConnect({})}
           shells={shells}
           pluginTerminal={plugins?.find((p) => p.id === "terminal")?.enabled ?? true}
           onOpenTerminal={handleOpenTerminal}
@@ -3905,7 +4034,11 @@ useEffect(() => {
             dir={searchPane.path}
             cmd={searchCmd}
             onClose={closeSearchPanel}
-            onReveal={revealPath}
+            // v0.29.0 模态框化：定位导航发生在遮罩后面的窗格里，关掉框才能看到定位结果
+            onReveal={(p, isDir) => {
+              revealPath(p, isDir);
+              closeSearchPanel();
+            }}
             onOpenFile={openFileExternal}
             onCopyPath={copyPath}
             onRenamed={handleSearchRenamed}
@@ -4034,7 +4167,10 @@ useEffect(() => {
 
       <SettingsDialog
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => {
+          setSettingsOpen(false);
+          setSettingsJump(null);
+        }}
         dark={dark}
         onToggleTheme={toggleTheme}
         onBindingsChanged={() => setKeymapVer((v) => v + 1)}
@@ -4059,6 +4195,13 @@ useEffect(() => {
         onAddOpener={() => void handleAddCustomOpener()}
         onRemoveOpener={handleRemoveCustomOpener}
         onSetOpenerExtensions={handleSetOpenerExtensions}
+        jumpTo={settingsJump}
+        quickTools={quickTools}
+        editorSuggestions={editorSugs}
+        onAddQuickTool={() => void handleAddQuickTool()}
+        onAddSuggestedTool={(c) => void handleAddSuggestedTool(c)}
+        onRemoveQuickTool={handleRemoveQuickTool}
+        onMoveQuickTool={handleMoveQuickTool}
         appName={appName}
         appVersion={appVersion}
         onOpenRepo={openRepo}

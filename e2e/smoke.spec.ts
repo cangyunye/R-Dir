@@ -166,6 +166,23 @@ test.describe("6. 搜索", () => {
     expect(opened).toContain(`${HOME}/photo.png`);
   });
 
+  // v0.29.0 搜索模态框化：Esc 关框；右键菜单开着时 Esc 只关菜单一层
+  test("S5 Esc 关闭搜索模态框；右键菜单开着时只关菜单", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+KeyF`);
+    await page.getByPlaceholder(/搜索当前层文件名/).fill("Notes");
+    const row = page.locator(`[data-search-path="${HOME}/Notes.txt"]`);
+    await expect(row).toBeVisible();
+    await row.click({ button: "right" });
+    const menu = page.locator('[data-slot="context-menu-content"]');
+    await expect(menu).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+    // 菜单关掉后模态框仍在（再按一次 Esc 才关框）
+    await expect(page.getByPlaceholder(/搜索当前层文件名/)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByPlaceholder(/搜索当前层文件名/)).toBeHidden();
+  });
+
   test("S4 目录结果右键定位进入文件夹", async ({ page }) => {
     await page.keyboard.press(`${MOD}+KeyF`);
     await page.getByPlaceholder(/搜索当前层文件名/).fill("Projects");
@@ -1107,5 +1124,55 @@ test.describe("28A. 大图标自动排列（v0.27.1）", () => {
     await page.locator("[data-icongrid-body]").click({ button: "right", position: { x: 20, y: 300 } });
     await expect(page.getByRole("menuitem", { name: /自动排列 ✓/ })).toBeVisible();
     await page.keyboard.press("Escape");
+  });
+});
+
+test.describe("30. 常用工具条（v0.29.0）", () => {
+  // mock 固定清单：VSCode（稳定 slug id=vscode，验证固定行去重）+ Zed
+  test("Q1 右键目录第一行显示常用条，点图标用该工具打开", async ({ page }) => {
+    const row = page.locator(`[data-path="${HOME}/Documents"]`);
+    await row.click({ button: "right" });
+    const menu = page.locator('[data-slot="context-menu-content"]');
+    await expect(menu).toBeVisible();
+    // 色块图标（title=工具名）与配置「＋」都在第一行区域
+    await expect(menu.locator('[role=menuitem][title="用 Visual Studio Code 打开"]')).toBeVisible();
+    await expect(menu.locator('[role=menuitem][title="用 Zed 打开"]')).toBeVisible();
+    await expect(menu.locator('[role=menuitem][title="配置常用工具…"]')).toBeVisible();
+    // VSCode 已进常用条 → 固定行「用 Visual Studio Code 打开」去重隐藏
+    await expect(menu.getByText("用 Visual Studio Code 打开")).toHaveCount(0);
+    // 点击 Zed 图标 → open_quick_tool 打开该目录
+    await menu.locator('[role=menuitem][title="用 Zed 打开"]').click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as unknown as { __RDIR_E2E_MOCK__: { opened: string[] } }).__RDIR_E2E_MOCK__.opened,
+        ),
+      )
+      .toContain(`${HOME}/Documents`);
+  });
+
+  test("Q2 右键文件同样显示常用条（点 = 用该工具打开该文件）", async ({ page }) => {
+    const row = page.locator(`[data-path="${HOME}/Notes.txt"]`);
+    await row.click({ button: "right" });
+    const menu = page.locator('[data-slot="context-menu-content"]');
+    await expect(menu.locator('[role=menuitem][title="用 Zed 打开"]')).toBeVisible();
+    await menu.locator('[role=menuitem][title="用 Zed 打开"]').click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as unknown as { __RDIR_E2E_MOCK__: { opened: string[] } }).__RDIR_E2E_MOCK__.opened,
+        ),
+      )
+      .toContain(`${HOME}/Notes.txt`);
+  });
+
+  test("Q3 常用条「＋」打开设置并定位到常用工具分区", async ({ page }) => {
+    await page.locator(`[data-path="${HOME}/Documents"]`).click({ button: "right" });
+    const menu = page.locator('[data-slot="context-menu-content"]');
+    await menu.locator('[role=menuitem][title="配置常用工具…"]').click();
+    const dialog = page.locator('[data-settings-dialog], [role="dialog"]').first();
+    await expect(page.getByText("检测到本机已安装", { exact: false })).toBeHidden(); // mock detect_editors 为空
+    await expect(page.getByText("还没有常用工具").or(page.getByText("右键菜单第一行按此顺序横排显示"))).toBeVisible();
+    void dialog;
   });
 });

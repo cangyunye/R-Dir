@@ -42,6 +42,64 @@ export const listShells = () => invoke<ShellItem[]>("list_shells");
 export const openTerminal = (shellId: string, path: string) =>
   invoke<void>("open_terminal", { shellId, path });
 
+// ==================== v0.29.0 右键 VSCode / Git 打开 ====================
+
+/** 「Git 打开」工具条目（未安装的 detected=false，前端折叠组内置灰展示） */
+export interface GitToolItem {
+  id: string;
+  name: string;
+  detected: boolean;
+}
+
+/** 是否探测到 VSCode */
+export const vscodeDetected = () => invoke<boolean>("vscode_detected");
+
+/** 用 VSCode 打开路径（文件/目录均可） */
+export const openVscode = (path: string) => invoke<void>("open_vscode", { path });
+
+/** 「Git 打开」工具清单（含未安装项） */
+export const listGitTools = () => invoke<GitToolItem[]>("list_git_tools");
+
+/** 在指定目录打开 Git 工具 */
+export const openGitTool = (toolId: string, path: string) =>
+  invoke<void>("open_git_tool", { toolId, path });
+
+// ==================== v0.29.0 常用工具条 ====================
+
+/** 常用工具条条目（右键菜单顶部横排；未安装 detected=false 前端置灰） */
+export interface QuickToolItem {
+  id: string;
+  name: string;
+  exec: string;
+  detected: boolean;
+}
+
+/** 本机检测到的编辑器（设置页「检测到已安装」建议芯片） */
+export interface EditorCandidate {
+  id: string;
+  name: string;
+  exec: string;
+}
+
+export const listQuickTools = () => invoke<QuickToolItem[]>("list_quick_tools");
+
+/** 添加常用工具（id 缺省生成；建议芯片传稳定 slug）；返回最新清单 */
+export const addQuickTool = (id: string | null, name: string, exec: string) =>
+  invoke<QuickToolItem[]>("add_quick_tool", { id, name, exec });
+
+export const removeQuickTool = (id: string) =>
+  invoke<QuickToolItem[]>("remove_quick_tool", { id });
+
+export const moveQuickTool = (id: string, up: boolean) =>
+  invoke<QuickToolItem[]>("move_quick_tool", { id, up });
+
+/** 用常用工具打开路径（目录=工作区，文件=打开文件） */
+export const openQuickTool = (id: string, path: string) =>
+  invoke<void>("open_quick_tool", { id, path });
+
+/** 检测本机已安装的常见编辑器 */
+export const detectEditors = () => invoke<EditorCandidate[]>("detect_editors");
+
 // ==================== v0.5 插件注册表 ====================
 
 export interface PluginInfo {

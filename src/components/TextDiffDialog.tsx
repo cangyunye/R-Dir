@@ -9,6 +9,7 @@ import {
   type DiffRow,
 } from "@/lib/text-diff";
 import { Button } from "@/components/ui/button";
+import { isMac } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
 
 /** 文本比较的来源：任意两侧文件 / 粘贴的 diff 文本 / .patch 文件 */
@@ -75,7 +76,8 @@ export function TextDiffDialog({
   const [coarse, setCoarse] = useState(false);
   const [lossy, setLossy] = useState(false);
   const [onlyDiff, setOnlyDiff] = useState(false);
-  const [maximized, setMaximized] = useState(false);
+  // v0.29.1 打开即最大化：差异阅读吃屏幕空间，1400px 窗口两侧各 ~650px，长行必须横向拖动
+  const [maximized, setMaximized] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(400);
@@ -142,13 +144,19 @@ export function TextDiffDialog({
     };
   }, [source, encoding]);
 
-  // Esc 关闭 + F11 全屏切换：仅在比对窗口打开期间注册（组件卸载即失效）。
+  // Esc 关闭 + F11/⌘⇧F 全屏切换：仅在比对窗口打开期间注册（组件卸载即失效）。
   // 监听器只订阅一次（回调走 ref），避免 [onClose] 依赖在每次渲染时反复退订/重订——
   // 重订阅窗口期与事件派发撞车时，真实按键会被跳过（表现为 Esc/F11 偶发不响应）。
+  // v0.29.1：macOS 把 F11 绑定为「调度中心 → 显示桌面」，按键在系统层就被吃掉、
+  // 页面根本收不到（表现为 F11 无效），因此补一路 mod+shift+F（mac ⌘⇧F / win Ctrl+Shift+F），
+  // 两平台都能穿透到页面；F11 保留给 Windows 用户。
   const keyActionRef = useRef<(e: KeyboardEvent) => void>(() => {});
   keyActionRef.current = (e: KeyboardEvent) => {
     if (e.key === "Escape") onClose();
-    if (e.key === "F11") {
+    const maximizeKey =
+      e.key === "F11" ||
+      (e.key === "F" && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.altKey);
+    if (maximizeKey) {
       e.preventDefault();
       setMaximized((m) => !m);
     }
@@ -203,6 +211,7 @@ export function TextDiffDialog({
 
   const leftLabel = source.kind === "files" ? (source.leftLabel ?? source.left) : null;
   const rightLabel = source.kind === "files" ? (source.rightLabel ?? source.right) : null;
+  const maximizeHint = (isMac ? "F11 / ⌘⇧F" : "F11 / Ctrl+Shift+F");
 
   const cellCls = (side: "left" | "right", row: DiffRow) => {
     const active =
@@ -211,6 +220,11 @@ export function TextDiffDialog({
         : row.kind === "add" || row.kind === "pair";
     return cn(
       "px-2 font-mono text-[11px] leading-6 whitespace-pre",
+      // v0.29.1：必须 overflow-hidden——grid 的 1fr 轨道 min-size 是 auto，
+      // whitespace-pre 长行会把本侧轨道撑到整行 min-content 宽，
+      // 把右侧整列推出视口（只能横向拖很久才看得到右栏）。钳到半栏宽后
+      // 左右两栏恒等宽同屏，超长行在栏内截断、悬停 title 看全文。
+      "overflow-hidden text-ellipsis",
       active && (side === "left" ? "bg-destructive/15" : "bg-emerald-500/15"),
       !active && row.kind !== "eq" && "text-muted-foreground/30",
     );
@@ -267,7 +281,7 @@ export function TextDiffDialog({
             <button
               onClick={() => setMaximized((m) => !m)}
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title={maximized ? "还原窗口（F11）" : "最大化（F11）"}
+              title={maximized ? `还原窗口（${maximizeHint}）` : `最大化（${maximizeHint}）`}
             >
               {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </button>
@@ -401,7 +415,9 @@ export function TextDiffDialog({
                     >
                       {row.left?.no ?? ""}
                     </span>
-                    <span className={cellCls("left", row)}>{row.left?.text ?? ""}</span>
+                    <span className={cellCls("left", row)} title={row.left?.text || undefined}>
+                      {row.left?.text ?? ""}
+                    </span>
                     <span
                       className={cn(
                         "select-none border-r px-1 text-right font-mono text-[10px] leading-6 text-muted-foreground/70 tabular-nums",
@@ -410,7 +426,9 @@ export function TextDiffDialog({
                     >
                       {row.right?.no ?? ""}
                     </span>
-                    <span className={cellCls("right", row)}>{row.right?.text ?? ""}</span>
+                    <span className={cellCls("right", row)} title={row.right?.text || undefined}>
+                      {row.right?.text ?? ""}
+                    </span>
                   </div>
                 );
               })}

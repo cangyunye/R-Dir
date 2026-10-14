@@ -52,6 +52,7 @@ function makeActions(overrides: Partial<AppMenuActions> = {}): AppMenuActions {
     onOpenSyncDiff: () => {},
     syncDiffActive: false,
     onOpenGitDiff: () => {},
+    onAddSftp: () => {},
     onMasterKey: () => {},
     onOpenSettings: () => {},
     onCheckUpdate: () => {},

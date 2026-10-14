@@ -26,6 +26,7 @@ import {
   saveDiffMtimeTolerance,
 } from "@/lib/persist";
 import { Button } from "@/components/ui/button";
+import { isMac } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
 
 const LEVELS: { id: DiffLevel; label: string; hint: string }[] = [
@@ -120,7 +121,8 @@ export function DiffDialog({
   const [notice, setNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [onlyDiff, setOnlyDiff] = useState(false);
-  const [maximized, setMaximized] = useState(false);
+  // v0.29.1 打开即最大化：目录比对与文本比较同理，屏幕空间优先
+  const [maximized, setMaximized] = useState(true);
   const [pending, setPending] = useState<{ direction: "left" | "right"; copy: number; del: number } | null>(null);
   const [syncResults, setSyncResults] = useState<SyncResult[] | null>(null);
   const [logOpen, setLogOpen] = useState(true);
@@ -128,10 +130,15 @@ export function DiffDialog({
   /** 当前比对任务 id（取消与进度过滤用） */
   const idRef = useRef<string>("");
 
-  // F11 全屏切换：仅在比对窗口打开期间注册，天然限定生效范围
+  // F11 / ⌘⇧F 全屏切换：仅在比对窗口打开期间注册，天然限定生效范围。
+  // v0.29.1：macOS 把 F11 绑定为「调度中心 → 显示桌面」，按键在系统层就被吃掉、
+  // 页面收不到（表现为 F11 无效），补一路 mod+shift+F（mac ⌘⇧F / win Ctrl+Shift+F）。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "F11") {
+      const maximizeKey =
+        e.key === "F11" ||
+        (e.key === "F" && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.altKey);
+      if (maximizeKey) {
         e.preventDefault();
         setMaximized((m) => !m);
       }
@@ -374,7 +381,7 @@ export function DiffDialog({
             <button
               onClick={() => setMaximized((m) => !m)}
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title={maximized ? "还原窗口（F11）" : "最大化（F11）"}
+              title={maximized ? `还原窗口（${(isMac ? "F11 / ⌘⇧F" : "F11 / Ctrl+Shift+F")}）` : `最大化（${(isMac ? "F11 / ⌘⇧F" : "F11 / Ctrl+Shift+F")}）`}
             >
               {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </button>

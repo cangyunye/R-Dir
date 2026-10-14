@@ -24,6 +24,7 @@ const base = {
   onSftpDisconnect: vi.fn(),
   onSftpEdit: vi.fn(),
   onSftpRemove: vi.fn(),
+  onSftpAdd: vi.fn(),
 };
 
 describe("Sidebar 标签计数（v0.15 修复被遮挡）", () => {

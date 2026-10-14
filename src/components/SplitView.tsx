@@ -31,7 +31,7 @@ import {
 import type { TagNames } from "@/lib/persist";
 import type { FileEntry, SortKey } from "@/lib/types";
 import type { DiffMarkMap, LinkSide } from "@/lib/sync-link";
-import type { OpenerItem, ShellItem } from "@/lib/openerApi";
+import type { OpenerItem, ShellItem, GitToolItem, QuickToolItem } from "@/lib/openerApi";
 
 export interface PaneHandlers {
   onSort: (paneId: number, key: SortKey) => void;
@@ -55,6 +55,16 @@ export interface PaneHandlers {
   /** v0.4 在此处打开终端 */
   onOpenWith: (toolId: string, path: string) => void;
   onOpenTerminal: (shellId: string, path: string) => void;
+  /** v0.29.0 右键「用 VSCode 打开」（文件/目录） */
+  vscodeDetected: boolean;
+  onOpenVscode: (path: string) => void;
+  /** v0.29.0 右键「Git 打开」折叠组（目录） */
+  gitTools: GitToolItem[];
+  onOpenGitTool: (toolId: string, path: string) => void;
+  /** v0.29.0 常用工具条（右键菜单第一行横排图标） */
+  quickTools: QuickToolItem[];
+  onOpenQuickTool: (id: string, path: string) => void;
+  onConfigureQuickTools: () => void;
   /** v0.4 添加自定义打开方式（文件选择器 + 命名） */
   onAddCustomOpener: (path?: string, ext?: string) => Promise<void>;
   onCopy: (paneId: number, paths: string[]) => void;
@@ -432,8 +442,15 @@ const PaneView = memo(function PaneView({
         pluginTerminal={h.pluginTerminal}
         openers={h.openers}
         shells={h.shells}
+        vscodeDetected={h.vscodeDetected}
+        gitTools={h.gitTools}
+        quickTools={h.quickTools}
         onOpenWith={(toolId, p) => h.onOpenWith(toolId, p)}
         onOpenTerminal={(shellId, p) => h.onOpenTerminal(shellId, p)}
+        onOpenVscode={h.onOpenVscode}
+        onOpenGitTool={h.onOpenGitTool}
+        onOpenQuickTool={h.onOpenQuickTool}
+        onConfigureQuickTools={h.onConfigureQuickTools}
         onAddCustomOpener={h.onAddCustomOpener}
         onCopy={(p) => h.onCopy(pane.id, p)}
         onCut={(p) => h.onCut(pane.id, p)}
@@ -538,8 +555,15 @@ const PaneView = memo(function PaneView({
             pluginTerminal={h.pluginTerminal}
             openers={h.openers}
             shells={h.shells}
+            vscodeDetected={h.vscodeDetected}
+            gitTools={h.gitTools}
+            quickTools={h.quickTools}
             onOpenWith={(toolId, p) => h.onOpenWith(toolId, p)}
             onOpenTerminal={(shellId, p) => h.onOpenTerminal(shellId, p)}
+            onOpenVscode={h.onOpenVscode}
+            onOpenGitTool={h.onOpenGitTool}
+            onOpenQuickTool={h.onOpenQuickTool}
+            onConfigureQuickTools={h.onConfigureQuickTools}
             onAddCustomOpener={h.onAddCustomOpener}
             dragTarget={dragOver?.targetPaneId === pane.id}
             dragOp={dragOver?.targetPaneId === pane.id ? dragOver.op : "copy"}

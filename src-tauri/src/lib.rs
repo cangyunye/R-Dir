@@ -1675,6 +1675,18 @@ pub fn run() {
         opener::remove_custom_opener,
         opener::list_shells,
         opener::open_terminal,
+        // v0.29.0 右键 VSCode / Git 打开
+        opener::vscode_detected,
+        opener::open_vscode,
+        opener::list_git_tools,
+        opener::open_git_tool,
+        // v0.29.0 常用工具条
+        opener::list_quick_tools,
+        opener::add_quick_tool,
+        opener::remove_quick_tool,
+        opener::move_quick_tool,
+        opener::open_quick_tool,
+        opener::detect_editors,
         // 地址栏命令执行（v0.22.0）
         cmdrun::complete_commands,
         cmdrun::run_command,

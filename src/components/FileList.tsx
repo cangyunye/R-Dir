@@ -25,6 +25,8 @@ import {
   ArrowLeftRight,
   Link2,
   GitCompare,
+  GitBranch,
+  SquareCode,
   Crosshair,
   ListTree,
   FileDiff,
@@ -49,11 +51,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TAG_DEFS, tagLabel, type FileTags, type TagDef, type TagNames } from "@/lib/persist";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import type { OpenerItem, ShellItem } from "@/lib/openerApi";
+import type { OpenerItem, ShellItem, GitToolItem, QuickToolItem } from "@/lib/openerApi";
 import { ROW_HEIGHT, visibleRange } from "@/lib/virtual-scroll";
 import type { DiffMarkMap } from "@/lib/sync-link";
 import { TagDots } from "@/components/TagView";
 import { MenuGroup } from "@/components/MenuGroup";
+import { QuickToolsStrip, quickStripVisible } from "@/components/EntryContextMenu";
 import { openersForEntry } from "@/lib/openers";
 import { rank } from "@/lib/fuzzy";
 import { isMac } from "@/lib/keymap";
@@ -134,8 +137,15 @@ export function FileList({
   pluginTerminal,
   openers,
   shells,
+  vscodeDetected,
+  gitTools,
+  quickTools,
   onOpenWith,
   onOpenTerminal,
+  onOpenVscode,
+  onOpenGitTool,
+  onOpenQuickTool,
+  onConfigureQuickTools,
   onAddCustomOpener,
   dragTarget,
   dragOp,
@@ -219,8 +229,17 @@ export function FileList({
   /** v0.4 打开方式数据与回调 */
   openers: OpenerItem[];
   shells: ShellItem[];
+  /** v0.29.0 右键「用 VSCode 打开」（文件/目录均可；未探测到置灰） */
+  vscodeDetected: boolean;
+  gitTools: GitToolItem[];
+  /** v0.29.0 常用工具条（菜单第一行横排图标） */
+  quickTools: QuickToolItem[];
   onOpenWith: (toolId: string, path: string) => void;
   onOpenTerminal: (shellId: string, path: string) => void;
+  onOpenVscode: (path: string) => void;
+  onOpenGitTool: (toolId: string, path: string) => void;
+  onOpenQuickTool: (id: string, path: string) => void;
+  onConfigureQuickTools: () => void;
   onAddCustomOpener: (path?: string, ext?: string) => Promise<void>;
   dragTarget: boolean;
   dragOp: "copy" | "move";
@@ -1073,9 +1092,30 @@ export function FileList({
                   if (renaming?.path === entry.path) e.preventDefault();
                 }}
               >
+                {quickStripVisible(pluginOpener, entry.path) && (
+                  <QuickToolsStrip
+                    path={entry.path}
+                    tools={quickTools}
+                    onOpen={onOpenQuickTool}
+                    onConfigure={onConfigureQuickTools}
+                  />
+                )}
                 <ContextMenuItem onClick={() => onOpen(entry)}>
                   <FolderInput className="mr-2 h-4 w-4" /> 打开
                 </ContextMenuItem>
+                {pluginOpener && !quickTools.some((t) => t.id === "vscode") && (
+                  // v0.29.0 内置直启：文件=VSCode 打开该文件，目录=作为工作区打开；
+                  // 已进常用条（稳定 slug id "vscode"）时隐藏固定行去重
+                  <ContextMenuItem
+                    disabled={!vscodeDetected}
+                    onClick={() => onOpenVscode(entry.path)}
+                  >
+                    <SquareCode className="mr-2 h-4 w-4" /> 用 Visual Studio Code 打开
+                    {!vscodeDetected && (
+                      <span className="ml-1 text-[10px] text-muted-foreground">未安装</span>
+                    )}
+                  </ContextMenuItem>
+                )}
                 {!entry.is_dir && pluginOpener && (
                   <MenuGroup
                     id="openWith"
@@ -1125,6 +1165,33 @@ export function FileList({
                         )}
                       </ContextMenuItem>
                     ))}
+                  </MenuGroup>
+                )}
+                {entry.is_dir && pluginTerminal && (
+                  // v0.29.0「Git 打开」：Git Bash / Git GUI / 常见 GUI 客户端（探测到才可点）
+                  <MenuGroup
+                    id="git"
+                    label="Git 打开"
+                    icon={<GitBranch className="mr-2 h-4 w-4" />}
+                    expanded={expandedMenu === "git"}
+                    onToggle={toggleMenuGroup}
+                  >
+                    {gitTools.length === 0 ? (
+                      <ContextMenuItem disabled>未检测到 Git 工具</ContextMenuItem>
+                    ) : (
+                      gitTools.map((t) => (
+                        <ContextMenuItem
+                          key={t.id}
+                          disabled={!t.detected}
+                          onClick={() => onOpenGitTool(t.id, entry.path)}
+                        >
+                          <span className="flex-1">{t.name}</span>
+                          {!t.detected && (
+                            <span className="text-[10px] text-muted-foreground">未安装</span>
+                          )}
+                        </ContextMenuItem>
+                      ))
+                    )}
                   </MenuGroup>
                 )}
                 {entry.is_dir && (

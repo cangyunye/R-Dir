@@ -52,10 +52,42 @@ pub struct CustomOpener {
     pub extensions: Vec<String>,
 }
 
+/// 常用工具条条目（v0.29.0，openers.json 的 quickTools 有序数组 = 显示顺序）
+#[derive(Serialize, Deserialize, Clone)]
+pub struct QuickTool {
+    pub id: String,
+    pub name: String,
+    pub exec: String,
+}
+
+/// QuickTool → 前端条目（detected 实时判断，卸载的置灰）
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickToolItem {
+    pub id: String,
+    pub name: String,
+    pub exec: String,
+    pub detected: bool,
+}
+
+fn to_quick_item(q: &QuickTool) -> QuickToolItem {
+    QuickToolItem {
+        id: q.id.clone(),
+        name: q.name.clone(),
+        exec: q.exec.clone(),
+        detected: std::path::Path::new(&q.exec).exists(),
+    }
+}
+
+/// 常用工具条上限（与标签/快捷访问交互一致：达上限拒绝并提示）
+pub const MAX_QUICK_TOOLS: usize = 10;
+
 #[derive(Serialize, Deserialize, Default)]
 struct OpenersConfig {
     #[serde(default)]
     custom: Vec<CustomOpener>,
+    #[serde(default)]
+    quick_tools: Vec<QuickTool>,
 }
 
 fn config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -210,6 +242,165 @@ pub fn list_shells() -> Vec<ShellItem> {
     detect::shell_items()
 }
 
+/// 是否探测到 VSCode（v0.29.0 右键「用 VSCode 打开」）
+#[tauri::command]
+pub fn vscode_detected() -> bool {
+    detect::find_vscode().detected()
+}
+
+/// 「Git 打开」工具清单（v0.29.0，含未安装项，detected 标记）
+#[tauri::command]
+pub fn list_git_tools() -> Vec<detect::GitToolItem> {
+    detect::git_tool_items()
+}
+
+/// 用 VSCode 打开路径（文件/目录均可）
+#[tauri::command]
+pub fn open_vscode(
+    path: String,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<(), String> {
+    if !crate::plugins::plugin_enabled(&state.plugins, "opener") {
+        return Err("“打开方式”插件已禁用（设置 → 插件中可重新启用）".into());
+    }
+    launch::launch_vscode(&path)
+}
+
+/// 在指定目录打开 Git 工具（Git Bash / GUI 客户端）
+#[tauri::command]
+pub fn open_git_tool(
+    tool_id: String,
+    path: String,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<(), String> {
+    if !crate::plugins::plugin_enabled(&state.plugins, "terminal") {
+        return Err("“终端”插件已禁用（设置 → 插件中可重新启用）".into());
+    }
+    launch::launch_git_tool(&tool_id, &path)
+}
+
+// ───────────────── v0.29.0 常用工具条 ─────────────────
+
+/// 纯函数：加入常用条（同 exec 去重、上限收敛）。返回 Err = 达上限。
+fn quick_add(
+    cfg: &mut OpenersConfig,
+    id: Option<String>,
+    name: String,
+    exec: String,
+) -> Result<(), String> {
+    let name = name.trim().to_string();
+    let exec = exec.trim().to_string();
+    if name.is_empty() {
+        return Err("名称不能为空".into());
+    }
+    if exec.is_empty() {
+        return Err("可执行文件路径不能为空".into());
+    }
+    if cfg.quick_tools.iter().any(|q| q.exec == exec) {
+        return Ok(()); // 同一可执行文件只进一次（幂等，不报错）
+    }
+    if cfg.quick_tools.len() >= MAX_QUICK_TOOLS {
+        return Err(format!("常用工具最多 {} 个", MAX_QUICK_TOOLS));
+    }
+    cfg.quick_tools.push(QuickTool {
+        id: id.unwrap_or_else(|| format!("qt:{}", uuid_v4())),
+        name,
+        exec,
+    });
+    Ok(())
+}
+
+/// 纯函数：移除
+fn quick_remove(cfg: &mut OpenersConfig, id: &str) {
+    cfg.quick_tools.retain(|q| q.id != id);
+}
+
+/// 纯函数：上移/下移（越界静默忽略）
+fn quick_move(cfg: &mut OpenersConfig, id: &str, up: bool) {
+    let Some(pos) = cfg.quick_tools.iter().position(|q| q.id == id) else {
+        return;
+    };
+    let target = if up { pos.checked_sub(1) } else { Some(pos + 1) };
+    let Some(target) = target else { return };
+    if target >= cfg.quick_tools.len() {
+        return;
+    }
+    cfg.quick_tools.swap(pos, target);
+}
+
+#[tauri::command]
+pub fn list_quick_tools(app: tauri::AppHandle) -> Vec<QuickToolItem> {
+    load_config(&app)
+        .quick_tools
+        .iter()
+        .map(to_quick_item)
+        .collect()
+}
+
+/// 添加常用工具（id 缺省生成；建议芯片传稳定 slug 以便 VSCode 固定行去重）。
+/// 返回最新清单。同 exec 幂等。
+#[tauri::command]
+pub fn add_quick_tool(
+    app: tauri::AppHandle,
+    id: Option<String>,
+    name: String,
+    exec: String,
+) -> Result<Vec<QuickToolItem>, String> {
+    let mut cfg = load_config(&app);
+    quick_add(&mut cfg, id, name, exec)?;
+    save_config(&app, &cfg)?;
+    Ok(cfg.quick_tools.iter().map(to_quick_item).collect())
+}
+
+#[tauri::command]
+pub fn remove_quick_tool(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<Vec<QuickToolItem>, String> {
+    let mut cfg = load_config(&app);
+    quick_remove(&mut cfg, &id);
+    save_config(&app, &cfg)?;
+    Ok(cfg.quick_tools.iter().map(to_quick_item).collect())
+}
+
+#[tauri::command]
+pub fn move_quick_tool(
+    app: tauri::AppHandle,
+    id: String,
+    up: bool,
+) -> Result<Vec<QuickToolItem>, String> {
+    let mut cfg = load_config(&app);
+    quick_move(&mut cfg, &id, up);
+    save_config(&app, &cfg)?;
+    Ok(cfg.quick_tools.iter().map(to_quick_item).collect())
+}
+
+/// 用常用工具打开路径（目录 = 作为工作区打开；文件 = 用该工具打开）
+#[tauri::command]
+pub fn open_quick_tool(
+    app: tauri::AppHandle,
+    id: String,
+    path: String,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<(), String> {
+    if !crate::plugins::plugin_enabled(&state.plugins, "opener") {
+        return Err("“打开方式”插件已禁用（设置 → 插件中可重新启用）".into());
+    }
+    let cfg = load_config(&app);
+    let q = cfg
+        .quick_tools
+        .iter()
+        .find(|q| q.id == id)
+        .ok_or_else(|| format!("未找到常用工具：{id}"))?;
+    launch::launch_custom(&q.exec, &path)
+}
+
+/// 「检测到本机已安装」建议清单（常用工具条设置分区用）
+#[tauri::command]
+pub fn detect_editors() -> Vec<detect::EditorCandidate> {
+    detect::editor_candidates()
+}
+
 /// 在指定目录打开终端（仅右键调用）
 #[tauri::command]
 pub fn open_terminal(
@@ -235,10 +426,18 @@ fn uuid_v4() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_exts;
+    use super::{normalize_exts, quick_add, quick_move, quick_remove, OpenersConfig};
 
     fn v(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn qt(id: &str, name: &str, exec: &str) -> super::QuickTool {
+        super::QuickTool {
+            id: id.to_string(),
+            name: name.to_string(),
+            exec: exec.to_string(),
+        }
     }
 
     #[test]
@@ -259,5 +458,50 @@ mod tests {
     #[test]
     fn normalize_keeps_star() {
         assert_eq!(normalize_exts(&v(&["*"])), v(&["*"]));
+    }
+
+    #[test]
+    fn quick_add_dedupes_by_exec_and_caps() {
+        let mut cfg = OpenersConfig::default();
+        quick_add(&mut cfg, Some("a".into()), "A".into(), "/a".into()).unwrap();
+        // 同 exec 幂等
+        quick_add(&mut cfg, Some("b".into()), "B".into(), "/a".into()).unwrap();
+        assert_eq!(cfg.quick_tools.len(), 1);
+        assert_eq!(cfg.quick_tools[0].id, "a");
+        // 稳定 id 生效、缺省生成 qt: 前缀
+        quick_add(&mut cfg, None, "C".into(), "/c".into()).unwrap();
+        assert!(cfg.quick_tools[1].id.starts_with("qt:"));
+        // 上限收敛
+        for i in 0..super::MAX_QUICK_TOOLS {
+            let _ = quick_add(&mut cfg, None, format!("X{i}"), format!("/x{i}"));
+        }
+        assert_eq!(cfg.quick_tools.len(), super::MAX_QUICK_TOOLS);
+        assert!(quick_add(&mut cfg, None, "Y".into(), "/y".into()).is_err());
+    }
+
+    #[test]
+    fn quick_add_rejects_blank() {
+        let mut cfg = OpenersConfig::default();
+        assert!(quick_add(&mut cfg, None, "  ".into(), "/a".into()).is_err());
+        assert!(quick_add(&mut cfg, None, "A".into(), "  ".into()).is_err());
+    }
+
+    #[test]
+    fn quick_move_and_remove() {
+        let mut cfg = OpenersConfig::default();
+        for (id, exec) in [("a", "/a"), ("b", "/b"), ("c", "/c")] {
+            quick_add(&mut cfg, Some(id.into()), id.into(), exec.into()).unwrap();
+        }
+        quick_move(&mut cfg, "c", true);
+        let order: Vec<&str> = cfg.quick_tools.iter().map(|q| q.id.as_str()).collect();
+        assert_eq!(order, ["a", "c", "b"]);
+        // 越界静默
+        quick_move(&mut cfg, "a", true);
+        quick_move(&mut cfg, "b", false);
+        assert_eq!(cfg.quick_tools.len(), 3);
+        quick_remove(&mut cfg, "c");
+        assert_eq!(cfg.quick_tools.iter().map(|q| q.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        quick_remove(&mut cfg, "missing");
+        assert_eq!(cfg.quick_tools.len(), 2);
     }
 }

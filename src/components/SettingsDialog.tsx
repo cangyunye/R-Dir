@@ -9,6 +9,7 @@ import {
   Keyboard,
   Moon,
   Plus,
+  Wrench,
   Puzzle,
   RotateCcw,
   Share2,
@@ -30,6 +31,8 @@ import {
   setUserBinding,
 } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
+import { quickInitials, quickTileColor } from "@/components/EntryContextMenu";
+import type { QuickToolItem, EditorCandidate } from "@/lib/openerApi";
 import type { OpenerItem, PluginInfo } from "@/lib/openerApi";
 import { normalizeExts } from "@/lib/openers";
 import {
@@ -43,13 +46,14 @@ import {
 } from "@/lib/persist";
 
 /** 设置分区标识（左栏导航 + 右栏锚点共用） */
-type SectionId = "appearance" | "preview" | "keys" | "openers" | "share" | "plugins" | "about";
+export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "share" | "plugins" | "about";
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
   { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
   { id: "preview", label: "预览", icon: <Eye className="h-4 w-4" /> },
   { id: "keys", label: "快捷键", icon: <Keyboard className="h-4 w-4" /> },
   { id: "openers", label: "打开方式", icon: <ExternalLink className="h-4 w-4" /> },
+  { id: "quickTools", label: "常用工具", icon: <Wrench className="h-4 w-4" /> },
   { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
   { id: "plugins", label: "插件", icon: <Puzzle className="h-4 w-4" /> },
   { id: "about", label: "关于", icon: <Info className="h-4 w-4" /> },
@@ -81,6 +85,13 @@ export function SettingsDialog({
   onAddOpener,
   onRemoveOpener,
   onSetOpenerExtensions,
+  jumpTo,
+  quickTools,
+  editorSuggestions,
+  onAddQuickTool,
+  onAddSuggestedTool,
+  onRemoveQuickTool,
+  onMoveQuickTool,
   appName,
   appVersion,
   onOpenRepo,
@@ -110,6 +121,15 @@ export function SettingsDialog({
   onAddOpener: () => void;
   onRemoveOpener: (id: string) => void;
   onSetOpenerExtensions: (id: string, extensions: string[]) => void;
+  /** v0.29.0 打开时跳转到的分区（常用条「＋」入口；null = 从头显示） */
+  jumpTo?: SectionId | null;
+  /** v0.29.0 常用工具条（右键菜单第一行横排图标） */
+  quickTools: QuickToolItem[];
+  editorSuggestions: EditorCandidate[];
+  onAddQuickTool: () => void;
+  onAddSuggestedTool: (c: EditorCandidate) => void;
+  onRemoveQuickTool: (id: string) => void;
+  onMoveQuickTool: (id: string, up: boolean) => void;
   /** 应用名 / 版本（getVersion = tauri.conf.json 版本，随 tag 同步） */
   appName: string;
   appVersion: string;
@@ -145,6 +165,13 @@ export function SettingsDialog({
     setSection(id);
     sectionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
+
+  // v0.29.0 外部指定分区（常用条「＋」→ 设置 → 常用工具）：打开时滚动定位
+  useEffect(() => {
+    if (!open || !jumpTo) return;
+    if (SECTIONS.some((sec) => sec.id === jumpTo)) scrollToSection(jumpTo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, jumpTo]);
 
   /** 右栏滚动 → 反推当前分区，同步左栏高亮 */
   const handleScroll = useCallback(() => {
@@ -712,6 +739,114 @@ export function SettingsDialog({
                         </form>
                       </div>
                     ))}
+                  </div>
+                )}
+            </div>
+
+            <div
+              ref={(el) => { sectionRefs.current.quickTools = el; }}
+              data-settings-section="quickTools"
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-xs font-semibold text-primary">常用工具</div>
+                  <button
+                    onClick={onAddQuickTool}
+                    className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    title="选择应用程序添加"
+                  >
+                    <Plus className="h-3 w-3" /> 添加
+                  </button>
+                </div>
+                <p className="mb-3 text-[11px] text-muted-foreground">
+                  右键菜单第一行按此顺序横排显示（最多 10 个）：点图标直接用该工具打开当前目录（作为工作区）或文件。
+                  与「打开方式」的按扩展名关联互不影响。
+                </p>
+
+                {quickTools.length === 0 ? (
+                  <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                    还没有常用工具。点右上角「添加」选择应用，或从下方检测列表一键加入。
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {quickTools.map((t, i) => (
+                      <div key={t.id} className="flex items-center gap-2 rounded-md border px-2 py-1.5">
+                        <span
+                          className={cn(
+                            "flex h-6 w-6 shrink-0 items-center justify-center rounded text-[9px] font-bold text-white",
+                            !t.detected && "opacity-40",
+                          )}
+                          style={{ background: quickTileColor(t.name) }}
+                        >
+                          {quickInitials(t.name)}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-xs font-medium">{t.name}</span>
+                            {!t.detected && (
+                              <span className="shrink-0 rounded-sm bg-destructive/10 px-1 py-0.5 text-[10px] text-destructive">
+                                未找到
+                              </span>
+                            )}
+                          </div>
+                          <div className="truncate text-[10px] text-muted-foreground" title={t.exec}>
+                            {t.exec}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => onMoveQuickTool(t.id, true)}
+                          disabled={i === 0}
+                          className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30"
+                          title="上移"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          onClick={() => onMoveQuickTool(t.id, false)}
+                          disabled={i === quickTools.length - 1}
+                          className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30"
+                          title="下移"
+                        >
+                          ↓
+                        </button>
+                        <button
+                          onClick={() => onRemoveQuickTool(t.id)}
+                          className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                          title="移除此常用工具"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {editorSuggestions.filter((c) => !quickTools.some((q) => q.id === c.id)).length > 0 && (
+                  <div className="mt-3">
+                    <div className="mb-1.5 text-[10px] text-muted-foreground">
+                      检测到本机已安装（点击一键加入）：
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {editorSuggestions
+                        .filter((c) => !quickTools.some((q) => q.id === c.id))
+                        .map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => onAddSuggestedTool(c)}
+                            title={c.exec}
+                            className="flex items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          >
+                            <span
+                              className="flex h-4 w-4 items-center justify-center rounded text-[8px] font-bold text-white"
+                              style={{ background: quickTileColor(c.name) }}
+                            >
+                              {quickInitials(c.name)}
+                            </span>
+                            {c.name}
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        ))}
+                    </div>
                   </div>
                 )}
             </div>

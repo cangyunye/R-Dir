@@ -113,6 +113,7 @@ export function Sidebar({
   onSftpDisconnect,
   onSftpEdit,
   onSftpRemove,
+  onSftpAdd,
   shells,
   pluginTerminal = true,
   onOpenTerminal,
@@ -146,6 +147,8 @@ export function Sidebar({
   onSftpDisconnect: (id: string) => void;
   onSftpEdit: (sv: SftpServerView) => void;
   onSftpRemove: (sv: SftpServerView) => void;
+  /** v0.29.0 悬停分组名的「+」：新增 SFTP 服务器（弹连接对话框） */
+  onSftpAdd: () => void;
   /** v0.25.1 侧边栏右键菜单：在此路径打开终端（可选，缺省不展示终端组） */
   shells?: ShellItem[];
   pluginTerminal?: boolean;
@@ -542,14 +545,24 @@ export function Sidebar({
           )}
         </div>
 
-        {/* SFTP 远程服务器（v0.2，内置插件；支持分组） */}
+        {/* SFTP 远程服务器（v0.2，内置插件；支持分组；v0.29.0 悬停分组名显示「+」新增） */}
         <div>
-          <div className="flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground">
+          <div
+            data-sidebar-servers-header=""
+            className="group flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground"
+          >
             <MonitorSmartphone className="h-3.5 w-3.5" /> 远程服务器
+            <button
+              onClick={onSftpAdd}
+              title="添加 SFTP 服务器"
+              className="ml-auto hidden rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
           </div>
           {sftpServers.length === 0 && (
             <div className="px-2 py-1 text-xs text-muted-foreground">
-              地址栏输入 sftp:// 连接
+              地址栏输入 sftp:// 连接，或点上方 +
             </div>
           )}
           {groupedServers.map(([group, servers]) => (

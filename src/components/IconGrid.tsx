@@ -44,6 +44,7 @@ import { TagDots } from "@/components/TagView";
 import { type RenameState } from "@/components/FileList";
 import { RenameInput } from "@/components/RenameInput";
 import { EntryContextMenuContent } from "@/components/EntryContextMenu";
+import type { QuickToolItem } from "@/lib/openerApi";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -54,7 +55,7 @@ import {
 import { MenuGroup } from "@/components/MenuGroup";
 import type { FileTags, TagDef, TagNames } from "@/lib/persist";
 import type { LinkSide } from "@/lib/sync-link";
-import type { OpenerItem, ShellItem } from "@/lib/openerApi";
+import type { OpenerItem, ShellItem, GitToolItem } from "@/lib/openerApi";
 
 interface Slot {
   c: number;
@@ -155,8 +156,15 @@ export function IconGrid({
   pluginTerminal,
   openers,
   shells,
+  vscodeDetected,
+  gitTools,
+  quickTools,
   onOpenWith,
   onOpenTerminal,
+  onOpenVscode,
+  onOpenGitTool,
+  onOpenQuickTool,
+  onConfigureQuickTools,
   onAddCustomOpener,
   dragTarget,
   dragOp,
@@ -240,8 +248,17 @@ export function IconGrid({
   pluginTerminal: boolean;
   openers: OpenerItem[];
   shells: ShellItem[];
+  /** v0.29.0 右键「用 VSCode 打开」（文件/目录均可） */
+  vscodeDetected: boolean;
+  gitTools: GitToolItem[];
+  /** v0.29.0 常用工具条（菜单第一行横排图标） */
+  quickTools: QuickToolItem[];
   onOpenWith: (toolId: string, path: string) => void;
   onOpenTerminal: (shellId: string, path: string) => void;
+  onOpenVscode: (path: string) => void;
+  onOpenGitTool: (toolId: string, path: string) => void;
+  onOpenQuickTool: (id: string, path: string) => void;
+  onConfigureQuickTools: () => void;
   onAddCustomOpener: (path?: string, ext?: string) => Promise<void>;
   dragTarget: boolean;
   dragOp: "copy" | "move";
@@ -927,6 +944,13 @@ export function IconGrid({
                         pluginTerminal={pluginTerminal}
                         openers={openers}
                         shells={shells}
+                        vscodeDetected={vscodeDetected}
+                        gitTools={gitTools}
+                        quickTools={quickTools}
+                        onOpenVscode={onOpenVscode}
+                        onOpenGitTool={onOpenGitTool}
+                        onOpenQuickTool={onOpenQuickTool}
+                        onConfigureQuickTools={onConfigureQuickTools}
                         fileTags={fileTags}
                         tags={tagsProp}
                         tagNames={tagNames}

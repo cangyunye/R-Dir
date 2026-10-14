@@ -150,6 +150,10 @@ function ResultRow({
   );
 }
 
+/**
+ * 搜索面板（v0.29.0 起以居中模态框展示；此前为右侧停靠窄栏）。
+ * 文件名检索：当前层前端过滤 / fd 递归引擎；内容检索：当前层 / 递归。
+ */
 export function SearchPanel({
   entries,
   dir,
@@ -175,7 +179,7 @@ export function SearchPanel({
   onRenamed: (oldPath: string, newPath: string) => void;
   /** 重命名失败的错误提示（App 全局 notice） */
   onError: (msg: string) => void;
-  /** 关闭搜索面板（右上角 ×） */
+  /** 关闭搜索模态框（右上角 × / 遮罩点击 / Esc） */
   onClose: () => void;
 }) {
   const [mode, setMode] = useState("name");
@@ -323,12 +327,36 @@ export function SearchPanel({
   }, [cQuery, dir, recursive, caseSensitive]);
 
   return (
-    <div className="flex w-64 shrink-0 flex-col border-l bg-sidebar">
+    // v0.29.0 模态框化：原右侧 256px 停靠栏在递归检索时 rel_path 截断严重，
+    // 改为居中浮层（640×70vh），点遮罩或 Esc 关闭；内容结构不变。
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+    <div
+      className="flex h-[70vh] max-h-[620px] w-[640px] max-w-[92vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
+      onKeyDown={(e) => {
+        // Esc 关闭搜索框；行内重命名的 Esc 已被 RenameInput stopPropagation 挡住。
+        // radix 右键/下拉菜单开着时不能关：radix 的 document 级监听晚于 React 根容器，
+        // 这里看到 defaultPrevented 恒为 false，只能按「浮层是否在 DOM」判断。
+        if (e.key !== "Escape" || e.defaultPrevented || renaming) return;
+        if (
+          document.querySelector(
+            '[data-slot="context-menu-content"],[data-slot="dropdown-menu-content"],[data-radix-popper-content-wrapper]',
+          )
+        )
+          return;
+        onClose();
+      }}
+    >
       {/* 标题 + 关闭（冻结的搜索目标目录随面板展示） */}
-      <div className="flex items-center gap-1 px-2 pt-2">
-        <span className="shrink-0 text-[11px] font-medium text-muted-foreground">搜索</span>
+      <div className="flex shrink-0 items-center gap-1.5 border-b px-3 py-2">
+        <FileSearch className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="shrink-0 text-xs font-medium">搜索</span>
         <span
-          className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground/70"
+          className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/70"
           title={dir}
         >
           {dir}
@@ -603,6 +631,7 @@ export function SearchPanel({
           </ScrollArea>
         </TabsContent>
       </Tabs>
+    </div>
     </div>
   );
 }

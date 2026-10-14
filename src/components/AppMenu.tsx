@@ -102,6 +102,8 @@ export interface AppMenuActions {
   onOpenGitDiff: () => void;
   /** v0.22.2 SFTP 主密钥（设置/解锁已保存密码） */
   onMasterKey: () => void;
+  /** v0.29.0 添加 SFTP 服务器（弹出连接对话框） */
+  onAddSftp: () => void;
   // 帮助 / 右上角常驻
   onOpenSettings: () => void;
   onCheckUpdate: () => void;
@@ -300,6 +302,7 @@ export function AppMenu(actions: AppMenuActions) {
             onClick={actions.onOpenSyncDiff}
           />
           <Item icon={<FileDiff />} label="打开 Git Diff…" onClick={actions.onOpenGitDiff} />
+          <Item icon={<Plus />} label="添加 SFTP 服务器…" onClick={actions.onAddSftp} />
           <Item icon={<KeyRound />} label="SFTP 主密钥…" onClick={actions.onMasterKey} />
 
           <GroupLabel>帮助</GroupLabel>
