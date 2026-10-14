@@ -248,6 +248,15 @@ test.describe("9. 设置对话框滑动分区", () => {
     // 点「快捷键」→ 滚动到该分区，且分区标题不被顶边裁掉
     await page.getByRole("button", { name: "快捷键", exact: true }).click();
     await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    // 等滚动动画停稳再采样：平滑滚动进行中/迟到重排的瞬时位置会偶发偏移（CI flake）
+    await expect
+      .poll(async () => {
+        const before = await scroller.evaluate((el) => el.scrollTop);
+        await page.waitForTimeout(150);
+        const after = await scroller.evaluate((el) => el.scrollTop);
+        return Math.abs(after - before);
+      })
+      .toBeLessThan(1);
     const scrollerTop = (await scroller.boundingBox())!.y;
     const keysTop = (await scroller.locator(":scope > div").nth(1).boundingBox())!.y;
     expect(keysTop).toBeGreaterThanOrEqual(scrollerTop);
