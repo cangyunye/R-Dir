@@ -29,16 +29,24 @@ export function AppConfirmDialog({
   // 若作 effect 依赖会反复退订/重订，与真实按键派发撞车时按键被跳过。
   const actionRef = useRef<(e: KeyboardEvent) => void>(() => {});
   actionRef.current = (e: KeyboardEvent) => {
-    if (e.key === "Escape") onCancel();
+    // capture 阶段拦截并阻断传播：否则同一按键继续冒泡到全局 keymap
+    // （Enter=打开选中项）——回车确认删除会顺带打开（刚删除的）选中文件，
+    // 或全局「打开」抢先吞掉回车导致确认根本没执行。
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      onCancel();
+    }
     if (e.key === "Enter") {
       e.preventDefault();
+      e.stopPropagation();
       onConfirm();
     }
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => actionRef.current(e);
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

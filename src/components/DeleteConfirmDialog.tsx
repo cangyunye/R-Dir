@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Loader2, Trash2 } from "lucide-react";
 import type { FileEntry, SizeProgress, SizeStat } from "@/lib/types";
@@ -30,6 +30,24 @@ export function DeleteConfirmDialog({
     computing: true,
   }));
 
+  /** 弹窗级键位回调走 ref：onConfirm/onCancel 每次渲染都是新引用，
+   *  作 effect 依赖会反复退订/重订，与真实按键派发撞车时按键被跳过 */
+  const actionRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  actionRef.current = (e: KeyboardEvent) => {
+    // capture 阶段拦截并阻断传播：否则同一按键继续冒泡到全局 keymap
+    // （Enter=打开选中项、Esc=清空选中）——回车确认删除会顺带打开（刚删除的）选中文件，
+    // 或全局「打开」抢先吞掉回车导致删除根本没执行。
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      onCancel();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      onConfirm();
+    }
+  };
+
   useEffect(() => {
     const id = `size-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     let disposed = false;
@@ -53,14 +71,12 @@ export function DeleteConfirmDialog({
       .catch(() => {
         if (!disposed) setStat((p) => ({ ...p, computing: false }));
       });
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
-    };
-    window.addEventListener("keydown", onKey);
+    const onKey = (e: KeyboardEvent) => actionRef.current(e);
+    window.addEventListener("keydown", onKey, { capture: true });
     return () => {
       disposed = true;
       un?.();
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, { capture: true });
       void cancelSize(id).catch(() => {});
     };
     // 每次挂载只统计一次（弹窗按 key 重新挂载）
