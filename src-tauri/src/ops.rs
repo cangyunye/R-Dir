@@ -272,15 +272,14 @@ fn apply_file(
         fs::remove_dir_all(target).map_err(|e| format!("覆盖目录 {} 失败：{}", target.display(), e))?;
     }
     if mode == Mode::Move {
-        // Windows 上 rename 到已存在文件会失败，先删目标
-        if target.exists() {
-            fs::remove_file(target).map_err(|e| format!("覆盖 {} 失败：{}", target.display(), e))?;
+        // rename 本身即可替换已存在目标（Unix 原子；Windows 走 MOVEFILE_REPLACE_EXISTING），
+        // 不再「先删目标再改名」——改名或回退复制失败时旧目标原地保留
+        if fs::rename(src, target).is_ok() {
+            return Ok(());
         }
-        if fs::rename(src, target).is_err() {
-            copy_file_progress(src, target, cb)
-                .map_err(|e| format!("移动 {} 失败：{}", src.display(), e))?;
-            fs::remove_file(src).map_err(|e| format!("移动 {} 清理失败：{}", src.display(), e))?;
-        }
+        copy_file_progress(src, target, cb)
+            .map_err(|e| format!("移动 {} 失败：{}", src.display(), e))?;
+        fs::remove_file(src).map_err(|e| format!("移动 {} 清理失败：{}", src.display(), e))?;
     } else {
         copy_file_progress(src, target, cb)
             .map_err(|e| format!("复制 {} 失败：{}", src.display(), e))?;
@@ -723,8 +722,30 @@ fn copy_file_fast_linux(
     }
 }
 
+/// 同目录临时文件名（事务化复制的中转）：固定前缀 + 进程 id + 原名哈希，
+/// 避免与用户文件撞名；长度有界，长路径场景不会把临时路径顶过 MAX_PATH。
+/// 与 dst 同卷保证最后一步 rename 是原子替换。
+fn tmp_sibling(dst: &Path) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let name = dst
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    name.hash(&mut h);
+    dst.with_file_name(format!(
+        ".rdir-tmp-{}-{:016x}",
+        std::process::id(),
+        h.finish()
+    ))
+}
+
 /// 流式复制文件并回报进度。优先平台快速路径（reflink/系统复制引擎，
 /// FastCopy 思路：避开用户态逐块搬运），不支持时回退 1MB 缓冲循环。
+///
+/// 事务化：数据先落同目录临时文件，全部成功后一次性 rename 覆盖目标。
+/// 失败/取消只清理临时文件，已存在的目标保持原样——此前任一失败路径都会把
+/// 旧目标删掉或截断（外部粘贴选「覆盖」后目标文件消失的根因）。
 fn copy_file_progress(src: &Path, dst: &Path, cb: &mut dyn FnMut(CbEvent) -> bool) -> std::io::Result<()> {
     let name = src
         .file_name()
@@ -733,30 +754,40 @@ fn copy_file_progress(src: &Path, dst: &Path, cb: &mut dyn FnMut(CbEvent) -> boo
     if !cb(CbEvent::Start(&name)) {
         return Err(cancelled());
     }
-    match copy_file_fast(src, dst, cb) {
-        Ok(true) => return Ok(()),
-        Ok(false) => {}
-        Err(e) => return Err(e),
-    }
-    let total = src.metadata().map(|m| m.len()).unwrap_or(0);
-    let mut r = fs::File::open(src)?;
-    let mut w = fs::File::create(dst)?;
-    let mut buf = vec![0u8; 1024 * 1024];
-    let mut done: u64 = 0;
-    loop {
-        let n = r.read(&mut buf)?;
-        if n == 0 {
-            break;
+    let tmp = tmp_sibling(dst);
+    let mut fill = |tmp: &Path| -> std::io::Result<()> {
+        match copy_file_fast(src, tmp, cb)? {
+            true => Ok(()),
+            false => {
+                let total = src.metadata().map(|m| m.len()).unwrap_or(0);
+                let mut r = fs::File::open(src)?;
+                let mut w = fs::File::create(tmp)?;
+                let mut buf = vec![0u8; 1024 * 1024];
+                let mut done: u64 = 0;
+                loop {
+                    let n = r.read(&mut buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    w.write_all(&buf[..n])?;
+                    done += n as u64;
+                    if !cb(CbEvent::Bytes(done, total)) {
+                        return Err(cancelled());
+                    }
+                }
+                w.flush()?;
+                Ok(())
+            }
         }
-        w.write_all(&buf[..n])?;
-        done += n as u64;
-        if !cb(CbEvent::Bytes(done, total)) {
-            let _ = fs::remove_file(dst);
-            return Err(cancelled());
-        }
+    };
+    if let Err(e) = fill(&tmp) {
+        let _ = fs::remove_file(&tmp); // 只清自己的半成品，目标原地保留
+        return Err(e);
     }
-    w.flush()?;
-    Ok(())
+    fs::rename(&tmp, dst).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e
+    })
 }
 
 fn remove_recursive(path: &Path) -> std::io::Result<()> {
@@ -869,6 +900,69 @@ mod tests {
         .unwrap();
         assert_eq!(created, vec![d.clone()]);
         assert_eq!(fs::read_to_string(&d).unwrap(), "new");
+    }
+
+    /// 回归（外部剪贴板粘贴覆盖后文件消失的根因）：复制中途失败（源不可读）时，
+    /// 已存在的目标必须原样保留——此前平台快速路径会先把旧目标删掉再试复制，
+    /// 失败后旧文件就没了（覆盖语义变成数据丢失）。
+    #[cfg(unix)]
+    #[test]
+    fn copy_failure_keeps_existing_target() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tmp("copy-fail-keep");
+        let src = base.join("src.txt");
+        let dest = base.join("dst");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(&src, "new").unwrap();
+        let target = dest.join("src.txt");
+        fs::write(&target, "old").unwrap();
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o000)).unwrap();
+        let d = target.to_string_lossy().to_string();
+        let r = copy_entries_plan(
+            &[src.to_string_lossy().to_string()],
+            &dest.to_string_lossy().to_string(),
+            &plan(&[(&d, Resolution::Overwrite)]),
+            &mut noop(),
+        );
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(r.is_err(), "源不可读时复制应失败");
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "old",
+            "复制失败后旧目标必须原样保留"
+        );
+    }
+
+    /// 回归：复制中途取消（进度回调返回 false）时，已存在的目标必须原样保留。
+    #[test]
+    fn copy_cancel_keeps_existing_target() {
+        let base = tmp("copy-cancel-keep");
+        let src = base.join("src.txt");
+        let dest = base.join("dst");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(&src, "new content").unwrap();
+        let target = dest.join("src.txt");
+        fs::write(&target, "old").unwrap();
+        let d = target.to_string_lossy().to_string();
+        let mut saw_bytes = false;
+        let r = copy_entries_plan(
+            &[src.to_string_lossy().to_string()],
+            &dest.to_string_lossy().to_string(),
+            &plan(&[(&d, Resolution::Overwrite)]),
+            &mut |ev| match ev {
+                CbEvent::Bytes(..) if !saw_bytes => {
+                    saw_bytes = true;
+                    false // 首个字节进度帧即取消
+                }
+                _ => true,
+            },
+        );
+        assert!(r.is_err(), "取消应以错误收场");
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "old",
+            "取消后旧目标必须原样保留"
+        );
     }
 
     #[test]

@@ -432,7 +432,11 @@ export async function installTauriMock(page: Page): Promise<void> {
       // ---- v0.29.0 右键 VSCode / Git 打开（mock 环境一律未安装，仅验证菜单渲染） ----
       vscode_detected: () => false,
       open_vscode: () => {},
-      list_git_tools: () => [],
+      // 默认空；用例可经 __rdirGitTools 注入（如 Git Bash 空白终端组回归）
+      list_git_tools: () => {
+        const w = (window as unknown as { __rdirGitTools?: () => unknown[] });
+        return w.__rdirGitTools?.() ?? [];
+      },
       open_git_tool: () => {},
       // ---- v0.29.0 常用工具条：固定两项（VSCode 借稳定 slug 验证固定行去重） ----
       list_quick_tools: () => [

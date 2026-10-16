@@ -26,6 +26,9 @@ export interface QuickAccessItem {
 export type SortKey = "name" | "size" | "modified" | "type";
 export type SortDir = "asc" | "desc";
 
+/** 主题颜色模式：显式浅色/深色，或跟随系统（随系统深浅色实时切换） */
+export type ThemeMode = "light" | "dark" | "system";
+
 /** 窗格视图模式（v0.27.0）：详情列表 / 大图标（可自由摆放）/ 画廊（缩略图墙） */
 export type ViewMode = "details" | "icons" | "gallery";
 /** 大图标/画廊模式的图标档位（px） */

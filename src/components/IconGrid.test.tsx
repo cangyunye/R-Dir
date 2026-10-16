@@ -99,6 +99,7 @@ function makeProps(overrides: Partial<IconGridProps> = {}) {
     onProperties: noop,
     onPropertiesDir: noop,
     onDiff: noop,
+    onSyncDiff: noop,
     iconPositions: {},
     onSetIconPosition: vi.fn(),
     onClearIconPositions: vi.fn(),

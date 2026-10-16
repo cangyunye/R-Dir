@@ -382,6 +382,8 @@ export function FileList({
   const [renameTagInput, setRenameTagInput] = useState("");
   // v0.28.0 全量标签（预设 + 自定义）；未下发时回落预设
   const tags = tagsProp ?? TAG_DEFS;
+  /** Windows Git Bash：既是 Git 工具也是终端，空白处右键收进「在此处打开终端」组 */
+  const gitBash = gitTools.find((t) => t.id === "gitbash");
   const renameTagInputRef = useRef<HTMLInputElement>(null);
   const submitRenameTag = () => {
     const label = renameTagInput.trim();
@@ -1376,7 +1378,19 @@ export function FileList({
       </div>
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent className="min-w-48" collisionPadding={10}>
+        <ContextMenuContent
+          className="max-h-[var(--radix-context-menu-content-available-height)] min-w-48 overflow-y-auto [scrollbar-width:thin]"
+          collisionPadding={10}
+        >
+          {/* 常用工具条（与条目右键菜单第一行同款）：空白处 = 当前目录，一步用常用工具打开 */}
+          {quickStripVisible(pluginOpener, currentDir) && (
+            <QuickToolsStrip
+              path={currentDir}
+              tools={quickTools}
+              onOpen={onOpenQuickTool}
+              onConfigure={onConfigureQuickTools}
+            />
+          )}
           {pluginTerminal && (
             <>
               <MenuGroup
@@ -1398,6 +1412,19 @@ export function FileList({
                     )}
                   </ContextMenuItem>
                 ))}
+                {/* Git Bash 本质是终端：空白处即当前目录内，同样可开（与目录右键「Git 打开」同源探测） */}
+                {gitBash && (
+                  <ContextMenuItem
+                    disabled={!gitBash.detected}
+                    onClick={() => onOpenGitTool(gitBash.id, currentDir)}
+                  >
+                    <GitBranch className="mr-2 h-4 w-4" />
+                    <span className="flex-1">{gitBash.name}</span>
+                    {!gitBash.detected && (
+                      <span className="text-[10px] text-muted-foreground">未安装</span>
+                    )}
+                  </ContextMenuItem>
+                )}
               </MenuGroup>
               <ContextMenuSeparator />
             </>

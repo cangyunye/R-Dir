@@ -116,6 +116,51 @@ function renderList(overrides: Partial<FileListProps> = {}) {
   return { ...utils, props, body };
 }
 
+describe("FileList 空白处右键菜单", () => {
+  // 注意：jsdom 下 radix ContextMenu 每个测试文件只有第一次能开出菜单，
+  // 三个场景用同一实例 rerender 切换（菜单保持打开、折叠组展开状态保留）。
+  it("终端组展开后包含 Git Bash：探测到无标注 / 未探测到标注未安装 / 无 gitbash 项不出现", () => {
+    const utils = renderList({
+      pluginTerminal: true,
+      gitTools: [{ id: "gitbash", name: "Git Bash", detected: true }],
+    });
+    fireEvent.contextMenu(utils.body);
+    // 折叠组：点组名内联展开
+    fireEvent.click(document.querySelector('[data-testid="menu-group-terminalEmpty"]')!);
+    const menu = () => document.querySelector('[data-slot="context-menu-content"]');
+
+    expect(menu()?.textContent).toContain("Git Bash");
+    expect(menu()?.textContent).not.toContain("未安装");
+
+    // 未探测到 → 置灰「未安装」
+    utils.rerender(
+      <FileList
+        {...makeProps({
+          pluginTerminal: true,
+          gitTools: [{ id: "gitbash", name: "Git Bash", detected: false }],
+        })}
+      />,
+    );
+    expect(menu()?.textContent).toContain("Git Bash");
+    expect(menu()?.textContent).toContain("未安装");
+
+    // 非 Windows（无 gitbash 项）→ 不出现
+    utils.rerender(<FileList {...makeProps({ pluginTerminal: true, gitTools: [] })} />);
+    expect(menu()?.textContent ?? "").not.toContain("Git Bash");
+
+    // 顶部常用工具条（与条目右键同款）：有启用工具时显示磁贴
+    utils.rerender(
+      <FileList
+        {...makeProps({
+          pluginOpener: true,
+          quickTools: [{ id: "vscode", name: "Visual Studio Code", exec: "", detected: true }],
+        })}
+      />,
+    );
+    expect(document.querySelector('[title="用 Visual Studio Code 打开"]')).toBeTruthy();
+  });
+});
+
 describe("FileList 快速定位集成", () => {
   it("键入可打印字符弹出玻璃窗并实时跟随首个命中", () => {
     const { props, body } = renderList();

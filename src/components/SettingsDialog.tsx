@@ -7,6 +7,7 @@ import {
   Globe,
   Info,
   Keyboard,
+  Monitor,
   Moon,
   Plus,
   Wrench,
@@ -31,6 +32,7 @@ import {
   setUserBinding,
 } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
+import type { ThemeMode } from "@/lib/types";
 import { quickInitials, quickTileColor } from "@/components/EntryContextMenu";
 import type { QuickToolItem, EditorCandidate } from "@/lib/openerApi";
 import type { OpenerItem, PluginInfo } from "@/lib/openerApi";
@@ -61,14 +63,14 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
 
 /**
  * 设置对话框（M5 P2）
- * - 外观：浅色 / 深色主题（持久化到 localStorage）
+ * - 外观：颜色模式 浅色 / 深色 / 跟随系统（持久化到 localStorage，system 随系统实时切换）
  * - 快捷键：点击"录制"按组合键自定义（当前平台），Esc 取消，冲突检测，恢复默认
  */
 export function SettingsDialog({
   open,
   onClose,
-  dark,
-  onToggleTheme,
+  themeMode,
+  onThemeModeChange,
   onBindingsChanged,
   previewEnabled,
   onPreviewEnabledChange,
@@ -99,8 +101,9 @@ export function SettingsDialog({
 }: {
   open: boolean;
   onClose: () => void;
-  dark: boolean;
-  onToggleTheme: () => void;
+  /** 主题颜色模式：显式浅色/深色，或跟随系统 */
+  themeMode: ThemeMode;
+  onThemeModeChange: (m: ThemeMode) => void;
   onBindingsChanged: () => void;
   /** v0.28 预览栏总开关（默认关）与默认宽度 */
   previewEnabled: boolean;
@@ -312,38 +315,33 @@ export function SettingsDialog({
               data-settings-section="appearance"
               className="scroll-mt-3 mb-6 border-b pb-5"
             >
-                {/* 外观：主题 */}
+                {/* 外观：主题（浅色 / 深色 / 跟随系统） */}
                 <div className="mb-4">
                   <div className="mb-1.5 text-xs font-semibold text-primary">主题</div>
                   <div className="flex items-center justify-between rounded-md border px-3 py-2 text-xs">
                     <span className="text-foreground">颜色模式</span>
                     <div className="flex gap-1">
-                      <button
-                        onClick={() => {
-                          if (dark) onToggleTheme();
-                        }}
-                        className={cn(
-                          "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors",
-                          !dark
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted text-muted-foreground hover:bg-accent",
-                        )}
-                      >
-                        <Sun className="h-3.5 w-3.5" /> 浅色
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (!dark) onToggleTheme();
-                        }}
-                        className={cn(
-                          "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors",
-                          dark
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted text-muted-foreground hover:bg-accent",
-                        )}
-                      >
-                        <Moon className="h-3.5 w-3.5" /> 深色
-                      </button>
+                      {(
+                        [
+                          ["light", <Sun key="s" className="h-3.5 w-3.5" />, "浅色"],
+                          ["dark", <Moon key="m" className="h-3.5 w-3.5" />, "深色"],
+                          ["system", <Monitor key="w" className="h-3.5 w-3.5" />, "跟随系统"],
+                        ] as [ThemeMode, React.ReactNode, string][]
+                      ).map(([mode, icon, label]) => (
+                        <button
+                          key={mode}
+                          aria-pressed={themeMode === mode}
+                          onClick={() => onThemeModeChange(mode)}
+                          className={cn(
+                            "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors",
+                            themeMode === mode
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-muted text-muted-foreground hover:bg-accent",
+                          )}
+                        >
+                          {icon} {label}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>

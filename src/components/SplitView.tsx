@@ -576,6 +576,7 @@ const PaneView = memo(function PaneView({
             zoom={pane.zoom}
             onBack={h.onBack}
             onForward={h.onForward}
+            onSyncDiff={h.onSyncDiff}
             onCompress={(paths, fmt) => h.onCompress(pane.id, paths, fmt)}
             onProperties={h.onProperties}
             onPropertiesDir={h.onPropertiesDir}

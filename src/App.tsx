@@ -52,6 +52,7 @@ import type {
   SortKey,
   SplitDir,
   TabState,
+  ThemeMode,
   TransferConflict,
   TransferProgress,
   VolumeInfo,
@@ -421,14 +422,22 @@ export default function App() {
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
   /** share://changed 事件版本号，驱动面板刷新 */
   const [shareVer, setShareVer] = useState(0);
-  /** 主题（默认浅色，M5 持久化到 localStorage "rfm.theme"） */
-  const [dark, setDark] = useState<boolean>(() => {
+  /** 主题模式（浅色/深色/跟随系统；持久化到 localStorage "rfm.theme"，
+   *  旧数据只有 "light"/"dark"，自动兼容；"system" 随系统深浅色实时切换） */
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     try {
-      return localStorage.getItem("rfm.theme") === "dark";
+      const v = localStorage.getItem("rfm.theme");
+      return v === "dark" || v === "light" || v === "system" ? v : "light";
     } catch {
-      return false;
+      return "light";
     }
   });
+  /** 生效深色（system 模式下随 matchMedia 实时变；界面/菜单继续消费 dark） */
+  const [dark, setDark] = useState<boolean>(() =>
+    themeMode === "system"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : themeMode === "dark",
+  );
   /** 快捷键配置版本号：自定义键位变更时 +1，触发菜单/设置重渲染 */
   const [keymapVer, setKeymapVer] = useState(0);
   /** v0.8 界面字体大小（13px=100%，作用于整个界面，根缩放） */
@@ -920,21 +929,31 @@ useEffect(() => {
     [refreshOpeners, showError],
   );
 
-  // 主题同步
+  // 主题同步：dark 只驱动 html.dark；system 模式监听系统深浅色实时翻转
+  useEffect(() => {
+    const mql = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () =>
+      setDark(themeMode === "system" ? mql.matches : themeMode === "dark");
+    apply();
+    mql.addEventListener("change", apply);
+    return () => mql.removeEventListener("change", apply);
+  }, [themeMode]);
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
-  const toggleTheme = useCallback(() => {
-    setDark((v) => {
-      const nv = !v;
-      try {
-        localStorage.setItem("rfm.theme", nv ? "dark" : "light");
-      } catch {
-        /* ignore */
-      }
-      return nv;
-    });
+  /** 设置颜色模式（显式 light/dark 或跟随系统），随改随存 */
+  const changeThemeMode = useCallback((m: ThemeMode) => {
+    setThemeMode(m);
+    try {
+      localStorage.setItem("rfm.theme", m);
+    } catch {
+      /* ignore */
+    }
   }, []);
+  /** 快捷键/菜单切换：写显式模式（跟随系统时按当前生效值翻转并退出跟随） */
+  const toggleTheme = useCallback(() => {
+    changeThemeMode(dark ? "light" : "dark");
+  }, [dark, changeThemeMode]);
 
 
 
@@ -2544,7 +2563,25 @@ useEffect(() => {
     setRedoStack([]);
   }, []);
 
-  const doPaste = useCallback(
+  /** 粘贴进行中标志：连续触发（连点/双入口）不再并发跑第二轮——
+   *  两轮写同一目标时，后失败的一轮会破坏先成功的一轮的产物 */
+  const pasteBusyRef = useRef(false);
+
+  /** 最新一轮 doPasteInner 引用：包装层经它调用，避免稳定 useCallback 捕获过期状态 */
+  const doPasteLatestRef = useRef<(paneId?: number) => Promise<void> | null>(null);
+
+  /** 包装层（对外暴露的 doPaste）：防重入 + 转发到最新实现 */
+  const doPaste = useCallback(async (paneId?: number) => {
+    if (pasteBusyRef.current) return;
+    pasteBusyRef.current = true;
+    try {
+      await doPasteLatestRef.current?.(paneId);
+    } finally {
+      pasteBusyRef.current = false;
+    }
+  }, []);
+
+  const doPasteInner = useCallback(
     async (paneId?: number) => {
       const pid = paneId ?? activePane?.id;
       if (pid === undefined) return;
@@ -2641,6 +2678,7 @@ useEffect(() => {
     },
     [clipboard, activePane, tabs, refreshPane, showError, pushOp, isSftpPath, runTransfer],
   );
+  doPasteLatestRef.current = doPasteInner;
 
   /** 复制到当前目录（Duplicate） */
   const doDuplicate = useCallback(async () => {
@@ -4171,8 +4209,8 @@ useEffect(() => {
           setSettingsOpen(false);
           setSettingsJump(null);
         }}
-        dark={dark}
-        onToggleTheme={toggleTheme}
+        themeMode={themeMode}
+        onThemeModeChange={changeThemeMode}
         onBindingsChanged={() => setKeymapVer((v) => v + 1)}
         previewEnabled={previewPrefs.enabled}
         onPreviewEnabledChange={(v) => updatePreviewPrefs({ enabled: v })}

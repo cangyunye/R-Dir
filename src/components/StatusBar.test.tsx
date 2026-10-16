@@ -72,4 +72,41 @@ describe("StatusBar 传输指示（v0.18.1 修复）", () => {
     // 完成后不再提供「停止下载」
     expect(screen.queryByText("停止")).toBeNull();
   });
+
+  it("done=true 且 label=传输失败 → 显示「复制失败」而非「复制完成」（失败曾被渲染成完成）", () => {
+    render(
+      <StatusBar
+        {...base}
+        transfer={{
+          phase: "copy",
+          label: "传输失败",
+          doneFiles: 3,
+          totalFiles: 3,
+          fileDone: 0,
+          fileTotal: 0,
+          done: true,
+        }}
+      />,
+    );
+    expect(screen.getByText("复制失败")).toBeTruthy();
+    expect(screen.queryByText("复制完成")).toBeNull();
+  });
+
+  it("done=true 且 label=已取消 → 显示「已取消」", () => {
+    render(
+      <StatusBar
+        {...base}
+        transfer={{
+          phase: "move",
+          label: "已取消",
+          doneFiles: 1,
+          totalFiles: 2,
+          fileDone: 0,
+          fileTotal: 0,
+          done: true,
+        }}
+      />,
+    );
+    expect(screen.getByText("已取消")).toBeTruthy();
+  });
 });

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ContextMenuItem } from "@/components/ui/context-menu";
@@ -24,6 +24,12 @@ export function MenuGroup({
   onToggle: (id: string) => void;
   children: ReactNode;
 }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // 展开后把新增子项滚进可视区：菜单内容受可用高度约束（展开不再顶破窗口）时，
+  // 组往往在滚动边界之下，不滚就看不见刚展开的内容
+  useEffect(() => {
+    if (expanded) bodyRef.current?.scrollIntoView({ block: "nearest" });
+  }, [expanded]);
   return (
     <>
       <ContextMenuItem
@@ -42,7 +48,11 @@ export function MenuGroup({
           )}
         />
       </ContextMenuItem>
-      {expanded && <div className="ml-3 border-l pl-1">{children}</div>}
+      {expanded && (
+        <div ref={bodyRef} className="ml-3 border-l pl-1">
+          {children}
+        </div>
+      )}
     </>
   );
 }

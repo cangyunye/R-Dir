@@ -17,12 +17,13 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
   const onRemoveOpener = vi.fn();
   const onSetOpenerExtensions = vi.fn();
   const onAddOpener = vi.fn();
+  const onThemeModeChange = vi.fn();
   render(
     <SettingsDialog
       open
       onClose={() => {}}
-      dark={false}
-      onToggleTheme={() => {}}
+      themeMode="light"
+      onThemeModeChange={onThemeModeChange}
       onBindingsChanged={() => {}}
       previewEnabled={false}
       onPreviewEnabledChange={() => {}}
@@ -53,7 +54,7 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: "打开方式" }));
-  return { onRemoveOpener, onSetOpenerExtensions, onAddOpener };
+  return { onRemoveOpener, onSetOpenerExtensions, onAddOpener, onThemeModeChange };
 }
 
 describe("SettingsDialog 打开方式分区", () => {
@@ -109,5 +110,32 @@ describe("SettingsDialog 关于分区", () => {
     setup({ appName: "R-Dir", appVersion: "9.9.9" });
     fireEvent.click(screen.getByRole("button", { name: "关于" }));
     expect(screen.getByText("版本 v9.9.9 · Tauri 2 + React")).toBeInTheDocument();
+  });
+});
+
+describe("SettingsDialog 外观：颜色模式三态", () => {
+  it("浅色/深色/跟随系统三段钮，当前模式高亮（aria-pressed）", () => {
+    setup({ themeMode: "system" });
+    fireEvent.click(screen.getByRole("button", { name: "外观" }));
+    expect(screen.getByRole("button", { name: /浅色/ })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: /跟随系统/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("点「跟随系统」→ onThemeModeChange(\"system\")", () => {
+    const { onThemeModeChange } = setup();
+    fireEvent.click(screen.getByRole("button", { name: /跟随系统/ }));
+    expect(onThemeModeChange).toHaveBeenCalledWith("system");
+  });
+
+  it("点「深色」→ onThemeModeChange(\"dark\")", () => {
+    const { onThemeModeChange } = setup({ themeMode: "system" });
+    fireEvent.click(screen.getByRole("button", { name: /深色/ }));
+    expect(onThemeModeChange).toHaveBeenCalledWith("dark");
   });
 });

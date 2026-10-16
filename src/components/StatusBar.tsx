@@ -1,5 +1,6 @@
 import { AlertCircle, Crosshair, FolderOpen, Layers, Loader2, X , Share2 } from "lucide-react";
 import { formatSize } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import type { TransferProgress } from "@/lib/types";
 import { SyncDiffStatusBar, type SyncDiffSummary } from "@/components/SyncDiffPanel";
 
@@ -76,12 +77,19 @@ export function StatusBar({
       <div className="flex h-6 items-center justify-between gap-4 border-t bg-sidebar px-3 text-[11px] text-muted-foreground select-none">
         <div className="flex min-w-0 items-center gap-2">
           {transfer ? (
-            <span className="flex items-center gap-1 truncate">
+            <span
+              className={cn(
+                "flex items-center gap-1 truncate",
+                transfer.done && transfer.label === "传输失败" && "text-destructive",
+              )}
+            >
               <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
               {transfer.done
                 ? transfer.label === "已取消"
                   ? "已取消"
-                  : `${PHASE_LABEL[transfer.phase]}完成`
+                  : transfer.label === "传输失败"
+                    ? `${PHASE_LABEL[transfer.phase]}失败`
+                    : `${PHASE_LABEL[transfer.phase]}完成`
                 : GENERIC_LABELS.has(transfer.label)
                   ? `${PHASE_LABEL[transfer.phase]}中…`
                   : `${PHASE_LABEL[transfer.phase]}中：${transfer.label}`}

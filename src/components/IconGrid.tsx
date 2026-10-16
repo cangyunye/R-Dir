@@ -18,7 +18,9 @@ import {
   Clipboard,
   FolderPlus,
   FilePlus2,
+  GitBranch,
   LayoutGrid,
+  Link2,
   RefreshCw,
   Info,
   Undo2,
@@ -43,7 +45,7 @@ import { ThumbImage } from "@/components/ThumbImage";
 import { TagDots } from "@/components/TagView";
 import { type RenameState } from "@/components/FileList";
 import { RenameInput } from "@/components/RenameInput";
-import { EntryContextMenuContent } from "@/components/EntryContextMenu";
+import { EntryContextMenuContent, QuickToolsStrip, quickStripVisible } from "@/components/EntryContextMenu";
 import type { QuickToolItem } from "@/lib/openerApi";
 import {
   ContextMenu,
@@ -177,6 +179,7 @@ export function IconGrid({
   zoom,
   onBack,
   onForward,
+  onSyncDiff,
   onCompress,
   onProperties,
   onPropertiesDir,
@@ -272,6 +275,8 @@ export function IconGrid({
   zoom: number;
   onBack: () => void;
   onForward: () => void;
+  /** 空白右键「同步比对（左右窗格）」，与详情列表菜单对齐 */
+  onSyncDiff: () => void;
   onCompress: (paths: string[], format: "zip" | "tar" | "tgz") => void;
   onProperties: (entries: FileEntry[]) => void;
   onPropertiesDir: (dir: string) => void;
@@ -297,6 +302,8 @@ export function IconGrid({
   );
   const cell = gridCell(iconSize);
   const rowH = cell.h + GRID_GAP;
+  /** Windows Git Bash：既是 Git 工具也是终端，空白处右键收进「在此处打开终端」组 */
+  const gitBash = gitTools.find((t) => t.id === "gitbash");
 
   // ---- 滚动/尺寸 ----
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1015,7 +1022,19 @@ export function IconGrid({
             </div>
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent className="min-w-48" collisionPadding={10}>
+        <ContextMenuContent
+          className="max-h-[var(--radix-context-menu-content-available-height)] min-w-48 overflow-y-auto [scrollbar-width:thin]"
+          collisionPadding={10}
+        >
+          {/* 常用工具条（与条目右键菜单第一行同款）：空白处 = 当前目录，一步用常用工具打开 */}
+          {quickStripVisible(pluginOpener, currentDir) && (
+            <QuickToolsStrip
+              path={currentDir}
+              tools={quickTools}
+              onOpen={onOpenQuickTool}
+              onConfigure={onConfigureQuickTools}
+            />
+          )}
           {pluginTerminal && shells.length > 0 && (
             <MenuGroup
               id="terminalEmpty"
@@ -1034,6 +1053,19 @@ export function IconGrid({
                   {!sh.detected && <span className="text-[10px] text-muted-foreground">未安装</span>}
                 </ContextMenuItem>
               ))}
+              {/* Git Bash 本质是终端：空白处即当前目录内，同样可开（与目录右键「Git 打开」同源探测） */}
+              {gitBash && (
+                <ContextMenuItem
+                  disabled={!gitBash.detected}
+                  onClick={() => onOpenGitTool(gitBash.id, currentDir)}
+                >
+                  <GitBranch className="mr-2 h-4 w-4" />
+                  <span className="flex-1">{gitBash.name}</span>
+                  {!gitBash.detected && (
+                    <span className="text-[10px] text-muted-foreground">未安装</span>
+                  )}
+                </ContextMenuItem>
+              )}
             </MenuGroup>
           )}
           <ContextMenuItem onClick={onNewFolder}>
@@ -1112,6 +1144,11 @@ export function IconGrid({
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onDiff}>
             <ArrowLeftRight className="mr-2 h-4 w-4" /> 与另一窗格差异比对…
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          {/* 同步比对：与详情列表空白菜单对齐 */}
+          <ContextMenuItem onClick={onSyncDiff}>
+            <Link2 className="mr-2 h-4 w-4" /> 同步比对（左右窗格）
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onRefresh}>
