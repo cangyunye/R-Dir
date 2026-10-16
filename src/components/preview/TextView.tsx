@@ -18,7 +18,13 @@ export function TextView({
   path: string;
   className?: string;
 }) {
-  const [state, setState] = useState<{ text: string; lossy: boolean; truncated: boolean } | null>(null);
+  const [state, setState] = useState<{
+    text: string;
+    lossy: boolean;
+    truncated: boolean;
+    /** v0.30 后端实际采用的解码；UTF-16 时给提示（Windows 工具写出的 ini/reg 常见） */
+    encoding: string;
+  } | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -33,6 +39,7 @@ export function TextView({
             text: truncated ? r.text.slice(0, RENDER_CAP) : r.text,
             lossy: r.lossy,
             truncated,
+            encoding: r.encoding ?? "UTF-8",
           });
         }
       })
@@ -56,9 +63,14 @@ export function TextView({
   }
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)} data-testid="preview-text">
+      {state.encoding.startsWith("UTF-16") && (
+        <div className="border-b bg-muted/40 px-3 py-1 text-[10px] text-muted-foreground">
+          已按 {state.encoding} 解码（Windows 记事本 / PowerShell 写出的配置常见编码）
+        </div>
+      )}
       {state.lossy && (
         <div className="border-b bg-muted/40 px-3 py-1 text-[10px] text-muted-foreground">
-          文件含非 UTF-8 字节，按近似字符显示
+          文件含非 {state.encoding} 字节，按近似字符显示
         </div>
       )}
       {state.truncated && (

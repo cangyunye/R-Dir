@@ -74,6 +74,8 @@ pub struct TextFileContent {
     pub is_temp: bool,
     pub lossy: bool,
     pub text: String,
+    /// v0.30 实际采用的解码（UTF-8 / UTF-16LE / UTF-16BE / …），预览栏据此给提示
+    pub encoding: String,
 }
 
 /// 按行拆分：\r\n 归一为 \n 的内容；结尾有无换行符视为相同。
@@ -91,45 +93,130 @@ pub fn split_lines(s: &str) -> Vec<String> {
     lines
 }
 
-/// 读取本地文件为文本（二进制 / 大小守卫）。返回 (文本, 是否 lossy, 字节数)。
-/// encoding 为 None / "utf-8" 时走 UTF-8；否则按 WhatWG 标签（gbk / big5 / shift_jis …）
-/// 经 encoding_rs 解码，无效字节替换为 U+FFFD 并置 lossy（v0.21.1 编码切换）。
-pub fn read_local_text(path: &Path, encoding: Option<&str>) -> Result<(String, bool, u64), String> {
+/// 本地文本读取结果（预览 / 比较共用）。
+pub struct LocalText {
+    pub text: String,
+    pub lossy: bool,
+    pub bytes: u64,
+    /// 实际采用的解码：自动探测得到的 "UTF-8" / "UTF-16LE" / "UTF-16BE"，或显式标签对应的规范名
+    pub encoding: &'static str,
+}
+
+const BINARY_ERR: &str = "疑似二进制文件，不支持按文本读取";
+const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+
+/// 读取本地文件为文本（二进制 / 大小守卫）。
+/// encoding 为 None 时自动探测：UTF-8 BOM 去除；UTF-16 LE/BE 按 BOM 识别，无 BOM 时按
+/// 「NUL 几乎只落在同一奇偶位」启发识别（Windows 记事本 / PowerShell / regedit 写出的 ini、reg
+/// 常为 UTF-16，v0.30 之前一律被 NUL 探测判成二进制）；其余按 UTF-8，非法字节替换为 U+FFFD
+/// 并置 lossy。"utf-8" 显式指定时只去 BOM、不嗅探 UTF-16；其他 WhatWG 标签（gbk / big5 /
+/// shift_jis …）经 encoding_rs 解码，不做 BOM 嗅探（尊重用户显式选择），仅移除匹配的 BOM。
+pub fn read_local_text_full(path: &Path, encoding: Option<&str>) -> Result<LocalText, String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("读取失败：{e}"))?;
     if meta.is_dir() {
-        return Err("路径是目录，无法按文本比较".into());
+        return Err("路径是目录，无法按文本读取".into());
     }
     let bytes_len = meta.len();
     if bytes_len > MAX_TEXT_BYTES {
         return Err(format!(
-            "文件超过 {}MB 上限（实际 {:.1}MB），不做文本比较",
+            "文件超过 {}MB 上限（实际 {:.1}MB），不按文本读取",
             MAX_TEXT_BYTES >> 20,
             bytes_len as f64 / (1024.0 * 1024.0)
         ));
     }
     let bytes = std::fs::read(path).map_err(|e| format!("读取失败：{e}"))?;
-    // 二进制探测：前 8KB 含 NUL 视为二进制（与 git 的 heuristic 一致的轻量版）
-    let probe_len = bytes.len().min(8192);
-    if bytes[..probe_len].contains(&0u8) {
-        return Err("疑似二进制文件，不支持文本比较".into());
-    }
-    let is_utf8 = encoding
-        .map(|e| e.is_empty() || e.eq_ignore_ascii_case("utf-8") || e.eq_ignore_ascii_case("utf8"))
-        .unwrap_or(true);
-    if is_utf8 {
-        // UTF-8 快路径零拷贝（from_utf8 取回所有权）；仅非法字节才 lossy 复制一份
-        match String::from_utf8(bytes) {
-            Ok(text) => Ok((text, false, bytes_len)),
-            Err(e) => Ok((String::from_utf8_lossy(e.as_bytes()).to_string(), true, bytes_len)),
-        }
+    let label = encoding.map(str::trim).unwrap_or("");
+    let explicit_utf8 = label.eq_ignore_ascii_case("utf-8") || label.eq_ignore_ascii_case("utf8");
+    let enc = if label.is_empty() {
+        detect_utf16(&bytes)
+    } else if explicit_utf8 {
+        None
     } else {
-        let label = encoding.unwrap_or_default();
-        let enc = encoding_rs::Encoding::for_label(label.as_bytes())
-            .ok_or_else(|| format!("不支持的编码：{label}"))?;
-        // decode_with_bom_removal：不做 BOM 嗅探（尊重用户显式选择），仅移除匹配的 BOM
+        Some(
+            encoding_rs::Encoding::for_label(label.as_bytes())
+                .ok_or_else(|| format!("不支持的编码：{label}"))?,
+        )
+    };
+    if let Some(enc) = enc {
+        // UTF-16 文本天然含 NUL，二进制探测只对单字节/多字节编码有效
+        if enc != encoding_rs::UTF_16LE && enc != encoding_rs::UTF_16BE && looks_binary(&bytes) {
+            return Err(BINARY_ERR.into());
+        }
         let (cow, had_errors) = enc.decode_with_bom_removal(&bytes);
-        Ok((cow.into_owned(), had_errors, bytes_len))
+        return Ok(LocalText {
+            text: cow.into_owned(),
+            lossy: had_errors,
+            bytes: bytes_len,
+            encoding: enc.name(),
+        });
     }
+    if looks_binary(&bytes) {
+        return Err(BINARY_ERR.into());
+    }
+    let mut bytes = bytes;
+    if bytes.starts_with(UTF8_BOM) {
+        bytes.drain(..UTF8_BOM.len());
+    }
+    // UTF-8 快路径零拷贝（from_utf8 取回所有权）；仅非法字节才 lossy 复制一份
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(LocalText {
+            text,
+            lossy: false,
+            bytes: bytes_len,
+            encoding: "UTF-8",
+        }),
+        Err(e) => Ok(LocalText {
+            text: String::from_utf8_lossy(e.as_bytes()).to_string(),
+            lossy: true,
+            bytes: bytes_len,
+            encoding: "UTF-8",
+        }),
+    }
+}
+
+/// 读取本地文件为文本，返回 (文本, 是否 lossy, 字节数)。比较链路沿用的精简形态。
+pub fn read_local_text(path: &Path, encoding: Option<&str>) -> Result<(String, bool, u64), String> {
+    read_local_text_full(path, encoding).map(|t| (t.text, t.lossy, t.bytes))
+}
+
+/// 二进制探测：前 8KB 含 NUL 视为二进制（与 git 的 heuristic 一致的轻量版）
+fn looks_binary(bytes: &[u8]) -> bool {
+    bytes[..bytes.len().min(8192)].contains(&0u8)
+}
+
+/// UTF-16 识别：BOM 优先；无 BOM 时要求偶数长度，且探测窗内 NUL 集中在同一奇偶位
+/// （ASCII 为主的 UTF-16 文本：高字节位 ≥30% 为 0、低字节位 ≤5% 为 0；CJK 为主的无 BOM
+/// UTF-16 命中不了这条，但 Windows 工具写出的 UTF-16 几乎都带 BOM）。
+fn detect_utf16(bytes: &[u8]) -> Option<&'static encoding_rs::Encoding> {
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        return Some(encoding_rs::UTF_16LE);
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        return Some(encoding_rs::UTF_16BE);
+    }
+    if bytes.len() < 4 || bytes.len() % 2 != 0 {
+        return None;
+    }
+    let probe = &bytes[..bytes.len().min(8192)];
+    let pairs = probe.len() / 2;
+    let (mut zero_even, mut zero_odd) = (0usize, 0usize);
+    for (i, b) in probe.iter().enumerate() {
+        if *b == 0 {
+            if i % 2 == 0 {
+                zero_even += 1;
+            } else {
+                zero_odd += 1;
+            }
+        }
+    }
+    let dominant = |hi: usize, lo: usize| hi * 10 >= pairs * 3 && lo * 20 <= pairs;
+    if dominant(zero_odd, zero_even) {
+        return Some(encoding_rs::UTF_16LE);
+    }
+    if dominant(zero_even, zero_odd) {
+        return Some(encoding_rs::UTF_16BE);
+    }
+    None
 }
 
 /// 行尾格式探测（v0.21.1 换行符差异提示）："lf" | "crlf" | "mixed" | "none"。
@@ -527,6 +614,72 @@ mod tests {
         assert_eq!(text, "你好\n");
         // 不支持的编码标签 → 报错
         assert!(read_local_text(&f, Some("no-such-encoding")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_local_text_utf16_autodetect() {
+        let dir = std::env::temp_dir().join("r-dir-text-diff-utf16-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        // UTF-16LE + BOM（Windows 记事本 / regedit 导出的典型形态）：此前被 NUL 探测判成二进制
+        let mut le = vec![0xFF, 0xFE];
+        for u in "[app]\r\nname=你好\r\n".encode_utf16() {
+            le.extend_from_slice(&u.to_le_bytes());
+        }
+        let f = dir.join("le.ini");
+        std::fs::write(&f, &le).unwrap();
+        let t = read_local_text_full(&f, None).unwrap();
+        assert_eq!(t.text, "[app]\r\nname=你好\r\n");
+        assert!(!t.lossy);
+        assert_eq!(t.encoding, "UTF-16LE");
+        // UTF-16BE + BOM
+        let mut be = vec![0xFE, 0xFF];
+        for u in "key=value\n".encode_utf16() {
+            be.extend_from_slice(&u.to_be_bytes());
+        }
+        let f = dir.join("be.txt");
+        std::fs::write(&f, &be).unwrap();
+        let t = read_local_text_full(&f, None).unwrap();
+        assert_eq!(t.text, "key=value\n");
+        assert_eq!(t.encoding, "UTF-16BE");
+        // 无 BOM 的 ASCII 为主 UTF-16LE：按 NUL 奇偶位分布识别
+        let mut nobom = Vec::new();
+        for u in "[section]\r\nkey=value\r\n".encode_utf16() {
+            nobom.extend_from_slice(&u.to_le_bytes());
+        }
+        let f = dir.join("nobom.ini");
+        std::fs::write(&f, &nobom).unwrap();
+        let t = read_local_text_full(&f, None).unwrap();
+        assert_eq!(t.text, "[section]\r\nkey=value\r\n");
+        assert_eq!(t.encoding, "UTF-16LE");
+        // 显式 utf-16le 标签：不再被 NUL 探测拦下
+        let (text, lossy, _) = read_local_text(&f, Some("utf-16le")).unwrap();
+        assert_eq!(text, "[section]\r\nkey=value\r\n");
+        assert!(!lossy);
+        // 真二进制（PNG 头：NUL 散布在奇偶位、占比低）仍判二进制
+        let f = dir.join("p.png");
+        std::fs::write(
+            &f,
+            [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52],
+        )
+        .unwrap();
+        assert!(read_local_text(&f, None).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_local_text_strips_utf8_bom() {
+        let dir = std::env::temp_dir().join("r-dir-text-diff-bom-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("bom.txt");
+        std::fs::write(&f, [0xEF, 0xBB, 0xBF, b'a', b'b', b'\n']).unwrap();
+        let t = read_local_text_full(&f, None).unwrap();
+        assert_eq!(t.text, "ab\n");
+        assert!(!t.lossy);
+        assert_eq!(t.encoding, "UTF-8");
+        // 显式 utf-8 同样去 BOM
+        let (text, _, _) = read_local_text(&f, Some("utf-8")).unwrap();
+        assert_eq!(text, "ab\n");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

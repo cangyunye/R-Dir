@@ -51,7 +51,9 @@ export const THUMBNAIL_KINDS: ReadonlySet<FileKind> = new Set<FileKind>([
 const IMAGE_EXTS = new Set([
   "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "heic", "avif", "ico", "tiff",
 ]);
-const VIDEO_EXTS = new Set(["mp4", "mkv", "mov", "avi", "webm", "flv", "m4v", "wmv", "ts"]);
+// v0.30：去掉 "ts"（MPEG-TS）——它同时列在 CODE_EXTS（TypeScript），此前因匹配顺序被判成视频，
+// 项目目录里的 .ts 源码全显示视频图标且无法文本预览；MPEG-TS 片段按 code 兜底影响可忽略
+const VIDEO_EXTS = new Set(["mp4", "mkv", "mov", "avi", "webm", "flv", "m4v", "wmv"]);
 const AUDIO_EXTS = new Set(["mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "wma"]);
 const ARCHIVE_EXTS = new Set(["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz"]);
 const CODE_EXTS = new Set([

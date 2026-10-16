@@ -802,6 +802,7 @@ async fn diff_text_files(
 }
 
 /// v0.19 读取文本文件内容（.patch / .diff「查看 Diff」解析用；支持 SFTP/HTTP 路径）。
+/// v0.28 起也是预览栏文本预览的读取口；v0.30 返回实际解码（UTF-16 自动识别）。
 #[tauri::command]
 async fn read_text_file(
     state: tauri::State<'_, AppState>,
@@ -809,15 +810,16 @@ async fn read_text_file(
 ) -> Result<text_diff::TextFileContent, String> {
     let (local, temp) = resolve_text_side(&state, &path).await?;
     tauri::async_runtime::spawn_blocking(move || {
-        let result = text_diff::read_local_text(std::path::Path::new(&local), None).map(
-            |(text, lossy, _)| text_diff::TextFileContent {
+        let result = text_diff::read_local_text_full(std::path::Path::new(&local), None).map(|t| {
+            text_diff::TextFileContent {
                 path,
                 local_path: local.clone(),
                 is_temp: temp,
-                lossy,
-                text,
-            },
-        );
+                lossy: t.lossy,
+                text: t.text,
+                encoding: t.encoding.to_string(),
+            }
+        });
         if temp {
             let _ = std::fs::remove_file(&local);
         }

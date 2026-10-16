@@ -9,7 +9,13 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 - **窗格布局拖动交换：拖窗格头路径条到另一窗格，快速互换两者位置**。按住任意窗格顶部的路径头（面包屑区，视图切换/关闭钮除外）拖动——拖动中源窗格头半透明、原生拖影跟随光标；悬停到目标窗格时整格主色描边 + 「⇄ 交换到此处」徽标（投放光标为 move），松手即对调两窗格在布局树中的位置，路径/选中/历史等内容跟随各自窗格整体对调，活动窗格与标签标题不变。拖到空白/原窗格不动作；Esc 取消、拖出窗口释放均安全复位。实现走 HTML5 DnD 独立标记类型（`application/x-rdir-pane-swap`），与既有文件拖拽在 window 级监听里分流互不干扰；布局树交换在 paneTree 新增单趟遍历的 `swapPanes`（先 replacePane(a→b) 再 replacePane(b→a) 会两处同换成一个 pane，已用单测锁死）。
 - **修复：双击标签栏空白处「放大后马上又缩小」**。标签栏兼任标题栏的拖拽区此前同时挂了 React `onDoubleClick → toggleMaximize` 和 Tauri 注入的 drag-region 原生双击处理（macOS 在 mouseup / Windows-Linux 在 mousedown 调 `internal_toggle_maximize`），一次双击切换两次 = 放大立刻还原。现移除 React 侧处理，双击最大化/还原完全交给 Tauri 原生（与系统标题栏行为一致，macOS 还获得「双击后移动鼠标可取消最大化」的系统手势）；标签双击重命名、拖拽区移动窗口不受影响。e2e 改为回归守卫：双击空白处前端侧必须零窗口命令。
-- 测试：前端 471 项（新增 swapPanes 互换/嵌套/幂等/不存在 id 不改动 5 项，470 通过；「版本号与最新 git tag 一致」一项按设计待打 v0.30.0 tag 后通过）；e2e 121 通过（+2：窗格交换悬停徽标+布局对调、拖回原窗格不动作；titlebar 双击断言改为防重复回归）；Rust 无改动。
+- **预览栏：简单文本格式全覆盖（ini 及同族 / 代码与数据格式 / 点文件）**。此前文本预览只放行 filekind 的 `text` 类 7 个扩展名，`code` 类（json / yaml / toml / xml / html / css / sh / py / rs / sql …）一律显示「此类型暂不支持预览」。现：
+  - **code 类全部按文本预览**；另补 filekind 未归类的纯文本扩展名——ini 同族配置（cfg / config / cnf / properties / reg / plist / desktop / service / editorconfig …）、数据格式（csv / tsv / jsonc / json5 / jsonl / ipynb / proto / graphql / tf / hcl / csproj / sln …）、脚本（bat / cmd / ps1 / vbs / pl / r / jl / scala / groovy / cs …）、字幕歌词（srt / vtt / ass / lrc）、构建与版本（mk / cmake / lock / sum / mod / diff / patch / pem …）、文档标记（rst / adoc / tex / nfo …）。csv/tsv 按原文预览（比 QuickLook 缩略图可读）。
+  - **点文件与无扩展名约定文件按完整文件名匹配**：`.gitignore` / `.gitattributes` / `.editorconfig` / `.env` 与 `.env.*` / `.bashrc` / `.zshrc` / `.npmrc` / Makefile / Dockerfile / LICENSE / README / CHANGELOG 等。根因：后端 `Path::extension()` 对点文件返回空串，原 `TEXT_EXTS` 里的 `env` / `gitignore` 实际永远匹配不上。未知点文件（如 `.DS_Store`）不猜，仍走信息卡。
+  - **修复 `.ts` 被判成视频**：`ts` 同时列在 VIDEO_EXTS（MPEG-TS）与 CODE_EXTS，因匹配顺序先命中视频——项目里的 TypeScript 源码全显示视频图标且不可预览。现从视频集合移除，图标与预览一致为 code。
+  - **修复 Windows 下 ini / reg 等 UTF-16 文本「文本读取失败」**。记事本 / PowerShell / regedit 写出的配置常为 UTF-16 LE（每个 ASCII 字符带一个 0x00 高字节），后端「前 8KB 含 NUL 即二进制」探测把它们全部拒掉。现 `read_local_text` 自动识别 UTF-16 LE/BE（BOM 优先；无 BOM 时按 NUL 集中在同一奇偶位的启发识别，ASCII 为主的配置文件可命中），UTF-8 BOM 也会去除不再显示为首字符；显式选择 utf-16 编码时同样不再被 NUL 探测拦下（文本比较对话框受益）。`read_text_file` 新增 `encoding` 字段，预览栏对 UTF-16 文件给出「已按 UTF-16LE 解码」提示；lossy 提示文案随实际编码变化。真二进制（如 PNG 头）仍判二进制。
+  - e2e 桩的扩展名规则同步对齐后端（小写、点文件为空串），避免桩与真实后端行为不一致掩盖问题。
+- 测试：前端 475 项（+9：swapPanes 5 项；预览 code 类 / 补充扩展名 / 点文件与约定名 / isTextLike 边界 4 项；474 通过，「版本号与最新 git tag 一致」一项按设计待打 v0.30.0 tag 后通过）；e2e 122 通过（+3：窗格交换悬停徽标+布局对调、拖回原窗格不动作、简单文本格式全覆盖 ini/json/点文件/Makefile/.env.local 出文本 + bin 信息卡 + 图文浏览收录数；titlebar 双击断言改为防重复回归）；Rust 134 通过（+2：UTF-16 LE/BE BOM 与无 BOM 启发识别 + 显式 utf-16le 不被二进制探测拦下 + PNG 头仍判二进制、UTF-8 BOM 去除）。
 - 版本号 0.29.1 → 0.30.0：同步 package.json、src-tauri/tauri.conf.json、src-tauri/Cargo.toml、src-tauri/Cargo.lock 四处。
 
 ## v0.29.1 (2026-10-16)

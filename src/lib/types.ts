@@ -322,13 +322,15 @@ export interface TextDiffOutcome {
   coarse: boolean;
 }
 
-/** 读取文本文件（.patch/.diff「查看 Diff」解析用） */
+/** 读取文本文件（.patch/.diff「查看 Diff」解析用；v0.28 起也是预览栏文本读取口） */
 export interface TextFileContent {
   path: string;
   localPath: string;
   isTemp: boolean;
   lossy: boolean;
   text: string;
+  /** v0.30 实际采用的解码（"UTF-8" / "UTF-16LE" / "UTF-16BE" / …）；旧桩可能缺省 */
+  encoding?: string;
 }
 
 // ---- v0.7 窗口分享 ----

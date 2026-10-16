@@ -21,6 +21,12 @@ export async function installTauriMock(page: Page): Promise<void> {
     const TEXTS: Record<string, string> = {
       [`${HOME}/Notes.txt`]: "R-Dir 预览文本第一行\n第二行",
       [`${HOME}/Documents/readme.md`]: "# readme",
+      // v0.30 简单文本格式全覆盖夹具
+      [`${HOME}/Documents/configs/app.ini`]: "[app]\nname=R-Dir\n",
+      [`${HOME}/Documents/configs/settings.json`]: '{\n  "name": "r-dir"\n}\n',
+      [`${HOME}/Documents/configs/.gitignore`]: "node_modules\ndist\n",
+      [`${HOME}/Documents/configs/Makefile`]: "all:\n\techo built\n",
+      [`${HOME}/Documents/configs/.env.local`]: "RDIR_MODE=test\n",
     };
 
     type Fake = { name: string; dir?: boolean; size?: number; symlink?: boolean };
@@ -48,6 +54,7 @@ export async function installTauriMock(page: Page): Promise<void> {
         // v0.18 同步比对夹具：syncA/syncB 结构对齐，B 侧少 missing/onlyA.txt
         { name: "syncA", dir: true },
         { name: "syncB", dir: true },
+        { name: "configs", dir: true },
       ],
       [`${HOME}/Documents/syncA`]: [
         { name: "common", dir: true },
@@ -61,7 +68,17 @@ export async function installTauriMock(page: Page): Promise<void> {
       [`${HOME}/Documents/syncA/missing`]: [{ name: "x.txt", size: 1 }],
       [`${HOME}/Documents/syncB`]: [{ name: "common", dir: true }],
       [`${HOME}/Documents/syncB/common`]: [{ name: "same.txt", size: 5 }],
-      [`${HOME}/Projects`]: [{ name: "app.ts", size: 900 }],
+      // v0.30 简单文本格式夹具：ini 同族 / json / 点文件 / Makefile + 二进制对照
+      [`${HOME}/Documents/configs`]: [
+        { name: "app.ini", size: 18 },
+        { name: "settings.json", size: 22 },
+        { name: ".gitignore", size: 18 },
+        { name: "Makefile", size: 20 },
+        { name: ".env.local", size: 14 },
+        { name: "build.bin", size: 77 },
+      ],
+      // v0.30 code 类（.ts）已可文本预览：「无可预览条目」夹具换 exe
+      [`${HOME}/Projects`]: [{ name: "app.exe", size: 900 }],
       "sftp://u@127.0.0.1:22/remote": [
         { name: "deploy.sh", size: 512 },
         { name: "logs", dir: true },
@@ -102,7 +119,13 @@ export async function installTauriMock(page: Page): Promise<void> {
         hasSecret: false,
         connected: false,
       },
-    ];    const entry = (dir: string, f: Fake) => ({
+    ];
+    // 扩展名规则对齐后端 Path::extension()：小写、不带点；点文件（.gitignore）与无点文件名为空串
+    const extOf = (name: string) => {
+      const dot = name.lastIndexOf(".");
+      return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+    };
+    const entry = (dir: string, f: Fake) => ({
       name: f.name,
       path: `${dir}/${f.name}`,
       is_dir: !!f.dir,
@@ -111,7 +134,7 @@ export async function installTauriMock(page: Page): Promise<void> {
       modified: NOW,
       created: NOW,
       permissions: f.dir ? "drwxr-xr-x" : "-rw-r--r--",
-      extension: f.dir ? "" : (f.name.split(".").pop() ?? ""),
+      extension: f.dir ? "" : extOf(f.name),
     });
 
     const parentOf = (p: string) => {
@@ -146,7 +169,7 @@ export async function installTauriMock(page: Page): Promise<void> {
       // v0.28 文本预览：虚拟 FS 内置内容（只覆盖夹具文件，其余回空串）
       read_text_file: (a) => {
         const p = String(a.path ?? "");
-        return { path: p, localPath: p, isTemp: false, lossy: false, text: TEXTS[p] ?? "" };
+        return { path: p, localPath: p, isTemp: false, lossy: false, text: TEXTS[p] ?? "", encoding: "UTF-8" };
       },
       // 未知路径报错（与真实后端一致）：同步浏览的镜像探测依赖"列目录失败 = 对侧无此目录"
       list_dir: (a) => {
