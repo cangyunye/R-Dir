@@ -9,6 +9,7 @@ import {
   isSinglePane,
   makeSplit,
   resetRatios,
+  swapPanes,
 } from "./paneTree";
 import type { PaneNode } from "./types";
 
@@ -119,5 +120,30 @@ describe("resetRatios", () => {
       return node.ratio === 0.5 && check(node.a) && check(node.b);
     }
     expect(check(result)).toBe(true);
+  });
+});
+
+describe("swapPanes", () => {
+  it("互换两个叶子的位置", () => {
+    const result = swapPanes(makeTree(), 1, 3);
+    expect(collectPaneIds(result)).toEqual([3, 2, 1]);
+  });
+  it("互换嵌套分支中的叶子", () => {
+    const result = swapPanes(makeTree(), 2, 3);
+    expect(collectPaneIds(result)).toEqual([1, 3, 2]);
+  });
+  it("每个 paneId 仍只出现一次（不会两处同换成一个 pane）", () => {
+    const result = swapPanes(makeTree(), 1, 2);
+    const ids = collectPaneIds(result);
+    expect(ids).toEqual([2, 1, 3]);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+  it("自身交换返回等价树", () => {
+    const tree = makeTree();
+    expect(swapPanes(tree, 1, 1)).toEqual(tree);
+  });
+  it("树中不存在的 id 不改动", () => {
+    const tree = makeTree();
+    expect(swapPanes(tree, 1, 99)).toEqual(tree);
   });
 });

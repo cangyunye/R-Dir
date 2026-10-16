@@ -59,9 +59,3 @@ export function WindowControls() {
     </div>
   );
 }
-
-/** 浏览器环境安全的最大化/还原切换（无 Tauri internals 时静默忽略），供标签栏双击空白处复用 */
-export function toggleWindowMaximize() {
-  if (!("__TAURI_INTERNALS__" in window)) return;
-  void getCurrentWindow().toggleMaximize().catch(() => {});
-}

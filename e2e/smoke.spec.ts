@@ -1176,3 +1176,90 @@ test.describe("30. 常用工具条（v0.29.0）", () => {
     void dialog;
   });
 });
+
+test.describe("31. 窗格位置交换（v0.30 拖窗格头）", () => {
+  const DOC_ROW = `[data-path="${HOME}/Documents"]`;
+
+  // 合成事件驱动应用的 dragstart → dragover/drop → dragend 链（CDP 拖拽模拟
+  // 在多次拖拽后不稳定，与 SFTP 拖拽上传用例同一套路）
+  const dragHeadTo = (
+    page: import("@playwright/test").Page,
+    fromIdx: number,
+    toIdx: number,
+  ) =>
+    page.evaluate(
+      ({ fromIdx, toIdx }) => {
+        const heads = document.querySelectorAll("[data-pane-head]");
+        const src = heads[fromIdx]!;
+        const dst = heads[toIdx]!;
+        const dt = new DataTransfer();
+        src.dispatchEvent(
+          new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }),
+        );
+        const r = dst.getBoundingClientRect();
+        const opts = {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: dt,
+          clientX: r.left + r.width / 2,
+          clientY: r.top + r.height / 2,
+        };
+        window.dispatchEvent(new DragEvent("dragover", opts));
+        window.dispatchEvent(new DragEvent("drop", opts));
+        src.dispatchEvent(new DragEvent("dragend", opts));
+      },
+      { fromIdx, toIdx },
+    );
+
+  test("S1 拖左窗格头到右窗格：悬停显示交换徽标，松手两窗格布局对调", async ({ page }) => {
+    await page.locator(DOC_ROW).click();
+    await page.keyboard.press(`${MOD}+Backslash`);
+    await expect(page.locator(DOC_ROW)).toHaveCount(2);
+    // 左窗格进 Documents，右窗格留在 HOME：面包屑可区分两窗格
+    await page.locator("[data-pane-id]").first().locator(DOC_ROW).dblclick();
+    const heads = page.locator("[data-pane-head]");
+    await expect(heads).toHaveCount(2);
+    await expect(heads.nth(0).locator("button", { hasText: "Documents" })).toBeVisible();
+    await expect(heads.nth(1).locator("button", { hasText: "Documents" })).toHaveCount(0);
+
+    // 悬停阶段：目标窗格出现「交换到此处」徽标（拖动显示）
+    await page.evaluate(() => {
+      const heads = document.querySelectorAll("[data-pane-head]");
+      const src = heads[0]!;
+      const dst = heads[1]!;
+      const dt = new DataTransfer();
+      src.dispatchEvent(
+        new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }),
+      );
+      const r = dst.getBoundingClientRect();
+      window.dispatchEvent(
+        new DragEvent("dragover", {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: dt,
+          clientX: r.left + r.width / 2,
+          clientY: r.top + r.height / 2,
+        }),
+      );
+    });
+    await expect(page.getByText("交换到此处")).toBeVisible();
+
+    // 松手：布局对调，内容跟随各自窗格；徽标随 dragend 消失
+    await dragHeadTo(page, 0, 1);
+    await expect(heads.nth(0).locator("button", { hasText: "Documents" })).toHaveCount(0);
+    await expect(heads.nth(1).locator("button", { hasText: "Documents" })).toBeVisible();
+    await expect(
+      page.locator("[data-pane-id]").first().locator(`[data-path="${HOME}/Notes.txt"]`),
+    ).toBeVisible();
+    await expect(page.getByText("交换到此处")).toHaveCount(0);
+  });
+
+  test("S2 拖到原窗格自身不交换", async ({ page }) => {
+    await page.locator(DOC_ROW).click();
+    await page.keyboard.press(`${MOD}+Backslash`);
+    await expect(page.locator(DOC_ROW)).toHaveCount(2);
+    await dragHeadTo(page, 0, 0);
+    await expect(page.locator(DOC_ROW)).toHaveCount(2);
+    await expect(page.getByText("交换到此处")).toHaveCount(0);
+  });
+});

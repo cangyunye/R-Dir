@@ -3,7 +3,7 @@ import { List, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { toggleWindowMaximize, WindowControls } from "@/components/WindowControls";
+import { WindowControls } from "@/components/WindowControls";
 
 export interface TabItem {
   id: number;
@@ -233,19 +233,15 @@ export function TabBar({
       // 空白处右键：接管为全局标签菜单，屏蔽 WebView 默认菜单
       onContextMenu={onBlankContextMenu}
       // 无边框窗口（decorations:false）：标签栏兼任标题栏，空白处拖动移动窗口、
-      // 双击最大化/还原。target 检查避免与标签双击重命名冲突（拖拽区按 target 判定）。
-      onDoubleClick={(e) => {
-        if (e.target === e.currentTarget) toggleWindowMaximize();
-      }}
+      // 双击最大化/还原。两者都由 Tauri 注入的 drag-region 脚本原生处理
+      // （macOS mouseup / Win-Linux mousedown，见 tauri window/plugin.rs）——
+      // 这里不要再挂 React onDoubleClick，否则与原生各切换一次 = 放大后立刻还原。
       className="relative flex items-end gap-0.5 border-b bg-sidebar px-1.5 pt-1 select-none"
     >
       {/* v0.22.2：标签区可收缩（Excel 式）——空间不足时标题截断为省略号而不挤走
           右侧按钮；全部标签经「全部标签」下拉访问。空白处仍属标题栏拖动区 */}
       <div
         data-tauri-drag-region
-        onDoubleClick={(e) => {
-          if (e.target === e.currentTarget) toggleWindowMaximize();
-        }}
         className="flex min-w-0 flex-1 items-end overflow-hidden"
       >
         {tabs.map((tab, idx) => {

@@ -28,6 +28,28 @@ export function replacePane(
   };
 }
 
+/** 树中是否存在指定 pane 叶子 */
+export function hasPaneId(node: PaneNode, paneId: number): boolean {
+  if (node.type === "pane") return node.paneId === paneId;
+  return hasPaneId(node.a, paneId) || hasPaneId(node.b, paneId);
+}
+
+/** 互换树中两个 pane 叶子的位置（内容跟随各自 paneId 不变，仅布局对调）。
+ *  单趟遍历完成——先 replacePane(a→b) 再 replacePane(b→a) 会命中两处同名叶子，
+ *  把两个位置都换成同一个 pane。任一 id 不在树中（或 a===b）时原样返回。 */
+export function swapPanes(node: PaneNode, a: number, b: number): PaneNode {
+  if (a === b || !hasPaneId(node, a) || !hasPaneId(node, b)) return node;
+  const walk = (n: PaneNode): PaneNode => {
+    if (n.type === "pane") {
+      if (n.paneId === a) return { ...n, paneId: b };
+      if (n.paneId === b) return { ...n, paneId: a };
+      return n;
+    }
+    return { ...n, a: walk(n.a), b: walk(n.b) };
+  };
+  return walk(node);
+}
+
 /** 按 split id 更新分割比例，返回新根 */
 export function setSplitRatio(
   node: PaneNode,

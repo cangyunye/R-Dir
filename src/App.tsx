@@ -129,6 +129,7 @@ import {
   replacePane,
   resetRatios,
   setSplitRatio,
+  swapPanes,
 } from "@/lib/paneTree";
 import { ACTIONS, bindingOf, findAction, isMac, keyEventString } from "@/lib/keymap";
 import { getNativeDragOut, probeNativeDragOut, setNativeDragOut } from "@/lib/native-drag";
@@ -256,7 +257,12 @@ function tagTitle(tagId: string, names?: TagNames): string {
 import { TabBar } from "@/components/TabBar";
 import { Toolbar } from "@/components/Toolbar";
 import { Sidebar } from "@/components/Sidebar";
-import { SplitView, type PaneHandlers } from "@/components/SplitView";
+import {
+  SplitView,
+  PANE_SWAP_DND_TYPE,
+  type PaneHandlers,
+  type PaneSwapDrag,
+} from "@/components/SplitView";
 import { SearchPanel } from "@/components/SearchPanel";
 import { StatusBar } from "@/components/StatusBar";
 import { SettingsDialog } from "@/components/SettingsDialog";
@@ -382,6 +388,9 @@ export default function App() {
     targetPaneId: number;
     op: "copy" | "move";
   } | null>(null);
+  /** v0.30 窗格交换拖拽会话（拖窗格头到另一窗格互换布局位置）：
+   *  source=拖动中的窗格，target=悬停目标（驱动 SplitView 的高亮/徽标） */
+  const [paneSwap, setPaneSwap] = useState<PaneSwapDrag | null>(null);
   /** 撤销 / 重做栈 */
   const [undoStack, setUndoStack] = useState<FileOp[]>([]);
   const [redoStack, setRedoStack] = useState<FileOp[]>([]);
@@ -2854,24 +2863,67 @@ useEffect(() => {
   useEffect(() => {
     void probeNativeDragOut();
   }, []);
+
+  /** v0.30 拖窗格头到另一窗格：互换两者在布局树中的位置。
+   *  只换树上的叶子，窗格状态（路径/选中/历史）跟随 paneId 不动——
+   *  两个窗格的内容随位置对调，活动窗格与标签标题不受影响。 */
+  const swapPanePositions = useCallback((a: number, b: number) => {
+    if (a === b) return;
+    setTabs((ts) =>
+      ts.map((t) => (t.panes[a] && t.panes[b] ? { ...t, root: swapPanes(t.root, a, b) } : t)),
+    );
+  }, []);
+
   const droppedAtRef = useRef(0);
   useEffect(() => {
     const DND_TYPE = "application/x-rdir-dnd";
     const isInternal = (e: DragEvent) => !!e.dataTransfer?.types.includes(DND_TYPE);
+    // v0.30 窗格交换拖拽（拖窗格头到另一窗格）：独立标记类型，与文件拖拽分流
+    const isPaneSwap = (e: DragEvent) => !!e.dataTransfer?.types.includes(PANE_SWAP_DND_TYPE);
     const paneAt = (x: number, y: number) => {
       const el = document.elementFromPoint(x, y) as HTMLElement | null;
-      const paneEl = el?.closest?.("[data-pane-id]") as HTMLElement | null;
-      return paneEl ? Number(paneEl.dataset.paneId) : null;
+      // 内容区命中 FileList/IconGrid 根（data-pane-id），窗格头区域命中
+      // PaneView 根（data-pane-swap-root）——两者都按窗格 id 归一
+      const paneEl = el?.closest?.("[data-pane-id],[data-pane-swap-root]") as HTMLElement | null;
+      if (!paneEl) return null;
+      const id = Number(paneEl.dataset.paneId ?? paneEl.dataset.paneSwapRoot);
+      return Number.isNaN(id) ? null : id;
     };
     let seenInternal = false;
     let leftWindow = false;
     let lastTarget: number | null = null;
     let lastOp: "copy" | "move" = "copy";
     let lastPos = { x: 0, y: 0 };
+    let lastSwapTarget: number | null = null;
+    const finishSwap = () => {
+      setPaneSwap(null);
+      lastSwapTarget = null;
+    };
+    // 拖动起点在窗格头上 → 开启交换会话（视图切换/关闭钮已在组件内 preventDefault，
+    // 那些拖拽不会真正发起，defaultPrevented 直接跳过）
+    const onDragStart = (e: DragEvent) => {
+      if (e.defaultPrevented) return;
+      const head = (e.target as HTMLElement | null)?.closest?.(
+        "[data-pane-head]",
+      ) as HTMLElement | null;
+      if (!head) return;
+      const paneId = Number(head.dataset.paneHead);
+      if (!Number.isNaN(paneId)) setPaneSwap({ source: paneId, target: null });
+    };
     const onDragEnter = () => {
       leftWindow = false;
     };
     const onDragOver = (e: DragEvent) => {
+      if (isPaneSwap(e)) {
+        e.preventDefault(); // 投放光标从 🚫 变为 move
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        const target = paneAt(e.clientX, e.clientY);
+        if (target !== lastSwapTarget) {
+          lastSwapTarget = target;
+          setPaneSwap((prev) => (prev ? { ...prev, target } : prev));
+        }
+        return;
+      }
       const native = getNativeDragOut();
       if (native) {
         if (!e.dataTransfer?.types.includes("Files")) return;
@@ -2912,6 +2964,16 @@ useEffect(() => {
       lastTarget = null;
     };
     const onDrop = (e: DragEvent) => {
+      if (isPaneSwap(e)) {
+        e.preventDefault();
+        const source = Number(e.dataTransfer?.getData(PANE_SWAP_DND_TYPE));
+        const target = paneAt(e.clientX, e.clientY);
+        finishSwap();
+        if (!Number.isNaN(source) && target !== null && target !== source) {
+          swapPanePositions(source, target);
+        }
+        return;
+      }
       const native = getNativeDragOut();
       if (native) {
         e.preventDefault();
@@ -2940,6 +3002,8 @@ useEffect(() => {
       }
     };
     const onDragEnd = (e: DragEvent) => {
+      // 窗格交换拖拽收尾（松手 / Esc 取消 / 拖出窗口释放都会触发 dragend）
+      finishSwap();
       // dragend 阶段 dataTransfer 已进入保护模式（types 清空），用 dragover 里的标记
       if (!seenInternal) return;
       seenInternal = false;
@@ -2961,19 +3025,21 @@ useEffect(() => {
         pane && rowPath && pane.selection.includes(rowPath) ? pane.selection : rowPath ? [rowPath] : [];
       if (paths.length > 0) void doDropPaths(source, paths, lastOp, target);
     };
+    window.addEventListener("dragstart", onDragStart);
     window.addEventListener("dragenter", onDragEnter);
     window.addEventListener("dragover", onDragOver);
     window.addEventListener("dragleave", onDragLeave);
     window.addEventListener("drop", onDrop);
     window.addEventListener("dragend", onDragEnd);
     return () => {
+      window.removeEventListener("dragstart", onDragStart);
       window.removeEventListener("dragenter", onDragEnter);
       window.removeEventListener("dragover", onDragOver);
       window.removeEventListener("dragleave", onDragLeave);
       window.removeEventListener("drop", onDrop);
       window.removeEventListener("dragend", onDragEnd);
     };
-  }, [doDropPaths]);
+  }, [doDropPaths, swapPanePositions]);
 
   // 右键兜底：桌面应用里 WebView2 默认菜单只允许出现在文本编辑上下文。
   // 组件自己的右键菜单（Radix / 手写）已 preventDefault → defaultPrevented 放行；
@@ -4047,6 +4113,7 @@ useEffect(() => {
                       canPaste={!!t.panes[t.activePane]}
                       renaming={renaming}
                       dragOver={dragOver}
+                      paneSwap={paneSwap}
                       fileTags={fileTags}
                       tags={tags}
                       tagNames={tagNames}

@@ -1,5 +1,6 @@
 ﻿import { Fragment, memo, useEffect, useState } from "react";
 import {
+  ArrowLeftRight,
   ChevronRight,
   Copy,
   Info,
@@ -32,6 +33,16 @@ import type { TagNames } from "@/lib/persist";
 import type { FileEntry, SortKey } from "@/lib/types";
 import type { DiffMarkMap, LinkSide } from "@/lib/sync-link";
 import type { OpenerItem, ShellItem, GitToolItem, QuickToolItem } from "@/lib/openerApi";
+
+/** v0.30 窗格位置交换（拖窗格头到另一窗格）的 HTML5 DnD 标记类型。
+ *  与文件拖拽的 application/x-rdir-dnd 区分：App 的 window 级监听据此分流。 */
+export const PANE_SWAP_DND_TYPE = "application/x-rdir-pane-swap";
+
+/** 一次窗格交换拖拽会话：source=拖动中的窗格（null=未在拖），target=悬停目标 */
+export interface PaneSwapDrag {
+  source: number | null;
+  target: number | null;
+}
 
 export interface PaneHandlers {
   onSort: (paneId: number, key: SortKey) => void;
@@ -149,12 +160,16 @@ export interface PaneHandlers {
  * 点击段在该窗格内导航并激活；非活动窗格整条弱化；多窗格时右侧有关闭钮。
  * 标签虚拟视图不渲染（TagView 自带带退出按钮的横幅）。
  * v0.25.1 右键菜单：空白处=窗格级操作（复制路径/终端/属性/关闭窗格），
- * 分段上=该层级操作（新标签页打开/复制此层级路径）。 */
+ * 分段上=该层级操作（新标签页打开/复制此层级路径）。
+ * v0.30 窗格头可拖拽：拖到另一窗格交换两者布局位置（App 的 window 监听
+ * 按 PANE_SWAP_DND_TYPE 分流），拖动中源窗格头半透明、目标窗格描边+徽标。 */
 function PaneHead({
   path,
   isActive,
   closable,
   viewMode,
+  swapActive,
+  swapOver,
   onViewModeChange,
   onNavigate,
   onClose,
@@ -165,6 +180,10 @@ function PaneHead({
   isActive: boolean;
   closable: boolean;
   viewMode: ViewMode;
+  /** 本窗格正被拖动（源） */
+  swapActive: boolean;
+  /** 拖动悬停在本窗格上（目标） */
+  swapOver: boolean;
   onViewModeChange: (mode: ViewMode) => void;
   onNavigate: (path: string) => void;
   onClose: () => void;
@@ -187,10 +206,23 @@ function PaneHead({
     >
       <ContextMenuTrigger asChild>
         <div
-          data-pane-head=""
+          data-pane-head={paneId}
+          draggable
+          onDragStart={(e) => {
+            // 视图切换/关闭钮的按压意图是点击，不发起窗格拖拽
+            if ((e.target as HTMLElement).closest("[data-view-switch],[data-panehead-close]")) {
+              e.preventDefault();
+              return;
+            }
+            e.dataTransfer.setData(PANE_SWAP_DND_TYPE, String(paneId));
+            e.dataTransfer.setData("text/plain", path);
+            e.dataTransfer.effectAllowed = "move";
+          }}
           className={cn(
             "flex h-7 shrink-0 items-center gap-0.5 border-b bg-sidebar px-1.5 text-xs select-none",
             isActive ? "text-foreground" : "text-muted-foreground",
+            swapActive && "opacity-60",
+            swapOver && "bg-primary/10",
           )}
           onContextMenu={(e) => {
             // 右键落在分段上记录该层路径，其余（padding/空白/按钮）清空。
@@ -265,6 +297,7 @@ function PaneHead({
             <button
               type="button"
               title="关闭窗格"
+              data-panehead-close=""
               onClick={onClose}
               className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
@@ -354,6 +387,7 @@ const PaneView = memo(function PaneView({
   diffMarks,
   linkBadge,
   compareBase,
+  paneSwap,
   handlers,
 }: {
   pane: PaneState;
@@ -382,12 +416,33 @@ const PaneView = memo(function PaneView({
   linkBadge?: LinkSide;
   /** v0.19 文本比较基准（跨窗格全局状态） */
   compareBase?: { path: string; name: string } | null;
+  /** v0.30 窗格交换拖拽会话（非 null 时必有 source 正被拖动） */
+  paneSwap: PaneSwapDrag | null;
   handlers: PaneHandlers;
 }) {
   const h = handlers;
   const showingTag = pane.tagId ?? null;
+  const swapActive = paneSwap?.source === pane.id;
+  const swapOver =
+    paneSwap !== null && paneSwap.target === pane.id && paneSwap.source !== pane.id;
   return (
-    <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background transition-shadow", isActive && highlight && "shadow-[0_4px_18px_rgba(15,23,42,0.10)] dark:shadow-[0_4px_18px_rgba(0,0,0,0.45)] -translate-y-[1px]")}>
+    <div
+      // 独立属性而非复用 data-pane-id：后者在 FileList/IconGrid 根上挂有侧键等
+      // 行为且被 e2e 按 .first() 定位，外层再挂同名属性会改变既有定位语义
+      data-pane-swap-root={pane.id}
+      className={cn(
+        "relative flex min-h-0 min-w-0 flex-1 flex-col bg-background transition-shadow",
+        isActive && highlight && "shadow-[0_4px_18px_rgba(15,23,42,0.10)] dark:shadow-[0_4px_18px_rgba(0,0,0,0.45)] -translate-y-[1px]",
+        swapOver && "shadow-[inset_0_0_0_2px_color-mix(in_oklch,var(--primary)_75%,transparent)]",
+      )}
+    >
+      {swapOver && (
+        <div className="pointer-events-none absolute inset-x-0 top-7 z-20 flex justify-center">
+          <div className="flex items-center gap-1 rounded-md border bg-popover px-2 py-0.5 text-xs font-medium text-primary shadow-elevate">
+            <ArrowLeftRight className="h-3 w-3" /> 交换到此处
+          </div>
+        </div>
+      )}
       {pane.loading && (
         <div className="absolute inset-x-0 top-0 z-10 flex h-6 items-center justify-center gap-2 bg-background/80 text-xs text-muted-foreground backdrop-blur-sm">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在加载…
@@ -418,6 +473,8 @@ const PaneView = memo(function PaneView({
             isActive={isActive}
             closable={highlight}
             viewMode={pane.viewMode}
+            swapActive={swapActive}
+            swapOver={swapOver}
             onViewModeChange={(mode) => h.onViewModeChange(pane.id, mode)}
             onNavigate={(p) => h.onNavigatePane(pane.id, p)}
             onClose={() => h.onClosePane(pane.id)}
@@ -683,6 +740,7 @@ export function SplitView({
   diffMarksByPane,
   linkBadgeByPane,
   compareBase,
+  paneSwap,
   handlers,
 }: {
   node: PaneNode;
@@ -710,6 +768,8 @@ export function SplitView({
   linkBadgeByPane?: Record<number, LinkSide>;
   /** v0.19 文本比较基准（跨窗格全局状态） */
   compareBase?: { path: string; name: string } | null;
+  /** v0.30 窗格交换拖拽会话 */
+  paneSwap: PaneSwapDrag | null;
   handlers: PaneHandlers;
 }) {
   if (node.type === "pane") {
@@ -737,6 +797,7 @@ export function SplitView({
         diffMarks={diffMarksByPane?.[node.paneId]}
         linkBadge={linkBadgeByPane?.[node.paneId]}
         compareBase={compareBase}
+        paneSwap={paneSwap}
         handlers={handlers}
       />
     );
@@ -770,6 +831,7 @@ export function SplitView({
           diffMarksByPane={diffMarksByPane}
           linkBadgeByPane={linkBadgeByPane}
           compareBase={compareBase}
+          paneSwap={paneSwap}
           handlers={handlers}
         />
       </div>
@@ -805,6 +867,7 @@ export function SplitView({
           diffMarksByPane={diffMarksByPane}
           linkBadgeByPane={linkBadgeByPane}
           compareBase={compareBase}
+          paneSwap={paneSwap}
           handlers={handlers}
         />
       </div>
