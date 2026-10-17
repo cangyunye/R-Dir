@@ -5,8 +5,10 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
-## v0.30.0 (2026-10-16)
+## v0.30.0 (2026-10-17)
 
+- **应用图标更换：海水玻璃文件夹（无底板图形稿）**。新图标来自 AI 设计稿抠图落版——透明玻璃质感、海水波浪与气泡。抠图走两套管线按素材选用：平色背景用「全局背景模型 + 键控 + 行/列外延」（行列外延天然保住页签 S 曲线与夹层白纸），强渐晕背景改用「局部边缘扫描」——从画布外缘向内找第一个 6px 基线突变点作轮廓，对平滑渐变免疫，开运算去投影细刺；落地时先目视定位真实几何边界硬钳制（面板与地面反光之间是连续渐变，纯阈值切不开）。图形按 0.98 填充落 1024 画布，`tauri icon` 重生成全平台图标（ico / icns / PNG / Android / iOS 全套）。无底板图形稿同时消解了 macOS 留白网格与 Windows 全出血的任务栏冲突：Windows 任务栏着色面积从旧版的 ~58% 升至 ~85%，修复「本程序图标在任务栏里格外小」。
+- **修复：换图标后编译产物仍嵌旧图标**。`tauri_build` 声明的 rerun-if-changed 只有 tauri.conf.json / capabilities，不含 bundle.icon 指向的图标——cargo 由此进入「仅按声明重跑」模式，换图标不会触发 build 脚本重跑，链接期复用旧 resource.lib，exe 内嵌图标停留在换图标之前（与 `tauri icon` 的输出无关，且 `--no-bundle` / 正常打包同样中招）。build.rs 显式声明 icons 目录后根治。取证注意：确认 exe 内嵌图标须解析 PE 资源目录树（.rsrc → RT_ICON），按 PNG magic 宽匹配会误抓前端资源，`ExtractAssociatedIcon` 走 Shell 图标缓存会给假象。
 - **窗格布局拖动交换：拖窗格头路径条到另一窗格，快速互换两者位置**。按住任意窗格顶部的路径头（面包屑区，视图切换/关闭钮除外）拖动——拖动中源窗格头半透明、原生拖影跟随光标；悬停到目标窗格时整格主色描边 + 「⇄ 交换到此处」徽标（投放光标为 move），松手即对调两窗格在布局树中的位置，路径/选中/历史等内容跟随各自窗格整体对调，活动窗格与标签标题不变。拖到空白/原窗格不动作；Esc 取消、拖出窗口释放均安全复位。实现走 HTML5 DnD 独立标记类型（`application/x-rdir-pane-swap`），与既有文件拖拽在 window 级监听里分流互不干扰；布局树交换在 paneTree 新增单趟遍历的 `swapPanes`（先 replacePane(a→b) 再 replacePane(b→a) 会两处同换成一个 pane，已用单测锁死）。
 - **修复：双击标签栏空白处「放大后马上又缩小」**。标签栏兼任标题栏的拖拽区此前同时挂了 React `onDoubleClick → toggleMaximize` 和 Tauri 注入的 drag-region 原生双击处理（macOS 在 mouseup / Windows-Linux 在 mousedown 调 `internal_toggle_maximize`），一次双击切换两次 = 放大立刻还原。现移除 React 侧处理，双击最大化/还原完全交给 Tauri 原生（与系统标题栏行为一致，macOS 还获得「双击后移动鼠标可取消最大化」的系统手势）；标签双击重命名、拖拽区移动窗口不受影响。e2e 改为回归守卫：双击空白处前端侧必须零窗口命令。
 - **预览栏：简单文本格式全覆盖（ini 及同族 / 代码与数据格式 / 点文件）**。此前文本预览只放行 filekind 的 `text` 类 7 个扩展名，`code` 类（json / yaml / toml / xml / html / css / sh / py / rs / sql …）一律显示「此类型暂不支持预览」。现：
