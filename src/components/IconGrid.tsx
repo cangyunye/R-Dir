@@ -908,6 +908,17 @@ export function IconGrid({
                             <div className="w-full">
                               <RenameInput
                                 initial={renaming.name}
+                                fitWidth={{
+                                  // 宽度下限=格子内容宽；上限=从格子内容左缘到窗格右缘的余量，
+                                  // 框允许越出格子向右扩展（对齐资源管理器）但不产生横向滚动
+                                  min: cell.w - 16,
+                                  max: Math.max(
+                                    cell.w - 16,
+                                    viewportW -
+                                      (GRID_PAD + slot.c * (cell.w + GRID_GAP) + 10) -
+                                      4,
+                                  ),
+                                }}
                                 onCommit={(name) => onRenameCommit(entry.path, name)}
                                 onCancel={onRenameCancel}
                               />

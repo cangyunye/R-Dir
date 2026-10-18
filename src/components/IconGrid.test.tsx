@@ -238,4 +238,13 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
     );
     expect(container.querySelector("input")).toBeTruthy();
   });
+
+  it("重命名框自适应宽度：jsdom 文本宽 0 → 落到下限（iconSize 64 → 格子内容宽 72px）", () => {
+    const { container } = render(
+      <IconGrid
+        {...makeProps({ renaming: { path: "/mock/dir/main.rs", name: "main.rs" } })}
+      />,
+    );
+    expect(container.querySelector("input")!.style.width).toBe("72px");
+  });
 });
