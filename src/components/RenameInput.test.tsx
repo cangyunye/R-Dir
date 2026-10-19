@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import { RenameInput } from "./RenameInput";
 
@@ -64,5 +64,59 @@ describe("RenameInput 全局 mousedown 收口（点拖拽区/滚动条等不触�
     fireEvent.keyDown(input, { key: "Enter" });
     document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(onCommit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("fitWidth 自适应宽度（图标网格长名）", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** jsdom 无 canvas 布局，stub 出确定性测宽：每字符 perChar px */
+  const stubMeasure = (perChar: number) =>
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      measureText: (s: string) => ({ width: s.length * perChar }),
+    } as unknown as CanvasRenderingContext2D);
+
+  it("按输入框实际计算字体测宽 + 内边距 12px + 边框 2px + 2px 余量", () => {
+    stubMeasure(10); // “通用应用图标设计.png”12 字符 × 10 + 16 = 136
+    render(
+      <RenameInput
+        initial="通用应用图标设计.png"
+        onCommit={vi.fn()}
+        onCancel={vi.fn()}
+        fitWidth={{ min: 72, max: 780 }}
+      />,
+    );
+    expect(document.querySelector("input")!.style.width).toBe("136px");
+  });
+
+  it("超长名钳到上限，不产生横向滚动", () => {
+    stubMeasure(10); // 100 字符 × 10 + 16 = 1016 → 780
+    render(
+      <RenameInput
+        initial={"x".repeat(100)}
+        onCommit={vi.fn()}
+        onCancel={vi.fn()}
+        fitWidth={{ min: 72, max: 780 }}
+      />,
+    );
+    expect(document.querySelector("input")!.style.width).toBe("780px");
+  });
+
+  it("canvas 不可用（jsdom 裸环境）→ 宽度落到下限", () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    render(
+      <RenameInput
+        initial="通用应用图标设计.png"
+        onCommit={vi.fn()}
+        onCancel={vi.fn()}
+        fitWidth={{ min: 72, max: 780 }}
+      />,
+    );
+    expect(document.querySelector("input")!.style.width).toBe("72px");
+  });
+
+  it("不传 fitWidth：不接管宽度（详情/搜索行保持铺满原样）", () => {
+    render(<RenameInput initial="main.rs" onCommit={vi.fn()} onCancel={vi.fn()} />);
+    expect(document.querySelector("input")!.style.width).toBe("");
   });
 });

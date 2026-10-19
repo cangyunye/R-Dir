@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 
 /** 行内重命名输入框（FileList 行 / 搜索结果行 / 图标网格共用） */
@@ -6,13 +6,38 @@ export function RenameInput({
   initial,
   onCommit,
   onCancel,
+  fitWidth,
 }: {
   initial: string;
   onCommit: (name: string) => void;
   onCancel: () => void;
+  /** 图标网格用：宽度随内容自适应并钳到 [min, max]。格子远窄于长名，单行输入框
+      只能露出一角（全选后浏览器滚到串尾，看起来"名字只剩尾巴"）；
+      不传则维持 w-full/flex-1 铺满容器的详情行/搜索行行为。 */
+  fitWidth?: { min: number; max: number };
 }) {
   const [value, setValue] = useState(initial);
   const ref = useRef<HTMLInputElement>(null);
+  const fitMin = fitWidth?.min;
+  const fitMax = fitWidth?.max;
+  /** 自适应宽 = canvas 按输入框实际计算字体测的文本宽 + 内边距 12px + 边框 2px + 2px 余量，
+      钳到区间。不能拿同字号 span 量：基础 Input 的 md:text-sm 在级联中会覆盖 text-[13px]，
+      实际渲染字号与类名字面不符，按类名量会窄出约一个字宽。 */
+  const [fitW, setFitW] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (fitMin === undefined || fitMax === undefined) return;
+    let textW = 0;
+    const el = ref.current;
+    // 每次现建 canvas（重命名会话内每击键一次，量级可忽略）：不做模块级缓存，
+    // 否则测试替身/环境切换会串味
+    const ctx = document.createElement("canvas").getContext("2d");
+    if (el && ctx) {
+      const cs = getComputedStyle(el);
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      textW = ctx.measureText(value).width;
+    }
+    setFitW(Math.min(Math.max(Math.ceil(textW + 2) + 14, fitMin), fitMax));
+  }, [fitMin, fitMax, value]);
   /** 是否真正持过焦：起手焦点竞争（radix 菜单关闭回焦等）期间 input 可能从未拿到焦点 */
   const everFocusedRef = useRef(false);
   /** 最新值（window mousedown 监听只注册一次，经此读取当前值） */
@@ -34,13 +59,15 @@ export function RenameInput({
     // 右键菜单关闭时 radix 会把焦点恢复到触发行，若晚于本输入框聚焦就会把焦点抢走
     // （onBlur 以未修改的名字提交 → 静默关闭，看起来"重命名失败"）。
     // 按 0/120/300ms 重试聚焦直到拿稳；已持焦时跳过，避免打断用户光标。
-    const attempts = [0, 120, 300].map((ms) =>
-      window.setTimeout(() => {
-        if (document.activeElement === ref.current) return;
-        ref.current?.focus();
-        ref.current?.select();
-      }, ms),
-    );
+      const attempts = [0, 120, 300].map((ms) =>
+        window.setTimeout(() => {
+          if (document.activeElement === ref.current) return;
+          ref.current?.focus();
+          ref.current?.select();
+          // 全选会把溢出内容的输入框滚到串尾（用户只看到名字尾部）；拨回串首
+          if (ref.current) ref.current.scrollLeft = 0;
+        }, ms),
+      );
     return () => attempts.forEach((t) => window.clearTimeout(t));
   }, []);
 
@@ -62,6 +89,7 @@ export function RenameInput({
       ref={ref}
       value={value}
       onChange={(e) => setValue(e.target.value)}
+      style={fitW !== null ? { width: fitW } : undefined}
       onFocus={() => {
         everFocusedRef.current = true;
       }}
