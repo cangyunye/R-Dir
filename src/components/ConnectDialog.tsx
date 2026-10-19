@@ -26,12 +26,14 @@ export interface SftpConnectInitial {
  * - 服务器可归组（分组名可选）
  * - 保存/解密密码需要 master-key：未设置或未输入时调 onNeedMasterKey
  *   （由 App 层弹出主密钥框；设置成功后自动重试连接）
+ * - v0.31「保存」：只写清单不连接、不导航（改分组/改名等整理场景）
  */
 export function ConnectDialog({
   open,
   initial,
   masterKey,
   onNeedMasterKey,
+  onSaveOnly,
   onClose,
   onConnected,
 }: {
@@ -41,6 +43,8 @@ export function ConnectDialog({
   masterKey: MasterKeyStatus;
   /** 需要主密钥（连接解密或保存密码时）→ App 弹出主密钥框 */
   onNeedMasterKey: (config: SftpServerConfig) => void;
+  /** v0.31 仅保存（不连接不导航）；缺省不显示「保存」按钮 */
+  onSaveOnly?: (config: SftpServerConfig) => Promise<void>;
   onClose: () => void;
   onConnected: (server: SftpServerConfig, view: SftpServerView) => void;
 }) {
@@ -122,6 +126,22 @@ export function ConnectDialog({
     },
     [buildConfig, onConnected, onClose, onNeedMasterKey],
   );
+
+  /** v0.31 仅保存：写清单后关闭，不发起连接、不切换目录 */
+  const saveOnly = useCallback(async () => {
+    if (!onSaveOnly) return;
+    const cfg = buildConfig();
+    if (!cfg) return;
+    setLoading(true);
+    setError("");
+    try {
+      await onSaveOnly(cfg);
+      onClose();
+    } catch (e) {
+      setError(String(e));
+      setLoading(false);
+    }
+  }, [buildConfig, onSaveOnly, onClose]);
 
   if (!open) return null;
 
@@ -267,6 +287,17 @@ export function ConnectDialog({
               <Button variant="ghost" size="sm" onClick={onClose} disabled={loading}>
                 取消
               </Button>
+              {onSaveOnly && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void saveOnly()}
+                  disabled={loading}
+                  title="只保存配置，不发起连接"
+                >
+                  保存
+                </Button>
+              )}
               <Button size="sm" onClick={() => void submit()} disabled={loading}>
                 {loading && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
                 连接

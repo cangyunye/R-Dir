@@ -1,11 +1,16 @@
 import { useCallback, useRef, useState } from "react";
 import {
+  sftpClearTemp,
   sftpConnect,
   sftpDisconnect,
+  sftpExportServers,
+  sftpImportServers,
   sftpListServers,
   sftpMasterKeyStatus,
   sftpRemoveServer,
   sftpSaveServer,
+  sftpSetServerGroup,
+  sftpTempInfo,
 } from "@/lib/api";
 import type {
   FileEntry,
@@ -16,7 +21,12 @@ import type {
 } from "@/lib/types";
 import type { SftpConnectInitial } from "@/components/ConnectDialog";
 import { sftpUrl } from "@/lib/sftp-path";
-import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
+import { formatSize } from "@/lib/format";
+import {
+  confirm as confirmDialog,
+  open as openFileDialog,
+  save as saveFileDialog,
+} from "@tauri-apps/plugin-dialog";
 
 /** 会话恢复中挂起的 SFTP 连接（master-key 输入成功后重试） */
 export interface PendingSftpRestore {
@@ -30,6 +40,8 @@ export interface UseSftpDeps {
   patchPane: (paneId: number, patch: Partial<PaneState>) => void;
   listDir: (path: string) => Promise<FileEntry[]>;
   showError: (msg: string) => void;
+  /** 操作成功提示（导出/导入/清理临时文件的中央轻提示） */
+  showInfo: (msg: string) => void;
 }
 
 /**
@@ -39,7 +51,7 @@ export interface UseSftpDeps {
  * 四个 pending ref 是这块最容易出错的地方（主密钥验证后要按序重试
  * 保存 → 连接 → 会话恢复），集中在这里便于单独理解。
  */
-export function useSftp({ navigate, patchPane, listDir, showError }: UseSftpDeps) {
+export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: UseSftpDeps) {
   const [servers, setServers] = useState<SftpServerView[]>([]);
   /** 已连接 id 集合（ref 同步，供 navigate 同步判断） */
   const connectedRef = useRef<Set<string>>(new Set());
@@ -294,6 +306,136 @@ export function useSftp({ navigate, patchPane, listDir, showError }: UseSftpDeps
     [showError, syncConnected],
   );
 
+  // ==================== v0.31 服务器清单导出 / 导入 + 临时目录清理 ====================
+
+  /** 导入文件含加密密码时的主密码框；待导入文件路径挂起在 ref（验证成功后重试） */
+  const [importPwOpen, setImportPwOpen] = useState(false);
+  const pendingImportFileRef = useRef<string | null>(null);
+
+  /** 导出服务器清单（save 对话框选位置；明文密码由后端拒绝并提示先设主密钥） */
+  const exportServers = useCallback(async () => {
+    const target = await saveFileDialog({
+      title: "导出远程服务器列表",
+      defaultPath: `rdir-servers-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!target) return;
+    try {
+      await sftpExportServers(target, new Date().toISOString());
+      showInfo(`已导出 ${servers.length} 台服务器`);
+    } catch (e) {
+      showError(`导出失败：${e}`);
+    }
+  }, [servers.length, showInfo, showError]);
+
+  /** 导入成功收尾：刷新清单 + 提示（供首次导入与主密码框重试共用） */
+  const finishImport = useCallback(
+    async (s: { imported: number; skipped: number }) => {
+      pendingImportFileRef.current = null;
+      setImportPwOpen(false);
+      const list = await sftpListServers().catch(() => []);
+      syncConnected(list);
+      setServers(list);
+      showInfo(
+        `已导入 ${s.imported} 台服务器${s.skipped > 0 ? `（跳过 ${s.skipped} 台已存在）` : ""}`,
+      );
+    },
+    [showInfo, syncConnected],
+  );
+
+  /** 执行导入（masterKey 缺省时后端检测到密文会抛 NEED_MASTER_KEY → 弹主密码框） */
+  const runImport = useCallback(
+    async (file: string, masterKey?: string) => {
+      try {
+        const s = await sftpImportServers(file, masterKey);
+        await finishImport(s);
+      } catch (e) {
+        const msg = String(e);
+        if (msg.includes("NEED_MASTER_KEY")) {
+          // 导入文件含加密密码：挂起文件、弹主密码框（导出方的主密码，非本机的）
+          pendingImportFileRef.current = file;
+          setImportPwOpen(true);
+          return;
+        }
+        showError(`导入失败：${msg}`);
+      }
+    },
+    [finishImport, showError],
+  );
+
+  /** 导入服务器清单（open 对话框选文件；需主密码时经 PasswordDialog 追加输入） */
+  const importServers = useCallback(async () => {
+    const file = await openFileDialog({
+      title: "导入远程服务器列表",
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (typeof file !== "string") return;
+    await runImport(file);
+  }, [runImport]);
+
+  /** 主密码框提交：用导出方主密码重试挂起的导入；失败把错误抛回框内展示 */
+  const submitImportPassword = useCallback(
+    async (password: string) => {
+      const file = pendingImportFileRef.current;
+      if (!file) {
+        setImportPwOpen(false);
+        return;
+      }
+      const s = await sftpImportServers(file, password);
+      await finishImport(s);
+    },
+    [finishImport],
+  );
+
+  const closeImportPassword = useCallback(() => {
+    setImportPwOpen(false);
+    pendingImportFileRef.current = null;
+  }, []);
+
+  /** 清空远程文件打开临时目录（确定性路径，提示释放量） */
+  const clearOpenTemp = useCallback(async () => {
+    try {
+      const info = await sftpTempInfo();
+      if (info.files === 0) {
+        showInfo("远程临时目录已是空的");
+        return;
+      }
+      const freed = await sftpClearTemp();
+      showInfo(`已清理 ${info.files} 个远程临时文件（释放 ${formatSize(freed)}）`);
+    } catch (e) {
+      showError(`清理失败：${e}`);
+    }
+  }, [showInfo, showError]);
+
+  // ==================== v0.31 仅保存配置 + 分组整理 ====================
+
+  /** 连接框「保存」：只写清单不连接、不导航（后端对已有条目留空字段保留原值）。
+   *  错误原样抛出，由调用方（连接框）在框内展示。 */
+  const saveServerOnly = useCallback(
+    async (config: SftpServerConfig) => {
+      const list = await sftpSaveServer(config);
+      syncConnected(list);
+      setServers(list);
+      showInfo(`已保存「${config.name || config.id}」`);
+    },
+    [syncConnected, showInfo],
+  );
+
+  /** 批量设置分组（侧边栏拖拽换组 / 分组右键整体重命名共用） */
+  const setServerGroup = useCallback(
+    async (ids: string[], group: string) => {
+      try {
+        const list = await sftpSetServerGroup(ids, group);
+        syncConnected(list);
+        setServers(list);
+      } catch (e) {
+        showError(`修改分组失败：${e}`);
+      }
+    },
+    [syncConnected, showError],
+  );
+
   return {
     servers,
     setServers,
@@ -318,5 +460,15 @@ export function useSftp({ navigate, patchPane, listDir, showError }: UseSftpDeps
     removeServer,
     disconnect,
     pendingRestoreRef,
+    // v0.31 导出/导入 + 临时目录清理
+    importPwOpen,
+    exportServers,
+    importServers,
+    submitImportPassword,
+    closeImportPassword,
+    clearOpenTemp,
+    // v0.31 仅保存配置 + 分组整理
+    saveServerOnly,
+    setServerGroup,
   };
 }

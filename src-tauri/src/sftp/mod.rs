@@ -182,6 +182,40 @@ pub async fn stat_path(pool: &SessionPool, path: &str) -> Result<String, String>
     }
 }
 
+/// 远程文件「打开」用的确定性临时目录：<temp>/r-dir-sftp。
+/// 双击/右键打开远程文件都先落这里再交给系统应用；路径固定，程序可整体清空。
+pub fn open_temp_dir() -> PathBuf {
+    std::env::temp_dir().join("r-dir-sftp")
+}
+
+/// 统计临时目录占用（文件数与总字节；目录不存在按空计）
+pub fn temp_usage() -> (u64, u32) {
+    let mut bytes = 0u64;
+    let mut files = 0u32;
+    if let Ok(rd) = std::fs::read_dir(open_temp_dir()) {
+        for e in rd.flatten() {
+            if let Ok(m) = e.metadata() {
+                if m.is_file() {
+                    bytes += m.len();
+                    files += 1;
+                }
+            }
+        }
+    }
+    (bytes, files)
+}
+
+/// 清空临时目录，返回释放的字节数（目录不存在视为已空）
+pub fn clear_temp() -> Result<u64, String> {
+    let dir = open_temp_dir();
+    if !dir.exists() {
+        return Ok(0);
+    }
+    let (bytes, _) = temp_usage();
+    std::fs::remove_dir_all(&dir).map_err(|e| format!("清理临时目录失败：{e}"))?;
+    Ok(bytes)
+}
+
 /// 下载远程文件到临时目录，返回本地路径（供 opener 打开）
 pub async fn download(
     pool: &SessionPool,
@@ -196,10 +230,14 @@ pub async fn download(
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "download".into());
-    // 临时目录：<temp>/r-dir-sftp/<sanitized 文件名>
-    let mut dest: PathBuf = std::env::temp_dir().join("r-dir-sftp");
+    // 临时目录：<temp>/r-dir-sftp/<sanitized 文件名>；目录可能尚不存在
+    //（首次打开 / 刚被清理）——先建再写，否则 File::create 报 os error 3
+    let mut dest: PathBuf = open_temp_dir();
     let safe = sanitize_name(&name);
     dest.push(safe);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建临时目录失败：{e}"))?;
+    }
     let mut g = sess.lock().await;
     // 单文件打开场景无取消：字节回调恒放行
     let _bytes = g.download(&remote, &dest, &mut |done, total| {
@@ -669,6 +707,21 @@ mod tests {
     #[test]
     fn upload_plan_rejects_missing_path() {
         assert!(upload_plan("/nonexistent/rdir/definitely-missing").is_err());
+    }
+
+    /// 打开临时目录：占用统计与整体清理（目录不存在按空计，清理后自动消失）
+    #[test]
+    fn open_temp_dir_usage_and_clear() {
+        let dir = open_temp_dir();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(temp_usage(), (0, 0), "目录不存在按空计");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.bin"), [0u8; 12]).unwrap();
+        std::fs::write(dir.join("b.bin"), [0u8; 8]).unwrap();
+        assert_eq!(temp_usage(), (20, 2));
+        assert_eq!(clear_temp().unwrap(), 20);
+        assert!(!dir.exists(), "清理后目录整个移除（下次打开自动重建）");
+        assert_eq!(clear_temp().unwrap(), 0, "重复清理安全无副作用");
     }
 
     /// ---- v0.28.1 SFTP 流水线上传：真实链路集成验证（本机 sshd；不可用时静默跳过） ----

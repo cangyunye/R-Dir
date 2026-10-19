@@ -327,6 +327,33 @@ async fn sftp_remove_server(
     Ok(file.servers.iter().map(|s| sftp::to_view(s, &pool)).collect())
 }
 
+/// 批量设置服务器分组（侧边栏拖拽换组 / 分组整体重命名共用）。
+/// 只动 group 字段，凭据与连接状态不受影响；返回最新清单。
+#[cfg(feature = "sftp")]
+#[tauri::command]
+async fn sftp_set_server_group(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    ids: Vec<String>,
+    group: String,
+) -> Result<Vec<sftp::ServerView>, String> {
+    ensure_plugin(&state, "sftp")?;
+    let path = sftp_servers_path(&app)?;
+    let mut file = sftp::servers::load_file(&path);
+    let mut changed = false;
+    for srv in file.servers.iter_mut() {
+        if ids.iter().any(|id| *id == srv.id) && srv.group != group {
+            srv.group = group.clone();
+            changed = true;
+        }
+    }
+    if changed {
+        sftp::servers::save_file(&path, &file)?;
+    }
+    let pool = state.sftp_pool.lock().await;
+    Ok(file.servers.iter().map(|s| sftp::to_view(s, &pool)).collect())
+}
+
 /// master-key 状态：是否设置过（有校验值）+ 当前内存是否已输入
 #[cfg(feature = "sftp")]
 #[tauri::command]
@@ -1087,6 +1114,97 @@ async fn sftp_rename(
     sftp::rename_entry(&pool, &path, &new_name).await
 }
 
+/// 远程文件打开临时目录的占用信息（路径/文件数/字节；清理菜单展示用）
+#[cfg(feature = "sftp")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SftpTempInfo {
+    path: String,
+    files: u32,
+    bytes: u64,
+}
+
+/// 查询远程文件打开临时目录（确定性路径 <temp>/r-dir-sftp）占用
+#[cfg(feature = "sftp")]
+#[tauri::command]
+fn sftp_temp_info() -> SftpTempInfo {
+    let (bytes, files) = sftp::temp_usage();
+    SftpTempInfo {
+        path: sftp::open_temp_dir().to_string_lossy().to_string(),
+        files,
+        bytes,
+    }
+}
+
+/// 清空远程文件打开临时目录，返回释放的字节数
+#[cfg(feature = "sftp")]
+#[tauri::command]
+fn sftp_clear_temp() -> Result<u64, String> {
+    sftp::clear_temp()
+}
+
+/// 导出服务器清单到目标文件（前端 save 对话框给路径）。
+/// 已保存的密码/口令以密文原样带走；存在明文保存的密码则拒绝导出——
+/// 导出文件会离开本机权限域，明文必须先经主密钥升级为密文。
+#[cfg(feature = "sftp")]
+#[tauri::command]
+async fn sftp_export_servers(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    target: String,
+    exported_at: String,
+) -> Result<(), String> {
+    ensure_plugin(&state, "sftp")?;
+    let path = sftp_servers_path(&app)?;
+    let file = sftp::servers::load_file(&path);
+    if sftp::servers::has_plaintext_secrets(&file) {
+        return Err(
+            "存在以明文保存的服务器密码，请先在 ⋮ 菜单设置主密钥（会自动加密）后再导出".into(),
+        );
+    }
+    let export = sftp::servers::ExportFile {
+        version: 1,
+        exported_at,
+        master_key_check: file.master_key_check.clone(),
+        servers: file.servers.clone(),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let json = serde_json::to_string_pretty(&export).map_err(|e| e.to_string())?;
+        std::fs::write(&target, json).map_err(|e| format!("写入导出文件失败：{e}"))
+    })
+    .await
+    .map_err(|e| format!("导出任务失败：{e}"))?
+}
+
+/// 导入服务器清单：密文经导入主密码解密 → 本机主密钥回填加密 → 按 id 去重合并。
+/// 文件含密文而未提供主密码 → Err("NEED_MASTER_KEY: …")（前端弹主密码框后重试）。
+#[cfg(feature = "sftp")]
+#[tauri::command]
+async fn sftp_import_servers(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    file_path: String,
+    master_key: Option<String>,
+) -> Result<sftp::servers::ImportOutcome, String> {
+    ensure_plugin(&state, "sftp")?;
+    let text = tauri::async_runtime::spawn_blocking(move || {
+        std::fs::read_to_string(&file_path).map_err(|e| format!("读取导出文件失败：{e}"))
+    })
+    .await
+    .map_err(|e| format!("读取任务失败：{e}"))??;
+    let export = sftp::servers::parse_export(&text)?;
+    let path = sftp_servers_path(&app)?;
+    let mut file = sftp::servers::load_file(&path);
+    let outcome = {
+        let mk = state.master_key.lock().await;
+        let local_master: Option<&[u8]> = mk.as_deref();
+        let import_master = master_key.as_deref().map(str::as_bytes);
+        sftp::servers::import_merge(&mut file, &export, import_master, local_master)?
+    };
+    sftp::servers::save_file(&path, &file)?;
+    Ok(outcome)
+}
+
 /// 目录路径补全。
 #[tauri::command]
 fn complete_path(input: String, cwd: String) -> Vec<String> {
@@ -1669,6 +1787,18 @@ pub fn run() {
         sftp_delete,
         #[cfg(feature = "sftp")]
         sftp_rename,
+        // v0.31 服务器清单导出/导入 + 远程打开临时目录管理
+        #[cfg(feature = "sftp")]
+        sftp_export_servers,
+        #[cfg(feature = "sftp")]
+        sftp_import_servers,
+        #[cfg(feature = "sftp")]
+        sftp_temp_info,
+        #[cfg(feature = "sftp")]
+        sftp_clear_temp,
+        // v0.31 服务器分组整理（拖拽换组 / 分组重命名）
+        #[cfg(feature = "sftp")]
+        sftp_set_server_group,
         // v0.4 打开方式 / 终端插件
         opener::list_openers,
         opener::open_with,

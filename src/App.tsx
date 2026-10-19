@@ -114,6 +114,7 @@ import {
   compressItems,
 } from "@/lib/api";
 import { ConnectDialog } from "@/components/ConnectDialog";
+import { PasswordDialog } from "@/components/PasswordDialog";
 import type { SectionId as SettingsSectionId } from "@/components/SettingsDialog";
 import { ConflictDialog } from "@/components/ConflictDialog";
 import { AppConfirmDialog, type AppConfirmRequest } from "@/components/AppConfirmDialog";
@@ -164,6 +165,7 @@ import {
   loadPrefsFromDisk,
   mergeDiskPrefs,
   flushPrefsToDisk,
+  remapPrefixedPath,
   type FileTags,
   type TagDef,
   type TagNames,
@@ -1107,7 +1109,9 @@ useEffect(() => {
   // 用 ref 打破循环：navigateVia 稳定，navigate 定义完后再回填。
   const navigateRef = useRef<(path: string) => void>(() => {});
   const navigateVia = useCallback((path: string) => navigateRef.current(path), []);
-  const sftp = useSftp({ navigate: navigateVia, patchPane, listDir, showError });
+  // SFTP 与 navigate 互相引用（navigate 要读 sftp.connectedRef，sftp 连接成功后要 navigate），
+  const showInfo = useCallback((msg: string) => flashClipboardTip(msg, 2400), [flashClipboardTip]);
+  const sftp = useSftp({ navigate: navigateVia, patchPane, listDir, showError, showInfo });
 
   const navigate = useCallback(
     async (path: string) => {
@@ -2566,6 +2570,53 @@ useEffect(() => {
     [fileTags],
   );
 
+  /**
+   * 标签视图中重命名条目（v0.31：标签作用于文件夹后可就地改名本体）。
+   * 改名后迁移 fileTags 与快捷访问里指向旧本体/旧子路径的键——目录改名
+   * 会让其下已打标签的子条目整体失效，不做迁移标签就"丢了"。
+   */
+  const renameTagEntry = useCallback(
+    async (path: string, newName: string) => {
+      const trimmed = newName.trim();
+      if (!trimmed || trimmed === basename(path)) return;
+      try {
+        const newPath = isSftpPath(path)
+          ? await sftpRename(path, trimmed)
+          : await renameEntry(path, trimmed);
+        setFileTags((prev) => {
+          const next: FileTags = {};
+          let changed = false;
+          for (const [k, v] of Object.entries(prev)) {
+            const nk = remapPrefixedPath(k, path, newPath);
+            if (nk !== k) changed = true;
+            next[nk] = v;
+          }
+          if (changed) saveFileTags(next);
+          return changed ? next : prev;
+        });
+        setCustomQuick((prev) => {
+          let changed = false;
+          const next = prev.map((k) => {
+            const nk = remapPrefixedPath(k, path, newPath);
+            if (nk !== k) changed = true;
+            return nk;
+          });
+          if (changed) saveCustomQuick(next);
+          return changed ? next : prev;
+        });
+        // 刷新正显示旧条目父目录的窗格
+        const parent = parentPath(path);
+        tabs
+          .flatMap((t) => Object.values(t.panes))
+          .filter((pane) => pane.path === parent)
+          .forEach((pane) => refreshPane(pane.id));
+      } catch (e) {
+        showError(String(e));
+      }
+    },
+    [tabs, refreshPane, showError],
+  );
+
   /** 撤销/重做栈：只记录可安全反向的操作 */
   const pushOp = useCallback((op: FileOp) => {
     setUndoStack((s) => [...s.slice(-49), op]);
@@ -3199,6 +3250,12 @@ useEffect(() => {
         .flatMap((t) => Object.values(t.panes))
         .find((p) => p.id === paneId);
       if (!pane) return;
+      // 虚拟视图没有可写文件系统：不落盘、不进重命名（否则后端会在进程
+      // 工作目录下创建名为 tags: / http: 的真实怪目录）
+      if (!isSftpPath(pane.path) && (VIRTUAL_TAG_RE.test(pane.path) || isHttpPath(pane.path))) {
+        showError("标签 / HTTP 视图不支持新建，请先进入本地或远程目录");
+        return;
+      }
       const name = kind === "dir" ? "新建文件夹" : "新建文件.txt";
       try {
         const p = isSftpPath(pane.path)
@@ -3763,6 +3820,7 @@ useEffect(() => {
     onRename: startRename,
     onRenameCommit: (path, name) => void commitRename(path, name),
     onRenameCancel: () => setRenaming(null),
+    onTagRename: (path, name) => void renameTagEntry(path, name),
     onCopyPath: copyPath,
     onRefresh: refreshPane,
     onDropPaths: (src, paths, op, target) => void doDropPaths(src, paths, op, target),
@@ -3855,6 +3913,7 @@ useEffect(() => {
     doDelete,
     startRename,
     commitRename,
+    renameTagEntry,
     copyPath,
     refreshPane,
     doDropPaths,
@@ -4015,6 +4074,8 @@ useEffect(() => {
             onOpenGitDiff={() => setGitDiffOpen(true)}
             onAddSftp={() => sftp.openConnect({})}
             onMasterKey={() => sftp.setMasterKeyOpen(true)}
+            onExportServers={() => void sftp.exportServers()}
+            onImportServers={() => void sftp.importServers()}
             onOpenSettings={() => setSettingsOpen(true)}
             onCheckUpdate={() => void checkUpdate(false)}
             onOpenRepo={openRepo}
@@ -4087,6 +4148,10 @@ useEffect(() => {
           onSftpEdit={sftp.editServer}
           onSftpRemove={sftp.removeServer}
           onSftpAdd={() => sftp.openConnect({})}
+          onSftpExport={() => void sftp.exportServers()}
+          onSftpImport={() => void sftp.importServers()}
+          onSftpClearTemp={() => void sftp.clearOpenTemp()}
+          onSftpSetGroup={(ids, group) => void sftp.setServerGroup(ids, group)}
           shells={shells}
           pluginTerminal={plugins?.find((p) => p.id === "terminal")?.enabled ?? true}
           onOpenTerminal={handleOpenTerminal}
@@ -4326,6 +4391,7 @@ useEffect(() => {
         initial={sftp.connectInitial}
         masterKey={sftp.masterKeyStatus}
         onNeedMasterKey={sftp.requestMasterKey}
+        onSaveOnly={(cfg) => sftp.saveServerOnly(cfg)}
         onClose={sftp.closeConnect}
         onConnected={sftp.handleConnected}
       />
@@ -4336,6 +4402,21 @@ useEffect(() => {
         configured={sftp.masterKeyStatus.configured}
         onClose={sftp.closeMasterKey}
         onDone={(ok) => void sftp.handleMasterKeyDone(ok)}
+      />
+
+      {/* v0.31 导入服务器清单的主密码框：导出文件含加密密码时必须输入导出方主密码解析 */}
+      <PasswordDialog
+        open={sftp.importPwOpen}
+        title="输入主密码"
+        description={
+          <>
+            导入文件包含加密保存的服务器密码，需输入<b>导出时使用的主密码</b>解析。
+            校验通过后按本机主密钥重新加密合并（同 id 服务器跳过）。
+          </>
+        }
+        submitLabel="导入"
+        onSubmit={sftp.submitImportPassword}
+        onClose={sftp.closeImportPassword}
       />
 
       {/* 同名冲突裁决弹窗 */}
@@ -4417,6 +4498,7 @@ useEffect(() => {
       {clipboardTip && (
         <div
           key={clipboardTip.tick}
+          data-toast=""
           className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center"
         >
           <div className="rounded-lg border border-primary/25 bg-background/90 px-5 py-2.5 text-sm font-medium text-foreground shadow-xl backdrop-blur-sm">

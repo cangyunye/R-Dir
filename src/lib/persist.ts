@@ -248,6 +248,24 @@ export function parentOf(p: string): string {
   return norm.slice(0, i);
 }
 
+/**
+ * 把以 oldPath 为前缀的路径重写为 newPath 前缀（本体相等，或 oldPath 的子路径）；
+ * 其余路径原样返回。条目重命名后迁移文件标签/快捷访问键用——
+ * 目录改名会使其下已打标签的子条目路径整体失效，需一并重写。
+ */
+export function remapPrefixedPath(p: string, oldPath: string, newPath: string): string {
+  if (p === oldPath) return newPath;
+  if (oldPath.endsWith("/") || oldPath.endsWith("\\")) {
+    return p.startsWith(oldPath) ? newPath + p.slice(oldPath.length) : p;
+  }
+  for (const sep of ["/", "\\"]) {
+    if (p.startsWith(oldPath + sep)) {
+      return newPath + p.slice(oldPath.length);
+    }
+  }
+  return p;
+}
+
 // ---- v0.7 分享设置 ----
 const SHARE_ALLOW_PARENT_KEY = "rfm.share-allow-parent";
 const SHARE_DEFAULT_EXPIRES_KEY = "rfm.share-default-expires";

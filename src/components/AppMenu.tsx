@@ -33,6 +33,7 @@ import {
   Sun,
   Trash2,
   Undo2,
+  Upload,
   Redo2,
   X,
 } from "lucide-react";
@@ -104,6 +105,9 @@ export interface AppMenuActions {
   onMasterKey: () => void;
   /** v0.29.0 添加 SFTP 服务器（弹出连接对话框） */
   onAddSftp: () => void;
+  /** v0.31 服务器清单导出/导入（提供时才显示菜单项） */
+  onExportServers?: () => void;
+  onImportServers?: () => void;
   // 帮助 / 右上角常驻
   onOpenSettings: () => void;
   onCheckUpdate: () => void;
@@ -303,6 +307,12 @@ export function AppMenu(actions: AppMenuActions) {
           />
           <Item icon={<FileDiff />} label="打开 Git Diff…" onClick={actions.onOpenGitDiff} />
           <Item icon={<Plus />} label="添加 SFTP 服务器…" onClick={actions.onAddSftp} />
+          {actions.onExportServers && (
+            <Item icon={<Download />} label="导出服务器列表…" onClick={actions.onExportServers} />
+          )}
+          {actions.onImportServers && (
+            <Item icon={<Upload />} label="导入服务器列表…" onClick={actions.onImportServers} />
+          )}
           <Item icon={<KeyRound />} label="SFTP 主密钥…" onClick={actions.onMasterKey} />
 
           <GroupLabel>帮助</GroupLabel>

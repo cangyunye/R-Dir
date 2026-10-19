@@ -20,6 +20,7 @@ import {
   TerminalSquare,
   Trash2,
   Unplug,
+  Upload,
   User,
   X,
 } from "lucide-react";
@@ -70,6 +71,9 @@ const QUICK_LABELS: Record<string, string> = {
   movies: "影片",
 };
 
+/** v0.31 侧边栏服务器拖拽换组的 DnD 标记类型（与文件拖拽/窗格交换分流互不干扰） */
+const SERVER_DND_TYPE = "application/x-rdir-server-id";
+
 function isActive(current: string, target: string): boolean {
   if (current === target) return true;
   // macOS 根目录 "/" 前缀匹配所有路径，特殊处理
@@ -114,6 +118,10 @@ export function Sidebar({
   onSftpEdit,
   onSftpRemove,
   onSftpAdd,
+  onSftpExport,
+  onSftpImport,
+  onSftpClearTemp,
+  onSftpSetGroup,
   shells,
   pluginTerminal = true,
   onOpenTerminal,
@@ -149,6 +157,12 @@ export function Sidebar({
   onSftpRemove: (sv: SftpServerView) => void;
   /** v0.29.0 悬停分组名的「+」：新增 SFTP 服务器（弹连接对话框） */
   onSftpAdd: () => void;
+  /** v0.31 分组名右键：导出/导入服务器清单、清理远程打开临时文件 */
+  onSftpExport?: () => void;
+  onSftpImport?: () => void;
+  onSftpClearTemp?: () => void;
+  /** v0.31 服务器分组整理：拖拽换组 / 分组整体重命名（ids 置为新组名；"" = 默认组） */
+  onSftpSetGroup?: (ids: string[], group: string) => void;
   /** v0.25.1 侧边栏右键菜单：在此路径打开终端（可选，缺省不展示终端组） */
   shells?: ShellItem[];
   pluginTerminal?: boolean;
@@ -200,6 +214,29 @@ export function Sidebar({
     onRenameTag(renameTagId, label);
     setRenameTagOpen(false);
   };
+  // v0.31 服务器分组整理：分组名右键重命名（组内服务器整体换组）+ 拖拽换组悬停高亮
+  const [renameGroupOpen, setRenameGroupOpen] = useState(false);
+  const [renameGroupOld, setRenameGroupOld] = useState("");
+  const [renameGroupInput, setRenameGroupInput] = useState("");
+  const renameGroupInputRef = useRef<HTMLInputElement>(null);
+  const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
+  const openRenameGroup = (group: string) => {
+    setRenameGroupOld(group);
+    setRenameGroupInput(group); // 默认组（""）留空待填，其余预填现名
+    setRenameGroupOpen(true);
+  };
+  const submitRenameGroup = () => {
+    const name = renameGroupInput.trim();
+    if (!name) return;
+    // 分组按显示名对齐（空组名显示为「默认」）；改回「默认」= 解除分组（存空串）
+    const value = name === "默认" ? "" : name;
+    const ids = sftpServers
+      .filter((s) => (s.group || "默认") === renameGroupOld)
+      .map((s) => s.id);
+    setRenameGroupOpen(false);
+    if (ids.length === 0) return;
+    onSftpSetGroup?.(ids, value);
+  };
   // 对话框每次打开稳拿焦点（radix 焦点竞争后重试一次兜底）
   useEffect(() => {
     if (!renameTagOpen) return;
@@ -211,6 +248,11 @@ export function Sidebar({
     const t = window.setTimeout(() => addTagInputRef.current?.focus(), 0);
     return () => window.clearTimeout(t);
   }, [addTagOpen]);
+  useEffect(() => {
+    if (!renameGroupOpen) return;
+    const t = window.setTimeout(() => renameGroupInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [renameGroupOpen]);
   const groupedServers = groupServers(sftpServers);
 
   // 侧边栏路径项共用的右键菜单段：终端折叠组（词汇表与文件列表空白菜单一致）
@@ -319,6 +361,43 @@ export function Sidebar({
             取消
           </Button>
           <Button size="sm" onClick={submitRenameTag} disabled={!renameTagInput.trim()}>
+            保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    {/* v0.31 重命名服务器分组：组内服务器整体换到新组名 */}
+    <Dialog open={renameGroupOpen} onOpenChange={setRenameGroupOpen}>
+      <DialogContent
+        className="max-w-sm"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          renameGroupInputRef.current?.focus();
+          renameGroupInputRef.current?.select();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>重命名分组</DialogTitle>
+          <DialogDescription>
+            将「{renameGroupOld || "默认"}」组内的{" "}
+            {sftpServers.filter((s) => (s.group || "默认") === renameGroupOld).length} 台服务器整体移到新分组
+          </DialogDescription>
+        </DialogHeader>
+        <Input
+          ref={renameGroupInputRef}
+          value={renameGroupInput}
+          onChange={(e) => setRenameGroupInput(e.target.value)}
+          placeholder="新分组名"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submitRenameGroup();
+            if (e.key === "Escape") setRenameGroupOpen(false);
+          }}
+        />
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={() => setRenameGroupOpen(false)}>
+            取消
+          </Button>
+          <Button size="sm" onClick={submitRenameGroup} disabled={!renameGroupInput.trim()}>
             保存
           </Button>
         </DialogFooter>
@@ -545,21 +624,51 @@ export function Sidebar({
           )}
         </div>
 
-        {/* SFTP 远程服务器（v0.2，内置插件；支持分组；v0.29.0 悬停分组名显示「+」新增） */}
+        {/* SFTP 远程服务器（v0.2，内置插件；支持分组；v0.29.0 悬停分组名显示「+」新增；
+            v0.31 分组名右键 → 导出/导入清单、清理远程打开临时文件） */}
         <div>
-          <div
-            data-sidebar-servers-header=""
-            className="group flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground"
-          >
-            <MonitorSmartphone className="h-3.5 w-3.5" /> 远程服务器
-            <button
-              onClick={onSftpAdd}
-              title="添加 SFTP 服务器"
-              className="ml-auto hidden rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-          </div>
+          <ContextMenu onOpenChange={(o) => !o && setExpandedMenu(null)}>
+            <ContextMenuTrigger asChild>
+              <div
+                data-sidebar-servers-header=""
+                className="group flex cursor-default items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground"
+              >
+                <MonitorSmartphone className="h-3.5 w-3.5" /> 远程服务器
+                <button
+                  onClick={onSftpAdd}
+                  title="添加 SFTP 服务器"
+                  className="ml-auto hidden rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </ContextMenuTrigger>
+            {(onSftpExport || onSftpImport || onSftpClearTemp) && (
+              <ContextMenuContent className="min-w-44" collisionPadding={10}>
+                <ContextMenuItem onClick={onSftpAdd}>
+                  <Plus className="mr-2 h-4 w-4" /> 添加 SFTP 服务器…
+                </ContextMenuItem>
+                {onSftpExport && (
+                  <ContextMenuItem onClick={onSftpExport}>
+                    <Download className="mr-2 h-4 w-4" /> 导出服务器列表…
+                  </ContextMenuItem>
+                )}
+                {onSftpImport && (
+                  <ContextMenuItem onClick={onSftpImport}>
+                    <Upload className="mr-2 h-4 w-4" /> 导入服务器列表…
+                  </ContextMenuItem>
+                )}
+                {onSftpClearTemp && (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={onSftpClearTemp}>
+                      <Trash2 className="mr-2 h-4 w-4" /> 清理远程临时文件
+                    </ContextMenuItem>
+                  </>
+                )}
+              </ContextMenuContent>
+            )}
+          </ContextMenu>
           {sftpServers.length === 0 && (
             <div className="px-2 py-1 text-xs text-muted-foreground">
               地址栏输入 sftp:// 连接，或点上方 +
@@ -567,12 +676,50 @@ export function Sidebar({
           )}
           {groupedServers.map(([group, servers]) => (
             <div key={group} className="mb-0.5">
-              <div className="flex items-center gap-1 px-2 pt-0.5 pb-0.5 text-[10px] font-medium text-muted-foreground/80">
-                <span className="min-w-0 truncate">{group || "默认"}</span>
-                <span className="tabular-nums text-[9px] text-muted-foreground/60">
-                  {servers.length}
-                </span>
-              </div>
+              <ContextMenu onOpenChange={(o) => !o && setExpandedMenu(null)}>
+                <ContextMenuTrigger asChild>
+                  <div
+                    data-server-group={group || "默认"}
+                    onDragOver={(e) => {
+                      // 只接服务器行拖拽（独立标记类型），文件拖拽路过不响应
+                      if (!onSftpSetGroup || !e.dataTransfer.types.includes(SERVER_DND_TYPE))
+                        return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      if (dragOverGroup !== group) setDragOverGroup(group);
+                    }}
+                    onDragLeave={() =>
+                      setDragOverGroup((cur) => (cur === group ? null : cur))
+                    }
+                    onDrop={(e) => {
+                      setDragOverGroup(null);
+                      if (!onSftpSetGroup) return;
+                      const id = e.dataTransfer.getData(SERVER_DND_TYPE);
+                      if (!id) return;
+                      e.preventDefault();
+                      e.stopPropagation(); // 不落入 window 级文件投放
+                      // 分组 key 是显示名（空组名显示「默认」），落库还原为空串
+                      onSftpSetGroup([id], group === "默认" ? "" : group);
+                    }}
+                    className={cn(
+                      "flex cursor-default items-center gap-1 rounded px-2 pt-0.5 pb-0.5 text-[10px] font-medium text-muted-foreground/80 transition-colors",
+                      dragOverGroup === group &&
+                        "bg-primary/10 text-foreground ring-1 ring-primary/40",
+                    )}
+                    title="右键重命名分组；把服务器拖到分组名上可换组"
+                  >
+                    <span className="min-w-0 truncate">{group || "默认"}</span>
+                    <span className="tabular-nums text-[9px] text-muted-foreground/60">
+                      {servers.length}
+                    </span>
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="min-w-44" collisionPadding={10}>
+                  <ContextMenuItem onClick={() => openRenameGroup(group)}>
+                    <Pencil className="mr-2 h-4 w-4" /> 重命名分组…
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
               {servers.map((sv) => (
                 <div key={sv.id} className="group relative">
                   <ContextMenu onOpenChange={(o) => !o && setExpandedMenu(null)}>
@@ -583,7 +730,14 @@ export function Sidebar({
                           e.button === 1 &&
                           (e.preventDefault(), onMiddleOpen(`sftp://${sv.user}@${sv.host}:${sv.port}/`))
                         }
-                        title={`${sv.user}@${sv.host}:${sv.port}${sv.connected ? "（已连接）" : ""} · 右键操作`}
+                        draggable={!!onSftpSetGroup}
+                        onDragStart={(e) => {
+                          if (!onSftpSetGroup) return;
+                          e.dataTransfer.setData(SERVER_DND_TYPE, sv.id);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragEnd={() => setDragOverGroup(null)}
+                        title={`${sv.user}@${sv.host}:${sv.port}${sv.connected ? "（已连接）" : ""} · 右键操作${onSftpSetGroup ? " · 拖到分组名可换组" : ""}`}
                         className={cn(
                           "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",
                           isActive(currentPath, `sftp://${sv.user}@${sv.host}:${sv.port}/`)

@@ -374,6 +374,13 @@ export async function installTauriMock(page: Page): Promise<void> {
         return created;
       },
       // ---- 单路径元信息（v0.17 空白处「属性（当前目录）」） ----
+      create_file: (a) => {
+        const parent = String(a.parent);
+        const name = String(a.name);
+        FS[parent] = FS[parent] ?? [];
+        if (!FS[parent].some((f) => f.name === name)) FS[parent].push({ name, size: 0 });
+        return `${parent}/${name}`;
+      },
       stat_entry: (a) => {
         const p = String(a.path);
         const name = p.split("/").filter(Boolean).pop() ?? p;
@@ -491,12 +498,26 @@ export async function installTauriMock(page: Page): Promise<void> {
       // ---- SFTP：一台"已保存密码"的服务器 + 一台需要手输的服务器 ----
       sftp_list_servers: () => SFTP_SERVERS.map((s) => ({ ...s })),
       sftp_connect: (a) => {
-        const cfg = a.config as Record<string, unknown> | undefined;
+        const cfg = a.server as Record<string, unknown> | undefined;
         const id = cfg?.id ? String(cfg.id) : `${cfg?.user}@${cfg?.host}:${cfg?.port}`;
+        sftpConnects.push(id);
         const s = SFTP_SERVERS.find((x) => x.id === id);
+        if (s) s.connected = true;
         return { ...(s ?? SFTP_SERVERS[0]), connected: true };
       },
-      sftp_save_server: () => SFTP_SERVERS.map((s) => ({ ...s, connected: true })),
+      // 仅保存/连接成功都会走这里：按 id 更新可编辑字段（名称/分组/根目录），
+      // connected 状态与真实后端一致取自会话池（mock 里即条目自身），不因保存而连接
+      sftp_save_server: (a) => {
+        const cfg = a.server as Record<string, unknown> | undefined;
+        const id = cfg?.id ? String(cfg.id) : `${cfg?.user}@${cfg?.host}:${cfg?.port}`;
+        const s = SFTP_SERVERS.find((x) => x.id === id);
+        if (s) {
+          if (cfg?.name != null) s.name = String(cfg.name);
+          if (cfg?.group != null) s.group = String(cfg.group);
+          if (cfg?.root !== undefined) s.root = (cfg.root as string | null) ?? null;
+        }
+        return SFTP_SERVERS.map((x) => ({ ...x }));
+      },
       // ---- SFTP 上传（v0.22.2 拖拽上传回归）：写虚拟 FS 并记录供用例断言 ----
       sftp_upload: (a) => {
         const dest = String(a.dest ?? "");
@@ -529,12 +550,57 @@ export async function installTauriMock(page: Page): Promise<void> {
         return `${localDir}/${finalName}`;
       },
       sftp_remove_server: () => [],
-      sftp_disconnect: () => null,
+      sftp_disconnect: (a) => {
+        const s = SFTP_SERVERS.find((x) => x.id === String(a.id));
+        if (s) s.connected = false;
+        return null;
+      },
+      // ---- v0.31 服务器分组整理：拖拽换组 / 分组重命名（改夹具并记录调用） ----
+      sftp_set_server_group: (a) => {
+        const ids = (a.ids as string[]) ?? [];
+        const group = String(a.group);
+        for (const s of SFTP_SERVERS) {
+          if (ids.includes(s.id)) s.group = group;
+        }
+        sftpSetGroup.push({ ids: [...ids], group });
+        return SFTP_SERVERS.map((s) => ({ ...s }));
+      },
       sftp_master_key_status: () => ({ configured: false, active: false }),
+      // ---- v0.31 服务器清单导出/导入（浏览器环境无真实凭据，返回固定摘要并记录调用） ----
+      sftp_export_servers: (a) => {
+        sftpExport.push({ target: String(a.target) });
+        return null;
+      },
+      sftp_import_servers: (a) => {
+        // 用例经 __rdirImportNeedsKey 模拟「文件含密文」：未给主密码 → NEED_MASTER_KEY；
+        // 密码固定 mk1（其余 = 主密码不正确），覆盖导入主密码框的完整交互
+        const w = window as unknown as { __rdirImportNeedsKey?: boolean };
+        if (w.__rdirImportNeedsKey && a.masterKey == null) {
+          throw new Error("NEED_MASTER_KEY: 导入文件包含加密密码，需要输入导出时使用的主密码");
+        }
+        if (a.masterKey != null && String(a.masterKey) !== "mk1") {
+          throw new Error("主密码不正确");
+        }
+        sftpImport.push({ filePath: String(a.filePath), hasKey: a.masterKey != null });
+        return { imported: 2, skipped: 1 };
+      },
+      // ---- v0.31 远程打开临时目录（虚拟占用：2 个文件 3MB） ----
+      sftp_temp_info: () => ({ path: "/tmp/r-dir-sftp", files: 2, bytes: 3 * 1024 * 1024 }),
+      sftp_clear_temp: () => 3 * 1024 * 1024,
+      // ---- v0.31 双击打开远程文件：记录下载并回确定性临时路径（断言 open_path 落点） ----
+      sftp_download: (a) => {
+        const p = String(a.path);
+        const name = p.split("/").filter(Boolean).pop() ?? "download";
+        sftpDownloads.push(p);
+        return `/tmp/r-dir-sftp/${name}`;
+      },
       share_list: () => [],
       plugin: () => null,
-      "plugin:dialog|open": () => null,
-      "plugin:dialog|save": () => null,
+      // 文件对话框：用例可经 __rdirDialogOpen / __rdirDialogSave 注入返回路径（缺省取消）
+      "plugin:dialog|open": () =>
+        (window as unknown as { __rdirDialogOpen?: string | null }).__rdirDialogOpen ?? null,
+      "plugin:dialog|save": () =>
+        (window as unknown as { __rdirDialogSave?: string | null }).__rdirDialogSave ?? null,
       // plugin-dialog 的 confirm() 底层复用 message 命令，返回值按点击的按钮判定：
       // (await messageCommand(...)) === 'Ok' → 这里恒返回 'Ok'（确认类对话框全部确认）
       "plugin:dialog|message": () => "Ok",
@@ -587,6 +653,14 @@ export async function installTauriMock(page: Page): Promise<void> {
     const uploads: { local: string; dest: string; name: string }[] = [];
     /** sftp_download_to 记录（v0.22.0 拖拽覆盖对称回归用） */
     const downloads: { path: string; localDir: string; overwrite: boolean }[] = [];
+    /** v0.31 服务器导出/导入调用记录 */
+    const sftpExport: { target: string }[] = [];
+    const sftpImport: { filePath: string; hasKey: boolean }[] = [];
+    /** v0.31 双击打开远程文件的下载记录 */
+    const sftpDownloads: string[] = [];
+    /** v0.31 服务器分组整理与连接调用记录（断言「保存」不连接） */
+    const sftpSetGroup: { ids: string[]; group: string }[] = [];
+    const sftpConnects: string[] = [];
 
     const internals = {
       invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
@@ -635,6 +709,6 @@ export async function installTauriMock(page: Page): Promise<void> {
       }
       return origFetch ? origFetch(input, init) : Promise.reject(new Error("fetch unavailable"));
     }) as typeof window.fetch;
-    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads };
+    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, sftpSetGroup, sftpConnects, servers: SFTP_SERVERS };
   });
 }

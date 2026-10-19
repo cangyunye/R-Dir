@@ -84,6 +84,8 @@ export interface PaneHandlers {
   onRename: (paneId: number, entry: FileEntry) => void;
   onRenameCommit: (path: string, name: string) => void;
   onRenameCancel: () => void;
+  /** v0.31 标签视图条目重命名（改名 + 迁移标签/快捷访问路径） */
+  onTagRename: (path: string, name: string) => void;
   onCopyPath: (path: string) => void;
   onRefresh: (paneId: number) => void;
   /** 跨窗格拖拽：从 sourcePaneId 拖入目标窗格 */
@@ -462,6 +464,7 @@ const PaneView = memo(function PaneView({
           onToggleTag={h.onToggleTag}
           onCopyPath={h.onCopyPath}
           onToggleQuick={h.onToggleQuick}
+          onRename={h.onTagRename}
           customQuick={customQuick}
           onExit={() => onExitTag(pane.id)}
           isActive={isActive}

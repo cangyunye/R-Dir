@@ -237,6 +237,111 @@ mod tests {
             _ => panic!(),
         }
     }
+
+    // ==================== 导出 / 导入 ====================
+
+    fn srv(id: &str, auth: AuthConfig) -> ServerConfigFile {
+        ServerConfigFile {
+            id: id.into(),
+            name: id.into(),
+            host: "h".into(),
+            port: 22,
+            user: "u".into(),
+            root: None,
+            group: String::new(),
+            auth,
+        }
+    }
+
+    #[test]
+    fn export_rejects_plaintext_secrets() {
+        let mut file = ServersFile::default();
+        file.servers.push(srv("a", pw_cfg("plain", true)));
+        assert!(has_plaintext_secrets(&file), "明文密码必须先设主密钥再导出");
+        let enc = encrypt_password(b"mk", "secret").unwrap();
+        file.servers[0] = srv("a", pw_cfg(&enc, true));
+        assert!(!has_plaintext_secrets(&file), "密文可导出");
+        file.servers[0] = srv("a", pw_cfg("", false));
+        assert!(!has_plaintext_secrets(&file), "未勾选记住的空密码不算明文泄漏");
+    }
+
+    #[test]
+    fn import_requires_master_password_and_verifies_check() {
+        let enc = encrypt_password(b"mk", "secret").unwrap();
+        let export = ExportFile {
+            version: 1,
+            exported_at: "2026-10-19T00:00:00Z".into(),
+            master_key_check: Some(master_key_check(b"mk")),
+            servers: vec![srv("a", pw_cfg(&enc, true))],
+        };
+        let mut local = ServersFile::default();
+        // 含密文但没给主密码 → NEED_MASTER_KEY（前端据此弹主密码框）
+        let err = import_merge(&mut local, &export, None, None).unwrap_err();
+        assert!(err.contains("NEED_MASTER_KEY"));
+        // 错误主密码：先过校验值拦截
+        let err = import_merge(&mut local, &export, Some(b"wrong"), None).unwrap_err();
+        assert!(err.contains("主密码不正确"), "masterKeyCheck 必须先拦截错误密码");
+        // 正确主密码：解密导入，跳过数 0
+        let out = import_merge(&mut local, &export, Some(b"mk"), None).unwrap();
+        assert_eq!((out.imported, out.skipped), (1, 0));
+        match &local.servers[0].auth {
+            AuthConfig::Password { password, .. } => {
+                assert_eq!(password, "secret", "本机未设主密钥 → 明文落盘（与首存策略一致）");
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn import_reseals_with_local_master_and_skips_existing() {
+        let enc = encrypt_password(b"export-mk", "secret").unwrap();
+        let export = ExportFile {
+            version: 1,
+            exported_at: String::new(),
+            master_key_check: Some(master_key_check(b"export-mk")),
+            servers: vec![srv("a", pw_cfg(&enc, true)), srv("b", pw_cfg("plain-b", true))],
+        };
+        let mut local = ServersFile::default();
+        local.servers.push(srv("a", pw_cfg("local-keep", true)));
+        // 本机主密钥已解锁：解密后回填加密；id 冲突的 a 跳过
+        let out = import_merge(&mut local, &export, Some(b"export-mk"), Some(b"local-mk")).unwrap();
+        assert_eq!((out.imported, out.skipped), (1, 1), "同 id 跳过，不覆盖本机配置");
+        assert_eq!(local.servers.len(), 2);
+        match &local.servers[0].auth {
+            AuthConfig::Password { password, .. } => {
+                assert_eq!(password, "local-keep", "本机已有条目不被导入覆盖");
+            }
+            _ => panic!(),
+        }
+        match &local.servers[1].auth {
+            AuthConfig::Password { password, .. } => {
+                assert!(password.starts_with(ENC_PREFIX), "导入后按本机主密钥加密");
+                assert_eq!(decrypt_password(b"local-mk", password).unwrap(), "plain-b");
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn parse_export_accepts_full_and_bare_array() {
+        let enc = encrypt_password(b"mk", "s").unwrap();
+        let export = ExportFile {
+            version: 1,
+            exported_at: "t".into(),
+            master_key_check: Some(master_key_check(b"mk")),
+            servers: vec![srv("a", pw_cfg(&enc, true))],
+        };
+        let text = serde_json::to_string(&export).unwrap();
+        let parsed = parse_export(&text).unwrap();
+        assert_eq!(parsed.servers.len(), 1);
+        assert_eq!(parsed.master_key_check.as_deref(), export.master_key_check.as_deref());
+        // 裸数组兼容（无校验值 → 导入时按逐条解密对账）
+        let bare = serde_json::to_string(&export.servers).unwrap();
+        let parsed = parse_export(&bare).unwrap();
+        assert_eq!(parsed.servers.len(), 1);
+        assert!(parsed.master_key_check.is_none());
+        assert!(parse_export("not json").is_err());
+    }
 }
 
 // ==================== 主密钥策略（v0.22.2） ====================
@@ -277,24 +382,165 @@ pub fn seal_auth_secrets(auth: &mut AuthConfig, master: Option<&[u8]>) -> Result
 pub fn encrypt_all_plaintext(file: &mut ServersFile, master: &[u8]) -> Result<usize, String> {
     let mut n = 0;
     for srv in file.servers.iter_mut() {
-        match &mut srv.auth {
-            AuthConfig::Password { password, save_password } => {
-                if *save_password && !password.is_empty() && !password.starts_with(ENC_PREFIX) {
-                    *password = encrypt_password(master, password)?;
-                    n += 1;
-                }
+        n += encrypt_entry_plaintext(&mut srv.auth, master)?;
+    }
+    Ok(n)
+}
+
+fn encrypt_entry_plaintext(auth: &mut AuthConfig, master: &[u8]) -> Result<usize, String> {
+    let mut n = 0;
+    match auth {
+        AuthConfig::Password { password, save_password } => {
+            if *save_password && !password.is_empty() && !password.starts_with(ENC_PREFIX) {
+                *password = encrypt_password(master, password)?;
+                n += 1;
             }
-            AuthConfig::PublicKey { passphrase, save_passphrase, .. } => {
-                if *save_passphrase {
-                    if let Some(p) = passphrase.as_deref() {
-                        if !p.is_empty() && !p.starts_with(ENC_PREFIX) {
-                            *passphrase = Some(encrypt_password(master, p)?);
-                            n += 1;
-                        }
+        }
+        AuthConfig::PublicKey { passphrase, save_passphrase, .. } => {
+            if *save_passphrase {
+                if let Some(p) = passphrase.as_mut() {
+                    if !p.is_empty() && !p.starts_with(ENC_PREFIX) {
+                        *p = encrypt_password(master, p)?;
+                        n += 1;
                     }
                 }
             }
         }
     }
     Ok(n)
+}
+
+// ==================== 服务器清单导出 / 导入 ====================
+
+/// 导出文件顶层结构：servers.json 的可迁移子集。
+/// 已保存的密码/口令以密文（enc:v1:）原样带走；masterKeyCheck 一并导出，
+/// 导入端先用它校验主密码、再解密，避免拿错误密码逐条硬试。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ExportFile {
+    pub version: u32,
+    /// RFC3339 导出时间（前端生成传入）
+    #[serde(rename = "exportedAt")]
+    pub exported_at: String,
+    /// 导出方 master-key 校验值（明文清单没有）
+    #[serde(rename = "masterKeyCheck", skip_serializing_if = "Option::is_none")]
+    pub master_key_check: Option<String>,
+    pub servers: Vec<ServerConfigFile>,
+}
+
+/// 导入结果摘要（跳过 = 本机已有同 id 服务器）
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportOutcome {
+    pub imported: usize,
+    pub skipped: usize,
+}
+
+/// 单条目是否带有 enc: 密文密码/口令
+fn entry_has_ciphertext(auth: &AuthConfig) -> bool {
+    match auth {
+        AuthConfig::Password { password, .. } => password.starts_with(ENC_PREFIX),
+        AuthConfig::PublicKey { passphrase, .. } => passphrase
+            .as_deref()
+            .map(|p| p.starts_with(ENC_PREFIX))
+            .unwrap_or(false),
+    }
+}
+
+/// 清单中是否存在「勾选记住但仍是明文」的密码/口令（导出前的安全门：
+/// 明文进导出文件会随文件外流，必须先设主密钥加密）
+pub fn has_plaintext_secrets(file: &ServersFile) -> bool {
+    file.servers.iter().any(|srv| match &srv.auth {
+        AuthConfig::Password { password, save_password } => {
+            *save_password && !password.is_empty() && !password.starts_with(ENC_PREFIX)
+        }
+        AuthConfig::PublicKey {
+            passphrase,
+            save_passphrase,
+            ..
+        } => {
+            *save_passphrase
+                && passphrase
+                    .as_deref()
+                    .map(|p| !p.is_empty() && !p.starts_with(ENC_PREFIX))
+                    .unwrap_or(false)
+        }
+    })
+}
+
+/// 解析导出文件文本：标准 ExportFile；兼容裸服务器数组（旧版/手工编辑）
+pub fn parse_export(text: &str) -> Result<ExportFile, String> {
+    if let Ok(f) = serde_json::from_str::<ExportFile>(text) {
+        return Ok(f);
+    }
+    if let Ok(servers) = serde_json::from_str::<Vec<ServerConfigFile>>(text) {
+        return Ok(ExportFile {
+            version: 1,
+            exported_at: String::new(),
+            master_key_check: None,
+            servers,
+        });
+    }
+    Err("不是有效的服务器导出文件".into())
+}
+
+/// 用导入主密码解密条目中的密文（无密码或解不开 → Err）
+fn decrypt_entry_secrets(auth: &mut AuthConfig, master: Option<&[u8]>) -> Result<(), String> {
+    let Some(mk) = master else {
+        return Err("NEED_MASTER_KEY: 导入文件包含加密密码，需要输入导出时使用的主密码".into());
+    };
+    match auth {
+        AuthConfig::Password { password, .. } => {
+            if password.starts_with(ENC_PREFIX) {
+                *password = decrypt_password(mk, password)?;
+            }
+        }
+        AuthConfig::PublicKey { passphrase: Some(p), .. } => {
+            if p.starts_with(ENC_PREFIX) {
+                *p = decrypt_password(mk, p)?;
+            }
+        }
+        AuthConfig::PublicKey { passphrase: None, .. } => {}
+    }
+    Ok(())
+}
+
+/// 合并导入：密文经导入主密码解密 → 本机主密钥回填加密 → 按 id 去重（已存在跳过）。
+/// 导入不覆盖本机同 id 条目（本机的连接状态/凭据改动不因导入被回滚）。
+/// 返回 (导入数, 跳过数)；文件带 masterKeyCheck 时先校验主密码再动手。
+pub fn import_merge(
+    local: &mut ServersFile,
+    export: &ExportFile,
+    master: Option<&[u8]>,
+    local_master: Option<&[u8]>,
+) -> Result<ImportOutcome, String> {
+    let has_ct = export.servers.iter().any(|s| entry_has_ciphertext(&s.auth));
+    if has_ct {
+        let mk = master.ok_or_else(|| {
+            "NEED_MASTER_KEY: 导入文件包含加密密码，需要输入导出时使用的主密码".to_string()
+        })?;
+        if let Some(check) = &export.master_key_check {
+            if *check != master_key_check(mk) {
+                return Err("主密码不正确".into());
+            }
+        }
+    }
+    let mut imported = 0usize;
+    let mut skipped = 0usize;
+    for srv in &export.servers {
+        if local.servers.iter().any(|s| s.id == srv.id) {
+            skipped += 1;
+            continue;
+        }
+        let mut entry = srv.clone();
+        if entry_has_ciphertext(&entry.auth) {
+            decrypt_entry_secrets(&mut entry.auth, master)?;
+        }
+        // 本机已解锁主密钥 → 按本机策略回填加密；未设置则与首存一致明文落盘
+        if let Some(lm) = local_master {
+            encrypt_entry_plaintext(&mut entry.auth, lm)?;
+        }
+        local.servers.push(entry);
+        imported += 1;
+    }
+    Ok(ImportOutcome { imported, skipped })
 }

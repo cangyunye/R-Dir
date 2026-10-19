@@ -173,6 +173,10 @@ export const sftpSaveServer = (server: SftpServerConfig) =>
 export const sftpRemoveServer = (id: string) =>
   invoke<SftpServerView[]>("sftp_remove_server", { id });
 
+/** 批量设置服务器分组（侧边栏拖拽换组 / 分组整体重命名共用）；返回最新清单 */
+export const sftpSetServerGroup = (ids: string[], group: string) =>
+  invoke<SftpServerView[]>("sftp_set_server_group", { ids, group });
+
 export const sftpConnect = (server: SftpServerConfig) =>
   invoke<SftpServerView>("sftp_connect", { server });
 
@@ -203,6 +207,37 @@ export const sftpDelete = (paths: string[]) =>
 
 export const sftpRename = (path: string, newName: string) =>
   invoke<string>("sftp_rename", { path, newName });
+
+// ---- v0.31 服务器清单导出/导入 + 远程打开临时目录 ----
+
+/** 远程文件「打开」临时目录占用信息（确定性路径，可整体清理） */
+export interface SftpTempInfo {
+  path: string;
+  files: number;
+  bytes: number;
+}
+
+export const sftpTempInfo = () => invoke<SftpTempInfo>("sftp_temp_info");
+
+/** 清空远程打开临时目录，返回释放的字节数 */
+export const sftpClearTemp = () => invoke<number>("sftp_clear_temp");
+
+/** 导出服务器清单到目标文件；存在明文保存的密码时后端拒绝（先设主密钥） */
+export const sftpExportServers = (target: string, exportedAt: string) =>
+  invoke<void>("sftp_export_servers", { target, exportedAt });
+
+/** 导入结果：imported 新增台数；skipped 本机已有同 id 跳过台数 */
+export interface SftpImportSummary {
+  imported: number;
+  skipped: number;
+}
+
+/** 导入服务器清单；文件含加密密码而未给主密码 → 抛 NEED_MASTER_KEY（弹框重试） */
+export const sftpImportServers = (filePath: string, masterKey?: string) =>
+  invoke<SftpImportSummary>("sftp_import_servers", {
+    filePath,
+    masterKey: masterKey ?? null,
+  });
 
 // ---- 会话保存 / 恢复（v0.3.0） ----
 export const sessionSave = (layout: SessionLayout) =>

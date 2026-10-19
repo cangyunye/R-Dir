@@ -13,6 +13,7 @@ import {
   MAX_TAGS,
   TAG_DEFS,
   parentOf,
+  remapPrefixedPath,
   loadShareAllowParent,
   loadUiFontFamily,
   saveUiFontFamily,
@@ -90,6 +91,28 @@ describe("parentOf", () => {
   });
   it("根目录返回 /", () => {
     expect(parentOf("/file.txt")).toBe("/");
+  });
+});
+
+describe("remapPrefixedPath（条目重命名后迁移标签/快捷访问路径）", () => {
+  const OLD = "/home/u/旧文件夹";
+  const NEW = "/home/u/新文件夹";
+  it("本体相等 → 新路径", () => {
+    expect(remapPrefixedPath(OLD, OLD, NEW)).toBe(NEW);
+  });
+  it("子路径 → 前缀重写", () => {
+    expect(remapPrefixedPath(`${OLD}/子/文件.txt`, OLD, NEW)).toBe(`${NEW}/子/文件.txt`);
+  });
+  it("仅前缀字符串不算（同级目录名前缀重叠）", () => {
+    expect(remapPrefixedPath(`${OLD}-备份/a.txt`, OLD, NEW)).toBe(`${OLD}-备份/a.txt`);
+  });
+  it("无关路径原样返回", () => {
+    expect(remapPrefixedPath("/home/u/其他.txt", OLD, NEW)).toBe("/home/u/其他.txt");
+  });
+  it("Windows 反斜杠子路径", () => {
+    expect(remapPrefixedPath("F:\\dir\\old\\a.txt", "F:\\dir\\old", "F:\\dir\\new")).toBe(
+      "F:\\dir\\new\\a.txt",
+    );
   });
 });
 

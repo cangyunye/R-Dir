@@ -4,6 +4,7 @@ import {
   Clipboard,
   Crosshair,
   FolderOpen,
+  Pencil,
   Star,
   Tag,
   X,
@@ -12,6 +13,7 @@ import { tagLabel, TAG_DEFS, type FileTags, type TagDef, type TagNames } from "@
 import { FileIcon } from "@/components/FileIcon";
 import { statPaths } from "@/lib/api";
 import { MenuGroup } from "@/components/MenuGroup";
+import { RenameInput } from "@/components/RenameInput";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -25,7 +27,7 @@ import { hideExtension } from "@/lib/format";
 /**
  * 标签过滤视图（Finder 风格）：展示某个标签下的全部文件/文件夹，
  * 点击选中、双击跳转所在目录并定位，顶部横幅可关闭。
- * 条目右键菜单：定位 / 打开 / 加标签 / 复制路径 / 快捷访问 / 移除此标签。
+ * 条目右键菜单：定位 / 打开 / 重命名 / 加标签 / 复制路径 / 快捷访问 / 移除此标签。
  */
 export function TagView({
   tagId,
@@ -40,6 +42,7 @@ export function TagView({
   onToggleTag,
   onCopyPath,
   onToggleQuick,
+  onRename,
   customQuick,
   onExit,
   isActive,
@@ -58,6 +61,8 @@ export function TagView({
   onToggleTag: (path: string, tagId: string) => void;
   onCopyPath: (path: string) => void;
   onToggleQuick: (path: string) => void;
+  /** v0.31 重命名条目本体（文件夹/文件；App 侧负责迁移标签与快捷访问路径） */
+  onRename: (path: string, newName: string) => void;
   customQuick: string[];
   onExit: () => void;
   isActive: boolean;
@@ -77,6 +82,8 @@ export function TagView({
   // 条目类型（目录 / 文件）：标签可作用于文件夹，右键菜单据此显示"定位到文件夹"等
   const [kinds, setKinds] = useState<Record<string, string>>({});
   const [expandedMenu, setExpandedMenu] = useState<string | null>(null);
+  /** v0.31 行内重命名会话（本体改名，路径迁移由 App 侧完成） */
+  const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null);
   useEffect(() => {
     if (files.length === 0) {
       setKinds({});
@@ -170,6 +177,7 @@ export function TagView({
               permissions: "",
               extension: extOf(p),
             };
+            const isRenaming = renaming?.path === p;
             return (
               <ContextMenu
                 key={p}
@@ -178,11 +186,20 @@ export function TagView({
                 }}
               >
                 <ContextMenuTrigger asChild>
-                  <button
+                  {/* div 而非 button：重命名时行内要放 input（button 内嵌交互元素
+                      在 WKWebView 下焦点行为不可靠）；点击在改名期间让位给输入框 */}
+                  <div
                     data-tag-path={p}
-                    onClick={() => onOpen(p)}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      if (!isRenaming) onOpen(p);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !isRenaming) onOpen(p);
+                    }}
                     title={`${p}\n双击跳转所在目录（当前：${currentPath}）`}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
+                    className="flex w-full cursor-default items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
                   >
                     <FileIcon
                       entry={entry}
@@ -190,15 +207,41 @@ export function TagView({
                       className="shrink-0 text-muted-foreground"
                     />
                     <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-                      {showExtensions ? nameOf(p) : hideExtension(nameOf(p), isDir)}
+                      {isRenaming ? (
+                        <span
+                          className="block"
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <RenameInput
+                            initial={renaming.name}
+                            onCommit={(name) => {
+                              setRenaming(null);
+                              onRename(p, name);
+                            }}
+                            onCancel={() => setRenaming(null)}
+                          />
+                        </span>
+                      ) : showExtensions ? (
+                        nameOf(p)
+                      ) : (
+                        hideExtension(nameOf(p), isDir)
+                      )}
                     </span>
                     <span className="min-w-0 max-w-[45%] truncate text-[10px] text-muted-foreground">
                       {p}
                     </span>
                     <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-                  </button>
+                  </div>
                 </ContextMenuTrigger>
-                <ContextMenuContent className="min-w-48" collisionPadding={10}>
+                <ContextMenuContent
+                  className="min-w-48"
+                  collisionPadding={10}
+                  onCloseAutoFocus={(e) => {
+                    // 右键「重命名」后焦点留给行内 RenameInput（radix 回焦触发行会抢走输入框焦点）
+                    if (renaming?.path === p) e.preventDefault();
+                  }}
+                >
                   <ContextMenuItem onClick={() => onOpen(p)}>
                     <FolderOpen className="mr-2 h-4 w-4" /> 打开
                   </ContextMenuItem>
@@ -209,6 +252,10 @@ export function TagView({
                   )}
                   <ContextMenuItem onClick={() => onReveal(p, isDir)}>
                     <Crosshair className="mr-2 h-4 w-4" /> 定位到{isDir ? "文件夹" : "文件"}
+                  </ContextMenuItem>
+                  {/* v0.31 重命名本体（含文件夹） */}
+                  <ContextMenuItem onClick={() => setRenaming({ path: p, name: nameOf(p) })}>
+                    <Pencil className="mr-2 h-4 w-4" /> 重命名…
                   </ContextMenuItem>
                   <ContextMenuSeparator />
                   {/* 标签（内联展开，避免 Radix Sub 在 WKWebView 下的点击丢失） */}
