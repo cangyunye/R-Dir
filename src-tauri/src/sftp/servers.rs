@@ -265,6 +265,48 @@ mod tests {
         assert!(!has_plaintext_secrets(&file), "未勾选记住的空密码不算明文泄漏");
     }
 
+    /// v0.31.1：导出遇到明文密码不再直接拒绝，而是要主密码就地加密——
+    /// 「菜单里设置过主密钥也没生效」的根因是解锁分支不回填，导出永远被明文卡住。
+    #[test]
+    fn seal_for_export_demands_master_then_encrypts_in_place() {
+        let mut file = ServersFile::default();
+        file.servers.push(srv("a", pw_cfg("plain", true)));
+        file.servers.push(srv("b", pw_cfg("", false)));
+        // 没主密码 → NEED_MASTER_KEY（前端弹框）
+        let err = seal_for_export(&mut file, None).unwrap_err();
+        assert!(err.starts_with("NEED_MASTER_KEY"), "{err}");
+        assert!(has_plaintext_secrets(&file), "拒绝时不动清单");
+        // 首次给主密码：写入校验值 + 明文加密，返回 true 让调用方落盘
+        assert!(seal_for_export(&mut file, Some(b"mk")).unwrap());
+        assert_eq!(file.master_key_check.as_deref(), Some(master_key_check(b"mk").as_str()));
+        assert!(!has_plaintext_secrets(&file));
+        assert!(has_ciphertext(&file));
+        match &file.servers[0].auth {
+            AuthConfig::Password { password, .. } => {
+                assert_eq!(decrypt_password(b"mk", password).unwrap(), "plain");
+            }
+            _ => panic!(),
+        }
+        // 已全是密文：不传主密码也放行、不改动
+        assert!(!seal_for_export(&mut file, None).unwrap());
+        // 已全是密文但传了错误主密码：按校验值拦截（导出者得知道这把密码）
+        assert!(seal_for_export(&mut file, Some(b"wrong")).unwrap_err().contains("主密码不正确"));
+        assert!(!seal_for_export(&mut file, Some(b"mk")).unwrap());
+    }
+
+    #[test]
+    fn seal_for_export_rejects_wrong_master_when_check_exists() {
+        let mut file = ServersFile {
+            master_key_check: Some(master_key_check(b"mk")),
+            servers: vec![srv("a", pw_cfg("plain-saved-while-locked", true))],
+        };
+        let err = seal_for_export(&mut file, Some(b"wrong")).unwrap_err();
+        assert!(err.contains("主密码不正确"));
+        assert!(has_plaintext_secrets(&file), "错误密码不得动清单");
+        assert!(seal_for_export(&mut file, Some(b"mk")).unwrap());
+        assert!(!has_plaintext_secrets(&file));
+    }
+
     #[test]
     fn import_requires_master_password_and_verifies_check() {
         let enc = encrypt_password(b"mk", "secret").unwrap();
@@ -465,6 +507,45 @@ pub fn has_plaintext_secrets(file: &ServersFile) -> bool {
                     .unwrap_or(false)
         }
     })
+}
+
+/// 清单中是否有任何密文密码/口令（导出文件含密文 → 导入端需要主密码）
+pub fn has_ciphertext(file: &ServersFile) -> bool {
+    file.servers.iter().any(|s| entry_has_ciphertext(&s.auth))
+}
+
+/// 导出结果摘要
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportOutcome {
+    pub exported: usize,
+    /// 导出文件含密文密码（导入时需输入这把主密码）
+    pub encrypted: bool,
+}
+
+/// 导出前的加密门（v0.31.1）：存在「记住但明文」的密码时必须有主密码——
+/// 有则就地加密（首次设置顺手写入校验值），没有则返回 `NEED_MASTER_KEY:`（前端弹主密码框）。
+/// 清单里全是密文/无密码时不需要主密码；若此时仍传了主密码，只做校验值核对
+/// （导出者得知道这把密码，导入端才解得开）。返回是否改动了清单（调用方据此落盘）。
+pub fn seal_for_export(file: &mut ServersFile, master: Option<&[u8]>) -> Result<bool, String> {
+    if !has_plaintext_secrets(file) {
+        if let (Some(mk), Some(check)) = (master, &file.master_key_check) {
+            if *check != master_key_check(mk) {
+                return Err("主密码不正确".into());
+            }
+        }
+        return Ok(false);
+    }
+    let mk = master.ok_or_else(|| {
+        "NEED_MASTER_KEY: 存在以明文保存的服务器密码，导出前需用主密码加密".to_string()
+    })?;
+    match &file.master_key_check {
+        Some(check) if *check != master_key_check(mk) => return Err("主密码不正确".into()),
+        Some(_) => {}
+        None => file.master_key_check = Some(master_key_check(mk)),
+    }
+    encrypt_all_plaintext(file, mk)?;
+    Ok(true)
 }
 
 /// 解析导出文件文本：标准 ExportFile；兼容裸服务器数组（旧版/手工编辑）

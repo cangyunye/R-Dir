@@ -20,7 +20,7 @@ import type {
   SftpServerView,
 } from "@/lib/types";
 import type { SftpConnectInitial } from "@/components/ConnectDialog";
-import { sftpUrl } from "@/lib/sftp-path";
+import { parseSftpAuthority, sftpUrl } from "@/lib/sftp-path";
 import { formatSize } from "@/lib/format";
 import {
   confirm as confirmDialog,
@@ -260,6 +260,63 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
     [navigate, openConnect, showError, handleConnected],
   );
 
+  /**
+   * v0.31.1 确保 sftp:// 路径所属服务器已连接（标签视图重命名等**不经导航**的远程操作用）：
+   * 已连接 → true；已保存凭据 → 静默重连（不切换目录）→ true；
+   * 需要主密钥 → 弹主密钥框 → false；无保存凭据 / 未知服务器 → 弹预填连接框 → false。
+   * 返回 false 时调用方应提示「连接后重试」。
+   */
+  const ensureConnected = useCallback(
+    async (path: string): Promise<boolean> => {
+      const auth = parseSftpAuthority(path);
+      if (!auth) return false;
+      if (connectedRef.current.has(auth.id)) return true;
+      const sv = servers.find((s) => s.id === auth.id);
+      if (!sv) {
+        openConnect({ host: auth.host, port: auth.port, user: auth.user });
+        return false;
+      }
+      if (!sv.hasSecret) {
+        openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
+        return false;
+      }
+      const cfg: SftpServerConfig = {
+        id: sv.id,
+        name: sv.name,
+        host: sv.host,
+        port: sv.port,
+        user: sv.user,
+        root: sv.root ?? null,
+        group: sv.group,
+        auth: sv.auth === "key" ? "publicKey" : "password",
+        ...(sv.auth === "key"
+          ? { keyPath: "", savePassphrase: true }
+          : { password: "", savePassword: true }),
+      };
+      try {
+        await sftpConnect(cfg);
+        connectedRef.current.add(sv.id);
+        const list = await sftpListServers().catch(() => []);
+        if (list.length > 0) {
+          syncConnected(list);
+          setServers(list);
+        }
+        return true;
+      } catch (e) {
+        const msg = String(e);
+        if (msg.includes("NEED_MASTER_KEY")) {
+          // 已保存密码是密文、本会话还没解锁：弹主密钥框；验证后用户重做一次操作即可
+          setMasterKeyOpen(true);
+          return false;
+        }
+        openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
+        showError(`自动连接失败：${e}`);
+        return false;
+      }
+    },
+    [servers, openConnect, showError, syncConnected],
+  );
+
   /** 侧边栏右键"编辑"：回填连接框（含 root/分组/认证方式） */
   const editServer = useCallback(
     (sv: SftpServerView) => {
@@ -311,8 +368,43 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
   /** 导入文件含加密密码时的主密码框；待导入文件路径挂起在 ref（验证成功后重试） */
   const [importPwOpen, setImportPwOpen] = useState(false);
   const pendingImportFileRef = useRef<string | null>(null);
+  /** v0.31.1 导出遇到明文密码且主密钥未解锁时的主密码框；待写入的目标路径挂起在 ref */
+  const [exportPwOpen, setExportPwOpen] = useState(false);
+  const pendingExportTargetRef = useRef<string | null>(null);
 
-  /** 导出服务器清单（save 对话框选位置；明文密码由后端拒绝并提示先设主密钥） */
+  /** 导出成功收尾：提示台数 + 是否含密文；输入过主密码则刷新主密钥状态（已激活到内存） */
+  const finishExport = useCallback(
+    (s: { exported: number; encrypted: boolean }) => {
+      pendingExportTargetRef.current = null;
+      setExportPwOpen(false);
+      showInfo(
+        `已导出 ${s.exported} 台服务器${s.encrypted ? "（含加密密码，导入时需输入主密码）" : ""}`,
+      );
+      sftpMasterKeyStatus().then(setMasterKeyStatus).catch(() => {});
+    },
+    [showInfo],
+  );
+
+  /** 执行导出（masterKey 缺省时后端遇明文密码且无内存主密钥会抛 NEED_MASTER_KEY → 弹主密码框） */
+  const runExport = useCallback(
+    async (target: string, masterKey?: string) => {
+      try {
+        const s = await sftpExportServers(target, new Date().toISOString(), masterKey);
+        finishExport(s);
+      } catch (e) {
+        const msg = String(e);
+        if (msg.includes("NEED_MASTER_KEY")) {
+          pendingExportTargetRef.current = target;
+          setExportPwOpen(true);
+          return;
+        }
+        showError(`导出失败：${msg}`);
+      }
+    },
+    [finishExport, showError],
+  );
+
+  /** 导出服务器清单（save 对话框选位置；明文密码需主密码就地加密后再写出） */
   const exportServers = useCallback(async () => {
     const target = await saveFileDialog({
       title: "导出远程服务器列表",
@@ -320,13 +412,27 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
     if (!target) return;
-    try {
-      await sftpExportServers(target, new Date().toISOString());
-      showInfo(`已导出 ${servers.length} 台服务器`);
-    } catch (e) {
-      showError(`导出失败：${e}`);
-    }
-  }, [servers.length, showInfo, showError]);
+    await runExport(target);
+  }, [runExport]);
+
+  /** 导出主密码框提交：带主密码重试挂起的导出；失败把错误抛回框内展示（如主密码不正确） */
+  const submitExportPassword = useCallback(
+    async (password: string) => {
+      const target = pendingExportTargetRef.current;
+      if (!target) {
+        setExportPwOpen(false);
+        return;
+      }
+      const s = await sftpExportServers(target, new Date().toISOString(), password);
+      finishExport(s);
+    },
+    [finishExport],
+  );
+
+  const closeExportPassword = useCallback(() => {
+    setExportPwOpen(false);
+    pendingExportTargetRef.current = null;
+  }, []);
 
   /** 导入成功收尾：刷新清单 + 提示（供首次导入与主密码框重试共用） */
   const finishImport = useCallback(
@@ -466,9 +572,15 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
     importServers,
     submitImportPassword,
     closeImportPassword,
+    // v0.31.1 导出遇明文密码时的主密码框
+    exportPwOpen,
+    submitExportPassword,
+    closeExportPassword,
     clearOpenTemp,
     // v0.31 仅保存配置 + 分组整理
     saveServerOnly,
     setServerGroup,
+    // v0.31.1 不经导航的远程操作前自动连接
+    ensureConnected,
   };
 }

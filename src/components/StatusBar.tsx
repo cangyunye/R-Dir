@@ -64,6 +64,9 @@ export function StatusBar({
     transfer && transfer.fileTotal > 0
       ? Math.min(100, Math.round((transfer.fileDone / transfer.fileTotal) * 100))
       : 0;
+  // 失败收尾帧会在状态栏停留 1.5 秒，此时若已有具体错误文案，直接让位给它——
+  // 否则「复制失败」四个字盖住了真正的原因
+  const showTransfer = !!transfer && !(transfer.done && transfer.label === "传输失败" && notice);
   return (
     <div data-statusbar="" className="relative shrink-0">
       {transfer && !transfer.done && (
@@ -76,7 +79,7 @@ export function StatusBar({
       )}
       <div className="flex h-6 items-center justify-between gap-4 border-t bg-sidebar px-3 text-[11px] text-muted-foreground select-none">
         <div className="flex min-w-0 items-center gap-2">
-          {transfer ? (
+          {showTransfer && transfer ? (
             <span
               className={cn(
                 "flex items-center gap-1 truncate",

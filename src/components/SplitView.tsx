@@ -16,7 +16,7 @@ import { hasScheme } from "@/lib/cmdline";
 import { splitPathSegments } from "@/lib/path-segments";
 import type { IconSize, PaneNode, PaneState, SplitDir, ViewMode } from "@/lib/types";
 import type { IconPositionMap } from "@/lib/api";
-import type { FileTags, TagDef } from "@/lib/persist";
+import type { EntryAliases, FileTags, TagDef } from "@/lib/persist";
 import { FileList, type RenameState } from "@/components/FileList";
 import { IconGrid } from "@/components/IconGrid";
 import { PropertiesBar } from "@/components/PropertiesBar";
@@ -86,6 +86,8 @@ export interface PaneHandlers {
   onRenameCancel: () => void;
   /** v0.31 标签视图条目重命名（改名 + 迁移标签/快捷访问路径） */
   onTagRename: (path: string, name: string) => void;
+  /** v0.31.1 条目显示别名（只读后端条目在标签视图里的"改名"结果） */
+  entryAliases?: EntryAliases;
   onCopyPath: (path: string) => void;
   onRefresh: (paneId: number) => void;
   /** 跨窗格拖拽：从 sourcePaneId 拖入目标窗格 */
@@ -465,6 +467,7 @@ const PaneView = memo(function PaneView({
           onCopyPath={h.onCopyPath}
           onToggleQuick={h.onToggleQuick}
           onRename={h.onTagRename}
+          aliases={h.entryAliases}
           customQuick={customQuick}
           onExit={() => onExitTag(pane.id)}
           isActive={isActive}

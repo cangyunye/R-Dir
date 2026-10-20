@@ -153,7 +153,7 @@ describe("FileList 空白处右键菜单", () => {
       <FileList
         {...makeProps({
           pluginOpener: true,
-          quickTools: [{ id: "vscode", name: "Visual Studio Code", exec: "", detected: true }],
+          quickTools: [{ id: "vscode", name: "Visual Studio Code", exec: "", args: "", detected: true }],
         })}
       />,
     );

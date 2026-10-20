@@ -371,6 +371,10 @@ async fn sftp_master_key_status(
 /// 设置 master-key（仅内存）。首次设置写入校验值，并把清单中已有的
 /// 明文密码/口令回填加密（v0.22.2：首次创建不再强制设主密码，明文在此时升级为密文）；
 /// 已设置则校验输入是否匹配。
+///
+/// v0.31.1：解锁分支同样回填——主密钥在内存里只活一个会话，重启后「记住密码」保存的
+/// 服务器会以明文落盘；此前解锁只写内存不动文件，导出一直被「存在明文密码」拦住，
+/// 用户按提示去菜单设了主密钥也「没生效」。
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_set_master_key(
@@ -386,6 +390,9 @@ async fn sftp_set_master_key(
     if let Some(check) = &file.master_key_check {
         if *check != sftp::servers::master_key_check(key.as_bytes()) {
             return Err("主密钥不正确".into());
+        }
+        if sftp::servers::encrypt_all_plaintext(&mut file, key.as_bytes())? > 0 {
+            sftp::servers::save_file(&path, &file)?;
         }
     } else {
         file.master_key_check = Some(sftp::servers::master_key_check(key.as_bytes()));
@@ -1144,8 +1151,10 @@ fn sftp_clear_temp() -> Result<u64, String> {
 }
 
 /// 导出服务器清单到目标文件（前端 save 对话框给路径）。
-/// 已保存的密码/口令以密文原样带走；存在明文保存的密码则拒绝导出——
-/// 导出文件会离开本机权限域，明文必须先经主密钥升级为密文。
+/// 已保存的密码/口令以密文带走。存在明文保存的密码时需要主密码（v0.31.1）：
+/// 优先用调用方传入的 `master_key`，其次用本会话已解锁的内存密钥；都没有则返回
+/// `NEED_MASTER_KEY:`，前端弹主密码框后带密码重试。拿到密码后就地加密并落盘
+/// （本机清单一并升级为密文），导出时输入的密码顺手激活到内存。
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_export_servers(
@@ -1153,27 +1162,39 @@ async fn sftp_export_servers(
     state: tauri::State<'_, AppState>,
     target: String,
     exported_at: String,
-) -> Result<(), String> {
+    master_key: Option<String>,
+) -> Result<sftp::servers::ExportOutcome, String> {
     ensure_plugin(&state, "sftp")?;
     let path = sftp_servers_path(&app)?;
-    let file = sftp::servers::load_file(&path);
-    if sftp::servers::has_plaintext_secrets(&file) {
-        return Err(
-            "存在以明文保存的服务器密码，请先在 ⋮ 菜单设置主密钥（会自动加密）后再导出".into(),
-        );
+    let mut file = sftp::servers::load_file(&path);
+    let provided = master_key.map(String::into_bytes);
+    {
+        let mut mem = state.master_key.lock().await;
+        let key: Option<Vec<u8>> = provided.clone().or_else(|| mem.clone());
+        if sftp::servers::seal_for_export(&mut file, key.as_deref())? {
+            sftp::servers::save_file(&path, &file)?;
+        }
+        if mem.is_none() {
+            if let Some(k) = provided {
+                *mem = Some(k);
+            }
+        }
     }
+    let encrypted = sftp::servers::has_ciphertext(&file);
     let export = sftp::servers::ExportFile {
         version: 1,
         exported_at,
         master_key_check: file.master_key_check.clone(),
         servers: file.servers.clone(),
     };
+    let exported = export.servers.len();
     tauri::async_runtime::spawn_blocking(move || {
         let json = serde_json::to_string_pretty(&export).map_err(|e| e.to_string())?;
         std::fs::write(&target, json).map_err(|e| format!("写入导出文件失败：{e}"))
     })
     .await
-    .map_err(|e| format!("导出任务失败：{e}"))?
+    .map_err(|e| format!("导出任务失败：{e}"))??;
+    Ok(sftp::servers::ExportOutcome { exported, encrypted })
 }
 
 /// 导入服务器清单：密文经导入主密码解密 → 本机主密钥回填加密 → 按 id 去重合并。
@@ -1817,6 +1838,7 @@ pub fn run() {
         opener::add_quick_tool,
         opener::remove_quick_tool,
         opener::move_quick_tool,
+        opener::set_quick_tool_args,
         opener::open_quick_tool,
         opener::detect_editors,
         // 地址栏命令执行（v0.22.0）

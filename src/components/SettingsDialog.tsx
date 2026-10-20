@@ -94,6 +94,7 @@ export function SettingsDialog({
   onAddSuggestedTool,
   onRemoveQuickTool,
   onMoveQuickTool,
+  onSetQuickToolArgs,
   appName,
   appVersion,
   onOpenRepo,
@@ -133,6 +134,8 @@ export function SettingsDialog({
   onAddSuggestedTool: (c: EditorCandidate) => void;
   onRemoveQuickTool: (id: string) => void;
   onMoveQuickTool: (id: string, up: boolean) => void;
+  /** v0.31.1 启动参数串（占位符 {path} / {dir} / $pwd / {name}；空 = 默认行为） */
+  onSetQuickToolArgs?: (id: string, args: string) => void;
   /** 应用名 / 版本（getVersion = tauri.conf.json 版本，随 tag 同步） */
   appName: string;
   appVersion: string;
@@ -760,6 +763,15 @@ export function SettingsDialog({
                   右键菜单第一行按此顺序横排显示（最多 10 个）：点图标直接用该工具打开当前目录（作为工作区）或文件。
                   与「打开方式」的按扩展名关联互不影响。
                 </p>
+                <p className="mb-3 text-[11px] text-muted-foreground">
+                  每个工具可填<b>启动参数</b>，支持占位符
+                  <code className="mx-0.5 rounded bg-muted px-1">$pwd</code>/
+                  <code className="mx-0.5 rounded bg-muted px-1">{"{dir}"}</code>（当前目录）、
+                  <code className="mx-0.5 rounded bg-muted px-1">{"{path}"}</code>（当前目录或所选文件完整路径）、
+                  <code className="mx-0.5 rounded bg-muted px-1">{"{name}"}</code>（文件名）。
+                  留空 = 默认：终端类（Git Bash / cmd / PowerShell / bash…）直接在当前目录开窗，其余工具以路径为参数打开；
+                  非终端工具的参数里没写占位符时，路径自动补在末尾。
+                </p>
 
                 {quickTools.length === 0 ? (
                   <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
@@ -790,6 +802,11 @@ export function SettingsDialog({
                           <div className="truncate text-[10px] text-muted-foreground" title={t.exec}>
                             {t.exec}
                           </div>
+                          <QuickToolArgsInput
+                            toolId={t.id}
+                            value={t.args ?? ""}
+                            onCommit={(v) => onSetQuickToolArgs?.(t.id, v)}
+                          />
                         </div>
                         <button
                           onClick={() => onMoveQuickTool(t.id, true)}
@@ -1027,6 +1044,47 @@ export function SettingsDialog({
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 常用工具的启动参数输入（v0.31.1）：本地编辑，失焦 / Enter 提交。
+ *  受控值随外部清单刷新同步，避免提交后被旧值覆盖。（Esc 由对话框统一处理 = 关闭设置） */
+function QuickToolArgsInput({
+  toolId,
+  value,
+  onCommit,
+}: {
+  toolId: string;
+  value: string;
+  onCommit: (args: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    const v = draft.trim();
+    if (v !== value) onCommit(v);
+  };
+  return (
+    <div className="mt-1 flex items-center gap-1.5">
+      <span className="shrink-0 text-[10px] text-muted-foreground">启动参数</span>
+      <input
+        data-testid={`quick-tool-args-${toolId}`}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+            (e.target as HTMLInputElement).blur();
+          }
+          e.stopPropagation();
+        }}
+        placeholder="留空 = 默认；例：--cd=$pwd 或 --new-window {path}"
+        spellCheck={false}
+        className="h-6 min-w-0 flex-1 rounded border bg-background px-1.5 font-mono text-[10px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-primary"
+      />
     </div>
   );
 }

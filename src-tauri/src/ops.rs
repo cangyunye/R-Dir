@@ -247,7 +247,7 @@ fn apply_dir(
         if target.is_dir() {
             // 合并：保留目标已有内容
         } else {
-            fs::remove_file(target).map_err(|e| format!("覆盖 {} 失败：{}", target.display(), e))?;
+            force_remove_file(target).map_err(|e| format!("覆盖 {} 失败：{}", target.display(), io_hint(e)))?;
         }
     }
     fs::create_dir_all(target).map_err(|e| format!("创建目录 {} 失败：{}", target.display(), e))?;
@@ -274,15 +274,15 @@ fn apply_file(
     if mode == Mode::Move {
         // rename 本身即可替换已存在目标（Unix 原子；Windows 走 MOVEFILE_REPLACE_EXISTING），
         // 不再「先删目标再改名」——改名或回退复制失败时旧目标原地保留
-        if fs::rename(src, target).is_ok() {
+        if rename_replace(src, target).is_ok() {
             return Ok(());
         }
         copy_file_progress(src, target, cb)
-            .map_err(|e| format!("移动 {} 失败：{}", src.display(), e))?;
-        fs::remove_file(src).map_err(|e| format!("移动 {} 清理失败：{}", src.display(), e))?;
+            .map_err(|e| format!("移动 {} 失败：{}", src.display(), io_hint(e)))?;
+        force_remove_file(src).map_err(|e| format!("移动 {} 清理失败：{}", src.display(), io_hint(e)))?;
     } else {
         copy_file_progress(src, target, cb)
-            .map_err(|e| format!("复制 {} 失败：{}", src.display(), e))?;
+            .map_err(|e| format!("复制 {} 失败：{}", src.display(), io_hint(e)))?;
     }
     Ok(())
 }
@@ -652,7 +652,7 @@ fn copy_file_fast_windows(
         Ok(true)
     } else {
         let e = std::io::Error::last_os_error();
-        let _ = fs::remove_file(dst); // 清理半成品（取消时系统通常已删，兜底）
+        let _ = force_remove_file(dst); // 清理半成品（取消时系统通常已删，兜底）
         if e.raw_os_error() == Some(ERROR_REQUEST_ABORTED) || e.raw_os_error() == Some(ERROR_OPERATION_ABORTED) {
             Err(cancelled())
         } else {
@@ -671,24 +671,26 @@ fn copy_file_fast_macos(
     use std::os::unix::ffi::OsStrExt;
     let csrc = std::ffi::CString::new(src.as_os_str().as_bytes())?;
     let cdst = std::ffi::CString::new(dst.as_os_str().as_bytes())?;
-    let _ = fs::remove_file(dst); // clonefile 要求目标不存在；此处语义为覆盖
+    let _ = force_remove_file(dst); // clonefile 要求目标不存在；此处语义为覆盖
     let rc = unsafe { libc::clonefile(csrc.as_ptr(), cdst.as_ptr(), 0) };
     if rc == 0 {
         let total = fs::metadata(src).map(|m| m.len()).unwrap_or(0);
         if !cb(CbEvent::Bytes(total, total)) {
-            let _ = fs::remove_file(dst);
+            let _ = force_remove_file(dst);
             return Err(cancelled());
         }
         Ok(true)
     } else {
         let e = std::io::Error::last_os_error();
         match e.raw_os_error() {
-            // EXDEV 跨卷 / ENOTSUP·ENOSYS 文件系统不支持 / EPERM / EINVAL → 回退
+            // EXDEV 跨卷 / ENOTSUP·ENOSYS 文件系统不支持 / EPERM / EINVAL → 回退；
+            // EEXIST = 目标残留且删不掉，回退循环会用 File::create 再试一次
             Some(libc::EXDEV)
             | Some(libc::ENOTSUP)
             | Some(libc::ENOSYS)
             | Some(libc::EPERM)
-            | Some(libc::EINVAL) => Ok(false),
+            | Some(libc::EINVAL)
+            | Some(libc::EEXIST) => Ok(false),
             _ => Err(e),
         }
     }
@@ -704,29 +706,35 @@ fn copy_file_fast_linux(
 ) -> std::io::Result<bool> {
     use std::os::unix::io::AsRawFd;
     let srcf = fs::File::open(src)?;
-    let _ = fs::remove_file(dst);
+    let _ = force_remove_file(dst);
     let dstf = fs::File::create(dst)?;
     let rc = unsafe { libc::ioctl(dstf.as_raw_fd(), libc::FICLONE, srcf.as_raw_fd()) };
     if rc == 0 {
         let total = fs::metadata(src).map(|m| m.len()).unwrap_or(0);
         if !cb(CbEvent::Bytes(total, total)) {
-            let _ = fs::remove_file(dst);
+            let _ = force_remove_file(dst);
             return Err(cancelled());
         }
         Ok(true)
     } else {
         // 文件系统不支持 reflink：删掉空目标，走用户态回退循环
         drop(dstf);
-        let _ = fs::remove_file(dst);
+        let _ = force_remove_file(dst);
         Ok(false)
     }
 }
 
-/// 同目录临时文件名（事务化复制的中转）：固定前缀 + 进程 id + 原名哈希，
+/// 同目录临时文件名（事务化复制的中转）：固定前缀 + 进程 id + 原名哈希 + 进程内序号，
 /// 避免与用户文件撞名；长度有界，长路径场景不会把临时路径顶过 MAX_PATH。
 /// 与 dst 同卷保证最后一步 rename 是原子替换。
+///
+/// 序号保证每次调用拿到不同的名字。此前同名目标固定映射到同一个临时路径：一次覆盖失败
+/// 若留下删不掉的半成品（Windows 只读属性 / macOS uchg 被快速路径从源原样带过来），
+/// 之后每次复制同名文件都撞上它，再怎么重试都失败、换资源管理器却正常。
 fn tmp_sibling(dst: &Path) -> PathBuf {
     use std::hash::{Hash, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     let name = dst
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -734,10 +742,111 @@ fn tmp_sibling(dst: &Path) -> PathBuf {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     name.hash(&mut h);
     dst.with_file_name(format!(
-        ".rdir-tmp-{}-{:016x}",
+        ".rdir-tmp-{}-{:016x}-{:x}",
         std::process::id(),
-        h.finish()
+        h.finish(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+/// 取一个当前不存在的临时路径：撞上残留就强制清掉，清不掉换下一个序号。
+fn fresh_tmp_sibling(dst: &Path) -> PathBuf {
+    for _ in 0..8 {
+        let t = tmp_sibling(dst);
+        if fs::symlink_metadata(&t).is_err() || force_remove_file(&t).is_ok() {
+            return t;
+        }
+    }
+    tmp_sibling(dst)
+}
+
+/// macOS：清掉 uchg（UF_IMMUTABLE，访达「锁定」）——它阻止 unlink 与 rename 覆盖。
+/// 只动这一位，其余 flags 原样保留。返回是否真的改了。
+#[cfg(target_os = "macos")]
+fn clear_immutable(p: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(p.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::lstat(c.as_ptr(), &mut st) } != 0 {
+        return false;
+    }
+    if st.st_flags & libc::UF_IMMUTABLE == 0 {
+        return false;
+    }
+    unsafe { libc::chflags(c.as_ptr(), st.st_flags & !libc::UF_IMMUTABLE) == 0 }
+}
+
+/// 去掉阻止覆盖/删除的只读保护（尽力而为，返回是否有改动）。
+///
+/// Windows：FILE_ATTRIBUTE_READONLY 会让 DeleteFile 与 MoveFileEx(REPLACE_EXISTING) 都报
+/// 拒绝访问（资源管理器覆盖前会先清掉它）；而 CopyFileExW 把源的只读属性原样带到副本上，
+/// 所以只要复制过一次只读文件，目标就「永久」覆盖不了——粘滞失败的另一条根因。
+/// Unix：unlink/rename 只看目录权限，文件自身的只读位无妨；macOS 还要清 uchg。
+#[allow(clippy::permissions_set_readonly_false)]
+fn make_writable(p: &Path) -> bool {
+    let mut changed = false;
+    #[cfg(target_os = "macos")]
+    {
+        changed |= clear_immutable(p);
+    }
+    let Ok(meta) = fs::symlink_metadata(p) else {
+        return changed;
+    };
+    #[cfg(windows)]
+    {
+        let mut perm = meta.permissions();
+        if perm.readonly() {
+            perm.set_readonly(false);
+            changed |= fs::set_permissions(p, perm).is_ok();
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode();
+        if mode & 0o200 == 0 {
+            changed |= fs::set_permissions(p, fs::Permissions::from_mode(mode | 0o200)).is_ok();
+        }
+    }
+    changed
+}
+
+/// 删除文件；被只读/锁定保护挡住就先去保护再删。不存在视为成功。
+fn force_remove_file(p: &Path) -> std::io::Result<()> {
+    match fs::remove_file(p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => {
+            if make_writable(p) {
+                fs::remove_file(p)
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+/// 以 from 替换 to（同卷 rename，to 存在则覆盖）。目标只读/锁定导致拒绝访问时
+/// 清保护再试一次；其余错误原样返回，旧目标原地保留。
+fn rename_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && make_writable(to) => {
+            fs::rename(from, to)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// io 错误加一句人话：拒绝访问多半是只读/锁定/占用，直说比 os error 5 有用。
+fn io_hint(e: std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        format!("{e}（文件可能为只读、已锁定或正被其他程序占用）")
+    } else {
+        e.to_string()
+    }
 }
 
 /// 流式复制文件并回报进度。优先平台快速路径（reflink/系统复制引擎，
@@ -754,7 +863,7 @@ fn copy_file_progress(src: &Path, dst: &Path, cb: &mut dyn FnMut(CbEvent) -> boo
     if !cb(CbEvent::Start(&name)) {
         return Err(cancelled());
     }
-    let tmp = tmp_sibling(dst);
+    let tmp = fresh_tmp_sibling(dst);
     let mut fill = |tmp: &Path| -> std::io::Result<()> {
         match copy_file_fast(src, tmp, cb)? {
             true => Ok(()),
@@ -781,11 +890,11 @@ fn copy_file_progress(src: &Path, dst: &Path, cb: &mut dyn FnMut(CbEvent) -> boo
         }
     };
     if let Err(e) = fill(&tmp) {
-        let _ = fs::remove_file(&tmp); // 只清自己的半成品，目标原地保留
+        let _ = force_remove_file(&tmp); // 只清自己的半成品，目标原地保留
         return Err(e);
     }
-    fs::rename(&tmp, dst).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
+    rename_replace(&tmp, dst).map_err(|e| {
+        let _ = force_remove_file(&tmp);
         e
     })
 }
@@ -963,6 +1072,143 @@ mod tests {
             "old",
             "取消后旧目标必须原样保留"
         );
+    }
+
+    // ---- 粘滞失败回归：一次覆盖失败后再复制同名文件必须能成功 ----
+
+    fn leftover_tmps(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with(".rdir-tmp-"))
+            .collect()
+    }
+
+    #[test]
+    fn tmp_sibling_differs_per_call() {
+        let dst = Path::new("/x/y/same-name.txt");
+        let a = tmp_sibling(dst);
+        let b = tmp_sibling(dst);
+        assert_ne!(a, b, "同名目标每次应拿到不同的临时路径（残留不可再撞名）");
+        assert_eq!(a.parent(), dst.parent(), "临时文件必须与目标同目录（同卷原子 rename）");
+        assert!(a.file_name().unwrap().to_string_lossy().starts_with(".rdir-tmp-"));
+    }
+
+    /// 目标被标成只读后再覆盖：Windows 下 MoveFileEx(REPLACE_EXISTING) 对只读目标报拒绝访问，
+    /// 资源管理器会先清掉只读位；我们也必须这样，否则复制过一次只读文件后目标永远覆盖不了。
+    #[test]
+    fn copy_overwrite_readonly_target_succeeds() {
+        let base = tmp("copy-ro-target");
+        let src = base.join("src.txt");
+        let dest = base.join("dst");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(&src, "new").unwrap();
+        let target = dest.join("src.txt");
+        fs::write(&target, "old").unwrap();
+        let mut perm = fs::metadata(&target).unwrap().permissions();
+        perm.set_readonly(true);
+        fs::set_permissions(&target, perm).unwrap();
+
+        let d = target.to_string_lossy().to_string();
+        copy_entries_plan(
+            &[src.to_string_lossy().to_string()],
+            &dest.to_string_lossy().to_string(),
+            &plan(&[(&d, Resolution::Overwrite)]),
+            &mut noop(),
+        )
+        .unwrap_or_else(|e| panic!("只读目标应可被覆盖：{e}"));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+        assert!(leftover_tmps(&dest).is_empty(), "不应残留临时文件");
+    }
+
+    /// 源文件本身只读：平台快速路径会把只读属性带到副本上，第二次覆盖同名文件时
+    /// 目标已是只读——这正是用户遇到的「复制一次失败后再复制还是失败」。
+    #[test]
+    fn copy_readonly_source_twice_overwrites_both_times() {
+        let base = tmp("copy-ro-src-twice");
+        let src = base.join("ro.txt");
+        let dest = base.join("dst");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(&src, "v1").unwrap();
+        let mut perm = fs::metadata(&src).unwrap().permissions();
+        perm.set_readonly(true);
+        fs::set_permissions(&src, perm).unwrap();
+
+        let target = dest.join("ro.txt");
+        let d = target.to_string_lossy().to_string();
+        let run = || {
+            copy_entries_plan(
+                &[src.to_string_lossy().to_string()],
+                &dest.to_string_lossy().to_string(),
+                &plan(&[(&d, Resolution::Overwrite)]),
+                &mut noop(),
+            )
+        };
+        run().unwrap_or_else(|e| panic!("首次复制只读源应成功：{e}"));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "v1");
+        run().unwrap_or_else(|e| panic!("第二次覆盖（目标已继承只读）应成功：{e}"));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "v1");
+        assert!(leftover_tmps(&dest).is_empty(), "不应残留临时文件");
+
+        let mut perm = fs::metadata(&src).unwrap().permissions();
+        perm.set_readonly(false);
+        let _ = fs::set_permissions(&src, perm);
+    }
+
+    /// 一次失败（源不可读）之后修好源再复制：必须成功，且失败那次不能留下临时文件。
+    #[cfg(unix)]
+    #[test]
+    fn copy_retry_after_failure_succeeds_without_leftover() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tmp("copy-retry");
+        let src = base.join("src.txt");
+        let dest = base.join("dst");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(&src, "new").unwrap();
+        let target = dest.join("src.txt");
+        fs::write(&target, "old").unwrap();
+        let d = target.to_string_lossy().to_string();
+        let run = || {
+            copy_entries_plan(
+                &[src.to_string_lossy().to_string()],
+                &dest.to_string_lossy().to_string(),
+                &plan(&[(&d, Resolution::Overwrite)]),
+                &mut noop(),
+            )
+        };
+
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(run().is_err(), "源不可读时应失败");
+        assert!(leftover_tmps(&dest).is_empty(), "失败后不应残留临时文件：{:?}", leftover_tmps(&dest));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "old");
+
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o644)).unwrap();
+        run().unwrap_or_else(|e| panic!("修复源后重试应成功：{e}"));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+        assert!(leftover_tmps(&dest).is_empty());
+    }
+
+    #[test]
+    fn force_remove_file_clears_readonly_and_tolerates_missing() {
+        let base = tmp("force-remove");
+        let f = base.join("ro.txt");
+        fs::write(&f, "x").unwrap();
+        let mut perm = fs::metadata(&f).unwrap().permissions();
+        perm.set_readonly(true);
+        fs::set_permissions(&f, perm).unwrap();
+        force_remove_file(&f).unwrap_or_else(|e| panic!("只读文件应可强制删除：{e}"));
+        assert!(!f.exists());
+        force_remove_file(&f).expect("不存在视为成功");
+    }
+
+    #[test]
+    fn io_hint_explains_permission_denied() {
+        let e = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "拒绝访问");
+        let s = io_hint(e);
+        assert!(s.contains("拒绝访问") && s.contains("只读"), "{s}");
+        let other = std::io::Error::new(std::io::ErrorKind::NotFound, "nope");
+        assert_eq!(io_hint(other), "nope");
     }
 
     #[test]

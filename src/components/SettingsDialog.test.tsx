@@ -139,3 +139,45 @@ describe("SettingsDialog 外观：颜色模式三态", () => {
     expect(onThemeModeChange).toHaveBeenCalledWith("dark");
   });
 });
+
+describe("SettingsDialog 常用工具：启动参数（v0.31.1）", () => {
+  const gitBash = {
+    id: "qt:gb",
+    name: "Git Bash",
+    exec: "C:\\Program Files\\Git\\git-bash.exe",
+    args: "",
+    detected: true,
+  };
+
+  it("每个工具有启动参数输入框，显示已保存值", () => {
+    setup({ quickTools: [{ ...gitBash, args: "--cd=$pwd" }] });
+    const input = screen.getByTestId("quick-tool-args-qt:gb") as HTMLInputElement;
+    expect(input.value).toBe("--cd=$pwd");
+  });
+
+  it("修改后回车 → onSetQuickToolArgs(id, 去首尾空白)", () => {
+    const onSetQuickToolArgs = vi.fn();
+    setup({ quickTools: [gitBash], onSetQuickToolArgs });
+    const input = screen.getByTestId("quick-tool-args-qt:gb");
+    fireEvent.change(input, { target: { value: "  --cd={dir}  " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSetQuickToolArgs).toHaveBeenCalledWith("qt:gb", "--cd={dir}");
+  });
+
+  it("值未变化时失焦不提交；改动后失焦提交", () => {
+    const onSetQuickToolArgs = vi.fn();
+    setup({ quickTools: [{ ...gitBash, args: "-x" }], onSetQuickToolArgs });
+    const input = screen.getByTestId("quick-tool-args-qt:gb") as HTMLInputElement;
+    fireEvent.blur(input);
+    expect(onSetQuickToolArgs).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "changed" } });
+    fireEvent.blur(input);
+    expect(onSetQuickToolArgs).toHaveBeenCalledWith("qt:gb", "changed");
+  });
+
+  it("说明文案列出占位符", () => {
+    setup({ quickTools: [gitBash] });
+    expect(screen.getByText("$pwd")).toBeInTheDocument();
+    expect(screen.getByText("{path}")).toBeInTheDocument();
+  });
+});

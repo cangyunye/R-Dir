@@ -92,6 +92,26 @@ describe("StatusBar 传输指示（v0.18.1 修复）", () => {
     expect(screen.queryByText("复制完成")).toBeNull();
   });
 
+  it("失败收尾帧 + 已有具体错误 notice → 直接显示错误原因，不被「复制失败」盖住", () => {
+    render(
+      <StatusBar
+        {...base}
+        notice="复制 a.txt 失败：拒绝访问 (os error 5)（文件可能为只读、已锁定或正被其他程序占用）"
+        transfer={{
+          phase: "copy",
+          label: "传输失败",
+          doneFiles: 1,
+          totalFiles: 1,
+          fileDone: 0,
+          fileTotal: 0,
+          done: true,
+        }}
+      />,
+    );
+    expect(screen.getByText(/拒绝访问/)).toBeTruthy();
+    expect(screen.queryByText("复制失败")).toBeNull();
+  });
+
   it("done=true 且 label=已取消 → 显示「已取消」", () => {
     render(
       <StatusBar

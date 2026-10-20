@@ -71,6 +71,8 @@ export interface QuickToolItem {
   id: string;
   name: string;
   exec: string;
+  /** v0.31.1 启动参数串（支持 {path} / {dir} / $pwd / {name} 占位符；空 = 默认行为） */
+  args: string;
   detected: boolean;
 }
 
@@ -92,6 +94,10 @@ export const removeQuickTool = (id: string) =>
 
 export const moveQuickTool = (id: string, up: boolean) =>
   invoke<QuickToolItem[]>("move_quick_tool", { id, up });
+
+/** 设置常用工具的启动参数串（v0.31.1）；返回最新清单 */
+export const setQuickToolArgs = (id: string, args: string) =>
+  invoke<QuickToolItem[]>("set_quick_tool_args", { id, args });
 
 /** 用常用工具打开路径（目录=工作区，文件=打开文件） */
 export const openQuickTool = (id: string, path: string) =>

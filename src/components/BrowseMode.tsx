@@ -148,11 +148,11 @@ export function BrowseMode({
         {current && previewKindOf(current) === "text" ? (
           <div className="mx-auto h-full w-full max-w-4xl p-4">
             <div className="h-full overflow-hidden rounded-lg bg-background shadow-xl">
-              <PreviewBody entry={current} />
+              <PreviewBody entry={current} onOpenExternal={onOpenExternal} />
             </div>
           </div>
         ) : (
-          <PreviewBody entry={current} />
+          <PreviewBody entry={current} onOpenExternal={onOpenExternal} />
         )}
       </div>
 

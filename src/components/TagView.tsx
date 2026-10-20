@@ -9,7 +9,7 @@ import {
   Tag,
   X,
 } from "lucide-react";
-import { tagLabel, TAG_DEFS, type FileTags, type TagDef, type TagNames } from "@/lib/persist";
+import { tagLabel, TAG_DEFS, type EntryAliases, type FileTags, type TagDef, type TagNames } from "@/lib/persist";
 import { FileIcon } from "@/components/FileIcon";
 import { statPaths } from "@/lib/api";
 import { MenuGroup } from "@/components/MenuGroup";
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import { hideExtension } from "@/lib/format";
+import { isHttpPath } from "@/lib/sftp-path";
 
 /**
  * 标签过滤视图（Finder 风格）：展示某个标签下的全部文件/文件夹，
@@ -43,6 +44,7 @@ export function TagView({
   onCopyPath,
   onToggleQuick,
   onRename,
+  aliases,
   customQuick,
   onExit,
   isActive,
@@ -61,8 +63,11 @@ export function TagView({
   onToggleTag: (path: string, tagId: string) => void;
   onCopyPath: (path: string) => void;
   onToggleQuick: (path: string) => void;
-  /** v0.31 重命名条目本体（文件夹/文件；App 侧负责迁移标签与快捷访问路径） */
+  /** v0.31 重命名条目本体（文件夹/文件；App 侧负责迁移标签与快捷访问路径）。
+   *  v0.31.1：HTTP 条目改的是显示别名（只读后端），App 侧分流 */
   onRename: (path: string, newName: string) => void;
+  /** v0.31.1 显示别名（path → 名）；有别名的条目显示别名、本名退到副标题 */
+  aliases?: EntryAliases;
   customQuick: string[];
   onExit: () => void;
   isActive: boolean;
@@ -108,8 +113,16 @@ export function TagView({
   }, [files]);
 
   const nameOf = (p: string) => {
-    const norm = p.replace(/\\/g, "/");
-    return norm.slice(norm.lastIndexOf("/") + 1);
+    const norm = p.replace(/\\/g, "/").replace(/\/+$/, "");
+    return norm.slice(norm.lastIndexOf("/") + 1) || p;
+  };
+
+  /** 显示名：有别名用别名（只读后端条目的"改名"），否则本名 */
+  const aliasOf = (p: string) => aliases?.[p]?.trim() || "";
+  const displayNameOf = (p: string, isDir: boolean) => {
+    const a = aliasOf(p);
+    if (a) return a;
+    return showExtensions ? nameOf(p) : hideExtension(nameOf(p), isDir);
   };
 
   const extOf = (p: string) => {
@@ -222,14 +235,12 @@ export function TagView({
                             onCancel={() => setRenaming(null)}
                           />
                         </span>
-                      ) : showExtensions ? (
-                        nameOf(p)
                       ) : (
-                        hideExtension(nameOf(p), isDir)
+                        displayNameOf(p, isDir)
                       )}
                     </span>
                     <span className="min-w-0 max-w-[45%] truncate text-[10px] text-muted-foreground">
-                      {p}
+                      {aliasOf(p) ? `${nameOf(p)} · ${p}` : p}
                     </span>
                     <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
                   </div>
@@ -253,9 +264,17 @@ export function TagView({
                   <ContextMenuItem onClick={() => onReveal(p, isDir)}>
                     <Crosshair className="mr-2 h-4 w-4" /> 定位到{isDir ? "文件夹" : "文件"}
                   </ContextMenuItem>
-                  {/* v0.31 重命名本体（含文件夹） */}
-                  <ContextMenuItem onClick={() => setRenaming({ path: p, name: nameOf(p) })}>
-                    <Pencil className="mr-2 h-4 w-4" /> 重命名…
+                  {/* v0.31 重命名本体（含文件夹）；HTTP 只读后端改的是显示别名（v0.31.1） */}
+                  <ContextMenuItem
+                    onClick={() =>
+                      setRenaming({
+                        path: p,
+                        name: isHttpPath(p) ? aliasOf(p) || nameOf(p) : nameOf(p),
+                      })
+                    }
+                  >
+                    <Pencil className="mr-2 h-4 w-4" />
+                    {isHttpPath(p) ? "重命名显示名…" : "重命名…"}
                   </ContextMenuItem>
                   <ContextMenuSeparator />
                   {/* 标签（内联展开，避免 Radix Sub 在 WKWebView 下的点击丢失） */}

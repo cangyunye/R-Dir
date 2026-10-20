@@ -16,6 +16,8 @@ export interface PrefsDisk {
   customQuick?: string[];
   /** v0.28.0 用户新增的自定义标签 */
   customTags?: TagDef[];
+  /** v0.31.1 条目显示别名（只读后端条目在标签/快捷访问里的改名） */
+  entryAliases?: EntryAliases;
 }
 
 /** 当前 localStorage 中的标签配置快照 */
@@ -25,6 +27,7 @@ function prefsSnapshot(): PrefsDisk {
     fileTags: loadFileTags(),
     customQuick: loadCustomQuick(),
     customTags: loadCustomTags(),
+    entryAliases: loadEntryAliases(),
   };
 }
 
@@ -73,6 +76,12 @@ export function mergeDiskPrefs(disk: PrefsDisk): void {
     localStorage.setItem(
       CUSTOM_TAGS_KEY,
       JSON.stringify([...byId.values()].slice(0, Math.max(0, MAX_TAGS - TAG_DEFS.length))),
+    );
+  }
+  if (disk.entryAliases && Object.keys(disk.entryAliases).length > 0) {
+    localStorage.setItem(
+      ALIASES_KEY,
+      JSON.stringify({ ...loadEntryAliases(), ...disk.entryAliases }),
     );
   }
 }
@@ -238,6 +247,46 @@ export function saveCustomQuick(q: CustomQuick): void {
     /* ignore */
   }
   flushPrefsToDisk();
+}
+
+/**
+ * v0.31.1 条目显示别名（路径 → 显示名）。标签视图 / 快捷访问里的条目若落在只读后端
+ * （HTTP autoindex），本体名改不了，就改这里的别名；本地/SFTP 条目仍改本体，不走别名。
+ */
+export type EntryAliases = Record<string, string>;
+
+const ALIASES_KEY = "rfm.entry-aliases";
+
+export function loadEntryAliases(): EntryAliases {
+  try {
+    const raw = localStorage.getItem(ALIASES_KEY);
+    const v = raw ? (JSON.parse(raw) as unknown) : {};
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out: EntryAliases = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof val === "string" && val.trim()) out[k] = val;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveEntryAliases(a: EntryAliases): void {
+  try {
+    localStorage.setItem(ALIASES_KEY, JSON.stringify(a));
+  } catch {
+    /* ignore */
+  }
+  flushPrefsToDisk();
+}
+
+/** 条目显示名：有别名用别名，否则用路径最后一段 */
+export function entryDisplayName(path: string, aliases: EntryAliases): string {
+  const a = aliases[path]?.trim();
+  if (a) return a;
+  const norm = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  return norm.slice(norm.lastIndexOf("/") + 1) || path;
 }
 
 /** 路径的父目录（纯字符串处理，供标签跳转使用） */

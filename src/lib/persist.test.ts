@@ -35,10 +35,38 @@ import {
   loadCustomQuick,
   loadPreviewPrefs,
   savePreviewPrefs,
+  loadEntryAliases,
+  saveEntryAliases,
+  entryDisplayName,
 } from "./persist";
 
 beforeEach(() => {
   localStorage.clear();
+});
+
+describe("entryAliases（v0.31.1 只读后端条目的显示别名）", () => {
+  it("保存/读取；空白值与非字符串被过滤", () => {
+    saveEntryAliases({ "http://h/docs/": "我的文档", "http://h/x/": "  ", "sftp://u@h:22/a": "A" });
+    expect(loadEntryAliases()).toEqual({ "http://h/docs/": "我的文档", "sftp://u@h:22/a": "A" });
+    localStorage.setItem("rfm.entry-aliases", JSON.stringify({ a: 1, b: "ok" }));
+    expect(loadEntryAliases()).toEqual({ b: "ok" });
+    localStorage.setItem("rfm.entry-aliases", "[1,2]");
+    expect(loadEntryAliases()).toEqual({});
+  });
+
+  it("entryDisplayName：有别名用别名，否则取最后一段（含尾斜杠的 URL 目录）", () => {
+    const aliases = { "http://h:8082/docs/": "资料库" };
+    expect(entryDisplayName("http://h:8082/docs/", aliases)).toBe("资料库");
+    expect(entryDisplayName("http://h:8082/other/", aliases)).toBe("other");
+    expect(entryDisplayName("C:\\Users\\me\\图书", {})).toBe("图书");
+    expect(entryDisplayName("/", {})).toBe("/");
+  });
+
+  it("mergeDiskPrefs 合并别名（磁盘优先）", () => {
+    saveEntryAliases({ a: "本地" });
+    mergeDiskPrefs({ entryAliases: { a: "磁盘", b: "新" } });
+    expect(loadEntryAliases()).toEqual({ a: "磁盘", b: "新" });
+  });
 });
 
 describe("标签定义", () => {

@@ -30,6 +30,7 @@ import {
   addQuickTool as apiAddQuickTool,
   removeQuickTool as apiRemoveQuickTool,
   moveQuickTool as apiMoveQuickTool,
+  setQuickToolArgs as apiSetQuickToolArgs,
   openQuickTool as apiOpenQuickTool,
   detectEditors as apiDetectEditors,
   type OpenerItem,
@@ -166,6 +167,10 @@ import {
   mergeDiskPrefs,
   flushPrefsToDisk,
   remapPrefixedPath,
+  loadEntryAliases,
+  saveEntryAliases,
+  entryDisplayName,
+  type EntryAliases,
   type FileTags,
   type TagDef,
   type TagNames,
@@ -174,7 +179,8 @@ import { shareStopByDir, shareList, type IconPositionMap } from "@/lib/api";
 import { loadAutoArrangeDirs, saveAutoArrangeDirs } from "@/lib/persist";
 import { type IconSize, type ViewMode } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-import { Bird } from "lucide-react";
+import { AlertCircle, Bird } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { PaneListMenu } from "@/components/PaneListMenu";
 import { PropertiesDialog } from "@/components/PropertiesDialog";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -377,11 +383,21 @@ export default function App() {
     name: string;
   } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  /** v0.14 复制/剪切成功后的中央提示（约 1 秒内消失） */
-  const [clipboardTip, setClipboardTip] = useState<{ text: string; tick: number } | null>(null);
+  /** v0.14 复制/剪切成功后的中央提示（约 1 秒内消失）；v0.31.1 起同一浮层承载 error 变体 */
+  const [clipboardTip, setClipboardTip] = useState<{
+    text: string;
+    tick: number;
+    variant?: "info" | "error";
+  } | null>(null);
   const clipboardTipTimer = useRef<number | null>(null);
   const flashClipboardTip = useCallback((text: string, ms = 900) => {
-    setClipboardTip({ text, tick: Date.now() });
+    setClipboardTip({ text, tick: Date.now(), variant: "info" });
+    if (clipboardTipTimer.current) window.clearTimeout(clipboardTipTimer.current);
+    clipboardTipTimer.current = window.setTimeout(() => setClipboardTip(null), ms);
+  }, []);
+  /** 传输/覆盖失败的中央红色提示：与「已复制 / 已剪切」同位同款，不再只靠状态栏一行小字 */
+  const flashErrorTip = useCallback((text: string, ms = 3600) => {
+    setClipboardTip({ text, tick: Date.now(), variant: "error" });
     if (clipboardTipTimer.current) window.clearTimeout(clipboardTipTimer.current);
     clipboardTipTimer.current = window.setTimeout(() => setClipboardTip(null), ms);
   }, []);
@@ -655,6 +671,21 @@ useEffect(() => {
     noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
   }, []);
 
+  /** 传输类失败（粘贴 / 拖拽 / 覆盖）：窗口中央红色浮层 + 状态栏留底。
+   *  取消不是错误，只在状态栏轻提示。 */
+  const showTransferError = useCallback(
+    (e: unknown) => {
+      const msg = String(e);
+      if (msg.includes("取消")) {
+        showError("已取消");
+        return;
+      }
+      flashErrorTip(msg);
+      showError(msg);
+    },
+    [flashErrorTip, showError],
+  );
+
   /** v0.17 打开差异比对：需活动标签正好两个本地窗格（各指向一个目录）。
    *  目前仅支持本地 ↔ 本地；SFTP/HTTP 窗格不参与（故本地 ↔ SFTP 无法比对）。 */
   const openDiff = useCallback(() => {
@@ -869,6 +900,14 @@ useEffect(() => {
       void apiMoveQuickTool(id, up)
         .then(refreshQuickTools)
         .catch((e) => showError(`调整顺序失败：${e}`));
+    },
+    [showError, refreshQuickTools],
+  );
+  const handleSetQuickToolArgs = useCallback(
+    (id: string, args: string) => {
+      void apiSetQuickToolArgs(id, args)
+        .then(refreshQuickTools)
+        .catch((e) => showError(`保存启动参数失败：${e}`));
     },
     [showError, refreshQuickTools],
   );
@@ -1324,6 +1363,7 @@ useEffect(() => {
           setTagNames(loadTagNames());
           setFileTags(loadFileTags());
           setCustomQuick(loadCustomQuick());
+          setEntryAliases(loadEntryAliases());
         } else {
           // 磁盘尚无备份：把本地现有配置回写一份
           flushPrefsToDisk();
@@ -2538,6 +2578,19 @@ useEffect(() => {
     },
     [showError],
   );
+  /** v0.31.1 条目显示别名（只读后端条目在标签视图/快捷访问里的"改名"落点，持久化） */
+  const [entryAliases, setEntryAliases] = useState<EntryAliases>(() => loadEntryAliases());
+  const setEntryAlias = useCallback((path: string, label: string) => {
+    setEntryAliases((prev) => {
+      const v = label.trim();
+      const next = { ...prev };
+      // 改回与本名相同 / 清空 = 删除别名
+      if (!v || v === entryDisplayName(path, {})) delete next[path];
+      else next[path] = v;
+      saveEntryAliases(next);
+      return next;
+    });
+  }, []);
   /** v0.14 显示文件扩展名（默认显示，持久化） */
   const [showExtensions, setShowExtensions] = useState<boolean>(() => loadShowExtensions());
   const toggleExtensions = useCallback(() => {
@@ -2572,13 +2625,24 @@ useEffect(() => {
 
   /**
    * 标签视图中重命名条目（v0.31：标签作用于文件夹后可就地改名本体）。
-   * 改名后迁移 fileTags 与快捷访问里指向旧本体/旧子路径的键——目录改名
+   * 改名后迁移 fileTags / 快捷访问 / 别名里指向旧本体/旧子路径的键——目录改名
    * 会让其下已打标签的子条目整体失效，不做迁移标签就"丢了"。
+   *
+   * v0.31.1：HTTP autoindex 是只读后端，本体改不了 → 改显示别名（标签视图与快捷访问同步显示）；
+   * SFTP 条目先自动连接所属服务器（已保存凭据静默重连，否则弹连接/主密钥框）再改本体。
    */
   const renameTagEntry = useCallback(
     async (path: string, newName: string) => {
       const trimmed = newName.trim();
-      if (!trimmed || trimmed === basename(path)) return;
+      if (!trimmed) return;
+      if (isHttpPath(path)) {
+        if (trimmed === entryDisplayName(path, entryAliases)) return;
+        setEntryAlias(path, trimmed);
+        flashClipboardTip("已更新显示名（HTTP 目录为只读，不改远程本体）", 1800);
+        return;
+      }
+      if (trimmed === basename(path)) return;
+      if (isSftpPath(path) && !(await sftp.ensureConnected(path))) return;
       try {
         const newPath = isSftpPath(path)
           ? await sftpRename(path, trimmed)
@@ -2604,6 +2668,17 @@ useEffect(() => {
           if (changed) saveCustomQuick(next);
           return changed ? next : prev;
         });
+        setEntryAliases((prev) => {
+          const next: EntryAliases = {};
+          let changed = false;
+          for (const [k, v] of Object.entries(prev)) {
+            const nk = remapPrefixedPath(k, path, newPath);
+            if (nk !== k) changed = true;
+            next[nk] = v;
+          }
+          if (changed) saveEntryAliases(next);
+          return changed ? next : prev;
+        });
         // 刷新正显示旧条目父目录的窗格
         const parent = parentPath(path);
         tabs
@@ -2614,7 +2689,7 @@ useEffect(() => {
         showError(String(e));
       }
     },
-    [tabs, refreshPane, showError],
+    [tabs, refreshPane, showError, entryAliases, setEntryAlias, flashClipboardTip, sftp],
   );
 
   /** 撤销/重做栈：只记录可安全反向的操作 */
@@ -2731,12 +2806,13 @@ useEffect(() => {
         }
         refreshPane(pid);
       } catch (e) {
-        // 取消传输不算错误，收敛为轻提示；剪贴板保留可继续粘贴
-        const msg = String(e);
-        showError(msg.includes("取消") ? "已取消" : msg);
+        // 取消传输不算错误，收敛为轻提示；剪贴板保留可继续粘贴。
+        // 真失败（覆盖被拒 / 源被占用…）走中央红色浮层——此前只有状态栏一行小字，
+        // 还被 1.5 秒的传输完成帧盖住，用户以为「没反应」。
+        showTransferError(e);
       }
     },
-    [clipboard, activePane, tabs, refreshPane, showError, pushOp, isSftpPath, runTransfer],
+    [clipboard, activePane, tabs, refreshPane, showError, showTransferError, pushOp, isSftpPath, runTransfer],
   );
   doPasteLatestRef.current = doPasteInner;
 
@@ -2762,9 +2838,9 @@ useEffect(() => {
       });
       refreshPane(paneId);
     } catch (e) {
-      showError(String(e));
+      showTransferError(e);
     }
-  }, [activePane, refreshPane, showError, pushOp, runTransfer]);
+  }, [activePane, refreshPane, showError, showTransferError, pushOp, runTransfer]);
 
   /** 跨窗格拖拽落盘：目标 pane 的路径执行复制/移动，源、目标均刷新 */
   /** 拖拽落盘核心（v0.27 从 doDropPaths 抽出）：dest 显式给定——跨窗格投放 =
@@ -2877,10 +2953,10 @@ useEffect(() => {
         }
         refreshPanes(refreshIds);
       } catch (e) {
-        showError(String(e));
+        showTransferError(e);
       }
     },
-    [refreshPanes, showError, pushOp, runTransfer],
+    [refreshPanes, showError, showTransferError, pushOp, runTransfer],
   );
 
   const doDropPaths = useCallback(
@@ -3117,6 +3193,13 @@ useEffect(() => {
       if (!r) return;
       const trimmed = name.trim();
       if (trimmed === "" || trimmed === r.name) return;
+      // HTTP autoindex 只读：此前 URL 直接喂给本地 fs::rename，报一串 ENOENT 让人摸不着头脑
+      if (isHttpPath(path)) {
+        showError("HTTP 目录为只读，不能重命名远程条目；可在标签视图中为其设置显示别名");
+        return;
+      }
+      // 会话未连接（如重启后窗格还停在远程路径）→ 自动重连再改名，而不是报「未连接到该服务器」
+      if (isSftpPath(path) && !(await sftp.ensureConnected(path))) return;
       try {
         const newPath = isSftpPath(path)
           ? await sftpRename(path, trimmed)
@@ -3129,7 +3212,7 @@ useEffect(() => {
         showError(String(e));
       }
     },
-    [renaming, refreshPane, showError, pushOp, isSftpPath],
+    [renaming, refreshPane, showError, pushOp, isSftpPath, sftp],
   );
 
   const doDeleteNow = useCallback(
@@ -3821,6 +3904,7 @@ useEffect(() => {
     onRenameCommit: (path, name) => void commitRename(path, name),
     onRenameCancel: () => setRenaming(null),
     onTagRename: (path, name) => void renameTagEntry(path, name),
+    entryAliases,
     onCopyPath: copyPath,
     onRefresh: refreshPane,
     onDropPaths: (src, paths, op, target) => void doDropPaths(src, paths, op, target),
@@ -3914,6 +3998,7 @@ useEffect(() => {
     startRename,
     commitRename,
     renameTagEntry,
+    entryAliases,
     copyPath,
     refreshPane,
     doDropPaths,
@@ -4134,6 +4219,8 @@ useEffect(() => {
           onMiddleOpen={(path) => newTab(path)}
           customQuick={customQuick}
           onRemoveQuick={toggleQuick}
+          entryAliases={entryAliases}
+          onRenameQuick={setEntryAlias}
           tagCounts={Object.fromEntries(tags.map((t) => [t.id, tagPaths(t.id).length]))}
           tags={tags}
           tagNames={tagNames}
@@ -4372,6 +4459,7 @@ useEffect(() => {
         onAddSuggestedTool={(c) => void handleAddSuggestedTool(c)}
         onRemoveQuickTool={handleRemoveQuickTool}
         onMoveQuickTool={handleMoveQuickTool}
+        onSetQuickToolArgs={handleSetQuickToolArgs}
         appName={appName}
         appVersion={appVersion}
         onOpenRepo={openRepo}
@@ -4417,6 +4505,30 @@ useEffect(() => {
         submitLabel="导入"
         onSubmit={sftp.submitImportPassword}
         onClose={sftp.closeImportPassword}
+      />
+
+      {/* v0.31.1 导出服务器清单的主密码框：清单里有明文保存的密码且本会话未解锁主密钥时，
+          输入主密码就地加密后再写出（首次 = 设置主密码；已设过 = 校验） */}
+      <PasswordDialog
+        open={sftp.exportPwOpen}
+        title={sftp.masterKeyStatus.configured ? "输入主密码" : "设置主密码"}
+        description={
+          sftp.masterKeyStatus.configured ? (
+            <>
+              清单中有<b>以明文保存的服务器密码</b>（在主密钥未解锁时保存的）。导出文件会离开本机，
+              需输入主密码把它们加密后再写出；本机清单同时升级为密文。导入时需要同一主密码。
+            </>
+          ) : (
+            <>
+              清单中有<b>以明文保存的服务器密码</b>。导出文件会离开本机，请设置一个主密码用于加密——
+              导入到其他设备时需要输入同一主密码。本机清单同时升级为密文，之后启动输入此密码解锁。
+            </>
+          )
+        }
+        placeholder={sftp.masterKeyStatus.configured ? "输入主密码" : "设置主密码（请牢记）"}
+        submitLabel="加密并导出"
+        onSubmit={sftp.submitExportPassword}
+        onClose={sftp.closeExportPassword}
       />
 
       {/* 同名冲突裁决弹窗 */}
@@ -4494,15 +4606,24 @@ useEffect(() => {
         />
       )}
 
-      {/* v0.14 复制/剪切成功提示：窗内居中，约 1 秒消失 */}
+      {/* v0.14 复制/剪切成功提示：窗内居中，约 1 秒消失；error 变体 = 传输/覆盖失败（红色、停留更久） */}
       {clipboardTip && (
         <div
           key={clipboardTip.tick}
           data-toast=""
+          data-variant={clipboardTip.variant ?? "info"}
           className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center"
         >
-          <div className="rounded-lg border border-primary/25 bg-background/90 px-5 py-2.5 text-sm font-medium text-foreground shadow-xl backdrop-blur-sm">
-            {clipboardTip.text}
+          <div
+            className={cn(
+              "max-w-[70vw] rounded-lg border px-5 py-2.5 text-sm font-medium shadow-xl backdrop-blur-sm",
+              clipboardTip.variant === "error"
+                ? "flex items-start gap-2 border-destructive/40 bg-destructive/10 text-destructive"
+                : "border-primary/25 bg-background/90 text-foreground",
+            )}
+          >
+            {clipboardTip.variant === "error" && <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+            <span className="break-words whitespace-pre-wrap">{clipboardTip.text}</span>
           </div>
         </div>
       )}

@@ -196,6 +196,48 @@ test.describe("31C. 服务器清单导出/导入", () => {
     await expect(toast(page)).toContainText("已导入 2 台服务器");
     await expect(dlg).toHaveCount(0);
   });
+
+  test("导出遇明文密码且主密钥未解锁：弹主密码框，加密后再写出（v0.31.1）", async ({ page }) => {
+    await page.evaluate(() => {
+      const w = window as unknown as {
+        __rdirDialogSave?: string | null;
+        __rdirExportNeedsKey?: boolean;
+      };
+      w.__rdirDialogSave = "/mock/home/servers-backup.json";
+      w.__rdirExportNeedsKey = true;
+    });
+    await page.getByTitle("应用菜单").click();
+    await page.getByRole("menuitem", { name: "导出服务器列表…" }).click();
+
+    // NEED_MASTER_KEY → 主密码框（本机未设过主密钥 → 标题为「设置主密码」）
+    const dlg = page.locator("[data-password-dialog]");
+    await expect(dlg).toBeVisible();
+    await expect(dlg).toContainText("设置主密码");
+    await expect(dlg).toContainText("明文保存的服务器密码");
+    const input = dlg.locator('input[type="password"]');
+
+    // 错误密码 → 框内报错、不关闭
+    await input.fill("wrong");
+    await dlg.getByRole("button", { name: "加密并导出" }).click();
+    await expect(dlg).toContainText("主密码不正确");
+
+    // 正确密码 → 带密码重试导出、成功提示注明含加密密码、框关闭
+    await input.fill("mk1");
+    await dlg.getByRole("button", { name: "加密并导出" }).click();
+    await expect(toast(page)).toContainText("已导出 3 台服务器（含加密密码");
+    await expect(dlg).toHaveCount(0);
+
+    const mock = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __RDIR_E2E_MOCK__: { sftpExport: { target: string; hasKey: boolean }[] };
+          }
+        ).__RDIR_E2E_MOCK__,
+    );
+    // 首次无密码被拒不计入记录；错误密码被拒不计入；仅正确那次落盘
+    expect(mock.sftpExport).toEqual([{ target: "/mock/home/servers-backup.json", hasKey: true }]);
+  });
 });
 
 test.describe("31D. 远程文件打开与临时目录", () => {

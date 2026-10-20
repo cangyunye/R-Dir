@@ -43,13 +43,14 @@ import {
   TAG_COLOR_PALETTE,
   makeTagId,
   tagLabel,
+  entryDisplayName,
+  type EntryAliases,
   type TagDef,
   type TagNames,
 } from "@/lib/persist";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { basename } from "@/lib/format";
 
 const QUICK_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   home: Home,
@@ -104,6 +105,8 @@ export function Sidebar({
   onMiddleOpen,
   customQuick,
   onRemoveQuick,
+  entryAliases,
+  onRenameQuick,
   tagCounts,
   tags,
   tagNames,
@@ -137,6 +140,9 @@ export function Sidebar({
   /** 用户自定义快捷访问（右键文件 → 添加到快速访问） */
   customQuick: string[];
   onRemoveQuick: (path: string) => void;
+  /** v0.31.1 条目显示别名（标签视图里为只读后端条目改的名，这里同步显示）+ 快捷访问重命名显示名 */
+  entryAliases?: EntryAliases;
+  onRenameQuick?: (path: string, label: string) => void;
   /** 每个标签下的文件数量 */
   tagCounts: Record<string, number>;
   /** 全量标签 = 预设 + 用户自定义（v0.28.0 起支持新增） */
@@ -213,6 +219,22 @@ export function Sidebar({
     if (!label) return;
     onRenameTag(renameTagId, label);
     setRenameTagOpen(false);
+  };
+  // v0.31.1 快捷访问条目「重命名显示名」：只改侧栏显示的别名，不动本体（远程/只读条目也能改）
+  const [renameQuickOpen, setRenameQuickOpen] = useState(false);
+  const [renameQuickPath, setRenameQuickPath] = useState("");
+  const [renameQuickInput, setRenameQuickInput] = useState("");
+  const renameQuickInputRef = useRef<HTMLInputElement>(null);
+  const openRenameQuick = (path: string) => {
+    setRenameQuickPath(path);
+    setRenameQuickInput(entryDisplayName(path, entryAliases ?? {}));
+    setRenameQuickOpen(true);
+  };
+  const submitRenameQuick = () => {
+    const label = renameQuickInput.trim();
+    if (!label) return;
+    onRenameQuick?.(renameQuickPath, label);
+    setRenameQuickOpen(false);
   };
   // v0.31 服务器分组整理：分组名右键重命名（组内服务器整体换组）+ 拖拽换组悬停高亮
   const [renameGroupOpen, setRenameGroupOpen] = useState(false);
@@ -305,6 +327,11 @@ export function Sidebar({
       {remove && (
         <>
           <ContextMenuSeparator />
+          {onRenameQuick && (
+            <ContextMenuItem onClick={() => openRenameQuick(path)}>
+              <Pencil className="mr-2 h-4 w-4" /> 重命名显示名…
+            </ContextMenuItem>
+          )}
           <ContextMenuItem variant="destructive" onClick={remove}>
             <X className="mr-2 h-4 w-4" /> 从快速访问移除
           </ContextMenuItem>
@@ -314,6 +341,44 @@ export function Sidebar({
   );
   return (
     <>
+    <Dialog open={renameQuickOpen} onOpenChange={setRenameQuickOpen}>
+      <DialogContent
+        className="max-w-sm"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          renameQuickInputRef.current?.focus();
+          renameQuickInputRef.current?.select();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>重命名显示名</DialogTitle>
+          <DialogDescription className="break-all">
+            只改侧栏显示的名字，不改文件/目录本体；改回原名即清除别名。
+            <br />
+            {renameQuickPath}
+          </DialogDescription>
+        </DialogHeader>
+        <Input
+          ref={renameQuickInputRef}
+          value={renameQuickInput}
+          onChange={(e) => setRenameQuickInput(e.target.value)}
+          placeholder="显示名"
+          data-testid="rename-quick-input"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submitRenameQuick();
+            if (e.key === "Escape") setRenameQuickOpen(false);
+          }}
+        />
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={() => setRenameQuickOpen(false)}>
+            取消
+          </Button>
+          <Button size="sm" onClick={submitRenameQuick} disabled={!renameQuickInput.trim()}>
+            保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     <Dialog open={renameTagOpen} onOpenChange={setRenameTagOpen}>
       <DialogContent
         className="max-w-sm"
@@ -491,7 +556,7 @@ export function Sidebar({
           {customQuick.length > 0 && (
             <div className="mt-1 border-t pt-1">
               {customQuick.map((p) => {
-                const name = basename(p) || p;
+                const name = entryDisplayName(p, entryAliases ?? {});
                 return (
                   <div
                     key={p}

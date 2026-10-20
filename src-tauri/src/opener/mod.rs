@@ -58,6 +58,10 @@ pub struct QuickTool {
     pub id: String,
     pub name: String,
     pub exec: String,
+    /// 启动参数串（v0.31.1）：引号感知切分，支持 `{path}` / `{dir}` / `$pwd` / `{name}` 占位符；
+    /// 空 = 默认行为（终端类只设 cwd，其他工具 `exec <path>`）。旧配置无此字段按空处理。
+    #[serde(default)]
+    pub args: String,
 }
 
 /// QuickTool → 前端条目（detected 实时判断，卸载的置灰）
@@ -67,6 +71,7 @@ pub struct QuickToolItem {
     pub id: String,
     pub name: String,
     pub exec: String,
+    pub args: String,
     pub detected: bool,
 }
 
@@ -75,6 +80,7 @@ fn to_quick_item(q: &QuickTool) -> QuickToolItem {
         id: q.id.clone(),
         name: q.name.clone(),
         exec: q.exec.clone(),
+        args: q.args.clone(),
         detected: std::path::Path::new(&q.exec).exists(),
     }
 }
@@ -306,7 +312,19 @@ fn quick_add(
         id: id.unwrap_or_else(|| format!("qt:{}", uuid_v4())),
         name,
         exec,
+        args: String::new(),
     });
+    Ok(())
+}
+
+/// 纯函数：设置启动参数串（找不到 id 报错）
+fn quick_set_args(cfg: &mut OpenersConfig, id: &str, args: &str) -> Result<(), String> {
+    let q = cfg
+        .quick_tools
+        .iter_mut()
+        .find(|q| q.id == id)
+        .ok_or_else(|| format!("未找到常用工具：{id}"))?;
+    q.args = args.trim().to_string();
     Ok(())
 }
 
@@ -375,7 +393,20 @@ pub fn move_quick_tool(
     Ok(cfg.quick_tools.iter().map(to_quick_item).collect())
 }
 
-/// 用常用工具打开路径（目录 = 作为工作区打开；文件 = 用该工具打开）
+/// 设置常用工具的启动参数串（v0.31.1）。返回最新清单。
+#[tauri::command]
+pub fn set_quick_tool_args(
+    app: tauri::AppHandle,
+    id: String,
+    args: String,
+) -> Result<Vec<QuickToolItem>, String> {
+    let mut cfg = load_config(&app);
+    quick_set_args(&mut cfg, &id, &args)?;
+    save_config(&app, &cfg)?;
+    Ok(cfg.quick_tools.iter().map(to_quick_item).collect())
+}
+
+/// 用常用工具打开路径（目录 = 作为工作区打开 / 终端类在该目录开窗；文件 = 用该工具打开）
 #[tauri::command]
 pub fn open_quick_tool(
     app: tauri::AppHandle,
@@ -392,7 +423,7 @@ pub fn open_quick_tool(
         .iter()
         .find(|q| q.id == id)
         .ok_or_else(|| format!("未找到常用工具：{id}"))?;
-    launch::launch_custom(&q.exec, &path)
+    launch::launch_quick_tool(&q.exec, &q.args, &path)
 }
 
 /// 「检测到本机已安装」建议清单（常用工具条设置分区用）
@@ -426,18 +457,30 @@ fn uuid_v4() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_exts, quick_add, quick_move, quick_remove, OpenersConfig};
+    use super::{normalize_exts, quick_add, quick_move, quick_remove, quick_set_args, OpenersConfig};
 
     fn v(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
     }
 
-    fn qt(id: &str, name: &str, exec: &str) -> super::QuickTool {
-        super::QuickTool {
-            id: id.to_string(),
-            name: name.to_string(),
-            exec: exec.to_string(),
-        }
+    #[test]
+    fn quick_tool_args_default_for_old_config() {
+        // v0.29 写出的 openers.json 没有 args 字段，反序列化必须兼容
+        let json = r#"{"custom":[],"quick_tools":[{"id":"a","name":"A","exec":"/a"}]}"#;
+        let cfg: OpenersConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.quick_tools.len(), 1);
+        assert_eq!(cfg.quick_tools[0].args, "");
+    }
+
+    #[test]
+    fn quick_set_args_trims_and_rejects_unknown() {
+        let mut cfg = OpenersConfig::default();
+        quick_add(&mut cfg, Some("gb".into()), "Git Bash".into(), r"C:\Git\git-bash.exe".into()).unwrap();
+        quick_set_args(&mut cfg, "gb", "  --cd={dir}  ").unwrap();
+        assert_eq!(cfg.quick_tools[0].args, "--cd={dir}");
+        quick_set_args(&mut cfg, "gb", "").unwrap();
+        assert_eq!(cfg.quick_tools[0].args, "");
+        assert!(quick_set_args(&mut cfg, "nope", "x").is_err());
     }
 
     #[test]

@@ -470,8 +470,8 @@ export async function installTauriMock(page: Page): Promise<void> {
       open_git_tool: () => {},
       // ---- v0.29.0 常用工具条：固定两项（VSCode 借稳定 slug 验证固定行去重） ----
       list_quick_tools: () => [
-        { id: "vscode", name: "Visual Studio Code", exec: "/mock/Applications/Visual Studio Code.app", detected: true },
-        { id: "zed", name: "Zed", exec: "/mock/Applications/Zed.app", detected: true },
+        { id: "vscode", name: "Visual Studio Code", exec: "/mock/Applications/Visual Studio Code.app", args: "", detected: true },
+        { id: "zed", name: "Zed", exec: "/mock/Applications/Zed.app", args: "", detected: true },
       ],
       open_quick_tool: (a) => {
         opened.push(String(a.path));
@@ -479,6 +479,7 @@ export async function installTauriMock(page: Page): Promise<void> {
       add_quick_tool: () => [],
       remove_quick_tool: () => [],
       move_quick_tool: () => [],
+      set_quick_tool_args: () => [],
       detect_editors: () => [],
       // ---- 地址栏命令（v0.22.0）：PATH 补全桩 + 执行记录（供用例断言） ----
       complete_commands: (a) => {
@@ -568,8 +569,17 @@ export async function installTauriMock(page: Page): Promise<void> {
       sftp_master_key_status: () => ({ configured: false, active: false }),
       // ---- v0.31 服务器清单导出/导入（浏览器环境无真实凭据，返回固定摘要并记录调用） ----
       sftp_export_servers: (a) => {
-        sftpExport.push({ target: String(a.target) });
-        return null;
+        // v0.31.1 用例经 __rdirExportNeedsKey 模拟「清单含明文密码且主密钥未解锁」：
+        // 未给主密码 → NEED_MASTER_KEY；密码固定 mk1（其余 = 主密码不正确）
+        const w = window as unknown as { __rdirExportNeedsKey?: boolean };
+        if (w.__rdirExportNeedsKey && a.masterKey == null) {
+          throw new Error("NEED_MASTER_KEY: 存在以明文保存的服务器密码，导出前需用主密码加密");
+        }
+        if (a.masterKey != null && String(a.masterKey) !== "mk1") {
+          throw new Error("主密码不正确");
+        }
+        sftpExport.push({ target: String(a.target), hasKey: a.masterKey != null });
+        return { exported: 3, encrypted: a.masterKey != null };
       },
       sftp_import_servers: (a) => {
         // 用例经 __rdirImportNeedsKey 模拟「文件含密文」：未给主密码 → NEED_MASTER_KEY；
@@ -654,7 +664,7 @@ export async function installTauriMock(page: Page): Promise<void> {
     /** sftp_download_to 记录（v0.22.0 拖拽覆盖对称回归用） */
     const downloads: { path: string; localDir: string; overwrite: boolean }[] = [];
     /** v0.31 服务器导出/导入调用记录 */
-    const sftpExport: { target: string }[] = [];
+    const sftpExport: { target: string; hasKey: boolean }[] = [];
     const sftpImport: { filePath: string; hasKey: boolean }[] = [];
     /** v0.31 双击打开远程文件的下载记录 */
     const sftpDownloads: string[] = [];

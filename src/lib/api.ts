@@ -222,9 +222,20 @@ export const sftpTempInfo = () => invoke<SftpTempInfo>("sftp_temp_info");
 /** 清空远程打开临时目录，返回释放的字节数 */
 export const sftpClearTemp = () => invoke<number>("sftp_clear_temp");
 
-/** 导出服务器清单到目标文件；存在明文保存的密码时后端拒绝（先设主密钥） */
-export const sftpExportServers = (target: string, exportedAt: string) =>
-  invoke<void>("sftp_export_servers", { target, exportedAt });
+/** 导出结果：exported 台数；encrypted = 文件含密文密码（导入时需输入这把主密码） */
+export interface SftpExportSummary {
+  exported: number;
+  encrypted: boolean;
+}
+
+/** 导出服务器清单到目标文件。存在明文保存的密码且未解锁主密钥 → 抛 NEED_MASTER_KEY
+ *  （前端弹主密码框后带 masterKey 重试；后端用它就地加密并落盘） */
+export const sftpExportServers = (target: string, exportedAt: string, masterKey?: string) =>
+  invoke<SftpExportSummary>("sftp_export_servers", {
+    target,
+    exportedAt,
+    masterKey: masterKey ?? null,
+  });
 
 /** 导入结果：imported 新增台数；skipped 本机已有同 id 跳过台数 */
 export interface SftpImportSummary {

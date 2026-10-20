@@ -114,7 +114,7 @@ export function PreviewDrawer({
 
         {/* 内容 */}
         <div className="min-h-0 flex-1 overflow-hidden">
-          <PreviewBody entry={entry} />
+          <PreviewBody entry={entry} onOpenExternal={onOpenExternal} />
         </div>
 
         {/* 底部操作条 */}
@@ -124,7 +124,8 @@ export function PreviewDrawer({
             disabled={!entry || entry.is_dir}
             onClick={() => entry && onOpenExternal(entry.path)}
           >
-            <ExternalLink className="h-3.5 w-3.5" /> 外部打开
+            <ExternalLink className="h-3.5 w-3.5" />
+            {entry?.path.startsWith("sftp://") ? "下载并打开" : "外部打开"}
           </button>
           <button
             data-testid="preview-browse-btn"

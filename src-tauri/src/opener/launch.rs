@@ -20,7 +20,135 @@ pub fn launch_custom(exec: &str, path: &str) -> Result<(), String> {
             .unwrap_or_else(|| exec.to_string());
         launch(&Command::new("open").arg("-a").arg(&name).arg("--").arg(path), None)
     } else {
-        launch(&Command::new(exec).arg(path), parent_of(path))
+        launch(&Command::new(exec).arg(path), Some(work_dir_of(path)))
+    }
+}
+
+/// 常用工具条（v0.31.1）：可带用户配置的启动参数串，支持占位符。
+///
+/// - `args` 为空 → 默认行为：终端类可执行文件（git-bash / bash / cmd / powershell / wt …）
+///   只在目标目录里开窗、**不**把目录当位置参数（bash 会把它当脚本执行 → `Is a directory`）；
+///   其他工具仍是 `exec <path>`。
+/// - `args` 非空 → 引号感知切分后逐个 token 替换占位符，再作为参数数组启动（零 shell 拼接）。
+///
+/// 工作目录统一为「目标目录」：path 是目录就是它本身，是文件则取父目录——此前用父目录，
+/// 空白处右键打开时终端落在上一级。
+pub fn launch_quick_tool(exec: &str, args: &str, path: &str) -> Result<(), String> {
+    let dir = work_dir_of(path);
+    let kind = terminal_kind(exec);
+    let args = args.trim();
+    if args.is_empty() {
+        if is_mac() && exec.ends_with(".app") {
+            return launch_custom(exec, path);
+        }
+        return match kind {
+            Some(TerminalKind::GitBash) => {
+                launch(&Command::new(exec).arg(format!("--cd={dir}")), Some(dir))
+            }
+            Some(TerminalKind::Wt) => launch(&Command::new(exec).arg("-d").arg(dir), None),
+            Some(TerminalKind::Cmd) => launch_in_console(&Command::new(exec).arg("/k"), Some(dir)),
+            Some(TerminalKind::PowerShell) => {
+                launch_in_console(&Command::new(exec).arg("-NoExit"), Some(dir))
+            }
+            Some(TerminalKind::PosixShell) => {
+                launch_in_console(&Command::new(exec).arg("--login").arg("-i"), Some(dir))
+            }
+            Some(TerminalKind::Other) => launch(&Command::new(exec), Some(dir)),
+            None => launch(&Command::new(exec).arg(path), Some(dir)),
+        };
+    }
+    let mut argv: Vec<String> = crate::cmdrun::tokenize(args)
+        .into_iter()
+        .map(|t| expand_placeholders(&t, path, dir))
+        .collect();
+    // 非终端工具的参数串里没写任何占位符 → 目标路径补在末尾（`code --new-window` 这类写法）；
+    // 终端类只需要 cwd，不追加
+    if kind.is_none() && !has_placeholder(args) {
+        argv.push(path.to_string());
+    }
+    let mut cmd = Command::new(exec);
+    cmd.args(&argv);
+    // 控制台 shell（cmd / powershell / bash…）必须新开控制台，否则窗口被一起隐藏；
+    // GUI 启动器（git-bash 的 mintty / wt / 其他终端模拟器）与普通工具照常
+    if kind.is_some_and(|k| k.is_console_shell()) {
+        launch_in_console(&cmd, Some(dir))
+    } else {
+        launch(&cmd, Some(dir))
+    }
+}
+
+/// 常用工具启动参数里的占位符（纯字符串替换，不做 shell 展开）：
+/// `{path}` 目标完整路径；`{dir}` / `$pwd` / `${pwd}` / `{pwd}` 目标目录；`{name}` 文件名。
+pub fn expand_placeholders(token: &str, path: &str, dir: &str) -> String {
+    let name = base_name(path);
+    token
+        .replace("${pwd}", dir)
+        .replace("{pwd}", dir)
+        .replace("$pwd", dir)
+        .replace("{dir}", dir)
+        .replace("{path}", path)
+        .replace("{name}", name)
+}
+
+/// 最后一段路径名：同时认 `/` 与 `\`——exec 在 Windows 上是反斜杠路径，
+/// 判断逻辑不应依赖运行平台的 Path 实现
+fn base_name(p: &str) -> &str {
+    p.trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(p)
+}
+
+/// 启动参数里是否出现任何占位符（设置页用来判断是否需要把目录自动补在末尾）
+pub fn has_placeholder(args: &str) -> bool {
+    ["{path}", "{dir}", "{pwd}", "${pwd}", "$pwd", "{name}"]
+        .iter()
+        .any(|p| args.contains(p))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalKind {
+    /// git-bash.exe（mintty 启动器，用 --cd=）
+    GitBash,
+    /// Windows Terminal（-d 起始目录）
+    Wt,
+    Cmd,
+    PowerShell,
+    /// bash / sh / zsh / fish / nu 等控制台 shell
+    PosixShell,
+    /// 其他已知终端模拟器（alacritty / wezterm / mintty …）：只设 cwd
+    Other,
+}
+
+impl TerminalKind {
+    /// 控制台子系统程序：Windows 上要 CREATE_NEW_CONSOLE 才有窗口
+    pub fn is_console_shell(self) -> bool {
+        matches!(self, TerminalKind::Cmd | TerminalKind::PowerShell | TerminalKind::PosixShell)
+    }
+}
+
+/// 按可执行文件名判断是不是终端类程序（大小写不敏感，忽略 .exe）
+pub fn terminal_kind(exec: &str) -> Option<TerminalKind> {
+    let stem = base_name(exec).to_lowercase();
+    let stem = stem.trim_end_matches(".exe");
+    match stem {
+        "git-bash" => Some(TerminalKind::GitBash),
+        "wt" => Some(TerminalKind::Wt),
+        "cmd" => Some(TerminalKind::Cmd),
+        "powershell" | "pwsh" => Some(TerminalKind::PowerShell),
+        "bash" | "sh" | "zsh" | "fish" | "nu" | "dash" | "ksh" => Some(TerminalKind::PosixShell),
+        "mintty" | "alacritty" | "wezterm" | "wezterm-gui" | "conemu" | "conemu64" | "hyper"
+        | "tabby" | "kitty" | "terminal" | "iterm" | "iterm2" => Some(TerminalKind::Other),
+        _ => None,
+    }
+}
+
+/// 目标对应的工作目录：目录就是自身，文件取父目录
+fn work_dir_of(path: &str) -> &str {
+    if Path::new(path).is_dir() {
+        path
+    } else {
+        parent_of(path).unwrap_or(path)
     }
 }
 
@@ -257,5 +385,52 @@ fn launch_ex(cmd: &Command, cwd: Option<&str>, new_console: bool) -> Result<(), 
     match c.spawn() {
         Ok(_) => Ok(()),
         Err(e) => Err(format!("启动失败：{e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{expand_placeholders, has_placeholder, terminal_kind, TerminalKind};
+
+    #[test]
+    fn placeholders_expand_dir_path_name() {
+        let path = r"C:\Work\My Repo\readme.md";
+        let dir = r"C:\Work\My Repo";
+        assert_eq!(expand_placeholders("--cd={dir}", path, dir), format!("--cd={dir}"));
+        assert_eq!(expand_placeholders("$pwd", path, dir), dir);
+        assert_eq!(expand_placeholders("${pwd}", path, dir), dir);
+        assert_eq!(expand_placeholders("{pwd}", path, dir), dir);
+        assert_eq!(expand_placeholders("{path}", path, dir), path);
+        assert_eq!(expand_placeholders("{name}", path, dir), "readme.md");
+        // 不含占位符的 token 原样返回
+        assert_eq!(expand_placeholders("--login", path, dir), "--login");
+    }
+
+    #[test]
+    fn placeholder_detection() {
+        assert!(has_placeholder("--cd=$pwd"));
+        assert!(has_placeholder("-n {path}"));
+        assert!(!has_placeholder("--new-window"));
+        assert!(!has_placeholder(""));
+    }
+
+    #[test]
+    fn terminal_kind_by_file_name_case_insensitive() {
+        assert_eq!(terminal_kind(r"C:\Program Files\Git\git-bash.exe"), Some(TerminalKind::GitBash));
+        assert_eq!(terminal_kind(r"C:\Program Files\Git\bin\bash.exe"), Some(TerminalKind::PosixShell));
+        assert_eq!(terminal_kind(r"C:\Windows\System32\cmd.EXE"), Some(TerminalKind::Cmd));
+        assert_eq!(terminal_kind("pwsh.exe"), Some(TerminalKind::PowerShell));
+        assert_eq!(terminal_kind("wt.exe"), Some(TerminalKind::Wt));
+        assert_eq!(terminal_kind("/usr/local/bin/alacritty"), Some(TerminalKind::Other));
+        assert_eq!(terminal_kind(r"C:\Users\me\AppData\Local\Programs\Microsoft VS Code\Code.exe"), None);
+        assert_eq!(terminal_kind("/Applications/Visual Studio Code.app"), None);
+    }
+
+    #[test]
+    fn console_shells_need_new_console() {
+        assert!(TerminalKind::Cmd.is_console_shell());
+        assert!(TerminalKind::PosixShell.is_console_shell());
+        assert!(!TerminalKind::GitBash.is_console_shell());
+        assert!(!TerminalKind::Wt.is_console_shell());
     }
 }
