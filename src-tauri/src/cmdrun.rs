@@ -634,7 +634,10 @@ mod tests {
         assert_eq!(s2.count, 4);
         assert_eq!(s2.bounds[3].1.as_deref(), Some("cherry.exe"));
 
-        // 删除 → count 变化
+        // 删除 → 名字集合与数量都回到初始状态，只剩目录 mtime 能区分；
+        // 创建与删除可能落在同一时间戳刻度内（CI 上真实发生过：前后快照连
+        // mtime_ms 都相同），先跨过 tick 再删，保证这条覆盖稳定
+        std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::remove_file(base.join("cherry.exe")).unwrap();
         assert_ne!(s1, sentinel_of(&base));
 
