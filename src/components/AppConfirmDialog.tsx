@@ -14,16 +14,20 @@ export interface AppConfirmRequest {
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  /** 可选第三选项（渲染在取消与确认之间，如目录同名复制时的「覆盖」） */
+  altLabel?: string;
 }
 
 export function AppConfirmDialog({
   req,
   onConfirm,
   onCancel,
+  onAlt,
 }: {
   req: AppConfirmRequest;
   onConfirm: () => void;
   onCancel: () => void;
+  onAlt?: () => void;
 }) {
   // 键位监听只订阅一次（回调走 ref）：onConfirm/onCancel 每次 App 渲染都是新引用，
   // 若作 effect 依赖会反复退订/重订，与真实按键派发撞车时按键被跳过。
@@ -72,6 +76,11 @@ export function AppConfirmDialog({
           <Button variant="outline" size="sm" onClick={onCancel}>
             {req.cancelLabel ?? "取消"}
           </Button>
+          {req.altLabel && onAlt && (
+            <Button variant="outline" size="sm" onClick={onAlt}>
+              {req.altLabel}
+            </Button>
+          )}
           <Button
             variant={req.danger ? "destructive" : "default"}
             size="sm"

@@ -361,16 +361,22 @@ export default function App() {
   const [conflictReq, setConflictReq] = useState<TransferConflict[] | null>(null);
   /** v0.28.0 应用内确认框（替代原生 confirm：Windows 原生是经典样式弹窗） */
   const [appConfirmReq, setAppConfirmReq] = useState<AppConfirmRequest | null>(null);
-  const appConfirmResolver = useRef<((v: boolean) => void) | null>(null);
-  const appConfirm = useCallback(
+  /** 确认框裁决：confirm = 确认按钮、alt = 可选第三按钮（altLabel）、cancel = 取消/Esc/点遮罩 */
+  const appConfirmResolver = useRef<((v: "confirm" | "cancel" | "alt") => void) | null>(null);
+  const appConfirmChoice = useCallback(
     (req: AppConfirmRequest) =>
-      new Promise<boolean>((resolve) => {
+      new Promise<"confirm" | "cancel" | "alt">((resolve) => {
         appConfirmResolver.current = resolve;
         setAppConfirmReq(req);
       }),
     [],
   );
-  const settleAppConfirm = useCallback((v: boolean) => {
+  /** 布尔收敛版（绝大多数调用方只有确定/取消两种结果） */
+  const appConfirm = useCallback(
+    async (req: AppConfirmRequest) => (await appConfirmChoice(req)) === "confirm",
+    [appConfirmChoice],
+  );
+  const settleAppConfirm = useCallback((v: "confirm" | "cancel" | "alt") => {
     setAppConfirmReq(null);
     const resolve = appConfirmResolver.current;
     appConfirmResolver.current = null;
@@ -1904,8 +1910,8 @@ useEffect(() => {
    *
    * v0.28.0 目录复制语义（仅 copy）：
    * - 跨目录（目标 ≠ 源父目录，如另一窗格/另一文件夹）复制目录 → 同名冲突一律**覆盖**，不再逐条询问；
-   * - 同目录复制（目标 = 源父目录，含 Ctrl+D 原位副本）遇同名目录 → 询问「是否新增目录」，
-   *   确认后按 `name (2)` 建议名新建副本，取消则跳过这些目录（其余条目照常）。
+   * - 同目录复制（目标 = 源父目录，含 Ctrl+D 原位副本）遇同名目录 → 三选一询问：
+   *   「覆盖」递归合并进原目录 / 「新增目录」按 `name (2)` 建议名新建副本 / 取消则跳过这些目录（其余条目照常）。
    * 文件冲突（含目录 vs 文件类型冲突）仍走冲突裁决弹窗。
    */
   const runTransfer = useCallback(
@@ -1954,24 +1960,30 @@ useEffect(() => {
             remaining.push(c);
           }
         }
-        // 同目录复制遇同名目录 → 询问是否新增目录
+        // 同目录复制遇同名目录 → 询问：覆盖（递归合并）/ 新增目录（`name (2)`）/ 取消跳过
         if (dups.length > 0) {
           const names = dups.map((d) => basename(d.src));
           const preview =
             names.slice(0, 5).join("、") + (names.length > 5 ? ` 等 ${dups.length} 项` : "");
-          const ok = await appConfirm({
-            title: "新增目录",
-            message: `当前目录已存在同名文件夹：${preview}\n\n是否新增目录？将复制为自动命名的新文件夹（如「xx (2)」）；取消则跳过这些文件夹。`,
+          const choice = await appConfirmChoice({
+            title: "目标已存在同名文件夹",
+            message: `当前目录已存在同名文件夹：${preview}\n\n「覆盖」保留原文件夹，递归覆盖其中的同名内容；「新增目录」复制为自动命名的新文件夹（如「xx (2)」）；取消则跳过这些文件夹。`,
             confirmLabel: "新增目录",
+            altLabel: "覆盖",
           });
-          if (ok) {
-            for (const d of dups) {
-              plan[scheme.join(dest, basename(d.src))] = { action: "rename", name: d.suggest };
-            }
-          } else {
+          if (choice === "cancel") {
             // 取消 → 整体跳过这些同名目录（连同其子树）
             const skip = new Set(dups.map((d) => d.src));
             execPaths = paths.filter((p) => !skip.has(p));
+          } else if (choice === "alt") {
+            // 覆盖：dir→dir 的 overwrite 在后端即递归合并，子树内同名文件按覆盖处理
+            for (const d of dups) {
+              plan[scheme.join(dest, basename(d.src))] = { action: "overwrite" };
+            }
+          } else {
+            for (const d of dups) {
+              plan[scheme.join(dest, basename(d.src))] = { action: "rename", name: d.suggest };
+            }
           }
         }
         if (remaining.length > 0) {
@@ -1990,7 +2002,7 @@ useEffect(() => {
       if (execPaths.length === 0) return { created: [] };
       return { created: await copyEntriesPlan(execPaths, dest, plan) };
     },
-    [promptConflicts, appConfirm],
+    [promptConflicts, appConfirmChoice],
   );
 
   /** 删除文件夹确认弹窗 */
@@ -4539,8 +4551,9 @@ useEffect(() => {
       {appConfirmReq && (
         <AppConfirmDialog
           req={appConfirmReq}
-          onConfirm={() => settleAppConfirm(true)}
-          onCancel={() => settleAppConfirm(false)}
+          onConfirm={() => settleAppConfirm("confirm")}
+          onCancel={() => settleAppConfirm("cancel")}
+          onAlt={() => settleAppConfirm("alt")}
         />
       )}
 

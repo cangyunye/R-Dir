@@ -200,6 +200,7 @@ export async function installTauriMock(page: Page): Promise<void> {
         const paths = (a.paths as string[]) ?? [];
         const dest = String(a.dest);
         const resolutions = (a.resolutions as Record<string, { action: string; name?: string }>) ?? {};
+        copyPlans.push({ paths, dest, resolutions });
         const d = FS[dest];
         if (!d) throw new Error(`ENOENT: ${dest}`);
         const created: string[] = [];
@@ -208,6 +209,11 @@ export async function installTauriMock(page: Page): Promise<void> {
           const f = FS[parent]?.find((x) => `${parent}/${x.name}` === p);
           if (!f) continue;
           const resolution = resolutions[`${dest}/${f.name}`];
+          if (resolution?.action === "overwrite" && d.some((x) => x.name === f.name)) {
+            // 覆盖 = 合并/替换语义：目标已有同名条目时保留原条目（内容替换只发生在真实后端），不追加重复
+            created.push(`${dest}/${f.name}`);
+            continue;
+          }
           const name =
             resolution?.action === "rename" && resolution.name ? resolution.name : f.name;
           d.push({ ...f, name });
@@ -671,6 +677,12 @@ export async function installTauriMock(page: Page): Promise<void> {
     /** v0.31 服务器分组整理与连接调用记录（断言「保存」不连接） */
     const sftpSetGroup: { ids: string[]; group: string }[] = [];
     const sftpConnects: string[] = [];
+    /** copy_entries_plan 调用记录（v0.32 同名目录「覆盖」裁决回归用） */
+    const copyPlans: {
+      paths: string[];
+      dest: string;
+      resolutions: Record<string, { action: string; name?: string }>;
+    }[] = [];
 
     const internals = {
       invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
@@ -719,6 +731,6 @@ export async function installTauriMock(page: Page): Promise<void> {
       }
       return origFetch ? origFetch(input, init) : Promise.reject(new Error("fetch unavailable"));
     }) as typeof window.fetch;
-    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, sftpSetGroup, sftpConnects, servers: SFTP_SERVERS };
+    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, sftpSetGroup, sftpConnects, copyPlans, servers: SFTP_SERVERS };
   });
 }

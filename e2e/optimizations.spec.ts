@@ -6,7 +6,7 @@ import { installTauriMock } from "./tauri-mock";
  * 1) 侧边栏标签新增（悬停 +，上限 10 + 提醒）；
  * 2) 快捷访问上限 10 + 提醒；
  * 3) 标签重命名对话框输入框自动聚焦（重命名失效回归）；
- * 4) 复制语义：同目录目录复制询问「新增目录」，跨目录目录复制直接覆盖；
+ * 4) 复制语义：同目录目录复制询问「覆盖 / 新增目录」，跨目录目录复制直接覆盖；
  * 5) 文本比较窗口 F11 全屏（仅比对窗口生效）。
  */
 
@@ -250,6 +250,41 @@ test.describe("29C. 目录复制语义", () => {
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "停止" }).click();
     await expect(dialog).toBeHidden();
+  });
+
+  test("C5 同目录复制目录遇同名 → 「覆盖」递归合并进原目录，不新建 (2)", async ({ page }) => {
+    await page.evaluate((home) => {
+      (
+        window as unknown as {
+          __rdirDirDups?: (paths: string[], dest: string) => { src: string; suggest: string }[];
+        }
+      ).__rdirDirDups = (paths, dest) =>
+        dest === home && paths.includes(`${home}/Documents`)
+          ? [{ src: `${home}/Documents`, suggest: "Documents (2)" }]
+          : [];
+    }, HOME);
+    await page.locator(`[data-path="${HOME}/Documents"]`).click();
+    await page.keyboard.press(`${MOD}+KeyD`);
+    const confirm = page.locator("[data-app-confirm]");
+    await expect(confirm).toBeVisible();
+    await confirm.getByRole("button", { name: "覆盖" }).click();
+    // 合并语义：不产生 Documents (2)，原目录原样保留
+    await expect(page.locator(`[data-path="${HOME}/Documents (2)"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-path="${HOME}/Documents"]`)).toBeVisible();
+    // 裁决表对同名目录走了 overwrite（后端 dir→dir 覆盖即递归合并）
+    const action = await page.evaluate(() => {
+      const m = (
+        window as unknown as {
+          __RDIR_E2E_MOCK__: {
+            copyPlans: { dest: string; resolutions: Record<string, { action: string }[]> }[];
+          };
+        }
+      ).__RDIR_E2E_MOCK__;
+      return m.copyPlans.find((p) => p.dest === "/mock/home")?.resolutions[
+        "/mock/home/Documents"
+      ]?.action;
+    });
+    expect(action).toBe("overwrite");
   });
 });
 
