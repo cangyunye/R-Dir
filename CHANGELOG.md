@@ -5,6 +5,14 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.31.2 (未发布)
+
+- **大图标视图可拖出到浏览器上传区 / 访达，同时保留图标自由摆放与文件夹投放**。此前图标网格刻意不启用 HTML5 `draggable`（v0.27 为规避与自研鼠标拖拽的双体系冲突），拖出窗口根本不会发起系统拖拽，松手后落进「空槽重摆」分支——表现为想拖到网页上传却变成了图标换位。现在网格条目与详情列表走同一套双路径拖出（Windows 原生 CF_HDROP `drag_out_files` / macOS HTML5 `file://` uri-list），dragstart 一旦触发即 `cleanupDrag` 与自研拖拽交接、只留一套收尾；同窗格「空槽重摆」改由网格自己的 `onDrop` 按落点完成（与自研回落路径共用 `slotDropRef`，不 stopPropagation，文件夹图标 / 跨窗格投放继续冒泡交给 App 的 window 级 drop 统一解析）。自研鼠标拖拽保留为 dragstart 未发生时的回落（jsdom / 极短拖动）。
+- **详情列表：拖到目录行上 = 进入该目录（多选一起进），不再只认「另一个窗格」**。根因：自研拖拽与 App 的 window 级 drop 此前都只把「另一窗格」当目标，目录行从来不是投放目标，多选拖到文件夹上没有任何反应。现在目录行打 `data-drop-dir` 标记，新增 `lib/drop-target.ts` 统一解析落点——目录条目优先（同窗格、跨窗格都成立；被拖路径自身排除：把文件夹拖到自己身上回落窗格级 = 无操作），否则窗格级；`doDropIntoDir` 增加目标窗格参数，跨窗格投放双方都刷新。悬停目录条目高亮（新增 `dragDir` 状态经 SplitView 下发到 FileList / IconGrid）；dragover 阶段 dataTransfer 读不到值，被拖路径由新增的 HTML5 会话记录（`setHtml5Drag`）提供。HTML5 drop、原生 CF_HDROP 回落、dragend 兜底三条链路共用同一个 `fileDrop`。
+- **投放提示条浮层化 + 跨窗格稳定显示**。「复制到此处」提示条此前是 sticky 占位元素，光标进入目标窗格时把内容整体下推 24px——目录行成为目标后，瞄准文件行的落点会被顶到相邻目录行上误投（e2e R18 据此暴露：拖到 `deploy.sh` 实际上传进了上面的 `logs`）。现改为 `pointer-events-none -mb-6` 纯展示浮层：不占流式高度、不抢首行命中测试；提示条只在跨窗格时显示、不随「是否悬停在目录行上」闪烁，目录高亮叠加其上；同窗格拖动（图标重摆）不再亮提示条与窗格描边；拖出窗口即清高亮（原生拖出窗外松手没有 dragend 兜底）。
+- **修复：macOS 双击标题栏只能「向下还原」不能「最大化」**。双击归 Tauri 注入的 drag-region 脚本（macOS 在第二次 mouseup 未移动时调 `internal_toggle_maximize`），而该命令的放大分支有 `is_maximizable()` 门槛——tao 在 macOS 上取的是 NSWindow 标准「缩放」按钮的启用态，`decorations: false` 的无边框窗口根本没有标准标题栏按钮，恒为 `false`，放大永远走不进去；还原分支无此门槛所以好使（上游 tauri 2.x 未修，dev 分支同样；Windows 读窗口样式位不受影响；右上角自绘「最大化」按钮走无门槛的公开 `toggle_maximize` 所以双向都好使）。现 TabBar 在 mouseup 捕获阶段接管 macOS 双击：判定与 drag.js 同语义（可点元素阻断、裸标记仅直接命中、鼠标移动过 = 取消），`stopPropagation` 让原生监听收不到、改调无门槛的公开 `toggleMaximize()`——单击拖动移动窗口、Windows/Linux 原生行为、双击标签重命名均不受影响。e2e 守卫随之更新：双击空白 = 恰好一次 `toggle_maximize`（出现两次或 `internal_toggle_maximize` 即回归），双击标签本体零窗口命令。
+- 测试：前端 510 通过（+10：落点解析 ×6、图标网格多选拖入文件夹 / dragstart 交接 / HTML5 空槽重摆 ×3、详情目录行投放标记与高亮 ×1）；e2e 140 通过（+4：图标视图真实 dragstart 携带 uri-list 并投放进文件夹、详情列表多选拖到目录行高亮并一起复制、拖文件夹到自身不动作、跨窗格拖到 SFTP 目录行上传进子目录）。
+
 ## v0.31.1 (2026-10-20)
 
 - **修复：复制覆盖失败一次后再怎么重试都失败（换资源管理器却正常）**。根因两条，都在 v0.29.1 的事务化复制里：① 同目录临时文件名 `.rdir-tmp-{pid}-{hash(文件名)}` 对同名目标是**确定性**的——一次失败若留下删不掉的半成品，之后每次复制同名文件都撞上它；② Windows `CopyFileExW` 会把源文件的**只读属性**原样带到副本上，而 `MoveFileEx(REPLACE_EXISTING)` 不能替换只读目标、`DeleteFile` 也删不掉只读文件（资源管理器覆盖前会先清掉只读位），于是只要复制过一次只读文件，该目标就「永久」覆盖不了，残留的只读临时文件也清不掉。现在：临时文件名追加进程内序号，每次尝试都是新名字，撞上残留先强制清理再换名；新增 `make_writable` / `force_remove_file` / `rename_replace`——最终替换与清理遇「拒绝访问」先去掉只读位（Windows）/ uchg 锁定（macOS）再重试，其余错误原样返回、旧目标原地保留；macOS `clonefile` 的 `EEXIST` 纳入回退清单；移动模式的 rename 同样走 `rename_replace`。拒绝访问类错误追加人话提示「文件可能为只读、已锁定或正被其他程序占用」。Rust 回归 +6：只读目标可覆盖、只读源复制两次都成功、失败后重试成功且无临时文件残留、临时名每次不同、强制删除只读文件、错误提示文案。
