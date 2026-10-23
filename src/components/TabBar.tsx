@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { List, Plus, X } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { cn } from "@/lib/utils";
+import { isMac } from "@/lib/keymap";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { WindowControls } from "@/components/WindowControls";
@@ -8,6 +10,30 @@ import { WindowControls } from "@/components/WindowControls";
 export interface TabItem {
   id: number;
   title: string;
+}
+
+/** 与 Tauri 注入的 drag.js（src/window/scripts/drag.js）同语义的 drag-region 判定：
+ *  沿祖先向上找最近的 data-tauri-drag-region；可点元素（button/input/role=button/
+ *  tabindex≥0 …）自身不带标记时阻断；裸标记只有直接点在该元素上才算生效。 */
+const CLICKABLE_TAGS = new Set(["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL", "SUMMARY"]);
+const INTERACTIVE_ROLES = new Set(["button", "link", "menuitem", "tab", "checkbox", "radio", "switch", "option"]);
+
+function inTitlebarDragRegion(target: HTMLElement): boolean {
+  let el: HTMLElement | null = target;
+  while (el) {
+    const attr = el.getAttribute("data-tauri-drag-region");
+    const interactive =
+      CLICKABLE_TAGS.has(el.tagName) ||
+      (el.getAttribute("contenteditable") ?? "false") !== "false" ||
+      (el.hasAttribute("tabindex") && el.getAttribute("tabindex") !== "-1") ||
+      INTERACTIVE_ROLES.has(el.getAttribute("role") ?? "");
+    if (interactive && attr === null) return false;
+    if (attr === "false") return false;
+    if (attr === "deep") return true;
+    if (attr !== null) return el === target; // bare / "true"
+    el = el.parentElement;
+  }
+  return false;
 }
 
 /** OneNote 风格标签色相环：按 tab.id 稳定取色（会话恢复后同一标签颜色不变）。
@@ -90,6 +116,8 @@ export function TabBar({
   const [listPos, setListPos] = useState({ left: 0, top: 0 });
   const listBtnRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  /** macOS 双击最大化接管：第二次 mousedown 的位置（mouseup 时未移动才算双击切换） */
+  const dbl2Ref = useRef<{ x: number; y: number } | null>(null);
 
   const endDrag = () => {
     dragRef.current = null;
@@ -232,10 +260,34 @@ export function TabBar({
       data-tauri-drag-region
       // 空白处右键：接管为全局标签菜单，屏蔽 WebView 默认菜单
       onContextMenu={onBlankContextMenu}
-      // 无边框窗口（decorations:false）：标签栏兼任标题栏，空白处拖动移动窗口、
-      // 双击最大化/还原。两者都由 Tauri 注入的 drag-region 脚本原生处理
-      // （macOS mouseup / Win-Linux mousedown，见 tauri window/plugin.rs）——
-      // 这里不要再挂 React onDoubleClick，否则与原生各切换一次 = 放大后立刻还原。
+      // 无边框窗口（decorations:false）：标签栏兼任标题栏，空白处拖动移动窗口由
+      // Tauri 注入的 drag-region 脚本原生处理（mousedown → start_dragging）。
+      // 双击最大化/还原在 macOS 上必须由这里接管（见 onMouseUpCapture）：
+      // 原生 internal_toggle_maximize 的放大分支被 is_maximizable() 挡死——
+      // 无边框窗口没有标准标题栏按钮，该检查在 macOS 恒为 false，于是原生双击
+      // 只能「还原」不能「放大」（tauri 2.x 未修，dev 分支同样）。
+      // 这里不要再挂 React onDoubleClick（双击走 mouseup 捕获拦截，见下）。
+      onMouseDown={(e) => {
+        if (isMac && e.button === 0 && e.detail === 2) {
+          dbl2Ref.current = { x: e.clientX, y: e.clientY };
+        }
+      }}
+      onMouseUpCapture={(e) => {
+        const start = dbl2Ref.current;
+        dbl2Ref.current = null;
+        if (!isMac || !start || e.button !== 0 || e.detail !== 2) return;
+        // 鼠标移动过 = 取消（与 drag.js「双击后移动可取消最大化」的语义一致）
+        if (e.clientX !== start.x || e.clientY !== start.y) return;
+        if (!inTitlebarDragRegion(e.target as HTMLElement)) return;
+        if (!("__TAURI_INTERNALS__" in window)) return;
+        // 捕获阶段合成事件 stopPropagation 会停掉原生传播——drag.js 的 document
+        // 冒泡监听收不到，internal_toggle_maximize（只能还原）不再触发；
+        // 改调无门槛的公开 toggle_maximize，两个方向都正确。
+        e.stopPropagation();
+        void getCurrentWindow()
+          .toggleMaximize()
+          .catch(() => {});
+      }}
       className="relative flex items-end gap-0.5 border-b bg-sidebar px-1.5 pt-1 select-none"
     >
       {/* v0.22.2：标签区可收缩（Excel 式）——空间不足时标题截断为省略号而不挤走
