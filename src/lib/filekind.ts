@@ -55,7 +55,7 @@ const IMAGE_EXTS = new Set([
 // 项目目录里的 .ts 源码全显示视频图标且无法文本预览；MPEG-TS 片段按 code 兜底影响可忽略
 const VIDEO_EXTS = new Set(["mp4", "mkv", "mov", "avi", "webm", "flv", "m4v", "wmv"]);
 const AUDIO_EXTS = new Set(["mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "wma"]);
-const ARCHIVE_EXTS = new Set(["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz"]);
+const ARCHIVE_EXTS = new Set(["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "tbz", "txz"]);
 const CODE_EXTS = new Set([
   "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp", "h", "hpp",
   "rb", "php", "swift", "kt", "sh", "bash", "zsh", "toml", "json", "yaml",
@@ -90,4 +90,12 @@ export function fileKindOf(entry: { is_dir: boolean; extension: string }): FileK
     if (set.has(ext)) return kind;
   }
   return "file";
+}
+
+/** v0.32 右键解压资格：压缩包扩展名（rar/7z/tar.xz 走系统 tar 兜底）。
+ *  裸 .xz 例外：后端暂不支持（macOS bsdtar 对裸 xz 有 mtree 误判、Windows 无解压器） */
+const EXTRACTABLE_EXTS = new Set([...ARCHIVE_EXTS].filter((e) => e !== "xz"));
+
+export function isArchiveExt(ext: string): boolean {
+  return EXTRACTABLE_EXTS.has(ext.toLowerCase());
 }

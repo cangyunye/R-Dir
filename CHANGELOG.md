@@ -5,6 +5,17 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.32.0 (2026-10-24)
+
+- **新功能：右键压缩包直接解压（zip / tar / tar.gz / tgz / tar.bz2 / tbz / tar.xz / txz / gz / bz2 / rar / 7z）**。右键菜单「压缩为」旁新增**「解压」折叠组**：**解压到此处**（智能落点——归档只有单个顶层条目且不与现有内容冲突时直接解到当前目录，否则建 `<归档名>/` 文件夹，杜绝静默覆盖与 tar 炸弹）、**解压到 `<归档名>/`**（WinRAR 惯例，同名自动改名 `(2)`）、**解压到…**（目录选择）。多选压缩包逐个解压。
+  - **实现路线**：zip / tar 系 / 单文件 gz / bz2 走 Rust crate 内置解码（`zip` 精简特性 `deflate-flate2` 复用既有 flate2/miniz_oxide——`image`/`ureq` 本就链入，不引入 zlib-rs 第二套 DEFLATE；`tar` / `bzip2`(纯 Rust libbz2-rs) 新增），rar / 7z / tar.xz 走**系统 tar**（libarchive）兜底：macOS 与 Windows 11 全格式可用，Win10 的 tar 无 liblzma（tar.xz 不可用）且 rar5 读取器 3.4+ 才有，失败时报可读错误。压缩（打包）保持 v0.8 系统命令不动——v0.9「系统命令更快」的结论对压缩仍成立，对解压不成立（实测 5000 小文件 zip：crate 0.76s vs ditto 2.75s）。
+  - **体积**：二进制 10.9MB → 实测约 +290KB（2.7%），zip 精简特性 + aes-crypto（加密 zip）+ tar + bzip2。
+  - **文件名编码修正**：无 UTF-8 标志位的 zip / 老 tar（Windows 资源管理器、旧 WinRAR 常见）按 GBK → Big5 → Shift_JIS 自动探测解码（`encoding_rs`，复用 v0.21.1 依赖），Latin-1 兜底；此前此类包在 macOS 上必然解出乱码。`encoding_rs` 解码不用 BOM 嗅探（`0xFF 0xFE` 开头会误判 UTF-16LE）。
+  - **加密 zip**：支持 ZipCrypto 与 WinZip AES（`aes-crypto` 特性）；遇加密包弹**密码框**（复用 PasswordDialog），密码错误框内提示就地重试，取消中止。
+  - **安全与卫生**：归档内 `../` 路径穿越与绝对路径拒绝落地（zip-slip）；**符号链接 / 硬链接条目跳过**（防解压路径劫持）；`__MACOSX/` 与任意层级 `._*` AppleDouble 自动跳过（此前 Rust crate 方案会把它们当普通文件释放，系统 tar/ditto 则自动处理）；出错/取消删除当前半成品。
+  - **进度与取消**：`transfer-progress` 新增 `extract` 阶段，逐条目 + 字节级进度（限频），状态栏可点 × 取消（id 走通用 cancel_transfer）；系统 tar 兜底路线以子进程轮询实现取消（kill），stdin 接 null 防加密包触发 libarchive 的 `Enter passphrase` 无限提示循环（曾实测刷出 160KB+ 提示卡死）。
+  - 单文件 `.xz`（非 tar 包）本版暂不支持（macOS bsdtar 对裸 xz 内容有 mtree 误判、Windows 无解压器），菜单不含裸 xz。Rust 回归 +14（分派/落点规划 smart+folder/GBK 解码/AppleDouble 过滤/防穿越/zip 手工夹具全链路/tar 往返/单文件 gz/密码信号/系统 tar 报错），前端 +1（isArchiveExt）。
+
 ## v0.31.2 (2026-10-24)
 
 - **大图标视图可拖出到浏览器上传区 / 访达，同时保留图标自由摆放与文件夹投放**。此前图标网格刻意不启用 HTML5 `draggable`（v0.27 为规避与自研鼠标拖拽的双体系冲突），拖出窗口根本不会发起系统拖拽，松手后落进「空槽重摆」分支——表现为想拖到网页上传却变成了图标换位。现在网格条目与详情列表走同一套双路径拖出（Windows 原生 CF_HDROP `drag_out_files` / macOS HTML5 `file://` uri-list），dragstart 一旦触发即 `cleanupDrag` 与自研拖拽交接、只留一套收尾；同窗格「空槽重摆」改由网格自己的 `onDrop` 按落点完成（与自研回落路径共用 `slotDropRef`，不 stopPropagation，文件夹图标 / 跨窗格投放继续冒泡交给 App 的 window 级 drop 统一解析）。自研鼠标拖拽保留为 dragstart 未发生时的回落（jsdom / 极短拖动）。

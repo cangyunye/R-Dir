@@ -3,6 +3,7 @@ mod cmdrun;
 mod compress;
 mod diff;
 mod drag_out;
+mod extract;
 mod find;
 mod fs_ops;
 mod fs_watch;
@@ -1274,7 +1275,7 @@ fn parent_dir(path: String) -> Result<String, String> {
 }
 
 /// 生成传输任务 id（毫秒时间戳 + 进程内序号，够唯一且无依赖）
-fn next_transfer_id() -> String {
+pub(crate) fn next_transfer_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(1);
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
@@ -1867,6 +1868,8 @@ pub fn run() {
         http_autoindex::cancel_http_download,
         // 压缩（v0.8：zip / tar / tgz，仅打包）
         compress::compress_items,
+        // 解压（v0.32：zip / tar 系 / gz / bz2 内置解码；rar / 7z / tar.xz 走系统 tar）
+        extract::extract_archive,
         // 窗口分享插件（v0.7）
         #[cfg(feature = "share")]
         share::share_create,

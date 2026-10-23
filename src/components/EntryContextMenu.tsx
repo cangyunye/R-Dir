@@ -5,6 +5,7 @@
  * 展开态（MenuGroup 折叠组）由使用方持有 expandedMenu 状态传入，同一窗格内互斥展开。
  */
 import {
+  ArchiveRestore,
   Check,
   Clipboard,
   Copy,
@@ -36,6 +37,7 @@ import { TAG_DEFS, tagLabel, type TagDef } from "@/lib/persist";
 import type { OpenerItem, ShellItem, GitToolItem, QuickToolItem } from "@/lib/openerApi";
 import { isSftpPath, isHttpPath } from "@/lib/sftp-path";
 import { openersForEntry } from "@/lib/openers";
+import { isArchiveExt } from "@/lib/filekind";
 import {
   ContextMenuContent,
   ContextMenuItem,
@@ -168,6 +170,8 @@ export interface EntryMenuProps {
   onOpenTerminal: (shellId: string, path: string) => void;
   onShareDir: (dir: string) => void;
   onCompress: (paths: string[], format: "zip" | "tar" | "tgz") => void;
+  /** v0.32 解压压缩包：here=智能落点 / folder=归档名文件夹 / choose=自选目录 */
+  onExtract: (paths: string[], mode: "here" | "folder" | "choose") => void;
   onCopy: (paths: string[]) => void;
   onCut: (paths: string[]) => void;
   onRename: (entry: FileEntry) => void;
@@ -220,6 +224,7 @@ export function EntryContextMenuContent({
   onOpenTerminal,
   onShareDir,
   onCompress,
+  onExtract,
   onCopy,
   onCut,
   onRename,
@@ -375,6 +380,22 @@ export function EntryContextMenuContent({
           <FileArchive className="mr-2 h-4 w-4" /> tgz（tar + gzip）
         </ContextMenuItem>
       </MenuGroup>
+      {!entry.is_dir && isArchiveExt(entry.extension) && (
+        // v0.32 解压折叠组（仅压缩包文件）：智能落点 / 归档名文件夹 / 自选目录
+        <MenuGroup
+          id="extract"
+          label="解压"
+          icon={<ArchiveRestore className="mr-2 h-4 w-4" />}
+          expanded={expandedMenu === "extract"}
+          onToggle={onToggleGroup}
+        >
+          <ContextMenuItem onClick={() => onExtract(targets, "here")}>解压到此处</ContextMenuItem>
+          <ContextMenuItem onClick={() => onExtract(targets, "folder")}>
+            解压到 {entry.name.replace(/\.[^.]+$/, "")}/
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onExtract(targets, "choose")}>解压到…</ContextMenuItem>
+        </MenuGroup>
+      )}
       <ContextMenuSeparator />
       <ContextMenuItem onClick={() => onCopy(targets)}>
         <Copy className="mr-2 h-4 w-4" /> 复制

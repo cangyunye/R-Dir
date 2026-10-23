@@ -135,6 +135,22 @@ export const createFile = (parent: string, name: string) =>
 export const compressItems = (paths: string[], targetDir: string, format: "zip" | "tar" | "tgz") =>
   invoke<string>("compress_items", { paths, targetDir, format });
 
+/** 解压结果：落点 + 统计（v0.32） */
+export interface ExtractOutcome {
+  dest: string;
+  files: number;
+  skipped: number;
+  bytes: number;
+}
+
+/**
+ * 解压压缩包（v0.32）：zip / tar 系 / gz / bz2 内置解码，rar / 7z / tar.xz 走系统 tar。
+ * 智能落点：单顶层条目且不冲突 → targetDir 本身，否则 targetDir/<归档名>/。
+ * 密码信号：「需要密码」（未提供）/「密码错误」（提供但不对），前端弹密码框重试。
+ */
+export const extractArchive = (path: string, targetDir: string, password?: string) =>
+  invoke<ExtractOutcome>("extract_archive", { path, targetDir, password: password ?? null });
+
 /** 内容搜索（字面量关键词，可递归/大小写开关） */
 export const searchContent = (
   query: string,

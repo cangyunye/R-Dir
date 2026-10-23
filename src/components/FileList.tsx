@@ -32,8 +32,10 @@ import {
   FileDiff,
   Undo2,
   Redo2,
+  ArchiveRestore,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isArchiveExt } from "@/lib/filekind";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
 import { formatSize, formatTime, hideExtension, extLabel } from "@/lib/format";
 import type { LinkSide } from "@/lib/sync-link";
@@ -163,6 +165,7 @@ export function FileList({
   onBack,
   onForward,
   onCompress,
+  onExtract,
   onProperties,
   onPropertiesDir,
   onDiff,
@@ -264,6 +267,8 @@ export function FileList({
   onForward: () => void;
   /** v0.8 压缩为 zip / tar / tgz（仅打包） */
   onCompress: (paths: string[], format: "zip" | "tar" | "tgz") => void;
+  /** v0.32 解压压缩包：here=智能落点 / folder=归档名文件夹 / choose=自选目录 */
+  onExtract: (paths: string[], mode: "here" | "folder" | "choose") => void;
   /** v0.16 右键「属性」：对选中条目显示属性（目录递归统计大小） */
   onProperties: (entries: FileEntry[]) => void;
   /** v0.17 空白处右键「属性（当前目录）」：统计 currentDir，与选中项无关 */
@@ -1233,6 +1238,26 @@ export function FileList({
                     <FileArchive className="mr-2 h-4 w-4" /> tgz（tar + gzip）
                   </ContextMenuItem>
                 </MenuGroup>
+                {!entry.is_dir && isArchiveExt(entry.extension) && (
+                  // v0.32 解压折叠组（仅压缩包文件）：智能落点 / 归档名文件夹 / 自选目录
+                  <MenuGroup
+                    id="extract"
+                    label="解压"
+                    icon={<ArchiveRestore className="mr-2 h-4 w-4" />}
+                    expanded={expandedMenu === "extract"}
+                    onToggle={toggleMenuGroup}
+                  >
+                    <ContextMenuItem onClick={() => onExtract(targets, "here")}>
+                      解压到此处
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => onExtract(targets, "folder")}>
+                      解压到 {entry.name.replace(/\.[^.]+$/, "")}/
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => onExtract(targets, "choose")}>
+                      解压到…
+                    </ContextMenuItem>
+                  </MenuGroup>
+                )}
                 <ContextMenuSeparator />
                 <ContextMenuItem onClick={() => onCopy(targets)}>
                   <Copy className="mr-2 h-4 w-4" /> 复制

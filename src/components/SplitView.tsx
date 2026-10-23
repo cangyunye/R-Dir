@@ -124,6 +124,8 @@ export interface PaneHandlers {
   onForward: () => void;
   /** v0.8 压缩为 zip / tar / tgz（仅打包） */
   onCompress: (paneId: number, paths: string[], format: "zip" | "tar" | "tgz") => void;
+  /** v0.32 解压压缩包：here=智能落点 / folder=归档名文件夹 / choose=自选目录 */
+  onExtract: (paneId: number, paths: string[], mode: "here" | "folder" | "choose") => void;
   /** v0.16 右键「属性」 */
   onProperties: (entries: FileEntry[]) => void;
   /** v0.17 空白处右键「属性（当前目录）」 */
@@ -560,6 +562,7 @@ const PaneView = memo(function PaneView({
         onBack={h.onBack}
         onForward={h.onForward}
         onCompress={(paths, fmt) => h.onCompress(pane.id, paths, fmt)}
+        onExtract={(paths, mode) => h.onExtract(pane.id, paths, mode)}
         onProperties={h.onProperties}
         onPropertiesDir={h.onPropertiesDir}
         onDiff={h.onDiff}
@@ -646,6 +649,7 @@ const PaneView = memo(function PaneView({
             onForward={h.onForward}
             onSyncDiff={h.onSyncDiff}
             onCompress={(paths, fmt) => h.onCompress(pane.id, paths, fmt)}
+            onExtract={(paths, mode) => h.onExtract(pane.id, paths, mode)}
             onProperties={h.onProperties}
             onPropertiesDir={h.onPropertiesDir}
             onDiff={h.onDiff}

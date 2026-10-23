@@ -12,7 +12,8 @@ use tauri::AppHandle;
 use crate::progress::{emit, TransferProgress};
 
 /// 同名冲突自动改名：name.zip → name (2).zip → name (3).zip …
-fn unique_dest(p: &Path) -> PathBuf {
+/// （v0.32 起解压落点复用同一规则）
+pub(crate) fn unique_dest(p: &Path) -> PathBuf {
     if !p.exists() {
         return p.to_path_buf();
     }

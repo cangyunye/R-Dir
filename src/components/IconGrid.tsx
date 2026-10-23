@@ -193,6 +193,7 @@ export function IconGrid({
   onForward,
   onSyncDiff,
   onCompress,
+  onExtract,
   onProperties,
   onPropertiesDir,
   onDiff,
@@ -292,6 +293,8 @@ export function IconGrid({
   /** 空白右键「同步比对（左右窗格）」，与详情列表菜单对齐 */
   onSyncDiff: () => void;
   onCompress: (paths: string[], format: "zip" | "tar" | "tgz") => void;
+  /** v0.32 解压压缩包：here=智能落点 / folder=归档名文件夹 / choose=自选目录 */
+  onExtract: (paths: string[], mode: "here" | "folder" | "choose") => void;
   onProperties: (entries: FileEntry[]) => void;
   onPropertiesDir: (dir: string) => void;
   onDiff: () => void;
@@ -1069,6 +1072,7 @@ export function IconGrid({
                         onOpenTerminal={onOpenTerminal}
                         onShareDir={onShareDir}
                         onCompress={onCompress}
+                        onExtract={onExtract}
                         onCopy={onCopy}
                         onCut={onCut}
                         onRename={onRename}

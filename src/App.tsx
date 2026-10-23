@@ -113,7 +113,9 @@ import {
   iconPositionsSave,
   statEntry,
   compressItems,
+  extractArchive,
 } from "@/lib/api";
+import { isArchiveExt } from "@/lib/filekind";
 import { ConnectDialog } from "@/components/ConnectDialog";
 import { PasswordDialog } from "@/components/PasswordDialog";
 import type { SectionId as SettingsSectionId } from "@/components/SettingsDialog";
@@ -360,6 +362,15 @@ export default function App() {
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
   /** 同名冲突裁决：非空时显示 ConflictDialog，resolve 存 ref 供异步等待 */
   const [conflictReq, setConflictReq] = useState<TransferConflict[] | null>(null);
+  /** v0.32 解压加密压缩包的密码框请求：onSubmit 就地重试，resolve(true)=已解压成功 / false=放弃 */
+  const [extractPw, setExtractPw] = useState<{
+    name: string;
+    archivePath: string;
+    targetDir: string;
+    paneId: number;
+    wrong: boolean;
+    resolve: (ok: boolean) => void;
+  } | null>(null);
   /** v0.28.0 应用内确认框（替代原生 confirm：Windows 原生是经典样式弹窗） */
   const [appConfirmReq, setAppConfirmReq] = useState<AppConfirmRequest | null>(null);
   /** 确认框裁决：confirm = 确认按钮、alt = 可选第三按钮（altLabel）、cancel = 取消/Esc/点遮罩 */
@@ -3748,6 +3759,71 @@ useEffect(() => {
     [tabs, refreshPane, showError],
   );
 
+  /** v0.32 弹解压密码框（Promise 在提交/关闭时兑现：true=已解压成功 / false=放弃） */
+  const promptExtractPassword = useCallback(
+    (req: { name: string; archivePath: string; targetDir: string; paneId: number; wrong: boolean }) =>
+      new Promise<boolean>((resolve) => setExtractPw({ ...req, resolve })),
+    [],
+  );
+
+  /** v0.32 解压压缩包：here/folder/choose 三种落点；加密包弹密码框就地重试 */
+  const doExtract = useCallback(
+    async (paneId: number, paths: string[], mode: "here" | "folder" | "choose") => {
+      const pane = tabs.find((t) => t.panes[paneId])?.panes[paneId];
+      if (!pane || paths.length === 0) return;
+      const archives = paths
+        .map((p) => pane.entries.find((e) => e.path === p))
+        .filter((e): e is FileEntry => !!e && !e.is_dir && isArchiveExt(e.extension));
+      if (archives.length === 0) return;
+      let targetDir = pane.path;
+      if (mode === "choose") {
+        const picked = await openDialog({
+          title: "选择解压目标目录",
+          multiple: false,
+          directory: true,
+        });
+        if (!picked || Array.isArray(picked)) return;
+        targetDir = picked;
+      }
+      for (const a of archives) {
+        try {
+          const out = await extractArchive(
+            a.path,
+            targetDir,
+            mode === "folder" ? "folder" : "smart",
+          );
+          refreshPane(paneId);
+          // 解到别处时同步刷新展示该目录的其他窗格
+          if (targetDir !== pane.path) {
+            const ids = tabs
+              .flatMap((t) => Object.values(t.panes))
+              .filter((p) => p.path === targetDir && p.id !== paneId)
+              .map((p) => p.id);
+            if (ids.length > 0) refreshPanes(ids);
+          }
+          showError(`已解压到 ${basename(out.dest)}（${out.files} 项）`);
+        } catch (e) {
+          const msg = String(e);
+          if (msg === "需要密码" || msg === "密码错误") {
+            // 密码框内就地重试，true = 已解压成功
+            const ok = await promptExtractPassword({
+              name: a.name,
+              archivePath: a.path,
+              targetDir,
+              paneId,
+              wrong: msg === "密码错误",
+            });
+            if (!ok) return;
+            continue;
+          }
+          showTransferError(e);
+          return;
+        }
+      }
+    },
+    [tabs, refreshPane, refreshPanes, showError, showTransferError, promptExtractPassword],
+  );
+
   // 快捷键：统一 keydown 分发（动作注册表 keymap.ts）
   const actionsRef = useRef<Record<string, () => void>>({});
   actionsRef.current = {
@@ -4015,6 +4091,7 @@ useEffect(() => {
     onBack: goBack,
     onForward: goForward,
     onCompress: (paneId, paths, fmt) => void doCompress(paneId, paths, fmt),
+    onExtract: (paneId, paths, mode) => void doExtract(paneId, paths, mode),
     onProperties: (list) => setPropertiesEntries(list),
     onPropertiesDir: (dir) => {
       // 空白处右键：统计当前目录本身（不受地址栏选中路径影响）
@@ -4086,6 +4163,7 @@ useEffect(() => {
     goBack,
     goForward,
     doCompress,
+    doExtract,
     openDiff,
     toggleSyncDiff,
     handleSetCompareBase,
@@ -4595,6 +4673,45 @@ useEffect(() => {
         submitLabel="加密并导出"
         onSubmit={sftp.submitExportPassword}
         onClose={sftp.closeExportPassword}
+      />
+
+      {/* v0.32 解压加密压缩包的密码框：onSubmit 就地重试（抛错 = 框内报错保持打开），
+          成功/关闭时兑现 promise（true = 已解压成功，主循环继续下一个归档） */}
+      <PasswordDialog
+        open={!!extractPw}
+        title={extractPw?.wrong ? "密码错误，请重试" : "输入归档密码"}
+        description={
+          <>
+            「<b>{extractPw?.name}</b>」是加密压缩包，输入密码继续解压。
+          </>
+        }
+        placeholder="归档密码"
+        submitLabel="解压"
+        onSubmit={async (password) => {
+          if (!extractPw) return;
+          try {
+            const out = await extractArchive(extractPw.archivePath, extractPw.targetDir, password);
+            refreshPane(extractPw.paneId);
+            showError(`已解压到 ${basename(out.dest)}（${out.files} 项）`);
+            extractPw.resolve(true);
+          } catch (e) {
+            const msg = String(e);
+            if (msg === "需要密码" || msg === "密码错误") {
+              setExtractPw({ ...extractPw, wrong: true });
+              throw new Error("密码不正确，请重试");
+            }
+            if (msg.includes("取消")) {
+              showError("已取消");
+            } else {
+              showTransferError(e);
+            }
+            extractPw.resolve(false);
+          }
+        }}
+        onClose={() => {
+          extractPw?.resolve(false);
+          setExtractPw(null);
+        }}
       />
 
       {/* 同名冲突裁决弹窗 */}

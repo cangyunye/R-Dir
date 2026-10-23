@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fileKindOf, THUMBNAIL_KINDS, FILE_KINDS } from "./filekind";
+import { fileKindOf, isArchiveExt, THUMBNAIL_KINDS, FILE_KINDS } from "./filekind";
 
 const mk = (is_dir: boolean, extension: string) => ({ is_dir, extension });
 
@@ -37,5 +37,15 @@ describe("fileKindOf（v0.27 文件类型分类）", () => {
   it("13 类完整且缩略图资格是子集", () => {
     expect(FILE_KINDS).toHaveLength(13);
     for (const k of THUMBNAIL_KINDS) expect(FILE_KINDS).toContain(k);
+  });
+
+  it("v0.32 isArchiveExt：常见压缩包可解压，裸 xz 例外（后端暂不支持）", () => {
+    for (const ext of ["zip", "rar", "7z", "tar", "gz", "bz2", "tgz", "tbz", "txz"]) {
+      expect(isArchiveExt(ext)).toBe(true);
+    }
+    expect(isArchiveExt("ZIP")).toBe(true); // 大小写不敏感
+    expect(isArchiveExt("xz")).toBe(false);
+    expect(isArchiveExt("txt")).toBe(false);
+    expect(isArchiveExt("")).toBe(false);
   });
 });

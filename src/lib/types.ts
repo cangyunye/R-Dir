@@ -174,8 +174,8 @@ export interface SftpServerView {
 /** master-key 状态 */
 /** 传输/复制进度事件载荷（对应后端 progress.rs） */
 export interface TransferProgress {
-  /** "copy" | "move" | "upload" | "download" | "compress" */
-  phase: "copy" | "move" | "upload" | "download" | "compress";
+  /** "copy" | "move" | "upload" | "download" | "compress" | "extract"（v0.32 解压） */
+  phase: "copy" | "move" | "upload" | "download" | "compress" | "extract";
   label: string;
   doneFiles: number;
   totalFiles: number;

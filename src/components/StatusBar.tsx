@@ -10,14 +10,15 @@ const PHASE_LABEL: Record<TransferProgress["phase"], string> = {
   upload: "上传",
   download: "下载",
   compress: "压缩",
+  extract: "解压",
 };
 
 /** 部分后端任务以固定文案作 label（复制/移动/压缩不逐文件改名）；
  *  此时不再拼接阶段名，避免渲染成「复制中：复制中…」（v0.18.1） */
-const GENERIC_LABELS = new Set(["下载中…", "上传中…", "复制中…", "移动中…", "压缩中…"]);
+const GENERIC_LABELS = new Set(["下载中…", "上传中…", "复制中…", "移动中…", "压缩中…", "解压中…"]);
 
-/** 可停止的传输阶段：HTTP/SFTP 下载 + 本地复制/移动 + SFTP 上传（v0.23 递归传输按任务 id 取消） */
-const CANCELLABLE = new Set<TransferProgress["phase"]>(["download", "copy", "move", "upload"]);
+/** 可停止的传输阶段：HTTP/SFTP 下载 + 本地复制/移动 + SFTP 上传 + 解压（v0.23 递归传输按任务 id 取消） */
+const CANCELLABLE = new Set<TransferProgress["phase"]>(["download", "copy", "move", "upload", "extract"]);
 
 export function StatusBar({
   path,

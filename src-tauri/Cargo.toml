@@ -1,6 +1,6 @@
 [package]
 name = "rust-file-manager"
-version = "0.31.2"
+version = "0.32.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -37,7 +37,15 @@ ignore = "0.4"
 encoding_rs = "0.8"
 # v0.27 画廊模式缩略图（本地图片解码缩放；按需特性裁掉不需要的格式）
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
-# v0.9 压缩改为调用系统命令（ditto / powershell / tar / zip），不再依赖 Rust crate
+# v0.9 压缩（打包）改为调用系统命令（ditto / powershell / tar / zip），不再依赖 Rust crate
+# v0.32 解压走 Rust crate（实测解压场景 crate 不慢于系统命令，且编码/进度/密码可控）：
+# zip 精简特性走 deflate-flate2 复用既有 miniz_oxide，不引入 zlib-rs 第二套 DEFLATE；
+# flate2(rust_backend) 本就已由 image→png / ureq 链入，此处显式声明仅为直接使用
+zip = { version = "9", default-features = false, features = ["deflate-flate2", "aes-crypto"] }
+tar = "0.4"
+# bzip2 默认走纯 Rust 后端 libbz2-rs（default = dep:libbz2-rs-sys），勿关 default features
+bzip2 = "0.6"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 # HTTP autoindex 插件：轻量同步 HTTP 客户端（rustls，无系统依赖）
 ureq = { version = "2", default-features = false, features = ["rustls", "gzip"] }
 # SFTP 远程文件系统插件（内置、可编译期拔出）：去掉 sftp feature 即不编译任何远程代码
