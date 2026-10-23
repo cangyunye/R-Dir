@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { IconGrid } from "./IconGrid";
+import { getHtml5Drag, setHtml5Drag } from "@/lib/native-drag";
 import type { FileEntry } from "@/lib/types";
 
 type IconGridProps = ComponentProps<typeof IconGrid>;
@@ -246,5 +247,83 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
       />,
     );
     expect(container.querySelector("input")!.style.width).toBe("72px");
+  });
+
+  it("多选拖到文件夹图标：onDropIntoDir 携带全部选中路径（自研回落路径）", () => {
+    const onDropIntoDir = vi.fn();
+    const { container } = render(
+      <IconGrid
+        {...makeProps({
+          onDropIntoDir,
+          selection: ["/mock/dir/main.rs", "/mock/dir/photo.png"],
+        })}
+      />,
+    );
+    const dirItem = container.querySelector('[data-path="/mock/dir/Documents"]')!;
+    // jsdom 没有 elementFromPoint，直接装桩让 hitTarget 命中文件夹图标
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const origFromPoint = doc.elementFromPoint;
+    doc.elementFromPoint = () => dirItem;
+    // 按下已选中项 = 携带全部选中拖拽（图标视图语义）
+    fireEvent.mouseDown(container.querySelector('[data-path="/mock/dir/main.rs"]')!);
+    fireEvent.mouseMove(window, { clientX: 40, clientY: 40 });
+    fireEvent.mouseUp(window, { clientX: 40, clientY: 40 });
+    doc.elementFromPoint = origFromPoint;
+    expect(onDropIntoDir).toHaveBeenCalledWith(
+      ["/mock/dir/main.rs", "/mock/dir/photo.png"],
+      "copy",
+      "/mock/dir/Documents",
+    );
+  });
+
+  it("dragstart：HTML5 拖出写入 uri-list / plain / 会话标记并接管（自研拖拽清理）", () => {
+    const { container } = render(
+      <IconGrid
+        {...makeProps({ selection: ["/mock/dir/main.rs", "/mock/dir/photo.png"] })}
+      />,
+    );
+    const item = container.querySelector('[data-path="/mock/dir/main.rs"]')!;
+    const setData = vi.fn();
+    const nativeEvent = new Event("dragstart", { bubbles: true, cancelable: true });
+    Object.defineProperty(nativeEvent, "dataTransfer", {
+      value: { setData, effectAllowed: "" },
+    });
+    fireEvent(item, nativeEvent);
+    // 拖出选中组：uri-list 供 macOS WKWebView 映射 NSURL（拖到浏览器/访达可上传）
+    const call = (t: string) => setData.mock.calls.find(([k]) => k === t)?.[1] as string;
+    expect(call("text/plain")).toBe("/mock/dir/main.rs\n/mock/dir/photo.png");
+    expect(call("text/uri-list")).toContain("file:///mock/dir/main.rs");
+    expect(call("application/x-rdir-dnd")).toBe("1");
+    expect(getHtml5Drag()).toMatchObject({
+      sourcePaneId: 1,
+      paths: ["/mock/dir/main.rs", "/mock/dir/photo.png"],
+    });
+    setHtml5Drag(null);
+  });
+
+  it("HTML5 drop 落回本窗格空白槽：按落点写入摆放记录；非应用内投放不动作", () => {
+    const onSetIconPosition = vi.fn();
+    // 不设选中：主选中的「滚入可视区」effect 会在 jsdom 里改 scrollTop，槽位换算随之漂移。
+    // 被拖路径来自 dataTransfer，与选中无关
+    const { container } = render(<IconGrid {...makeProps({ onSetIconPosition })} />);
+    const body = container.querySelector("[data-icongrid-body]")!;
+    const makeDt = (types: string[]) => ({
+      types,
+      getData: (t: string) =>
+        t === "application/x-rdir-dnd" ? "1" : t === "text/plain" ? "/mock/dir/main.rs" : "",
+    });
+    const dropAt = (x: number, y: number, types: string[]) => {
+      const nativeEvent = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(nativeEvent, "dataTransfer", { value: makeDt(types) });
+      Object.defineProperty(nativeEvent, "clientX", { value: x });
+      Object.defineProperty(nativeEvent, "clientY", { value: y });
+      fireEvent(body, nativeEvent);
+    };
+    // iconSize 64 → 单元 88×106，行距 114：clientY 600 → 槽位 (0,5)，写入摆放记录
+    dropAt(40, 600, ["application/x-rdir-dnd", "text/plain"]);
+    expect(onSetIconPosition).toHaveBeenCalledWith("main.rs", [0, 5]);
+    // 无应用内标记（外部拖入）：不动作
+    dropAt(40, 600, ["Files"]);
+    expect(onSetIconPosition).toHaveBeenCalledTimes(1);
   });
 });

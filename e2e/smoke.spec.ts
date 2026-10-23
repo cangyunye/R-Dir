@@ -1127,6 +1127,144 @@ test.describe("28A. 大图标自动排列（v0.27.1）", () => {
   });
 });
 
+test.describe("28B. 拖放目标：目录条目一级投放 + 图标视图可拖出（v0.31.2）", () => {
+  const switchBtn = (mode: string) => `[data-view-switch] button[data-view-mode="${mode}"]`;
+  const copyPlans = (page: import("@playwright/test").Page) =>
+    page.evaluate(
+      () =>
+        (window as unknown as { __RDIR_E2E_MOCK__: { copyPlans: { paths: string[]; dest: string }[] } })
+          .__RDIR_E2E_MOCK__.copyPlans,
+    );
+  /** 合成事件驱动应用的 dragstart → window dragover → drop → dragend 链（与 R18 / S1 同套路） */
+  const synthDrag = (
+    page: import("@playwright/test").Page,
+    srcSel: string,
+    dstSel: string,
+    opts: { drop: boolean } = { drop: true },
+  ) =>
+    page.evaluate(
+      ({ srcSel, dstSel, drop }) => {
+        const src = document.querySelector(srcSel)!;
+        const dst = document.querySelector(dstSel)!;
+        const dt = new DataTransfer();
+        src.dispatchEvent(
+          new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }),
+        );
+        const r = dst.getBoundingClientRect();
+        const o = {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: dt,
+          clientX: r.left + r.width / 2,
+          clientY: r.top + r.height / 2,
+        };
+        window.dispatchEvent(new DragEvent("dragover", o));
+        if (!drop) return;
+        window.dispatchEvent(new DragEvent("drop", o));
+        src.dispatchEvent(new DragEvent("dragend", o));
+      },
+      { srcSel, dstSel, drop: opts.drop },
+    );
+
+  test("T1 大图标：拖动条目发起原生拖拽（dragstart 携带 file:// uri-list，可拖到浏览器上传区），松手到文件夹图标 = 复制进该目录", async ({ page }) => {
+    await page.locator(switchBtn("icons")).click();
+    await expect(page.locator("[data-grid-item]")).toHaveCount(6);
+    // 捕获真实 dragstart 的 dataTransfer：图标视图此前不启用 draggable，拖出去只会变成图标重摆
+    await page.evaluate(() => {
+      (window as unknown as { __rdirDragStart: unknown }).__rdirDragStart = null;
+      document.addEventListener(
+        "dragstart",
+        (e) => {
+          const dt = (e as DragEvent).dataTransfer;
+          (window as unknown as { __rdirDragStart: unknown }).__rdirDragStart = {
+            uri: dt?.getData("text/uri-list") ?? "",
+            plain: dt?.getData("text/plain") ?? "",
+            dnd: dt?.getData("application/x-rdir-dnd") ?? "",
+          };
+        },
+        { capture: false, once: true },
+      );
+    });
+    await page
+      .locator(`[data-grid-item][data-path="${HOME}/Notes.txt"]`)
+      .dragTo(page.locator(`[data-grid-item][data-path="${HOME}/Documents"]`));
+    const captured = await page.evaluate(
+      () => (window as unknown as { __rdirDragStart: { uri: string; plain: string; dnd: string } | null }).__rdirDragStart,
+    );
+    expect(captured).not.toBeNull();
+    expect(captured!.uri).toContain(`file://${HOME}/Notes.txt`);
+    expect(captured!.plain).toBe(`${HOME}/Notes.txt`);
+    expect(captured!.dnd).not.toBe("");
+    // 落在文件夹图标上 = 复制进该目录（默认 copy；App 的 window drop 解析 data-drop-dir）
+    await expect
+      .poll(async () => (await copyPlans(page)).at(-1), { timeout: 5000 })
+      .toMatchObject({ paths: [`${HOME}/Notes.txt`], dest: `${HOME}/Documents` });
+  });
+
+  test("T2 详情列表：多选两文件拖到目录行 → 悬停目录行高亮，松手一起复制进该目录", async ({ page }) => {
+    const notes = `[data-path="${HOME}/Notes.txt"]`;
+    const photo = `[data-path="${HOME}/photo.png"]`;
+    const docs = `[data-path="${HOME}/Documents"]`;
+    // 目录行是投放目标（data-drop-dir），文件行不是
+    await expect(page.locator(docs)).toHaveAttribute("data-drop-dir", "");
+    await expect(page.locator(notes)).not.toHaveAttribute("data-drop-dir", /.*/);
+    // 多选：先点 Notes.txt，再按 Mod 追加 photo.png
+    await page.locator(notes).click();
+    await page.locator(photo).click({ modifiers: [MOD] });
+    await expect(page.locator(notes)).toHaveClass(/bg-selected/);
+    await expect(page.locator(photo)).toHaveClass(/bg-selected/);
+    // 悬停阶段：目录行高亮为投放目标（dragDir）
+    await synthDrag(page, notes, docs, { drop: false });
+    await expect(page.locator(docs)).toHaveClass(/\bring-2\b/);
+    // 松手：两项一起复制进 Documents
+    await synthDrag(page, notes, docs);
+    await expect
+      .poll(async () => (await copyPlans(page)).at(-1), { timeout: 5000 })
+      .toMatchObject({ paths: [`${HOME}/Notes.txt`, `${HOME}/photo.png`], dest: `${HOME}/Documents` });
+    // 高亮随 drop/dragend 收口
+    await expect(page.locator(docs)).not.toHaveClass(/\bring-2\b/);
+    // 进入 Documents 能看到两项
+    await page.locator(docs).dblclick();
+    await expect(page.locator(`[data-path="${HOME}/Documents/Notes.txt"]`)).toBeVisible();
+    await expect(page.locator(`[data-path="${HOME}/Documents/photo.png"]`)).toBeVisible();
+  });
+
+  test("T3 详情列表：拖文件夹到它自己的行上不动作（被拖路径不作为目标）", async ({ page }) => {
+    const docs = `[data-path="${HOME}/Documents"]`;
+    const before = (await copyPlans(page)).length;
+    await synthDrag(page, docs, docs, { drop: false });
+    await expect(page.locator(docs)).not.toHaveClass(/\bring-2\b/);
+    await synthDrag(page, docs, docs);
+    // 同窗格窗格级投放 = no-op：既不复制，也不报错
+    await page.waitForTimeout(300);
+    expect((await copyPlans(page)).length).toBe(before);
+    await expect(page.locator(docs)).toBeVisible();
+  });
+
+  test("T4 跨窗格：本地文件拖到 SFTP 窗格的目录行上 → 上传进该子目录（而非窗格当前目录）", async ({ page }) => {
+    test.slow();
+    await page.keyboard.press(`${MOD}+Backslash`);
+    await page.getByRole("button", { name: "生产机" }).click();
+    const remote = "sftp://u@127.0.0.1:22/remote";
+    const logsRow = `[data-path="${remote}/logs"]`;
+    await expect(page.locator(logsRow)).toBeVisible();
+    await expect(page.locator(logsRow)).toHaveAttribute("data-drop-dir", "");
+    const uploads = () =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __RDIR_E2E_MOCK__: { uploads: { local: string; dest: string; name: string }[] } })
+            .__RDIR_E2E_MOCK__.uploads,
+      );
+    // 真实拖拽到另一窗格的 logs 目录行：目标 = 该目录（跨窗格提示条为浮层，内容不下移，落点不漂）
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).dragTo(page.locator(logsRow));
+    await expect
+      .poll(async () => (await uploads()).at(-1), { timeout: 5000 })
+      .toMatchObject({ name: "Notes.txt", dest: `${remote}/logs` });
+    // 窗格当前目录（remote 根）不应出现 Notes.txt
+    await expect(page.locator(`[data-path="${remote}/Notes.txt"]`)).toHaveCount(0);
+  });
+});
+
 test.describe("30. 常用工具条（v0.29.0）", () => {
   // mock 固定清单：VSCode（稳定 slug id=vscode，验证固定行去重）+ Zed
   test("Q1 右键目录第一行显示常用条，点图标用该工具打开", async ({ page }) => {

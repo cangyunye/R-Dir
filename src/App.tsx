@@ -134,7 +134,8 @@ import {
   swapPanes,
 } from "@/lib/paneTree";
 import { ACTIONS, bindingOf, findAction, isMac, keyEventString } from "@/lib/keymap";
-import { getNativeDragOut, probeNativeDragOut, setNativeDragOut } from "@/lib/native-drag";
+import { getNativeDragOut, probeNativeDragOut, setNativeDragOut, getHtml5Drag, setHtml5Drag } from "@/lib/native-drag";
+import { dropTargetAt, type DropTarget } from "@/lib/drop-target";
 import { fetchLatestRelease, REPO_URL } from "@/lib/update";
 import {
   loadCustomQuick,
@@ -407,11 +408,14 @@ export default function App() {
     if (clipboardTipTimer.current) window.clearTimeout(clipboardTipTimer.current);
     clipboardTipTimer.current = window.setTimeout(() => setClipboardTip(null), ms);
   }, []);
-  /** 拖拽悬停目标窗格（自实现 DnD） */
+  /** 拖拽悬停目标窗格（自实现 DnD）。仅跨窗格的窗格级目标亮提示条；
+   *  悬停在目录条目上改由 dragDir 高亮那个条目（更精确，提示条不再常驻源窗格）。 */
   const [dragOver, setDragOver] = useState<{
     targetPaneId: number;
     op: "copy" | "move";
   } | null>(null);
+  /** 拖拽悬停的目录条目（详情列表目录行 / 大图标文件夹图标）：投放 = 移入/复制进该目录 */
+  const [dragDir, setDragDir] = useState<{ paneId: number; path: string } | null>(null);
   /** v0.30 窗格交换拖拽会话（拖窗格头到另一窗格互换布局位置）：
    *  source=拖动中的窗格，target=悬停目标（驱动 SplitView 的高亮/徽标） */
   const [paneSwap, setPaneSwap] = useState<PaneSwapDrag | null>(null);
@@ -2982,10 +2986,25 @@ useEffect(() => {
     [tabs, transferPaths],
   );
 
-  /** v0.27 大图标模式「拖到文件夹图标上」：目标为任意目录路径（含同窗格内文件夹） */
+  /** v0.27 大图标模式「拖到文件夹图标上」：目标为任意目录路径（含同窗格内文件夹）。
+   *  v0.31.2 起详情列表目录行同样接入（App 的 window drop 统一解析）；destPaneId
+   *  是文件夹所在窗格（跨窗格投放时双方都要刷新），缺省 = 同窗格。 */
   const doDropIntoDir = useCallback(
-    async (sourcePaneId: number, paths: string[], op: "copy" | "move", destDir: string) => {
-      await transferPaths(sourcePaneId, paths, op, destDir, [sourcePaneId], sourcePaneId);
+    async (
+      sourcePaneId: number,
+      paths: string[],
+      op: "copy" | "move",
+      destDir: string,
+      destPaneId = sourcePaneId,
+    ) => {
+      await transferPaths(
+        sourcePaneId,
+        paths,
+        op,
+        destDir,
+        [...new Set([sourcePaneId, destPaneId])],
+        destPaneId,
+      );
     },
     [transferPaths],
   );
@@ -3030,7 +3049,7 @@ useEffect(() => {
     };
     let seenInternal = false;
     let leftWindow = false;
-    let lastTarget: number | null = null;
+    let lastKey = "";
     let lastOp: "copy" | "move" = "copy";
     let lastPos = { x: 0, y: 0 };
     let lastSwapTarget: number | null = null;
@@ -3052,6 +3071,20 @@ useEffect(() => {
     const onDragEnter = () => {
       leftWindow = false;
     };
+    /** 文件拖拽的悬停高亮分流（v0.31.2 起文件夹条目成为一级投放目标）：
+     *  命中目录条目（data-drop-dir，详情目录行 / 网格文件夹图标）→ dragDir 精确高亮
+     *  该条目；窗格级目标仅跨窗格时亮 dragOver 提示条+描边——同窗格的窗格级投放要么
+     *  无操作（详情列表）要么是空槽重摆（图标网格），常驻提示条只会误导。
+     *  跨窗格时提示条对「是否悬停在目录行上」保持稳定（不随行切换闪烁），
+     *  目录高亮在其上叠加精确提示。 */
+    const highlight = (srcPaneId: number | null, t: DropTarget | null, op: "copy" | "move") => {
+      lastOp = op; // dragend 兜底投放用最近一次 dragover 的操作类型
+      const key = `${t?.paneId ?? ""}|${t?.dirPath ?? ""}|${op}`;
+      if (key === lastKey) return;
+      lastKey = key;
+      setDragOver(t && t.paneId !== srcPaneId ? { targetPaneId: t.paneId, op } : null);
+      setDragDir(t?.dirPath ? { paneId: t.paneId, path: t.dirPath } : null);
+    };
     const onDragOver = (e: DragEvent) => {
       if (isPaneSwap(e)) {
         e.preventDefault(); // 投放光标从 🚫 变为 move
@@ -3070,12 +3103,12 @@ useEffect(() => {
         const op: "copy" | "move" = e.altKey ? "move" : "copy";
         e.dataTransfer.dropEffect = op === "move" ? "move" : "copy";
         lastPos = { x: e.clientX, y: e.clientY };
-        const target = paneAt(e.clientX, e.clientY);
-        if (target !== lastTarget || op !== lastOp) {
-          lastTarget = target;
-          lastOp = op;
-          setDragOver(target !== null ? { targetPaneId: target, op } : null);
-        }
+        // nativeDragOut 会话带 paths：悬停在被拖文件夹自身上不高亮
+        highlight(
+          native.sourcePaneId,
+          dropTargetAt(e.clientX, e.clientY, native.paths),
+          op,
+        );
         return;
       }
       if (!isInternal(e)) {
@@ -3088,19 +3121,37 @@ useEffect(() => {
       const op: "copy" | "move" = e.altKey ? "move" : "copy";
       if (e.dataTransfer) e.dataTransfer.dropEffect = op === "move" ? "move" : "copy";
       lastPos = { x: e.clientX, y: e.clientY };
-      const target = paneAt(e.clientX, e.clientY);
-      if (target !== lastTarget || op !== lastOp) {
-        lastTarget = target;
-        lastOp = op;
-        setDragOver(target !== null ? { targetPaneId: target, op } : null);
-      }
+      // dragover 阶段 dataTransfer 值不可读，被拖路径从 HTML5 会话取（dragstart 记录）
+      const html5 = getHtml5Drag();
+      highlight(html5?.sourcePaneId ?? null, dropTargetAt(e.clientX, e.clientY, html5?.paths ?? []), op);
     };
     const onDragLeave = (e: DragEvent) => {
-      if (!e.relatedTarget) leftWindow = true;
+      if (!e.relatedTarget) {
+        leftWindow = true;
+        // 拖出窗口即清高亮（拖回时 dragover 会重设；原生拖出窗外松手没有 dragend 兜底）
+        finishDrag();
+      }
     };
     const finishDrag = () => {
       setDragOver(null);
-      lastTarget = null;
+      setDragDir(null);
+      lastKey = "";
+    };
+    /** 文件拖拽投放（HTML5 / 原生 / dragend 兜底三条链路共用）：目录条目 → 移入/复制
+     *  进该目录（同窗格、跨窗格都成立）；窗格级 → 跨窗格复制/移动。同窗格的窗格级
+     *  投放在这里是 no-op——图标网格的空槽重摆由网格自己的 onDrop 先行处理。 */
+    const fileDrop = (
+      source: number,
+      paths: string[],
+      op: "copy" | "move",
+      x: number,
+      y: number,
+    ) => {
+      if (Number.isNaN(source) || paths.length === 0) return;
+      const t = dropTargetAt(x, y, paths);
+      if (!t) return;
+      if (t.dirPath) void doDropIntoDir(source, paths, op, t.dirPath, t.paneId);
+      else if (t.paneId !== source) void doDropPaths(source, paths, op, t.paneId);
     };
     const onDrop = (e: DragEvent) => {
       if (isPaneSwap(e)) {
@@ -3117,10 +3168,13 @@ useEffect(() => {
       if (native) {
         e.preventDefault();
         finishDrag();
-        const target = paneAt(e.clientX, e.clientY);
-        if (target !== null && target !== native.sourcePaneId && native.paths.length > 0) {
-          void doDropPaths(native.sourcePaneId, native.paths, e.altKey ? "move" : "copy", target);
-        }
+        fileDrop(
+          native.sourcePaneId,
+          native.paths,
+          e.altKey ? "move" : "copy",
+          e.clientX,
+          e.clientY,
+        );
         setNativeDragOut(null);
         return;
       }
@@ -3131,18 +3185,18 @@ useEffect(() => {
       e.preventDefault();
       droppedAtRef.current = Date.now();
       finishDrag();
-      const target = paneAt(e.clientX, e.clientY);
+      setHtml5Drag(null);
       const source = Number(e.dataTransfer?.getData(DND_TYPE));
       const paths = (e.dataTransfer?.getData("text/plain") ?? "")
         .split("\n")
         .filter(Boolean);
-      if (!Number.isNaN(source) && target !== null && target !== source && paths.length > 0) {
-        void doDropPaths(source, paths, e.altKey ? "move" : "copy", target);
-      }
+      fileDrop(source, paths, e.altKey ? "move" : "copy", e.clientX, e.clientY);
     };
     const onDragEnd = (e: DragEvent) => {
       // 窗格交换拖拽收尾（松手 / Esc 取消 / 拖出窗口释放都会触发 dragend）
       finishSwap();
+      // HTML5 会话无论怎样收场都清掉（drop 已清，这里兜 Esc 取消 / 拖出窗口）
+      setHtml5Drag(null);
       // dragend 阶段 dataTransfer 已进入保护模式（types 清空），用 dragover 里的标记
       if (!seenInternal) return;
       seenInternal = false;
@@ -3151,18 +3205,17 @@ useEffect(() => {
         return;
       }
       // DOM drop 被 webview 拦截的平台：dragend + 最近 dragover 坐标兜底完成投放
-      const target = paneAt(lastPos.x, lastPos.y);
       const row = (e.target as HTMLElement | null)?.closest?.("[data-pane-id]") as HTMLElement | null;
       const source = row ? Number(row.dataset.paneId) : null;
       finishDrag();
-      if (source === null || Number.isNaN(source) || target === null || target === source) return;
+      if (source === null || Number.isNaN(source)) return;
       // dataTransfer 已清空：paths 用源窗格当前选中（拖的就是选中组）或拖动行本身
       const pane = tabsRef.current.flatMap((t) => Object.values(t.panes)).find((p) => p.id === source);
       const rowPath =
         (e.target as HTMLElement | null)?.closest?.("[data-path]")?.getAttribute("data-path") ?? null;
       const paths =
         pane && rowPath && pane.selection.includes(rowPath) ? pane.selection : rowPath ? [rowPath] : [];
-      if (paths.length > 0) void doDropPaths(source, paths, lastOp, target);
+      fileDrop(source, paths, lastOp, lastPos.x, lastPos.y);
     };
     window.addEventListener("dragstart", onDragStart);
     window.addEventListener("dragenter", onDragEnter);
@@ -3178,7 +3231,7 @@ useEffect(() => {
       window.removeEventListener("drop", onDrop);
       window.removeEventListener("dragend", onDragEnd);
     };
-  }, [doDropPaths, swapPanePositions]);
+  }, [doDropPaths, doDropIntoDir, swapPanePositions]);
 
   // 右键兜底：桌面应用里 WebView2 默认菜单只允许出现在文本编辑上下文。
   // 组件自己的右键菜单（Radix / 手写）已 preventDefault → defaultPrevented 放行；
@@ -4277,6 +4330,7 @@ useEffect(() => {
                       canPaste={!!t.panes[t.activePane]}
                       renaming={renaming}
                       dragOver={dragOver}
+                      dragDir={dragDir}
                       paneSwap={paneSwap}
                       fileTags={fileTags}
                       tags={tags}

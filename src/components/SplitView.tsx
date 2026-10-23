@@ -379,6 +379,7 @@ const PaneView = memo(function PaneView({
   renaming,
   isActive,
   dragOver,
+  dragDir,
   canPaste,
   fileTags,
   tags,
@@ -406,6 +407,8 @@ const PaneView = memo(function PaneView({
   renaming: RenameState | null;
   isActive: boolean;
   dragOver: { targetPaneId: number; op: "copy" | "move" } | null;
+  /** 原生拖拽悬停在本窗格某个目录条目上（窗格 id + 目录路径），驱动投放高亮 */
+  dragDir: { paneId: number; path: string } | null;
   canPaste: boolean;
   fileTags: FileTags;
   /** 全量标签 = 预设 + 自定义（v0.28.0） */
@@ -543,6 +546,7 @@ const PaneView = memo(function PaneView({
         onToggleQuick={h.onToggleQuick}
         dragTarget={dragOver?.targetPaneId === pane.id}
         dragOp={dragOver?.targetPaneId === pane.id ? dragOver.op : "copy"}
+        dragDir={dragDir?.paneId === pane.id ? dragDir.path : null}
         showHidden={showHidden}
         showExtensions={showExtensions}
         spaceTogglesPreview={previewSpace}
@@ -630,6 +634,7 @@ const PaneView = memo(function PaneView({
             onAddCustomOpener={h.onAddCustomOpener}
             dragTarget={dragOver?.targetPaneId === pane.id}
             dragOp={dragOver?.targetPaneId === pane.id ? dragOver.op : "copy"}
+            dragDir={dragDir?.paneId === pane.id ? dragDir.path : null}
             showHidden={showHidden}
             showExtensions={showExtensions}
             spaceTogglesPreview={previewSpace}
@@ -735,6 +740,7 @@ export function SplitView({
   canPaste,
   renaming,
   dragOver,
+  dragDir,
   fileTags,
   tags,
   tagNames,
@@ -760,6 +766,8 @@ export function SplitView({
   canPaste: boolean;
   renaming: RenameState | null;
   dragOver: { targetPaneId: number; op: "copy" | "move" } | null;
+  /** 原生拖拽悬停的目录条目（窗格 id + 目录路径），驱动投放高亮 */
+  dragDir: { paneId: number; path: string } | null;
   fileTags: FileTags;
   /** 全量标签 = 预设 + 自定义（v0.28.0） */
   tags: TagDef[];
@@ -791,6 +799,7 @@ export function SplitView({
         renaming={renaming}
         isActive={pane.id === activePaneId}
         dragOver={dragOver}
+        dragDir={dragDir}
         canPaste={canPaste}
         fileTags={fileTags}
         tags={tags}
@@ -826,6 +835,7 @@ export function SplitView({
           canPaste={canPaste}
           renaming={renaming}
           dragOver={dragOver}
+          dragDir={dragDir}
           fileTags={fileTags}
           tags={tags}
           tagNames={tagNames}
@@ -862,6 +872,7 @@ export function SplitView({
           canPaste={canPaste}
           renaming={renaming}
           dragOver={dragOver}
+          dragDir={dragDir}
           fileTags={fileTags}
           tags={tags}
           tagNames={tagNames}

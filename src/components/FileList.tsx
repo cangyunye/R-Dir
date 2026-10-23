@@ -62,7 +62,7 @@ import { rank } from "@/lib/fuzzy";
 import { isMac } from "@/lib/keymap";
 import { isSftpPath, isHttpPath } from "@/lib/sftp-path";
 import { dragOutFiles } from "@/lib/api";
-import { canNativeDragOut, setNativeDragOut } from "@/lib/native-drag";
+import { canNativeDragOut, setNativeDragOut, setHtml5Drag } from "@/lib/native-drag";
 import { QuickJump, type QuickJumpRow } from "@/components/QuickJump";
 
 /** 快速定位结果窗口大小。 */
@@ -149,6 +149,7 @@ export function FileList({
   onAddCustomOpener,
   dragTarget,
   dragOp,
+  dragDir = null,
   showHidden,
   showExtensions,
   spaceTogglesPreview,
@@ -243,6 +244,8 @@ export function FileList({
   onAddCustomOpener: (path?: string, ext?: string) => Promise<void>;
   dragTarget: boolean;
   dragOp: "copy" | "move";
+  /** 原生拖拽悬停在本窗格某个目录行上：该行高亮为投放目标（App 的 window dragover 解析） */
+  dragDir?: string | null;
   showHidden: boolean;
   /** v0.14 显示文件扩展名（false 时列表隐藏扩展名） */
   showExtensions: boolean;
@@ -910,7 +913,9 @@ export function FileList({
         onScroll={onListScroll}
       >
         {dragTarget && (
-          <div className="sticky top-0 z-10 flex h-6 items-center justify-center bg-primary/10 text-[11px] font-medium text-primary">
+          // pointer-events-none + -mb-6：纯展示浮层，不占流式高度、不参与命中测试——进入窗格时内容不在光标下整体下移，
+          // 目录行成为投放目标后，提示条若推挤内容会把瞄准的落点顶到相邻行上误投
+          <div className="pointer-events-none -mb-6 sticky top-0 z-10 flex h-6 items-center justify-center bg-primary/10 text-[11px] font-medium text-primary">
             {dragOp === "copy" ? `复制到此处（按住 ${isMac ? "Option" : "Alt"} 切换移动）` : "移动到此处"}
           </div>
         )}
@@ -938,6 +943,7 @@ export function FileList({
                   role="row"
                   tabIndex={0}
                   data-path={entry.path}
+                  data-drop-dir={entry.is_dir ? "" : undefined}
                   draggable="true"
                   onDragStart={(e) => {
                     const paths = selectionSet.has(entry.path) ? selection : [entry.path];
@@ -976,6 +982,7 @@ export function FileList({
                     // drop 据此拿源窗格 id（types 全程可读；值在 drop 阶段才可读）
                     e.dataTransfer.setData('application/x-rdir-dnd', String(paneId));
                     e.dataTransfer.effectAllowed = 'copyMove';
+                    setHtml5Drag({ sourcePaneId: paneId, paths });
                     // 原生拖拽接管后 mousemove/mouseup 停发——必须停掉自研鼠标拖拽，
                     // 否则提示条滞留到松手后、下一次点击的 mouseup 误触发一次投放
                     cleanupDrag();
@@ -1036,6 +1043,9 @@ export function FileList({
                     "grid cursor-default items-center border-b text-[13px]",
                     selected ? "bg-selected" : "hover:bg-muted",
                     isPrimary && "ring-1 ring-inset ring-primary/40",
+                    entry.is_dir &&
+                      dragDir === entry.path &&
+                      "bg-primary/15 ring-2 ring-inset ring-primary",
                   )}
                   style={{
                     gridTemplateColumns: COLUMNS.map((c) => c.width).join(" "),

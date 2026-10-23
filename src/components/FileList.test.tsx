@@ -429,3 +429,20 @@ describe("FileList 行内重命名提交（v0.26.1 macOS 回车/失焦不生效�
     expect(onRenameCancel).not.toHaveBeenCalled();
   });
 });
+
+describe("详情列表目录行 = 拖放目标（v0.31.2 拖入目录）", () => {
+  it("目录行带 data-drop-dir，文件行没有；dragDir 命中时高亮为投放目标", () => {
+    const { container } = renderList({ dragDir: "/mock/dir/Documents" });
+    const dirRow = container.querySelector('[data-path="/mock/dir/Documents"]')!;
+    const fileRow = container.querySelector('[data-path="/mock/dir/main.rs"]')!;
+    expect(dirRow.hasAttribute("data-drop-dir")).toBe(true);
+    expect(fileRow.hasAttribute("data-drop-dir")).toBe(false);
+    expect(dirRow.className).toContain("ring-primary");
+    expect(fileRow.className).not.toContain("ring-primary");
+    // 未命中其他目录行不高亮
+    const { container: c2 } = renderList({ dragDir: "/mock/dir/Other" });
+    expect(
+      c2.querySelector('[data-path="/mock/dir/Documents"]')!.className,
+    ).not.toContain("ring-primary");
+  });
+});

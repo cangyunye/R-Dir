@@ -5,12 +5,15 @@
  *   其余条目首个空槽补位；右键空白处「整理图标」清空记录回到自动排列
  * - 位置存储：App 集中持有 iconPositions（应用数据目录 icon-positions.json，
  *   Rust iconpos 命令读写），按目录路径 → 条目名 → 槽位索引
- * - 拖拽：自研鼠标拖拽（同 FileList）；同窗格内拖到空槽=改摆放位置，
- *   拖到文件夹图标上=移入/复制（Alt）该目录；跨窗格投放沿用 onDropPaths
+ * - 拖拽：条目启用 HTML5 draggable，与详情列表同一套双路径——Windows 原生
+ *   CF_HDROP 拖出 / macOS HTML5 file:// uri-list 拖出，因此可以拖到浏览器上传区、
+ *   访达 / 资源管理器。应用内投放（文件夹图标 / 跨窗格）由 App 的 window 级
+ *   dragover/drop 统一解析；同窗格拖到空槽 = 改摆放位置，由网格自己的 onDrop 处理。
+ *   自研鼠标拖拽保留为 dragstart 未发生时的回落路径（jsdom / 极短拖动），
+ *   dragstart 一旦触发即 cleanupDrag 交接，避免两套体系同时收尾
  * - 画廊模式（gallery）：图片条目渲染真实缩略图（ThumbImage），其余大类型图标
  * - 交互复用：橡皮筋框选（纯几何）、慢速双击重命名、条目右键菜单（EntryContextMenu）
- *   说明：图标视图条目不启用 HTML5 draggable（避免 macOS 双拖拽体系冲突），
- *   因此暂不支持从图标视图拖出到访达（详情列表不受影响）；QuickJump 后续版本接入。
+ *   QuickJump 后续版本接入。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -40,6 +43,14 @@ import {
 } from "@/lib/virtual-scroll";
 import { hideExtension } from "@/lib/format";
 import { isMac } from "@/lib/keymap";
+import { isSftpPath, isHttpPath } from "@/lib/sftp-path";
+import { dragOutFiles } from "@/lib/api";
+import {
+  canNativeDragOut,
+  getNativeDragOut,
+  setNativeDragOut,
+  setHtml5Drag,
+} from "@/lib/native-drag";
 import { FileIcon } from "@/components/FileIcon";
 import { ThumbImage } from "@/components/ThumbImage";
 import { TagDots } from "@/components/TagView";
@@ -170,6 +181,7 @@ export function IconGrid({
   onAddCustomOpener,
   dragTarget,
   dragOp,
+  dragDir = null,
   showHidden,
   showExtensions,
   spaceTogglesPreview,
@@ -265,6 +277,8 @@ export function IconGrid({
   onAddCustomOpener: (path?: string, ext?: string) => Promise<void>;
   dragTarget: boolean;
   dragOp: "copy" | "move";
+  /** 原生拖拽悬停在本窗格某个文件夹图标上：该图标高亮为投放目标（App 的 window dragover 解析） */
+  dragDir?: string | null;
   showHidden: boolean;
   showExtensions: boolean;
   /** v0.28 预览栏启用时空格让位给「切换预览」，网格不再用空格加选 */
@@ -521,6 +535,66 @@ export function IconGrid({
     };
   };
 
+  /** 同窗格空槽重摆（自研回落 mouseup 与 HTML5 drop 两条路径共用）：被拖项（多选按序）
+   *  从落点槽位开始排，被占槽跳过；落点与原槽一致（原位单击拖动）则不产生任何变化。
+   *  经 ref 每帧换新闭包——window 监听器持有旧帧，直引会拿到过期 slotsByName。 */
+  const slotDropRef = useRef<(paths: string[], clientX: number, clientY: number) => void>(
+    () => {},
+  );
+  slotDropRef.current = (paths, clientX, clientY) => {
+    if (autoArrange || paths.length === 0) return;
+    let { c, r } = slotAt(clientX, clientY);
+    c = Math.max(0, c);
+    r = Math.max(0, r);
+    const occupant = new Map<string, string>(); // slotKey -> name
+    for (const [name, s] of slotsByName) occupant.set(`${s.c}:${s.r}`, name);
+    const order = sorted.filter((x) => paths.includes(x.path)).map((x) => x.name);
+    const draggedNames = new Set(order);
+    let placed = 0;
+    for (const name of order) {
+      const cur = slotsByName.get(name);
+      for (let guard = 0; guard < 4096; guard++) {
+        const key = `${c}:${r}`;
+        const holder = occupant.get(key);
+        const isSelfSlot = cur && cur.c === c && cur.r === r;
+        if (isSelfSlot && placed === 0 && order.length === 1) break; // 原位
+        if (!holder || draggedNames.has(holder)) {
+          onSetIconPosition(name, [c, r]);
+          if (holder) occupant.delete(key);
+          occupant.set(key, name);
+          placed += 1;
+          break;
+        }
+        c += 1;
+        if (c >= cols) {
+          c = 0;
+          r += 1;
+        }
+      }
+    }
+  };
+
+  /** HTML5 / 原生拖回落回本窗格、且落点不是文件夹图标：应用内「空槽重摆」。
+   *  文件夹图标与跨窗格投放不在这里拦（不 stopPropagation）——事件继续冒泡到
+   *  window，由 App 的 drop 监听统一解析收尾（清会话 / 提示条）。 */
+  const onBodyDrop = (e: React.DragEvent) => {
+    const native = getNativeDragOut();
+    const dt = e.dataTransfer;
+    if (!native && !dt?.types.includes("application/x-rdir-dnd")) return;
+    const srcId = native ? native.sourcePaneId : Number(dt!.getData("application/x-rdir-dnd"));
+    if (srcId !== paneId) return;
+    const paths = native
+      ? native.paths
+      : (dt!.getData("text/plain") ?? "").split("\n").filter(Boolean);
+    if (paths.length === 0) return;
+    const el = document.elementFromPoint?.(e.clientX, e.clientY) as HTMLElement | null;
+    const dirPath =
+      el?.closest?.("[data-grid-item][data-drop-dir]")?.getAttribute("data-path") ?? null;
+    if (dirPath && !paths.includes(dirPath)) return; // 文件夹投放 → App 处理
+    e.preventDefault();
+    slotDropRef.current(paths, e.clientX, e.clientY);
+  };
+
   const onWinMouseUp = (e: MouseEvent) => {
     const cand = dragCandRef.current;
     if (cand) {
@@ -534,40 +608,8 @@ export function IconGrid({
           propsRef.current.onDropIntoDir(cand.paths, op, hit.path);
         } else if (hit?.kind === "pane") {
           propsRef.current.onDropPaths(propsRef.current.paneId, cand.paths, op, hit.paneId);
-        } else if (folder === null && cand.paths.length > 0 && !propsRef.current.autoArrange) {
-          // 同窗格空槽重摆：被拖项（多选按序）从落点槽位开始排，被占槽跳过；
-          // 落点与原槽一致（原位单击拖动）则不产生任何变化
-          let { c, r } = slotAt(e.clientX, e.clientY);
-          c = Math.max(0, c);
-          r = Math.max(0, r);
-          const occupant = new Map<string, string>(); // slotKey -> name
-          for (const [name, s] of propsRef.current.slotsByName) occupant.set(`${s.c}:${s.r}`, name);
-          const order = propsRef.current.sorted
-            .filter((x) => cand.paths.includes(x.path))
-            .map((x) => x.name);
-          const draggedNames = new Set(order);
-          let placed = 0;
-          for (const name of order) {
-            const cur = propsRef.current.slotsByName.get(name);
-            for (let guard = 0; guard < 4096; guard++) {
-              const key = `${c}:${r}`;
-              const holder = occupant.get(key);
-              const isSelfSlot = cur && cur.c === c && cur.r === r;
-              if (isSelfSlot && placed === 0 && order.length === 1) break; // 原位
-              if (!holder || draggedNames.has(holder)) {
-                propsRef.current.onSetIconPosition(name, [c, r]);
-                if (holder) occupant.delete(key);
-                occupant.set(key, name);
-                placed += 1;
-                break;
-              }
-              c += 1;
-              if (c >= cols) {
-                c = 0;
-                r += 1;
-              }
-            }
-          }
+        } else if (folder === null) {
+          slotDropRef.current(cand.paths, e.clientX, e.clientY);
         }
       } else {
         cleanupDrag();
@@ -790,9 +832,11 @@ export function IconGrid({
               onMouseDown={startRubber}
               onKeyDown={handleKeyDown}
               onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+              onDrop={onBodyDrop}
             >
               {dragTarget && (
-                <div className="sticky top-0 z-10 flex h-6 items-center justify-center bg-primary/10 text-[11px] font-medium text-primary">
+                // pointer-events-none + -mb-6：纯展示浮层，不占流式高度、不抢首行命中，跨窗格拖入时网格内容不在光标下移动
+                <div className="pointer-events-none -mb-6 sticky top-0 z-10 flex h-6 items-center justify-center bg-primary/10 text-[11px] font-medium text-primary">
                   {dragOp === "copy"
                     ? `复制到此处（按住 ${isMac ? "Option" : "Alt"} 切换移动）`
                     : "移动到此处"}
@@ -825,6 +869,46 @@ export function IconGrid({
                           role="gridcell"
                           aria-selected={selected}
                           tabIndex={-1}
+                          draggable="true"
+                          onDragStart={(e) => {
+                            const paths = selectionSet.has(entry.path) ? selection : [entry.path];
+                            // 原生拖出仅支持真实文件系统路径；sftp://、http:// 等虚拟路径走 HTML5 文本拖拽
+                            // （应用内投放两条链路都由 App 的 window 监听完成，目标窗格类型无关）
+                            const canNative =
+                              canNativeDragOut() &&
+                              paths.every((p) => !isSftpPath(p) && !isHttpPath(p));
+                            if (canNative) {
+                              // Windows 原生拖出（OLE 拖拽携带 CF_HDROP 文件引用）：浏览器上传
+                              // 投放区 / 资源管理器只认真实文件，HTML5 的 text/uri-list 文本
+                              // 格式一律被拒。preventDefault 后 HTML5 拖拽不会发生，拖回落到
+                              // 本窗口的 dragover/drop 由 App 的 window 监听按 nativeDragOut 会话驱动
+                              e.preventDefault();
+                              cleanupDrag();
+                              setNativeDragOut({ sourcePaneId: paneId, paths });
+                              dragOutFiles(paths)
+                                .catch((err) => console.warn("[rdir] 原生拖出失败：", err))
+                                .finally(() => {
+                                  setNativeDragOut(null);
+                                  // 拖出窗外松手时 JS 收不到 drop/dragend，在此兜底清提示条
+                                  cleanupDrag();
+                                });
+                              return;
+                            }
+                            // macOS / 非 Tauri 环境：HTML5 拖出（WKWebView 把 file:// uri-list 映射为 NSURL）
+                            // 选中文本为空时拖当前项，否则拖选中项
+                            const uriList = paths
+                              .map((p) => "file://" + p.replace(/\\/g, "/"))
+                              .join("\r\n");
+                            e.dataTransfer.setData("text/uri-list", uriList);
+                            e.dataTransfer.setData("text/plain", paths.join("\n"));
+                            // 应用内拖拽标记：window 的 dragover/drop 据此驱动投放高亮与落盘
+                            e.dataTransfer.setData("application/x-rdir-dnd", String(paneId));
+                            e.dataTransfer.effectAllowed = "copyMove";
+                            setHtml5Drag({ sourcePaneId: paneId, paths });
+                            // 原生拖拽接管后 mousemove/mouseup 停发——停掉自研鼠标拖拽，
+                            // 两套体系只留一套收尾（v0.27 旧实现因此冲突才禁用 draggable）
+                            cleanupDrag();
+                          }}
                           onMouseDown={(e) => startItemPress(e, entry)}
                           onClick={(e) => {
                             if (suppressClickRef.current) {
@@ -877,7 +961,7 @@ export function IconGrid({
                             "group absolute flex cursor-default flex-col items-center gap-1 rounded-lg p-2",
                             selected ? "bg-selected" : "hover:bg-muted",
                             isPrimary && "ring-1 ring-inset ring-primary/40",
-                            folderHover === entry.path &&
+                            (dragDir === entry.path || folderHover === entry.path) &&
                               "bg-primary/15 ring-2 ring-inset ring-primary",
                           )}
                           style={{

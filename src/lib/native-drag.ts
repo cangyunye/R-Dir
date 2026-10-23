@@ -54,3 +54,16 @@ export const setNativeDragOut = (d: NativeDragOut | null) => {
 };
 
 export const getNativeDragOut = (): NativeDragOut | null => active;
+
+/**
+ * 一次 HTML5 应用内拖拽会话（macOS WKWebView / 原生拖出不可用的回落路径）：
+ * dragstart 记录，drop / dragend 清除。dragover 阶段 dataTransfer 只能读 types
+ * 读不到值，「拖到自身文件夹」的悬停排除靠这里拿 paths。
+ */
+let html5: NativeDragOut | null = null;
+
+export const setHtml5Drag = (d: NativeDragOut | null) => {
+  html5 = d;
+};
+
+export const getHtml5Drag = (): NativeDragOut | null => html5;
