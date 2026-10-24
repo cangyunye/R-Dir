@@ -8,6 +8,7 @@ import type {
   SessionLayout,
   SftpServerConfig,
   SftpServerView,
+  TabFavorite,
   VolumeInfo,
 } from "./types";
 
@@ -273,6 +274,17 @@ export const sessionSave = (layout: SessionLayout) =>
 
 export const sessionLoad = () =>
   invoke<SessionLayout | null>("session_load");
+
+// ---- 标签收藏夹（favorites.json，独立于退出时的整体会话保存） ----
+export const favoritesLoad = async (): Promise<TabFavorite[] | null> => {
+  const file = await invoke<{ version: number; items: TabFavorite[] } | null>(
+    "favorites_load",
+  );
+  return file ? file.items : null;
+};
+
+export const favoritesSave = (items: TabFavorite[]) =>
+  invoke<void>("favorites_save", { items });
 
 /** v0.23 退出确认后放行下一次应用退出（否则 Rust 侧 prevent_exit 会拦住 exit(0)） */
 export const allowExit = () => invoke<void>("allow_exit");

@@ -78,6 +78,8 @@ export function TabBar({
   canReopen,
   onCloseOthers,
   onCloseRight,
+  onFavoriteTab,
+  onOpenFavorites,
   trailing,
 }: {
   tabs: TabItem[];
@@ -96,6 +98,10 @@ export function TabBar({
   onCloseOthers: (id: number) => void;
   /** 关闭该标签右侧的所有标签（标签右键菜单） */
   onCloseRight: (id: number) => void;
+  /** 收藏该标签的布局快照（标签右键菜单） */
+  onFavoriteTab: (id: number) => void;
+  /** 打开收藏夹面板（空白处右键菜单） */
+  onOpenFavorites: () => void;
   /** 右上角插槽（设置 / 主题 / 应用菜单），与「新建标签」按钮同行 */
   trailing?: React.ReactNode;
 }) {
@@ -483,6 +489,16 @@ export function TabBar({
               <button
                 type="button"
                 onClick={() => {
+                  onFavoriteTab(tabs[menu.idx].id);
+                  setMenu(null);
+                }}
+                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
+              >
+                收藏此标签页
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   startRename(tabs[menu.idx]);
                   setMenu(null);
                 }}
@@ -535,6 +551,16 @@ export function TabBar({
                 className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
               >
                 全部标签页…
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenu(null);
+                  onOpenFavorites();
+                }}
+                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
+              >
+                收藏夹…
               </button>
             </>
           )}

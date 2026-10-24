@@ -30,6 +30,7 @@ import {
   Scissors,
   Search,
   Settings,
+  Star,
   Sun,
   Trash2,
   Undo2,
@@ -108,6 +109,8 @@ export interface AppMenuActions {
   /** v0.31 服务器清单导出/导入（提供时才显示菜单项） */
   onExportServers?: () => void;
   onImportServers?: () => void;
+  /** 标签收藏夹面板（提供时才显示菜单项，快捷键 openFavorites） */
+  onOpenFavorites?: () => void;
   // 帮助 / 右上角常驻
   onOpenSettings: () => void;
   onCheckUpdate: () => void;
@@ -299,6 +302,9 @@ export function AppMenu(actions: AppMenuActions) {
           <Item icon={<ArrowLeftRight />} label="聚焦下一窗格" shortcutId="focusNextPane" onClick={actions.onFocusNextPane} />
 
           <GroupLabel>工具</GroupLabel>
+          {actions.onOpenFavorites && (
+            <Item icon={<Star />} label="收藏夹…" shortcutId="openFavorites" onClick={actions.onOpenFavorites} />
+          )}
           <Item icon={<GitCompare />} label="差异比对…" onClick={actions.onOpenDiff} />
           <Item
             icon={actions.syncDiffActive ? <Link2Off /> : <Link2 />}

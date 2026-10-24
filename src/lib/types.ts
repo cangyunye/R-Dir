@@ -220,6 +220,21 @@ export interface SessionLayout {
   tabs: SessionTab[];
 }
 
+/** 标签收藏项：SessionTab 快照 + 收藏元数据（独立于退出时的整体会话保存） */
+export interface TabFavorite {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  tab: SessionTab;
+}
+
+/** favorites.json 顶层结构（对应后端 FavoritesFile） */
+export interface FavoritesFile {
+  version: number;
+  items: TabFavorite[];
+}
+
 export interface MasterKeyStatus {
   /** 是否已设置过（有校验值） */
   configured: boolean;

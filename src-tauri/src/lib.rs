@@ -599,6 +599,71 @@ async fn session_load(app: tauri::AppHandle) -> Result<Option<SessionLayout>, St
     .map_err(|e| e.to_string())?
 }
 
+// ==================== 标签收藏夹（独立于会话保存的标签级快照） ====================
+
+/// 标签收藏项。tab 为前端 SessionTab 快照原样 JSON 透传（zoom/viewMode/iconSize
+/// 等前端字段不进 Rust 结构体，避免像 session_save 一样被未知字段丢弃）。
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TabFavorite {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub tab: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoritesFile {
+    pub version: u32,
+    pub items: Vec<TabFavorite>,
+}
+
+fn favorites_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    Ok(dir.join("favorites.json"))
+}
+
+/// 读取收藏夹；无文件返回 None
+#[tauri::command]
+async fn favorites_load(app: tauri::AppHandle) -> Result<Option<FavoritesFile>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = favorites_path(&app)?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = std::fs::read_to_string(&path).map_err(|e| format!("读取收藏夹失败：{e}"))?;
+        serde_json::from_str(&raw)
+            .map(Some)
+            .map_err(|e| format!("解析收藏夹失败：{e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 保存收藏夹（整文件原子写：先写临时文件再改名）
+#[tauri::command]
+async fn favorites_save(app: tauri::AppHandle, items: Vec<TabFavorite>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = FavoritesFile {
+            version: 1,
+            items,
+        };
+        let path = favorites_path(&app)?;
+        let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json).map_err(|e| format!("写入收藏夹失败：{e}"))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("保存收藏夹失败：{e}"))?;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ==================== 偏好持久化（v0.14：标签配置可靠落盘） ====================
 
 /// prefs.json 存标签重命名/文件标签/快捷访问，与 session.json 同级；
@@ -1848,6 +1913,9 @@ pub fn run() {
         // 会话保存 / 恢复
         session_save,
         session_load,
+        // 标签收藏夹
+        favorites_load,
+        favorites_save,
         // 偏好持久化（v0.14）
         prefs_load,
         prefs_save,

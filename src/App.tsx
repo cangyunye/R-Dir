@@ -49,15 +49,18 @@ import type {
   QuickAccessItem,
   ResolutionPlan,
   SessionLayout,
+  SessionTab,
   SortDir,
   SortKey,
   SplitDir,
+  TabFavorite,
   TabState,
   ThemeMode,
   TransferConflict,
   TransferProgress,
   VolumeInfo,
 } from "@/lib/types";
+import { dedupeName } from "@/lib/favorites";
 import { parseSftpAuthority, isSftpPath, isHttpPath } from "@/lib/sftp-path";
 import { backendCaps, backendKind, maxDiffLevelFor, pathScheme } from "@/lib/backends";
 import {
@@ -107,6 +110,8 @@ import {
   sftpUpload,
   sessionLoad,
   sessionSave,
+  favoritesLoad,
+  favoritesSave,
   allowExit,
   statPath,
   iconPositionsLoad,
@@ -194,6 +199,7 @@ import { GitDiffDialog } from "@/components/GitDiffDialog";
 import { SyncDiffModal } from "@/components/SyncDiffPanel";
 import { AppMenu } from "@/components/AppMenu";
 import { CommandPalette, type CommandItem } from "@/components/CommandPalette";
+import { FavoritesPalette } from "@/components/FavoritesPalette";
 import { PreviewDrawer } from "@/components/PreviewDrawer";
 import { BrowseMode } from "@/components/BrowseMode";
 import { sortEntries } from "@/lib/entry-sort";
@@ -219,35 +225,41 @@ function sftpAuthorityId(path: string): string | null {
 /** 非活动标签 keep-alive 上限（LRU）：超出后最久未激活的标签树卸载，退回「激活时重建」 */
 const KEEP_ALIVE_MAX = 8;
 
+/** 单个标签页 → SessionTab 快照（退出会话保存与标签收藏共用；
+ *  SFTP 只存 serverId，不含任何凭据） */
+function serializeSessionTab(t: TabState): SessionTab {
+  return {
+    id: t.id,
+    title: t.title,
+    customTitle: t.customTitle,
+    activePane: t.activePane,
+    root: t.root,
+    panes: Object.values(t.panes).map((p) => {
+      if (p.path.startsWith("sftp://")) {
+        return {
+          id: p.id,
+          path: p.path,
+          kind: "sftp",
+          serverId: sftpAuthorityId(p.path) ?? undefined,
+          zoom: p.zoom,
+          viewMode: p.viewMode,
+          iconSize: p.iconSize,
+        };
+      }
+      if (p.tagId)
+        return { id: p.id, path: p.path, kind: "tag", tagId: p.tagId, zoom: p.zoom, viewMode: p.viewMode, iconSize: p.iconSize };
+      return { id: p.id, path: p.path, kind: "local", zoom: p.zoom, viewMode: p.viewMode, iconSize: p.iconSize };
+    }),
+  };
+}
+
 function serializeSession(tabs: TabState[], activeId: number): SessionLayout {
   const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeId));
   return {
     version: 1,
     savedAt: new Date().toISOString(),
     activeTab: activeIdx,
-    tabs: tabs.map((t) => ({
-      id: t.id,
-      title: t.title,
-      customTitle: t.customTitle,
-      activePane: t.activePane,
-      root: t.root,
-      panes: Object.values(t.panes).map((p) => {
-        if (p.path.startsWith("sftp://")) {
-          return {
-            id: p.id,
-            path: p.path,
-            kind: "sftp",
-            serverId: sftpAuthorityId(p.path) ?? undefined,
-            zoom: p.zoom,
-            viewMode: p.viewMode,
-            iconSize: p.iconSize,
-          };
-        }
-        if (p.tagId)
-          return { id: p.id, path: p.path, kind: "tag", tagId: p.tagId, zoom: p.zoom, viewMode: p.viewMode, iconSize: p.iconSize };
-        return { id: p.id, path: p.path, kind: "local", zoom: p.zoom, viewMode: p.viewMode, iconSize: p.iconSize };
-      }),
-    })),
+    tabs: tabs.map(serializeSessionTab),
   };
 }
 
@@ -258,6 +270,50 @@ function remapNode(node: PaneNode, remap: Map<number, number>): PaneNode {
     return nid !== undefined ? { type: "pane", paneId: nid } : node;
   }
   return { ...node, a: remapNode(node.a, remap), b: remapNode(node.b, remap) };
+}
+
+/** SessionTab 快照 → 新 TabState（重新分配 tab/pane id，分屏树重映射；
+ *  同时收集需要重连的 SFTP 窗格。会话恢复与「打开收藏」共用。） */
+function buildTabFromSnapshot(st: SessionTab): {
+  tab: TabState;
+  sftpPanes: { paneId: number; serverId: string; path: string }[];
+} {
+  const remap = new Map<number, number>();
+  const panes: Record<number, PaneState> = {};
+  const tabId = nextTabId++;
+  const sftpPanes: { paneId: number; serverId: string; path: string }[] = [];
+  for (const sp of st.panes) {
+    const p = makePane(sp.path);
+    if (typeof sp.zoom === "number" && sp.zoom >= 0.5 && sp.zoom <= 2) p.zoom = sp.zoom;
+    // v0.27 视图模式与图标档位（旧会话缺省 details/64；越界值回默认）
+    if (sp.viewMode === "icons" || sp.viewMode === "details") {
+      p.viewMode = sp.viewMode;
+    }
+    // 画廊 v0.27 暂不开放：旧会话里的 gallery 归化为 icons（代码保留，放开即用）
+    if (sp.viewMode === "gallery") p.viewMode = "icons";
+    if ([48, 64, 96, 128].includes(sp.iconSize as 48)) {
+      p.iconSize = sp.iconSize as PaneState["iconSize"];
+    }
+    remap.set(sp.id, p.id);
+    if (sp.kind === "tag" && sp.tagId) p.tagId = sp.tagId;
+    if (sp.kind === "sftp" && sp.serverId) {
+      sftpPanes.push({ paneId: p.id, serverId: sp.serverId, path: sp.path });
+    }
+    panes[p.id] = p;
+  }
+  const root = remapNode(st.root as PaneNode, remap);
+  const activePane = remap.get(st.activePane) ?? firstPaneId(root);
+  return {
+    tab: {
+      id: tabId,
+      title: st.title || "",
+      customTitle: st.customTitle,
+      root,
+      activePane,
+      panes,
+    },
+    sftpPanes,
+  };
 }
 
 function tagTitle(tagId: string, names?: TagNames): string {
@@ -358,6 +414,9 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   /** 搜索面板冻结的目标窗格 id（打开时锁定，切换窗格不再自动重搜） */
   const [searchPaneId, setSearchPaneId] = useState<number | null>(null);
+  /** 标签收藏（favorites.json，独立于退出会话保存）：数据 + 面板开关 */
+  const [favorites, setFavorites] = useState<TabFavorite[]>([]);
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
   const [homePath, setHomePath] = useState("");
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
   /** 同名冲突裁决：非空时显示 ConflictDialog，resolve 存 ref 供异步等待 */
@@ -1249,57 +1308,66 @@ useEffect(() => {
     return !!au && sftp.connectedRef.current.has(au.id);
   }, [sftp]);
 
+  /** 显式加载指定窗格目录（listDir effect 只监听活动 pane，恢复的非活动窗格需手动加载） */
+  const loadPaneNow = useCallback(
+    async (paneId: number, path: string) => {
+      try {
+        const entries = await listDir(path);
+        patchPane(paneId, { entries, loading: false, error: null });
+      } catch (e) {
+        patchPane(paneId, { loading: false, error: String(e) });
+      }
+    },
+    [patchPane],
+  );
+
+  /** 恢复单个 SFTP 快照窗格：重连（后端回退已存配置 + master-key 解密）并加载目录；
+   *  NEED_MASTER_KEY 时挂起 pendingRestore，主密钥验证后统一续跑。
+   *  会话恢复与「打开收藏」共用。 */
+  const restoreSftpPane = useCallback(
+    async (sp: { paneId: number; serverId: string; path: string }) => {
+      try {
+        await sftpConnect({
+          id: sp.serverId,
+          name: "",
+          host: "",
+          port: 22,
+          user: "",
+          root: null,
+          group: "",
+          auth: "password",
+        });
+        sftp.connectedRef.current.add(sp.serverId);
+        await loadPaneNow(sp.paneId, sp.path);
+        void sftp.syncConnected(
+          sftp.servers.map((s) => (s.id === sp.serverId ? { ...s, connected: true } : s)),
+        );
+      } catch (e) {
+        const msg = String(e);
+        if (msg.includes("NEED_MASTER_KEY")) {
+          sftp.pendingRestoreRef.current.push(sp);
+          sftp.setMasterKeyOpen(true);
+        } else {
+          patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${msg}）` });
+        }
+      }
+    },
+    [loadPaneNow, patchPane, sftp],
+  );
+
   const restoreSession = useCallback(
     async (layout: SessionLayout) => {
-      const remap = new Map<number, number>();
       const restored: TabState[] = [];
       const sftpPanes: { paneId: number; serverId: string; path: string }[] = [];
       for (const st of layout.tabs) {
-        const panes: Record<number, PaneState> = {};
-        const tabId = nextTabId++;
-        for (const sp of st.panes) {
-          const p = makePane(sp.path);
-          if (typeof sp.zoom === "number" && sp.zoom >= 0.5 && sp.zoom <= 2) p.zoom = sp.zoom;
-          // v0.27 视图模式与图标档位（旧会话缺省 details/64；越界值回默认）
-          if (sp.viewMode === "icons" || sp.viewMode === "details") {
-            p.viewMode = sp.viewMode;
-          }
-          // 画廊 v0.27 暂不开放：旧会话里的 gallery 归化为 icons（代码保留，放开即用）
-          if (sp.viewMode === "gallery") p.viewMode = "icons";
-          if ([48, 64, 96, 128].includes(sp.iconSize as 48)) {
-            p.iconSize = sp.iconSize as PaneState["iconSize"];
-          }
-          remap.set(sp.id, p.id);
-          if (sp.kind === "tag" && sp.tagId) p.tagId = sp.tagId;
-          if (sp.kind === "sftp" && sp.serverId) {
-            sftpPanes.push({ paneId: p.id, serverId: sp.serverId, path: sp.path });
-          }
-          panes[p.id] = p;
-        }
-        const root = remapNode(st.root as PaneNode, remap);
-        const activePane = remap.get(st.activePane) ?? firstPaneId(root);
-        restored.push({
-          id: tabId,
-          title: st.title || "",
-          customTitle: st.customTitle,
-          root,
-          activePane,
-          panes,
-        });
+        const built = buildTabFromSnapshot(st);
+        restored.push(built.tab);
+        sftpPanes.push(...built.sftpPanes);
       }
       if (restored.length === 0) return;
       setTabs(restored);
       const idx = Math.min(Math.max(layout.activeTab, 0), restored.length - 1);
       setActiveId(restored[idx].id);
-      // 显式加载所有窗格（listDir effect 只监听活动 pane，非活动窗格不会自动加载）
-      const loadPaneNow = async (paneId: number, path: string) => {
-        try {
-          const entries = await listDir(path);
-          patchPane(paneId, { entries, loading: false, error: null });
-        } catch (e) {
-          patchPane(paneId, { loading: false, error: String(e) });
-        }
-      };
       const localPanes: { paneId: number; path: string }[] = [];
       const firstActive = restored[idx]?.activePane;
       for (const t of restored) {
@@ -1321,37 +1389,9 @@ useEffect(() => {
         }
       })();
       // SFTP 并发恢复（后端回退已存配置 + master-key 解密）
-      await Promise.all(
-        sftpPanes.map(async (sp) => {
-          try {
-            await sftpConnect({
-              id: sp.serverId,
-              name: "",
-              host: "",
-              port: 22,
-              user: "",
-              root: null,
-              group: "",
-              auth: "password",
-            });
-            sftp.connectedRef.current.add(sp.serverId);
-            await loadPaneNow(sp.paneId, sp.path);
-            void sftp.syncConnected(
-              sftp.servers.map((s) => (s.id === sp.serverId ? { ...s, connected: true } : s)),
-            );
-          } catch (e) {
-            const msg = String(e);
-            if (msg.includes("NEED_MASTER_KEY")) {
-              sftp.pendingRestoreRef.current.push(sp);
-              sftp.setMasterKeyOpen(true);
-            } else {
-              patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${msg}）` });
-            }
-          }
-        }),
-      );
+      await Promise.all(sftpPanes.map((sp) => restoreSftpPane(sp)));
     },
-    [patchPane, sftp],
+    [loadPaneNow, restoreSftpPane],
   );
 
   // 首次启动
@@ -1360,14 +1400,16 @@ useEffect(() => {
     bootRef.current = true;
     (async () => {
       try {
-        const [home, vols, qa] = await Promise.all([
+        const [home, vols, qa, favs] = await Promise.all([
           getHomeDir(),
           getVolumes(),
           getQuickAccess(),
+          favoritesLoad().catch(() => null),
         ]);
         setHomePath(home);
         setVolumes(vols);
         setQuickAccess(qa);
+        setFavorites(favs ?? []);
         // 会话恢复（v0.3.0）：有保存的布局则恢复，否则默认家目录
         const layout = await sessionLoad().catch(() => null);
         if (layout && layout.tabs && layout.tabs.length > 0) {
@@ -1604,6 +1646,109 @@ useEffect(() => {
       ts.map((t) => (t.id === id ? { ...t, customTitle: title || undefined } : t)),
     );
   }, []);
+
+  // ==================== 标签收藏（收藏夹面板数据源） ====================
+
+  /** 收藏变更统一落盘（变更频率低，直接整文件原子写） */
+  const persistFavorites = useCallback(
+    (next: TabFavorite[]) => {
+      setFavorites(next);
+      favoritesSave(next).catch((e) => showError(`保存收藏夹失败：${e}`));
+    },
+    [showError],
+  );
+
+  /** 收藏指定标签（标签右键 / 面板「收藏当前标签页」）：名称取自定义标题或自动标题，重名加序号 */
+  const addFavorite = useCallback(
+    (tabId: number) => {
+      const t = tabsRef.current.find((x) => x.id === tabId);
+      if (!t) return;
+      const name = dedupeName(
+        t.customTitle ?? t.title,
+        favorites.map((f) => f.name),
+      );
+      const now = new Date().toISOString();
+      persistFavorites([
+        ...favorites,
+        { id: crypto.randomUUID(), name, createdAt: now, updatedAt: now, tab: serializeSessionTab(t) },
+      ]);
+      flashClipboardTip(`已收藏「${name}」`);
+    },
+    [favorites, persistFavorites, flashClipboardTip],
+  );
+
+  /** 重命名收藏（重名自动加序号；只动元数据，updatedAt 反映快照新鲜度故不变） */
+  const renameFavorite = useCallback(
+    (id: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      persistFavorites(
+        favorites.map((f) =>
+          f.id === id
+            ? {
+                ...f,
+                name: dedupeName(
+                  trimmed,
+                  favorites.filter((x) => x.id !== id).map((x) => x.name),
+                ),
+              }
+            : f,
+        ),
+      );
+    },
+    [favorites, persistFavorites],
+  );
+
+  /** 删除收藏（应用内确认框确认一次；标签页本身不受影响） */
+  const removeFavorite = useCallback(
+    async (id: string) => {
+      const fav = favorites.find((f) => f.id === id);
+      if (!fav) return;
+      const ok = await appConfirm({
+        title: "删除收藏",
+        message: `确定删除收藏「${fav.name}」？标签页本身不受影响。`,
+        confirmLabel: "删除",
+      });
+      if (!ok) return;
+      persistFavorites(favorites.filter((f) => f.id !== id));
+    },
+    [appConfirm, favorites, persistFavorites],
+  );
+
+  /** 用当前活动标签的布局覆盖收藏快照（名称与创建时间不变） */
+  const updateFavorite = useCallback(
+    (id: string) => {
+      if (!activeTab) return;
+      persistFavorites(
+        favorites.map((f) =>
+          f.id === id
+            ? { ...f, updatedAt: new Date().toISOString(), tab: serializeSessionTab(activeTab) }
+            : f,
+        ),
+      );
+      flashClipboardTip("收藏已更新为当前布局");
+    },
+    [activeTab, favorites, persistFavorites, flashClipboardTip],
+  );
+
+  /** 打开收藏：按快照重建一个新标签页并激活（不动现有标签）。
+   *  活动窗格由 listDir effect 加载；其余本地窗格并发手动加载；SFTP 走重连/主密钥链路。 */
+  const openFavorite = useCallback(
+    (id: string) => {
+      const fav = favorites.find((f) => f.id === id);
+      if (!fav) return;
+      const { tab, sftpPanes } = buildTabFromSnapshot(fav.tab);
+      setTabs((ts) => [...ts, tab]);
+      setActiveId(tab.id);
+      for (const p of Object.values(tab.panes)) {
+        if (p.path.startsWith("sftp://")) continue;
+        if (p.id === tab.activePane) continue; // 活动窗格由 listDir effect 加载
+        void loadPaneNow(p.id, p.path);
+      }
+      sftpPanes.forEach((sp) => void restoreSftpPane(sp));
+    },
+    [favorites, loadPaneNow, restoreSftpPane],
+  );
 
   const cycleTab = useCallback(
     (delta: number) => {
@@ -3927,6 +4072,8 @@ useEffect(() => {
     },
     // v0.20 命令面板 + 无默认键位的应用命令（面板 / ⋮ 菜单共用此分发表）
     commandPalette: () => setPaletteOpen((v) => !v),
+    // 标签收藏夹面板（mod+b，与命令面板同款开关语义）
+    openFavorites: () => setFavoritesOpen((v) => !v),
     // v0.23 「退出」统一走确认对话框（与窗口 X 一致），不再静默保存退出
     quit: () => setCloseDialogOpen(true),
     openDiff: () => openDiff(),
@@ -3980,6 +4127,11 @@ useEffect(() => {
         if (combo === "mod+k" || combo === "mod+shift+p") {
           e.preventDefault();
           actionsRef.current.commandPalette?.();
+        }
+        // 收藏夹面板同理放行（地址栏打字时 Ctrl+B 直达）
+        if (combo === "mod+b") {
+          e.preventDefault();
+          actionsRef.current.openFavorites?.();
         }
         return;
       }
@@ -4247,10 +4399,13 @@ useEffect(() => {
         canReopen={closedTabsRef.current.length > 0}
         onCloseOthers={closeOtherTabs}
         onCloseRight={closeTabsToRight}
+        onFavoriteTab={addFavorite}
+        onOpenFavorites={() => setFavoritesOpen(true)}
         trailing={
           <AppMenu
             keymapVersion={keymapVer}
             onOpenPalette={() => setPaletteOpen(true)}
+            onOpenFavorites={() => setFavoritesOpen(true)}
             onNewTab={() => newTab()}
             onCloseTab={() => activeTab && closeTab(activeTab.id)}
             onQuit={() => setCloseDialogOpen(true)}
@@ -4608,6 +4763,7 @@ useEffect(() => {
         appVersion={appVersion}
         onOpenRepo={openRepo}
         onCheckUpdate={() => void checkUpdate(false)}
+        onOpenFavorites={() => setFavoritesOpen(true)}
       />
 
       {/* v0.20 命令面板：动作经 actionsRef 分发，与快捷键语义一致 */}
@@ -4616,6 +4772,18 @@ useEffect(() => {
         onOpenChange={setPaletteOpen}
         items={paletteItems}
         onRun={(id) => actionsRef.current[id]?.()}
+      />
+
+      {/* 标签收藏夹面板：数据与增删改查逻辑在本组件，面板只受控展示 */}
+      <FavoritesPalette
+        open={favoritesOpen}
+        onOpenChange={setFavoritesOpen}
+        favorites={favorites}
+        onOpenFavorite={openFavorite}
+        onAddFavorite={() => activeTab && addFavorite(activeTab.id)}
+        onRenameFavorite={renameFavorite}
+        onRemoveFavorite={(id) => void removeFavorite(id)}
+        onUpdateFavorite={updateFavorite}
       />
 
       <ConnectDialog

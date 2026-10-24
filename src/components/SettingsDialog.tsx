@@ -10,6 +10,7 @@ import {
   Monitor,
   Moon,
   Plus,
+  Star,
   Wrench,
   Puzzle,
   RotateCcw,
@@ -48,7 +49,7 @@ import {
 } from "@/lib/persist";
 
 /** 设置分区标识（左栏导航 + 右栏锚点共用） */
-export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "share" | "plugins" | "about";
+export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "favorites" | "share" | "plugins" | "about";
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
   { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
@@ -56,6 +57,7 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
   { id: "keys", label: "快捷键", icon: <Keyboard className="h-4 w-4" /> },
   { id: "openers", label: "打开方式", icon: <ExternalLink className="h-4 w-4" /> },
   { id: "quickTools", label: "常用工具", icon: <Wrench className="h-4 w-4" /> },
+  { id: "favorites", label: "收藏夹", icon: <Star className="h-4 w-4" /> },
   { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
   { id: "plugins", label: "插件", icon: <Puzzle className="h-4 w-4" /> },
   { id: "about", label: "关于", icon: <Info className="h-4 w-4" /> },
@@ -99,6 +101,7 @@ export function SettingsDialog({
   appVersion,
   onOpenRepo,
   onCheckUpdate,
+  onOpenFavorites,
 }: {
   open: boolean;
   onClose: () => void;
@@ -141,6 +144,8 @@ export function SettingsDialog({
   appVersion: string;
   onOpenRepo: () => void;
   onCheckUpdate: () => void;
+  /** 打开收藏夹面板（收藏夹分区入口按钮；先关设置再弹面板） */
+  onOpenFavorites: () => void;
 }) {
   /** v0.7 分享设置 */
   const [shareAllowParent, setShareAllowParent] = useState(() => loadShareAllowParent());
@@ -864,6 +869,41 @@ export function SettingsDialog({
                     </div>
                   </div>
                 )}
+            </div>
+
+            <div
+              ref={(el) => { sectionRefs.current.favorites = el; }}
+              data-settings-section="favorites"
+              className="scroll-mt-3 mb-6 border-b pb-5"
+            >
+                <div className="mb-4">
+                  <div className="mb-1.5 text-xs font-semibold text-primary">收藏夹</div>
+                  <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
+                    收藏 = 单个标签页的命名布局快照：全部窗格路径、分屏结构、视图/缩放状态。
+                    打开收藏会在新标签页还原（本地路径直接加载，SFTP 窗格自动重连）。
+                    与「保存并退出」的整体会话互不影响。
+                  </div>
+                  <div className="space-y-2">
+                    <p className="pl-1 text-[11px] text-muted-foreground">
+                      入口：右键标签页「收藏此标签页」、空白处右键「收藏夹…」、
+                      快捷键
+                      <kbd className="mx-1 rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">
+                        {formatBinding(bindingOf(ACTIONS.find((a) => a.id === "openFavorites")!))}
+                      </kbd>
+                      （可在「快捷键」分区改键）、或下方按钮。
+                    </p>
+                    <button
+                      onClick={() => {
+                        onClose();
+                        onOpenFavorites();
+                      }}
+                      className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      <Star className="h-3.5 w-3.5" />
+                      打开收藏夹面板…
+                    </button>
+                  </div>
+                </div>
             </div>
 
             <div

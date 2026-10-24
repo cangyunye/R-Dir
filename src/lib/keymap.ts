@@ -80,6 +80,8 @@ export const ACTIONS: KeyAction[] = [
   A({ id: "togglePreview", label: "预览栏（展开 / 收起）", group: "视图 / 全局", win: "space", mac: "space" }),
   A({ id: "toggleBrowse", label: "图文浏览模式", group: "视图 / 全局", win: "mod+shift+e", mac: "mod+shift+e" }),
   A({ id: "commandPalette", label: "命令面板", group: "视图 / 全局", win: "mod+k / mod+shift+p", mac: "mod+k / mod+shift+p" }),
+  // 标签收藏夹面板（mod+b：bookmark 联想；可在设置改键）
+  A({ id: "openFavorites", label: "收藏夹（标签布局）", group: "视图 / 全局", win: "mod+b", mac: "mod+b" }),
 ];
 
 export const isMac =

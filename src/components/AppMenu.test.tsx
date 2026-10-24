@@ -102,4 +102,21 @@ describe("AppMenu 菜单项点击", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: /^显示隐藏文件/ }));
     expect(onToggleHidden).toHaveBeenCalledTimes(1);
   });
+
+  it("传入 onOpenFavorites 时工具组显示「收藏夹…」并显示键位提示", () => {
+    const onOpenFavorites = vi.fn();
+    render(<AppMenu {...makeActions({ onOpenFavorites })} />);
+    openMenu();
+    const item = screen.getByRole("menuitem", { name: /^收藏夹…/ });
+    fireEvent.click(item);
+    expect(onOpenFavorites).toHaveBeenCalledTimes(1);
+    // 键位提示跟随 keymap 当前平台绑定（jsdom 走 Windows 分支：openFavorites = Ctrl+B）
+    expect(item.textContent).toContain("Ctrl+B");
+  });
+
+  it("未传 onOpenFavorites 时不显示收藏夹菜单项", () => {
+    render(<AppMenu {...makeActions()} />);
+    openMenu();
+    expect(screen.queryByRole("menuitem", { name: /^收藏夹…/ })).toBeNull();
+  });
 });

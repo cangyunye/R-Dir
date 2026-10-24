@@ -50,6 +50,7 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
       appVersion="0.0.0-test"
       onOpenRepo={() => {}}
       onCheckUpdate={() => {}}
+      onOpenFavorites={() => {}}
       {...over}
     />,
   );
@@ -102,6 +103,18 @@ describe("SettingsDialog 打开方式分区", () => {
   it("空列表显示引导文案", () => {
     setup({ openers: [] });
     expect(screen.getByText(/还没有自定义打开方式/)).toBeInTheDocument();
+  });
+});
+
+describe("SettingsDialog 收藏夹分区", () => {
+  it("左栏含「收藏夹」分区,点按钮关闭设置并 onOpenFavorites", () => {
+    const onOpenFavorites = vi.fn();
+    const onClose = vi.fn();
+    setup({ onOpenFavorites, onClose });
+    fireEvent.click(screen.getByRole("button", { name: "收藏夹" }));
+    fireEvent.click(screen.getByRole("button", { name: /打开收藏夹面板/ }));
+    expect(onClose).toHaveBeenCalled();
+    expect(onOpenFavorites).toHaveBeenCalled();
   });
 });
 

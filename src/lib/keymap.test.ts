@@ -285,6 +285,32 @@ describe("自定义键位", () => {
   });
 });
 
+// ---- 标签收藏夹（openFavorites）----
+describe("openFavorites 收藏夹快捷键", () => {
+  it("已注册且默认绑定 mod+b", () => {
+    const a = ACTIONS.find((x) => x.id === "openFavorites");
+    expect(a).toBeTruthy();
+    expect(a!.win).toBe("mod+b");
+    expect(a!.mac).toBe("mod+b");
+    expect(bindingOf(a!)).toBe("mod+b");
+  });
+
+  it("mod+b 与现有全部动作无冲突", () => {
+    expect(findConflicts("mod+b", "openFavorites")).toEqual([]);
+  });
+
+  it("findAction 能从 Ctrl+B 事件解析到 openFavorites", () => {
+    const e = {
+      key: "b",
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+    } as KeyboardEvent;
+    expect(findAction(keyEventString(e))?.id).toBe("openFavorites");
+  });
+});
+
 // ---- formatBinding ----
 describe("formatBinding", () => {
   it("mod+shift+n → Ctrl+Shift+N", () => {

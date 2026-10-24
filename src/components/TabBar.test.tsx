@@ -20,6 +20,8 @@ function setup(overrides: Partial<Parameters<typeof TabBar>[0]> = {}) {
     canReopen: false,
     onCloseOthers: vi.fn(),
     onCloseRight: vi.fn(),
+    onFavoriteTab: vi.fn(),
+    onOpenFavorites: vi.fn(),
     ...overrides,
   };
   const { container } = render(<TabBar {...props} />);
@@ -169,6 +171,23 @@ describe("TabBar", () => {
     fireEvent.contextMenu(rows[1]);
     const item = screen.getByText("关闭右侧标签页") as HTMLButtonElement;
     expect(item.disabled).toBe(true);
+  });
+
+  // ---- 标签收藏夹：标签右键「收藏此标签页」/ 空白处右键「收藏夹…」 ----
+  it("标签菜单含「收藏此标签页」并触发 onFavoriteTab(id)", () => {
+    const { props, container } = setup();
+    const rows = container.querySelectorAll("[data-tab-idx]");
+    fireEvent.contextMenu(rows[0]);
+    expect(screen.getByText("收藏此标签页")).toBeTruthy();
+    fireEvent.click(screen.getByText("收藏此标签页"));
+    expect(props.onFavoriteTab).toHaveBeenCalledWith(1);
+  });
+
+  it("空白菜单含「收藏夹…」并触发 onOpenFavorites", () => {
+    const { props, container } = setup();
+    fireEvent.contextMenu(container.firstChild as HTMLElement);
+    fireEvent.click(screen.getByText("收藏夹…"));
+    expect(props.onOpenFavorites).toHaveBeenCalled();
   });
 
   // ---- v0.23 空白处右键：全局标签菜单（新建 / 恢复 / 全部标签页） ----
