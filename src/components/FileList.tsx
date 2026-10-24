@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils";
 import { isArchiveExt } from "@/lib/filekind";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
 import { formatSize, formatTime, hideExtension, extLabel } from "@/lib/format";
+import { sortEntries } from "@/lib/entry-sort";
 import type { LinkSide } from "@/lib/sync-link";
 import { markColor, markTooltip } from "@/components/SyncDiffPanel";
 import { FileIcon } from "@/components/FileIcon";
@@ -294,31 +295,10 @@ export function FileList({
   /** v0.18 同步比对链接标识：该窗格的方位（undefined = 未链接） */
   linkBadge?: LinkSide;
 }) {
-  const sorted = useMemo(() => {
-    const visible = showHidden
-      ? entries
-      : entries.filter((e) => !e.name.startsWith("."));
-    const dir = sortDir === "asc" ? 1 : -1;
-    return [...visible].sort((a, b) => {
-      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-      let cmp = 0;
-      switch (sortKey) {
-        case "name":
-          cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
-          break;
-        case "size":
-          cmp = a.size - b.size;
-          break;
-        case "modified":
-          cmp = (a.modified ?? 0) - (b.modified ?? 0);
-          break;
-        case "type":
-          cmp = extLabel(a).localeCompare(extLabel(b));
-          break;
-      }
-      return cmp * dir;
-    });
-  }, [entries, sortKey, sortDir, showHidden]);
+  const sorted = useMemo(
+    () => sortEntries(entries, sortKey, sortDir, showHidden),
+    [entries, sortKey, sortDir, showHidden],
+  );
 
   const primary = selection.length > 0 ? selection[0] : null;
   /** Shift 范围选择的锚点 */

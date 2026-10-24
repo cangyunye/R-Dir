@@ -16,6 +16,7 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
   - **入口**：标签右键、标签栏空白右键「收藏夹…」、设置新增「收藏夹」分区（说明 + 打开面板按钮，显示当前键位）、⋮ 菜单工具组「收藏夹…」（shortcutId 跟随键位提示）。
   - **重构**：从会话保存 / 恢复抽出 `serializeSessionTab` / `buildTabFromSnapshot` / `restoreSftpPane` 三个共用函数，`restoreSession` 改为调用，行为不变。
   - 测试：前端 539 通过（+27：favorites 纯函数 10——去重 / 搜索打分 / 路径摘要，FavoritesPalette 9——过滤 / 高亮行 / 键盘打开 / 三个行内操作 / 空态，keymap 3——注册与 mod+b 无冲突、TabBar 2、AppMenu 2、SettingsDialog 分区 1）。
+- **修复：按修改时间 / 大小排序时目录恒在顶部**。排序比较对所有键无条件「目录在前」，「按修改时间」下最新变更（无论文件还是目录）永远被压在目录堆下。现在目录恒在前仅保留给名称 / 类型排序（资源管理器惯例）；修改时间 / 大小按键值混排——目录的 mtime / size 与文件一视同仁，最新变更（含目录）排最前。同时把详情列表里与 `sortEntries` 完全重复的内联排序副本收敛为同一实现（大图标 / 图文浏览 / QuickJump 此前已共用）；新增排序测试 8 例（名称升降序目录在前、修改时间升降序混排、null mtime 沉底、大小混排、隐藏过滤）。前端 547 通过（+8）。
 - 版本号 0.32.0 → 0.33.0：同步 package.json、src-tauri/tauri.conf.json、src-tauri/Cargo.toml、src-tauri/Cargo.lock 四处。
 
 ## v0.32.0 (2026-10-24)
