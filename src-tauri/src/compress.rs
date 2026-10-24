@@ -166,21 +166,35 @@ fn compress_with_system(paths: &[String], out: &Path, format: &str, cwd: &Path) 
     let items: Vec<String> = paths.iter().map(|p| relativize(p, cwd)).collect();
     match format {
         "zip" => {
-            // macOS: ditto（系统原生，比 zip 快，保留资源 fork）
+            // macOS：ditto 只支持单源（多源报 Can't archive multiple sources），
+            // 且 --keepParent 对文件会把父目录名包进归档（单文件压缩出 <目录名>/文件）。
+            // 语义对齐 Finder：文件在归档根部、目录带自身名字 →
+            // 单文件 ditto 无 keepParent（保留资源 fork）；其余一律 Info-ZIP zip -r。
             #[cfg(target_os = "macos")]
             {
-                let mut cmd = Command::new("ditto");
-                cmd.arg("-c").arg("-k").arg("--sequesterRsrc").arg("--keepParent")
-                    .current_dir(cwd);
-                for p in &items {
-                    cmd.arg(p);
+                if items.len() == 1 && !Path::new(cwd).join(&items[0]).is_dir() {
+                    let mut cmd = Command::new("ditto");
+                    cmd.arg("-c").arg("-k").arg("--sequesterRsrc")
+                        .arg(&items[0])
+                        .arg(&out_str)
+                        .current_dir(cwd);
+                    let status = cmd.status().map_err(|e| format!("启动 ditto 失败：{e}"))?;
+                    if !status.success() {
+                        return Err("ditto 压缩失败".into());
+                    }
+                    Ok(())
+                } else {
+                    let mut cmd = Command::new("zip");
+                    cmd.arg("-r").arg(&out_str).current_dir(cwd);
+                    for p in &items {
+                        cmd.arg(p);
+                    }
+                    let status = cmd.status().map_err(|e| format!("启动 zip 失败：{e}"))?;
+                    if !status.success() {
+                        return Err("zip 命令失败".into());
+                    }
+                    Ok(())
                 }
-                cmd.arg(&out_str);
-                let status = cmd.status().map_err(|e| format!("启动 ditto 失败：{e}"))?;
-                if !status.success() {
-                    return Err("ditto 压缩失败".into());
-                }
-                Ok(())
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -259,6 +273,58 @@ mod tests {
             assert!(out.exists(), "{name} 未生成");
             assert!(out.metadata().unwrap().len() > 0, "{name} 为空");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// zip 归档根部就是所选条目本身：单文件不带父目录包装（此前 ditto --keepParent
+    /// 打出 <目录名>/文件），多选文件在根、目录带自身名（此前 ditto 不支持多源直接失败）
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn zip_entries_are_selection_itself() {
+        use std::process::Command;
+        let dir = setup("ziproot");
+        let file = dir.join("SUPPORT.md");
+        std::fs::write(&file, "hello").unwrap();
+        std::fs::write(dir.join("b.txt"), "B").unwrap();
+        // setup() 已建 sub/（含 b.txt），补一个嵌套文件即可
+        std::fs::write(dir.join("sub").join("nested.txt"), "N").unwrap();
+
+        // 单文件：根部即文件，无目录包装
+        let out = dir.join("SUPPORT.md.zip");
+        let file_str = file.to_string_lossy().into_owned();
+        compress_with_system(std::slice::from_ref(&file_str), &out, "zip", &dir).unwrap();
+        let list = Command::new("tar").arg("-tf").arg(&out).output().unwrap();
+        let stdout = String::from_utf8_lossy(&list.stdout).into_owned();
+        assert!(
+            stdout.lines().any(|l| l == "SUPPORT.md" || l == "SUPPORT.md/"),
+            "单文件 zip 根部应为 SUPPORT.md：{stdout}"
+        );
+        assert!(
+            !stdout.lines().any(|l| l.starts_with("ziproot/") || l.starts_with("._")),
+            "单文件 zip 不应包含父目录包装：{stdout}"
+        );
+
+        // 多选（文件 + 目录）：文件在根、目录带名
+        let items = vec![
+            file.to_string_lossy().into_owned(),
+            dir.join("sub").to_string_lossy().into_owned(),
+        ];
+        let out2 = dir.join("multi.zip");
+        compress_with_system(&items, &out2, "zip", &dir).unwrap();
+        let list2 = Command::new("tar").arg("-tf").arg(&out2).output().unwrap();
+        let stdout2 = String::from_utf8_lossy(&list2.stdout).into_owned();
+        assert!(
+            stdout2.lines().any(|l| l == "SUPPORT.md"),
+            "多选文件应在根部：{stdout2}"
+        );
+        assert!(
+            stdout2.lines().any(|l| l.starts_with("sub/")),
+            "多选目录应带自身名：{stdout2}"
+        );
+        assert!(
+            !stdout2.lines().any(|l| l.starts_with("ziproot/")),
+            "多选不应包含父目录包装：{stdout2}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

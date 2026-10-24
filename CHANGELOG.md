@@ -16,6 +16,9 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
   - **进度与取消**：`transfer-progress` 新增 `extract` 阶段，逐条目 + 字节级进度（限频），状态栏可点 × 取消（id 走通用 cancel_transfer）；系统 tar 兜底路线以子进程轮询实现取消（kill），stdin 接 null 防加密包触发 libarchive 的 `Enter passphrase` 无限提示循环（曾实测刷出 160KB+ 提示卡死）。
   - 单文件 `.xz`（非 tar 包）本版暂不支持（macOS bsdtar 对裸 xz 内容有 mtree 误判、Windows 无解压器），菜单不含裸 xz。Rust 回归 +14（分派/落点规划 smart+folder/GBK 解码/AppleDouble 过滤/防穿越/zip 手工夹具全链路/tar 往返/单文件 gz/密码信号/系统 tar 报错），前端 +1（isArchiveExt）。
 
+- **修复：macOS 压缩 zip 把文件包进父目录（单文件压缩出 `<目录名>/文件`），且多选压缩直接失败**。v0.8 起 macOS zip 走 ditto 并全局加 `--keepParent`：它对目录是正确语义（归档带目录名），对**文件**却会把父目录名包进去（压缩 `SUPPORT.md` 得到含 `awesome-copilot/SUPPORT.md` 的包），解压后多出一层目录；且 ditto 根本**不支持多源打包**（报 `Can't archive multiple sources`），多选压缩在 macOS 上一直是坏的。现在对齐 Finder 语义：**单文件** ditto 无 keepParent（保留资源 fork，文件在归档根部）；**单目录** ditto `--keepParent`；**多选/混合**改用 Info-ZIP `zip -r`（文件在根、目录带名，多源天然支持）。实测追加进 ditto 归档的 zip 完整性无误。Rust 回归 +1（单文件根部无包装 / 多选文件在根+目录带名）。Windows（Compress-Archive）与 Linux（zip -r）语义本就正确，未动。
+- **解压侧配套说明**：解压「智能落点」按归档真实结构工作——归档根部多个顶层条目时建 `<归档名>/` 收纳（防散落），单顶层条目且不撞已有路径时直接解到当前目录。压缩端修复后，单文件 zip 解压即得到文件本身。
+
 ## v0.31.2 (2026-10-24)
 
 - **大图标视图可拖出到浏览器上传区 / 访达，同时保留图标自由摆放与文件夹投放**。此前图标网格刻意不启用 HTML5 `draggable`（v0.27 为规避与自研鼠标拖拽的双体系冲突），拖出窗口根本不会发起系统拖拽，松手后落进「空槽重摆」分支——表现为想拖到网页上传却变成了图标换位。现在网格条目与详情列表走同一套双路径拖出（Windows 原生 CF_HDROP `drag_out_files` / macOS HTML5 `file://` uri-list），dragstart 一旦触发即 `cleanupDrag` 与自研拖拽交接、只留一套收尾；同窗格「空槽重摆」改由网格自己的 `onDrop` 按落点完成（与自研回落路径共用 `slotDropRef`，不 stopPropagation，文件夹图标 / 跨窗格投放继续冒泡交给 App 的 window 级 drop 统一解析）。自研鼠标拖拽保留为 dragstart 未发生时的回落（jsdom / 极短拖动）。
