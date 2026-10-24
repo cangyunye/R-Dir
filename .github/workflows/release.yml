@@ -16,7 +16,11 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
+      # 拉全量 tag：version.test 断言「版本文件 == 最高 git tag」，tag 触发时
+      # checkout 会带上当次 tag，而分支 workflow_dispatch 不拉任何 tag 会假失败
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
