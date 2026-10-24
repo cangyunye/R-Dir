@@ -1791,6 +1791,30 @@ pub fn run() {
     builder = builder.setup(|app| {
             #[cfg(target_os = "windows")]
             set_app_user_model_id("com.rfm.app");
+            // Windows：禁用 WebView2 浏览器加速键。Ctrl+J（下载弹窗「下载的文件将在此显示」）、
+            // Ctrl+F（查找）、Ctrl+P（打印）、Ctrl+R/F5（整页刷新）、Ctrl+±（缩放）、F12 等
+            // 由 WebView2 优先处理，页面 JS 收不到（应用快捷键被劫持，典型：Ctrl+J = 上下分屏
+            // 变成弹下载面板）。关闭后全部按键直达页面由 keymap.ts 分发；文本编辑键
+            // （Ctrl+C/V/X/A/Z、Home/End 等）不受此设置影响。等价于 wry 的
+            // with_browser_accelerator_keys(false)（Tauri 2.11 尚未透传该选项，#16306）。
+            #[cfg(target_os = "windows")]
+            {
+                use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+                use windows_webview::core::Interface;
+                for w in app.webview_windows().values() {
+                    let _ = w.with_webview(move |webview| unsafe {
+                        let Ok(core) = webview.controller().CoreWebView2() else {
+                            return;
+                        };
+                        let Ok(settings) = core.Settings() else {
+                            return;
+                        };
+                        if let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>() {
+                            let _ = settings3.SetAreBrowserAcceleratorKeysEnabled(false);
+                        }
+                    });
+                }
+            }
             let state = app.state::<AppState>();
             plugins::init(app.handle(), &state.plugins);
             // 命令补全索引预热（后台线程）：优先加载磁盘缓存，PATH 签名变化才重扫，

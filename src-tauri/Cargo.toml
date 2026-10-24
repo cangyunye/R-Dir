@@ -92,6 +92,11 @@ windows = { version = "0.62", features = [
   "Win32_UI_Shell_Common",
 ] }
 windows-core = "0.62"
+# 禁用 WebView2 浏览器加速键（Ctrl+J 下载弹窗/Ctrl+F 查找/F5 刷新等劫持应用快捷键）：
+# with_webview 拿到 controller 后 cast 到 ICoreWebView2Settings3 关闭。webview2-com 0.38
+# 绑定的是 windows 0.61，Interface trait 必须用同一版本才能 cast，故以别名引入
+webview2-com = "0.38"
+windows-webview = { package = "windows", version = "0.61", features = [] }
 
 # 复制快速路径的系统调用（macOS clonefile / Linux FICLONE ioctl）
 [target.'cfg(unix)'.dependencies]
