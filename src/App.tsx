@@ -4690,7 +4690,7 @@ useEffect(() => {
         onSubmit={async (password) => {
           if (!extractPw) return;
           try {
-            const out = await extractArchive(extractPw.archivePath, extractPw.targetDir, password);
+            const out = await extractArchive(extractPw.archivePath, extractPw.targetDir, "smart", password);
             refreshPane(extractPw.paneId);
             showError(`已解压到 ${basename(out.dest)}（${out.files} 项）`);
             extractPw.resolve(true);

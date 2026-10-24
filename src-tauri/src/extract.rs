@@ -191,6 +191,15 @@ fn cancelled() -> String {
 
 // ==================== zip（crate） ====================
 
+/// 构造 zip 9 读取选项（密码可空；ZipReadOptions 借用密码切片，显式生命周期）
+fn zip_read_opts<'a>(pw: &'a Option<Vec<u8>>) -> zip::read::ZipReadOptions<'a> {
+    let mut o = zip::read::ZipReadOptions::new();
+    if let Some(p) = pw {
+        o = o.password(Some(p.as_slice()));
+    }
+    o
+}
+
 fn map_zip_err(e: &zip::result::ZipError, has_pw: bool) -> String {
     let msg = e.to_string();
     if matches!(e, zip::result::ZipError::InvalidPassword)
@@ -215,6 +224,8 @@ fn extract_zip(
 ) -> Result<ExtractOutcome, String> {
     use zip::result::ZipError;
     let has_pw = password.is_some();
+    // zip 9 读取选项：加密条目必须带 password 打开（by_index 不解密）
+    let pw_buf: Option<Vec<u8>> = password.map(|p| p.as_bytes().to_vec());
     let open = || -> Result<zip::ZipArchive<std::fs::File>, String> {
         let f = std::fs::File::open(path)
             .map_err(|e| format!("无法打开 zip：{}", e))?;
@@ -230,7 +241,9 @@ fn extract_zip(
     let mut z = open()?;
     let mut names = Vec::with_capacity(z.len());
     for i in 0..z.len() {
-        let e = z.by_index(i).map_err(|e| map_zip_err(&e, has_pw))?;
+        let e = z
+            .by_index_with_options(i, zip_read_opts(&pw_buf))
+            .map_err(|e| map_zip_err(&e, has_pw))?;
         let name = decode_archive_name(e.name_raw());
         if !is_apple_double(&name) {
             names.push(name);
@@ -253,7 +266,9 @@ fn extract_zip(
         if check_cancel() {
             return Err(cancelled());
         }
-        let mut e = z.by_index(i).map_err(|e| map_zip_err(&e, has_pw))?;
+        let mut e = z
+            .by_index_with_options(i, zip_read_opts(&pw_buf))
+            .map_err(|e| map_zip_err(&e, has_pw))?;
         let name = decode_archive_name(e.name_raw());
         if is_apple_double(&name) {
             skipped += 1;
@@ -282,7 +297,24 @@ fn extract_zip(
             std::fs::create_dir_all(parent)
                 .map_err(|err| format!("无法创建目录 {}: {err}", parent.display()))?;
         }
-        match write_stream(&mut e, size, &out_path, cb, check_cancel) {
+        // 加密条目读数据阶段的失败（ZipCrypto 校验字节 / AES-HMAC / CRC）几乎都是密码错：
+        // zip crate 不一定回 InvalidPassword（ZipCrypto 常以 CRC 失败呈现、AES 以 HMAC 失败
+        // 呈现），按「条目加密 + 密码已提供」推断，与 WinRAR「CRC failed = 密码错」一致
+        let encrypted = e.encrypted();
+        let map_read_err = |err: &std::io::Error| -> String {
+            let msg = err.to_string().to_lowercase();
+            if msg.contains("password")
+                || (encrypted && has_pw && (msg.contains("crc") || msg.contains("hmac")))
+            {
+                return if has_pw {
+                    ERR_WRONG_PASSWORD.into()
+                } else {
+                    ERR_NEED_PASSWORD.into()
+                };
+            }
+            format!("解压数据失败（{}）：{err}", out_path.display())
+        };
+        match write_stream(&mut e, size, &out_path, &map_read_err, cb, check_cancel) {
             Ok(bytes) => {
                 files += 1;
                 bytes_total += bytes;
@@ -299,11 +331,13 @@ fn extract_zip(
     })
 }
 
-/// 把 reader 流式写到 out_path：进度回调 + 取消检查；出错/取消删除半成品
+/// 把 reader 流式写到 out_path：进度回调 + 取消检查；出错/取消删除半成品。
+/// map_read_err 把底层 io 错误转人话（zip 据此把错误密码的 CRC/verify 失败映射成「密码错误」）
 fn write_stream(
     r: &mut dyn Read,
     total: u64,
     out_path: &Path,
+    map_read_err: &dyn Fn(&std::io::Error) -> String,
     cb: Cb,
     check_cancel: &dyn Fn() -> bool,
 ) -> Result<u64, String> {
@@ -318,7 +352,7 @@ fn write_stream(
         }
         let n = r.read(&mut chunk).map_err(|e| {
             let _ = std::fs::remove_file(out_path);
-            format!("解压数据失败（{}）：{e}", out_path.display())
+            map_read_err(&e)
         })?;
         if n == 0 {
             break;
@@ -405,7 +439,10 @@ fn extract_tar(
                 .map_err(|err| format!("无法创建目录 {}: {err}", parent.display()))?;
         }
         // Entry 的 Read 实现恰好读到本条目末尾（内部自带 size 上限）
-        match write_stream(&mut e, size, &out_path, cb, check_cancel) {
+        let map_read_err = |err: &std::io::Error| -> String {
+            format!("解压数据失败（{}）：{err}", out_path.display())
+        };
+        match write_stream(&mut e, size, &out_path, &map_read_err, cb, check_cancel) {
             Ok(bytes) => {
                 files += 1;
                 bytes_total += bytes;
@@ -476,7 +513,10 @@ fn extract_single(
         TarComp::Gz => Box::new(flate2::read::GzDecoder::new(f)),
         TarComp::Bz2 => Box::new(bzip2::read::BzDecoder::new(f)),
     };
-    let bytes = write_stream(&mut dec, 0, &out_path, cb, check_cancel)?;
+    let map_read_err = |err: &std::io::Error| -> String {
+        format!("解压数据损坏（{}）：{err}", out_path.display())
+    };
+    let bytes = write_stream(&mut dec, 0, &out_path, &map_read_err, cb, check_cancel)?;
     cb(CbEv::EntryDone(bytes));
     Ok(ExtractOutcome {
         dest: out_path.to_string_lossy().into_owned(),
@@ -1090,6 +1130,48 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
         let err = extract_zip(&archive, &target, "smart", None, nocb(), &not_cancelled).unwrap_err();
         assert!(err.contains("无法读取 zip"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 真实加密 zip（系统 zip -P 造 ZipCrypto 包）三分支：未提供密码 →「需要密码」；
+    /// 密码错误 →「密码错误」（ZipCrypto 错误密码常以 CRC 失败呈现，须正确映射）；
+    /// 密码正确 → 解出内容。前端据此弹密码框就地重试。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn zip_encrypted_password_flow() {
+        let dir = setup("enc");
+        let src = dir.join("sec");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("secret.txt"), "top secret").unwrap();
+        let archive = dir.join("sec.zip");
+        let st = std::process::Command::new("zip")
+            .args(["-q", "-r", "-P", "pw123"])
+            .arg("sec.zip")
+            .arg("sec")
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        assert!(st.success(), "系统 zip 打加密包失败");
+        let target = dir.join("out");
+        std::fs::create_dir_all(&target).unwrap();
+
+        // 未提供密码 → 需要密码
+        let err = extract_zip(&archive, &target, "smart", None, nocb(), &not_cancelled)
+            .unwrap_err();
+        assert_eq!(err, ERR_NEED_PASSWORD, "{err}");
+        // 密码错误 → 密码错误（且无半成品残留）
+        let err = extract_zip(&archive, &target, "smart", Some("wrong"), nocb(), &not_cancelled)
+            .unwrap_err();
+        assert_eq!(err, ERR_WRONG_PASSWORD, "{err}");
+        assert!(!target.join("sec").exists(), "错误密码不应留下解出文件");
+        // 密码正确 → 解出
+        let out = extract_zip(&archive, &target, "smart", Some("pw123"), nocb(), &not_cancelled)
+            .unwrap();
+        assert_eq!(out.files, 1, "{out:?}");
+        assert_eq!(
+            std::fs::read(target.join("sec/secret.txt")).unwrap(),
+            b"top secret"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

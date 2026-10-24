@@ -145,11 +145,12 @@ export interface ExtractOutcome {
 
 /**
  * 解压压缩包（v0.32）：zip / tar 系 / gz / bz2 内置解码，rar / 7z / tar.xz 走系统 tar。
- * 智能落点：单顶层条目且不冲突 → targetDir 本身，否则 targetDir/<归档名>/。
+ * mode：smart = 单顶层条目且不冲突 → targetDir 本身，否则 targetDir/<归档名>/；
+ *       folder = 无条件 targetDir/<归档名>/。
  * 密码信号：「需要密码」（未提供）/「密码错误」（提供但不对），前端弹密码框重试。
  */
-export const extractArchive = (path: string, targetDir: string, password?: string) =>
-  invoke<ExtractOutcome>("extract_archive", { path, targetDir, password: password ?? null });
+export const extractArchive = (path: string, targetDir: string, mode: "smart" | "folder", password?: string) =>
+  invoke<ExtractOutcome>("extract_archive", { path, targetDir, mode, password: password ?? null });
 
 /** 内容搜索（字面量关键词，可递归/大小写开关） */
 export const searchContent = (

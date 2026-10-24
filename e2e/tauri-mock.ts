@@ -33,6 +33,14 @@ export async function installTauriMock(page: Page): Promise<void> {
 
     const FS: Record<string, Fake[]> = {
       "/mock": [{ name: "home", dir: true }],
+      // v0.32 解压夹具：zip/tgz/7z 可解压，裸 xz 例外（后端不支持 → 菜单不出现）。
+      // 独立顶层目录，不动家目录（smoke 用例固定断言家目录 6 项）
+      "/mock/archives": [
+        { name: "sample.zip", size: 8192 },
+        { name: "backup.tar.gz", size: 4096 },
+        { name: "legacy.7z", size: 2048 },
+        { name: "bare.xz", size: 1024 },
+      ],
       [HOME]: [
         { name: "Documents", dir: true },
         { name: "Projects", dir: true },
@@ -236,6 +244,27 @@ export async function installTauriMock(page: Page): Promise<void> {
         const dest = String(a.dest);
         const w = (window as unknown as { __rdirDirDups?: (p: string[], d: string) => { src: string; suggest: string }[] });
         return w.__rdirDirDups?.(paths, dest) ?? [];
+      },
+      // v0.32 解压：记录调用并返回固定统计；用例经 __rdirExtract 注入脚本化行为
+      // （返回 string = 抛该错误，如「需要密码」；返回 undefined = 走默认成功）
+      extract_archive: (a) => {
+        const call = {
+          path: String(a.path ?? ""),
+          targetDir: String(a.targetDir ?? ""),
+          mode: a.mode == null ? undefined : String(a.mode),
+          password: (a.password as string | null) ?? null,
+        };
+        extractCalls.push(call);
+        const w = (
+          window as unknown as {
+            __rdirExtract?: (c: typeof call) => string | undefined;
+          }
+        );
+        const scripted = w.__rdirExtract?.(call);
+        // 真实 Tauri 的 invoke 拒绝时透传原始错误串（不是 Error 对象），这里保持一致
+        if (typeof scripted === "string") throw scripted;
+        const stem = call.path.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "out";
+        return { dest: `${call.targetDir}/${stem}`, files: 3, skipped: 1, bytes: 12345 };
       },
       // 回收站删除：直接从虚拟 FS 移除（删除确认弹窗回归用）
       delete_entries: (a) => {
@@ -683,6 +712,13 @@ export async function installTauriMock(page: Page): Promise<void> {
       dest: string;
       resolutions: Record<string, { action: string; name?: string }>;
     }[] = [];
+    /** extract_archive 调用记录（v0.32 解压回归用） */
+    const extractCalls: {
+      path: string;
+      targetDir: string;
+      mode?: string;
+      password: string | null;
+    }[] = [];
 
     const internals = {
       invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
@@ -731,6 +767,6 @@ export async function installTauriMock(page: Page): Promise<void> {
       }
       return origFetch ? origFetch(input, init) : Promise.reject(new Error("fetch unavailable"));
     }) as typeof window.fetch;
-    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, sftpSetGroup, sftpConnects, copyPlans, servers: SFTP_SERVERS };
+    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, sftpSetGroup, sftpConnects, copyPlans, extractCalls, servers: SFTP_SERVERS };
   });
 }
