@@ -12,10 +12,17 @@ import { installTauriMock } from "./tauri-mock";
  * 双向都好使）；macOS 上原生的放大分支被 is_maximizable() 挡死——无边框窗口没有
  * 标准标题栏按钮，该检查恒为 false，原生双击只能还原不能放大（tauri 2.x 未修）——
  * 因此 macOS 由 TabBar 在 mouseup 捕获阶段接管，改调无门槛的公开 toggle_maximize。
- * e2e 跑在 macOS（isMac=true）上，覆盖接管路径；拖动手感与真机缩放行为需真机验收。
+ * isMac 读宿主 UA（keymap.ts），本文件强制 macOS UA：接管路径不依赖跑测试的
+ * 宿主平台，Windows/Linux 上同样覆盖；拖动手感与真机缩放行为需真机验收。
  *
  * 运行：pnpm test:e2e -- titlebar
  */
+
+// isMac = UA 含 "Mac"（keymap.ts）；不伪装时该用例只在 mac 宿主通过
+test.use({
+  userAgent:
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+});
 
 const HOME = "/mock/home";
 

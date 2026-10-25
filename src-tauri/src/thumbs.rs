@@ -228,6 +228,9 @@ trailer<</Root 1 0 R>>
         p
     }
 
+    /// QuickLook 行为是 macOS 专属路径（非 macOS 的 ql_thumb 是 None 桩），
+    /// 这两个用例只在 macOS 跑。
+    #[cfg(target_os = "macos")]
     #[test]
     fn ql_pdf_thumbnail_renders() {
         let dir = std::env::temp_dir().join(format!("rdir-thumbs-test-{}", std::process::id()));
@@ -240,6 +243,7 @@ trailer<</Root 1 0 R>>
         assert_eq!(&out[1..4], b"PNG", "应为 PNG 格式");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn ql_unreadable_file_returns_none() {
         let dir = std::env::temp_dir().join(format!("rdir-thumbs-none-{}", std::process::id()));
