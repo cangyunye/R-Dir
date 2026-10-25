@@ -3,7 +3,7 @@
 **R-Dir** —— 基于 **Tauri 2 + Rust + React + TypeScript + Tailwind v4 + shadcn/ui** 的跨平台文件管理器（macOS / Windows）。
 
 > 🚀 最新版本见 [Releases](https://github.com/cangyunye/R-Dir/releases)（GitHub Actions 自动打包 macOS + Windows）。
-> 📖 使用教程见 [docs/user-guide.md](docs/user-guide.md)；逐版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+> 📖 使用教程见 **[R-Dir 使用手册](https://cangyunye.github.io/R-Dir-Docs/)**（含[功能演示截图](https://cangyunye.github.io/R-Dir-Docs/shots.html)）；逐版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### macOS 安装说明
 
