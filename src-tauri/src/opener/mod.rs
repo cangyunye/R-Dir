@@ -107,10 +107,44 @@ fn load_config(app: &tauri::AppHandle) -> OpenersConfig {
     let Ok(p) = config_path(app) else {
         return OpenersConfig::default();
     };
-    std::fs::read_to_string(&p)
+    let mut cfg = std::fs::read_to_string(&p)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // 历史坏数据自愈（v0.33 win 首跑暴露）：探测曾把无扩展名脚本（VS Code bin\code）
+    // 当可执行入库，CreateProcess 启动必报 os error 193 → 同目录同名 .exe/.cmd 改指
+    if migrate_extensionless_execs(&mut cfg) {
+        let _ = save_config(app, &cfg);
+    }
+    cfg
+}
+
+/// 无扩展名 exec 的修复目标：同目录同名 .exe / .cmd 存在则返回（坏数据自愈用）。
+/// Windows 上无扩展名文件不可由 CreateProcess 执行（sh 脚本 → os error 193）。
+fn fix_extensionless_exec(exec: &str) -> Option<String> {
+    let p = std::path::Path::new(exec);
+    if p.extension().is_some() || !p.exists() {
+        return None;
+    }
+    let dir = p.parent()?;
+    let stem = p.file_name()?.to_str()?;
+    ["exe", "cmd"].iter().find_map(|ext| {
+        let cand = dir.join(format!("{stem}.{ext}"));
+        cand.exists().then(|| cand.to_string_lossy().into_owned())
+    })
+}
+
+/// 修复 openers.json 里的历史坏数据（仅 quickTools——自定义打开方式走文件对话框
+/// 选 .exe，进不来这种路径）。返回是否有改动，由 load_config 落盘。
+fn migrate_extensionless_execs(cfg: &mut OpenersConfig) -> bool {
+    let mut changed = false;
+    for q in &mut cfg.quick_tools {
+        if let Some(fixed) = fix_extensionless_exec(&q.exec) {
+            q.exec = fixed;
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn save_config(app: &tauri::AppHandle, cfg: &OpenersConfig) -> Result<(), String> {
@@ -527,6 +561,35 @@ mod tests {
         let mut cfg = OpenersConfig::default();
         assert!(quick_add(&mut cfg, None, "  ".into(), "/a".into()).is_err());
         assert!(quick_add(&mut cfg, None, "A".into(), "  ".into()).is_err());
+    }
+
+    #[test]
+    fn migrate_repoints_extensionless_exec_to_sibling() {
+        // v0.33 曾把 VS Code 的 bin\code（sh 脚本）入库；同目录 code.cmd 存在 → 改指
+        let base = std::env::temp_dir().join(format!("rdir-migrate-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("code"), "").unwrap();
+        std::fs::write(base.join("code.cmd"), "").unwrap();
+        let mut cfg = OpenersConfig::default();
+        cfg.quick_tools.push(super::QuickTool {
+            id: "vscode".into(),
+            name: "Visual Studio Code".into(),
+            exec: base.join("code").to_string_lossy().into_owned(),
+            args: String::new(),
+        });
+        assert!(super::migrate_extensionless_execs(&mut cfg));
+        assert_eq!(
+            cfg.quick_tools[0].exec,
+            base.join("code.cmd").to_string_lossy().into_owned()
+        );
+        // 幂等：修复后不再改动
+        assert!(!super::migrate_extensionless_execs(&mut cfg));
+        // 带扩展名的有效路径与悬空路径都不动
+        cfg.quick_tools[0].exec = r"C:\Windows\System32\cmd.exe".into();
+        assert!(!super::migrate_extensionless_execs(&mut cfg));
+        cfg.quick_tools[0].exec = base.join("gone").to_string_lossy().into_owned();
+        assert!(!super::migrate_extensionless_execs(&mut cfg));
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

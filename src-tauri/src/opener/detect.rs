@@ -24,18 +24,22 @@ pub fn find_cli(cmd: &str) -> Option<String> {
     None
 }
 
-/// PATH 查找 CLI（Windows）
+/// PATH 查找 CLI（Windows）：只认可直接 CreateProcess 的形式（.exe 优先，其次 .cmd——
+/// std 对 .cmd/.bat 有 cmd /c 特判）。无扩展名同名文件一律跳过：Windows PATH 上它们
+/// 是给 Git Bash 用的 sh 脚本（VS Code 的 bin\code 即此类），拿去启动必报 os error 193。
 pub fn find_win_cli(cmd: &str) -> Option<String> {
     let path = std::env::var("PATH").unwrap_or_default();
-    for dir in path.split(';') {
-        if dir.is_empty() {
-            continue;
-        }
-        for name in [cmd, &format!("{cmd}.exe"), &format!("{cmd}.cmd")] {
-            let p = format!(r"{dir}\{name}");
-            if std::path::Path::new(&p).exists() {
-                return Some(p);
-            }
+    path.split(';')
+        .filter(|dir| !dir.is_empty())
+        .find_map(|dir| win_cli_in_dir(dir, cmd))
+}
+
+/// 单目录探测（find_win_cli 内层，独立出来便于测试）
+fn win_cli_in_dir(dir: &str, cmd: &str) -> Option<String> {
+    for ext in [".exe", ".cmd"] {
+        let p = format!(r"{dir}\{cmd}{ext}");
+        if std::path::Path::new(&p).exists() {
+            return Some(p);
         }
     }
     None
@@ -88,7 +92,8 @@ impl VscodeLaunch {
 
 /// 探测 VSCode：
 /// - mac：/Applications/Visual Studio Code.app，或 PATH 上的 code CLI
-/// - win：用户级/系统级标准安装路径的 Code.exe，或 PATH 上的 code.cmd
+/// - win：用户级/系统级标准安装路径的 Code.exe；自定义盘符安装时从 PATH 上的
+///   code CLI（安装器注册的 bin\code.cmd）上溯安装根推导 Code.exe，推不出退回 .cmd
 pub fn find_vscode() -> VscodeLaunch {
     if is_mac() {
         if std::path::Path::new("/Applications/Visual Studio Code.app").exists() {
@@ -114,12 +119,31 @@ pub fn find_vscode() -> VscodeLaunch {
             .into_iter()
             .flatten()
             .find(|p| std::path::Path::new(p).exists())
-            .or_else(|| find_win_cli("code"));
+            .or_else(find_code_via_path_cli);
         VscodeLaunch {
             app_name: None,
             exec: exe,
         }
     }
+}
+
+/// PATH 兜底：标准安装路径全 miss（自定义盘符安装）时，从 PATH 上的 code CLI
+/// （安装器注册的 bin\code.cmd）上溯安装根找 Code.exe。
+fn find_code_via_path_cli() -> Option<String> {
+    find_win_cli("code").map(|cli| code_exe_from_cli(&cli))
+}
+
+/// bin\code.cmd → 安装根\Code.exe（ancestors：文件 → bin → 安装根），存在性验证；
+/// 根下没有 Code.exe（非标准布局）原样返回 CLI（.cmd 可由 std 经 cmd /c 启动）。
+fn code_exe_from_cli(cli: &str) -> String {
+    let derived = std::path::Path::new(cli)
+        .ancestors()
+        .nth(2)
+        .map(|root| root.join("Code.exe"))
+        .filter(|p| p.exists());
+    derived
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| cli.to_string())
 }
 
 /// Git 打开工具条目（右键「Git 打开」折叠组）
@@ -324,6 +348,56 @@ pub fn editor_candidates() -> Vec<EditorCandidate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn win_cli_in_dir_skips_extensionless_sh_script() {
+        // VS Code 安装器的 bin\ 同时有 code（Git Bash 用的 sh 脚本）与 code.cmd；
+        // v0.33 曾按裸名优先取到脚本，CreateProcess 启动必报 os error 193
+        let base = std::env::temp_dir().join(format!("rdir-detect-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("code"), "").unwrap();
+        std::fs::write(base.join("code.cmd"), "").unwrap();
+        assert_eq!(
+            win_cli_in_dir(base.to_str().unwrap(), "code"),
+            Some(base.join("code.cmd").to_string_lossy().into_owned())
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn code_exe_derived_from_bin_cli_with_fallback() {
+        // 标准布局：bin\code.cmd 的上溯两级 = 安装根，根下有 Code.exe 则推导命中
+        let base = std::env::temp_dir().join(format!("rdir-detect2-{}", std::process::id()));
+        let bin = base.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("code.cmd"), "").unwrap();
+        let cli = bin.join("code.cmd").to_string_lossy().into_owned();
+        std::fs::write(base.join("Code.exe"), "").unwrap();
+        assert_eq!(
+            code_exe_from_cli(&cli),
+            base.join("Code.exe").to_string_lossy().into_owned()
+        );
+        // 非标准布局（根下无 Code.exe）→ 原样返回 .cmd（std 会经 cmd /c 启动）
+        std::fs::remove_file(base.join("Code.exe")).unwrap();
+        assert_eq!(code_exe_from_cli(&cli), cli);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn vscode_exec_never_extensionless_on_windows() {
+        // 不变量：win 探测结果必须是 CreateProcess 可执行的形式；
+        // 本机装有 VS Code 才实际命中（CI 无 VS Code 时空转）
+        if cfg!(target_os = "windows") {
+            if let Some(exec) = find_vscode().exec {
+                assert!(
+                    exec.ends_with(".exe") || exec.ends_with(".cmd"),
+                    "win 探测不应返回无扩展名脚本（CreateProcess 不可执行）：{exec}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn git_tools_ids_unique_per_platform() {
