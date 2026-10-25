@@ -287,7 +287,7 @@ pub fn editor_candidates() -> Vec<EditorCandidate> {
         push(
             "cursor",
             "Cursor",
-            win_local(r"cursor\Cursor.exe"),
+            exe_at(&[win_local(r"cursor\Cursor.exe")]),
         );
         push(
             "zed",
@@ -315,7 +315,7 @@ pub fn editor_candidates() -> Vec<EditorCandidate> {
         push(
             "fleet",
             "Fleet",
-            win_local(r"Fleet\Fleet.exe"),
+            exe_at(&[win_local(r"Fleet\Fleet.exe")]),
         );
         out
     }
