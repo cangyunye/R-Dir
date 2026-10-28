@@ -2,11 +2,14 @@
 //!
 //! 实现基于 `ignore` crate —— 这正是 fd 内部使用的遍历引擎，
 //! 行为对齐 fd：
-//! - 正则匹配文件名（smart case：模式全小写时不区分大小写，含大写则区分）；
+//! - 匹配文件名（默认正则，`glob = true` 时为通配符，等价 fd `--glob`）；
+//! - `case_sensitive` 显式控制大小写（等价 fd `--case`；不再做 smart case，
+//!   与搜索面板 Aa 灯钮的二态语义保持一致）；
 //! - 默认跳过隐藏文件/目录、尊重 .gitignore / .ignore；
 //! - 并行遍历目录（ignore 内部自带），结果按路径排序保证确定性；
 //! - `max_depth` 限制深度；结果上限 `MAX_TOTAL` 防止超大目录卡 UI。
 
+use globset::GlobBuilder;
 use regex::RegexBuilder;
 use serde::Serialize;
 use std::path::Path;
@@ -23,11 +26,28 @@ pub struct FindEntry {
     pub is_dir: bool,
 }
 
+/// 文件名匹配器：正则（fd 默认）或通配符（fd `--glob`，整名匹配）
+enum Matcher {
+    Regex(regex::Regex),
+    Glob(globset::GlobMatcher),
+}
+
+impl Matcher {
+    fn is_match(&self, name: &str) -> bool {
+        match self {
+            Matcher::Regex(re) => re.is_match(name),
+            Matcher::Glob(g) => g.is_match(name),
+        }
+    }
+}
+
 pub fn find_files(
     pattern: &str,
     dir: &str,
     show_hidden: bool,
     max_depth: Option<usize>,
+    glob: bool,
+    case_sensitive: bool,
 ) -> Result<Vec<FindEntry>, String> {
     let root = Path::new(dir);
     if !root.is_dir() {
@@ -38,12 +58,22 @@ pub fn find_files(
         return Ok(Vec::new());
     }
 
-    // smart case：模式不含大写字母 → 不区分大小写
-    let case_insensitive = !pattern.chars().any(char::is_uppercase);
-    let re = RegexBuilder::new(pattern)
-        .case_insensitive(case_insensitive)
-        .build()
-        .map_err(|e| format!("无效的正则表达式：{e}"))?;
+    let matcher = if glob {
+        Matcher::Glob(
+            GlobBuilder::new(pattern)
+                .case_insensitive(!case_sensitive)
+                .build()
+                .map_err(|e| format!("无效的通配符模式：{e}"))?
+                .compile_matcher(),
+        )
+    } else {
+        Matcher::Regex(
+            RegexBuilder::new(pattern)
+                .case_insensitive(!case_sensitive)
+                .build()
+                .map_err(|e| format!("无效的正则表达式：{e}"))?,
+        )
+    };
 
     let mut builder = ignore::WalkBuilder::new(root);
     builder
@@ -67,7 +97,7 @@ pub fn find_files(
             Err(_) => continue, // 跳过无法读取的条目
         };
         // fd 默认只匹配文件名（而非完整路径）
-        if !re.is_match(entry.file_name().to_string_lossy().as_ref()) {
+        if !matcher.is_match(entry.file_name().to_string_lossy().as_ref()) {
             continue;
         }
         let path = entry.path();
@@ -109,7 +139,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn find_smart_case_and_hidden() {
+    fn find_case_and_hidden() {
         let root = std::env::temp_dir().join("rfm_find_test");
         let sub = root.join("src");
         std::fs::create_dir_all(&sub).unwrap();
@@ -119,34 +149,66 @@ mod tests {
         std::fs::write(root.join(".hidden.md"), "").unwrap();
         std::fs::write(sub.join("main.rs"), "").unwrap();
 
-        // smart case：全小写模式 → 不区分大小写，命中 CamelCase.rs
-        let hits = find_files("camel", root.to_str().unwrap(), false, None).unwrap();
-        assert!(hits.iter().any(|e| e.rel_path == "CamelCase.rs"));
-        assert!(!hits.iter().any(|e| e.rel_path == ".hidden.md"), "应跳过隐藏");
+        // 默认不区分大小写：camel / CAMEL 均命中 CamelCase.rs
+        for pat in ["camel", "CAMEL"] {
+            let hits = find_files(pat, root.to_str().unwrap(), false, None, false, false).unwrap();
+            assert!(hits.iter().any(|e| e.rel_path == "CamelCase.rs"), "{pat} 应命中");
+        }
 
-        // 含大写 → 区分大小写：CAMEL 不命中 CamelCase.rs（字符串不含大写 CAMEL）
-        let hits = find_files("CAMEL", root.to_str().unwrap(), false, None).unwrap();
+        // 区分大小写：CAMEL 不命中 CamelCase.rs，PLAIN 不命中 plain.txt，plain 命中
+        let hits = find_files("CAMEL", root.to_str().unwrap(), false, None, false, true).unwrap();
         assert!(!hits.iter().any(|e| e.rel_path == "CamelCase.rs"));
-        // 敏感模式下 PLAIN 也不命中 plain.txt
-        let hits = find_files("PLAIN", root.to_str().unwrap(), false, None).unwrap();
+        let hits = find_files("PLAIN", root.to_str().unwrap(), false, None, false, true).unwrap();
         assert!(!hits.iter().any(|e| e.rel_path == "plain.txt"));
-        // 全小写 plain 命中
-        let hits = find_files("plain", root.to_str().unwrap(), false, None).unwrap();
+        let hits = find_files("plain", root.to_str().unwrap(), false, None, false, true).unwrap();
         assert!(hits.iter().any(|e| e.rel_path == "plain.txt"));
 
-        // 正则 + 递归命中子目录
-        let hits = find_files(r"^main\.rs$", root.to_str().unwrap(), false, None).unwrap();
+        // 正则 + 递归命中子目录；max_depth=0 只命中根目录直接子项
+        let hits = find_files(r"^main\.rs$", root.to_str().unwrap(), false, None, false, false).unwrap();
         assert!(hits.iter().any(|e| e.rel_path == "src/main.rs"));
-
-        // max_depth=0 只命中根目录直接子项（main.rs 不出现）
-        let hits = find_files("main", root.to_str().unwrap(), false, Some(0)).unwrap();
+        let hits = find_files("main", root.to_str().unwrap(), false, Some(0), false, false).unwrap();
         assert!(!hits.iter().any(|e| e.rel_path.contains("main.rs")));
+
+        // show_hidden：默认跳过 .hidden.md，开启后命中
+        let hits = find_files("hidden", root.to_str().unwrap(), false, None, false, false).unwrap();
+        assert!(!hits.iter().any(|e| e.rel_path == ".hidden.md"), "应跳过隐藏");
+        let hits = find_files("hidden", root.to_str().unwrap(), true, None, false, false).unwrap();
+        assert!(hits.iter().any(|e| e.rel_path == ".hidden.md"), "应包含隐藏");
 
         std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
-    fn invalid_regex_errors() {
-        assert!(find_files("(unclosed", "/", false, None).is_err());
+    fn find_glob_mode() {
+        let root = std::env::temp_dir().join("rfm_find_glob");
+        let sub = root.join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(root.join("a.rs"), "").unwrap();
+        std::fs::write(root.join("b.txt"), "").unwrap();
+        std::fs::write(sub.join("main.rs"), "").unwrap();
+
+        // 通配符整名匹配：*.rs 命中 a.rs 与 src/main.rs，不命中 b.txt
+        let hits = find_files("*.rs", root.to_str().unwrap(), false, None, true, false).unwrap();
+        assert!(hits.iter().any(|e| e.rel_path == "a.rs"));
+        assert!(hits.iter().any(|e| e.rel_path == "src/main.rs"));
+        assert!(!hits.iter().any(|e| e.rel_path == "b.txt"));
+
+        // 通配符同样受大小写开关控制：*.RS 在不区分时命中 a.rs
+        let hits = find_files("*.RS", root.to_str().unwrap(), false, None, true, false).unwrap();
+        assert!(hits.iter().any(|e| e.rel_path == "a.rs"));
+        let hits = find_files("*.RS", root.to_str().unwrap(), false, None, true, true).unwrap();
+        assert!(!hits.iter().any(|e| e.rel_path == "a.rs"));
+
+        // 通配符里 * 等价 .*：main* 命中 src/main.rs
+        let hits = find_files("main*", root.to_str().unwrap(), false, None, true, false).unwrap();
+        assert!(hits.iter().any(|e| e.rel_path == "src/main.rs"));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn invalid_patterns_error() {
+        assert!(find_files("(unclosed", "/", false, None, false, false).is_err());
+        assert!(find_files("[unclosed", "/", false, None, true, false).is_err());
     }
 }

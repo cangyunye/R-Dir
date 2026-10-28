@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  CaseSensitive,
   Clipboard,
   Crosshair,
   ExternalLink,
@@ -34,6 +33,78 @@ function extensionOf(path: string): string {
   const idx = name.lastIndexOf(".");
   if (idx <= 0) return "";
   return name.slice(idx + 1).toLowerCase();
+}
+
+/** 通配符转整名匹配正则：* → .*、? → .，其余转义（fd --glob 的前端等价，用于当前层过滤） */
+function globToRegExp(glob: string, caseSensitive: boolean): RegExp {
+  let src = "";
+  for (const ch of glob) {
+    if (ch === "*") src += ".*";
+    else if (ch === "?") src += ".";
+    else src += ch.replace(/[.*+?^${}()|[\]\\]/, "\\$&");
+  }
+  return new RegExp(`^${src}$`, caseSensitive ? "" : "i");
+}
+
+/** 灯芯按钮灯色分组：蓝/绿 = 搜索范围，琥珀/紫 = 匹配方式 */
+type ChipColor = "blue" | "green" | "amber" | "purple";
+
+const CHIP_ON: Record<ChipColor, { frame: string; led: string }> = {
+  blue: {
+    frame: "border-blue-500/60 bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    led: "bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.9)]",
+  },
+  green: {
+    frame: "border-emerald-500/60 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    led: "bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.9)]",
+  },
+  amber: {
+    frame: "border-amber-500/60 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    led: "bg-amber-500 shadow-[0_0_4px_rgba(245,158,11,0.9)]",
+  },
+  purple: {
+    frame: "border-purple-500/60 bg-purple-500/10 text-purple-600 dark:text-purple-400",
+    led: "bg-purple-500 shadow-[0_0_4px_rgba(168,85,247,0.9)]",
+  },
+};
+
+/** 灯芯开关按钮：左侧 LED 灯珠；点亮 = 彩色边框 + 淡彩底 + 灯珠发光 */
+function ToggleChip({
+  on,
+  color,
+  label,
+  title,
+  onClick,
+}: {
+  on: boolean;
+  color: ChipColor;
+  label: string;
+  title: string;
+  onClick: () => void;
+}) {
+  const s = CHIP_ON[color];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-pressed={on}
+      className={cn(
+        "flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition-colors",
+        on
+          ? s.frame
+          : "border-border bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      <span
+        className={cn(
+          "h-1.5 w-1.5 shrink-0 rounded-full transition-all",
+          on ? s.led : "bg-border",
+        )}
+      />
+      {label}
+    </button>
+  );
 }
 
 /** 字面量高亮（不区分大小写），返回节点列表 */
@@ -153,6 +224,7 @@ function ResultRow({
 /**
  * 搜索面板（v0.29.0 起以居中模态框展示；此前为右侧停靠窄栏）。
  * 文件名检索：当前层前端过滤 / fd 递归引擎；内容检索：当前层 / 递归。
+ * 选项为灯芯按钮（蓝=递归 绿=隐藏 琥珀=大小写 紫=正则/通配），两 tab 同一套语义。
  */
 export function SearchPanel({
   entries,
@@ -236,33 +308,53 @@ export function SearchPanel({
     }
   }, [cmd]);
 
-  // 文件名检索：当前层前端过滤 / fd 递归引擎
+  // 文件名检索：当前层前端过滤 / fd 递归引擎；灯钮 = 递归(蓝) 隐藏(绿) 大小写(琥珀) 正则⇄通配(紫)
   const [fdEnabled, setFdEnabled] = useState(false);
+  const [nameHidden, setNameHidden] = useState(false);
+  const [nameCase, setNameCase] = useState(false);
+  const [nameMode, setNameMode] = useState<"regex" | "glob">("regex");
   const [fdResults, setFdResults] = useState<FindEntry[]>([]);
   const [fdLoading, setFdLoading] = useState(false);
   const [fdError, setFdError] = useState<string | null>(null);
   const fdTimer = useRef<number | null>(null);
   const fdSeq = useRef(0);
 
-  // 内容搜索状态
+  // 内容搜索状态；灯钮 = 递归(蓝) 隐藏(绿) 大小写(琥珀) 正则(紫)
   const [cQuery, setCQuery] = useState("");
   const [recursive, setRecursive] = useState(false);
   const [caseSensitive, setCaseSensitive] = useState(false);
+  const [cHidden, setCHidden] = useState(false);
+  const [cRegex, setCRegex] = useState(false);
   const [cResults, setCResults] = useState<SearchMatch[]>([]);
   const [cLoading, setCLoading] = useState(false);
   const [cError, setCError] = useState<string | null>(null);
   const cTimer = useRef<number | null>(null);
   const cSeq = useRef(0);
 
-  // 文件名搜索（当前层，前端过滤）
+  // 文件名搜索（当前层，前端过滤）——匹配语义与 fd 灯钮一致：
+  // 正则/通配符整名匹配（无效正则回退字面量包含），隐藏灯控制 `.` 开头项
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return [];
+    let test: (name: string) => boolean;
+    if (nameMode === "glob") {
+      const re = globToRegExp(q, nameCase);
+      test = (n) => re.test(n);
+    } else {
+      try {
+        const re = new RegExp(q, nameCase ? "" : "i");
+        test = (n) => re.test(n);
+      } catch {
+        const lq = nameCase ? q : q.toLowerCase();
+        test = (n) => (nameCase ? n : n.toLowerCase()).includes(lq);
+      }
+    }
     return entries
-      .filter((e) => e.name.toLowerCase().includes(q))
+      .filter((e) => (nameHidden ? true : !e.name.startsWith(".")))
+      .filter((e) => test(e.name))
       .sort((a, b) => Number(b.is_dir) - Number(a.is_dir))
       .slice(0, 200);
-  }, [entries, query]);
+  }, [entries, query, nameHidden, nameCase, nameMode]);
 
   // fd 快速检索：防抖 250ms，后台线程执行
   useEffect(() => {
@@ -279,7 +371,7 @@ export function SearchPanel({
     const seq = ++fdSeq.current;
     fdTimer.current = window.setTimeout(async () => {
       try {
-        const res = await findFiles(q, dir, false, null);
+        const res = await findFiles(q, dir, nameHidden, null, nameMode === "glob", nameCase);
         if (seq !== fdSeq.current) return;
         setFdResults(res);
       } catch (e) {
@@ -293,7 +385,7 @@ export function SearchPanel({
     return () => {
       if (fdTimer.current) window.clearTimeout(fdTimer.current);
     };
-  }, [query, fdEnabled, dir]);
+  }, [query, fdEnabled, dir, nameHidden, nameMode, nameCase]);
 
   // 内容搜索：防抖 250ms，后台线程执行
   useEffect(() => {
@@ -310,7 +402,7 @@ export function SearchPanel({
     const seq = ++cSeq.current;
     cTimer.current = window.setTimeout(async () => {
       try {
-        const res = await searchContent(q, dir, recursive, caseSensitive);
+        const res = await searchContent(q, dir, recursive, caseSensitive, cHidden, cRegex);
         if (seq !== cSeq.current) return;
         setCResults(res);
       } catch (e) {
@@ -324,7 +416,7 @@ export function SearchPanel({
     return () => {
       if (cTimer.current) window.clearTimeout(cTimer.current);
     };
-  }, [cQuery, dir, recursive, caseSensitive]);
+  }, [cQuery, dir, recursive, caseSensitive, cHidden, cRegex]);
 
   return (
     // v0.29.0 模态框化：原右侧 256px 停靠栏在递归检索时 rel_path 截断严重，
@@ -385,30 +477,61 @@ export function SearchPanel({
                 ref={nameInputRef}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={fdEnabled ? "检索文件（fd 正则）…" : "搜索当前层文件名…"}
+                placeholder={
+                  fdEnabled
+                    ? nameMode === "glob"
+                      ? "检索文件（fd 通配符，如 *.rs）…"
+                      : "检索文件（fd 正则）…"
+                    : "搜索当前层文件名…"
+                }
                 className="h-7 text-xs"
                 autoFocus
               />
-              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <label className="flex cursor-pointer items-center gap-1">
-                  <input
-                    type="checkbox"
-                    checked={fdEnabled}
-                    onChange={(e) => setFdEnabled(e.target.checked)}
-                    className="h-3 w-3 accent-primary"
-                  />
-                  递归检索（fd 引擎）
-                </label>
+              <div className="flex items-center gap-1.5">
+                <ToggleChip
+                  on={fdEnabled}
+                  color="blue"
+                  label="递归"
+                  title="递归搜索子目录（fd 引擎，尊重 .gitignore）"
+                  onClick={() => setFdEnabled((v) => !v)}
+                />
+                <ToggleChip
+                  on={nameHidden}
+                  color="green"
+                  label="隐藏"
+                  title="包含隐藏文件 / 目录（. 开头）"
+                  onClick={() => setNameHidden((v) => !v)}
+                />
+                <ToggleChip
+                  on={nameCase}
+                  color="amber"
+                  label="Aa"
+                  title="区分大小写"
+                  onClick={() => setNameCase((v) => !v)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setNameMode((m) => (m === "regex" ? "glob" : "regex"))}
+                  title={
+                    nameMode === "regex"
+                      ? "当前：正则匹配，点击切换为通配符（如 *.rs）"
+                      : "当前：通配符匹配，点击切换为正则"
+                  }
+                  aria-label={`匹配模式：${nameMode === "regex" ? "正则" : "通配符"}`}
+                  className="flex h-6 shrink-0 items-center gap-1 rounded-md border border-purple-500/50 bg-purple-500/10 px-2 text-[11px] font-medium text-purple-600 transition-colors hover:bg-purple-500/20 dark:text-purple-400"
+                >
+                  {nameMode === "regex" ? ".* 正则" : "✱ 通配"}
+                </button>
               </div>
-              {fdEnabled ? (
-                <p className="text-[11px] text-muted-foreground">
-                  正则 + 智能大小写，递归搜索当前目录（尊重 .gitignore）
-                </p>
-              ) : (
-                <p className="text-[11px] text-muted-foreground">
-                  默认仅当前目录，共 {entries.length} 项
-                </p>
-              )}
+              <p className="truncate text-[11px] text-muted-foreground">
+                {[
+                  fdEnabled ? "fd 递归中" : "当前层匹配",
+                  nameMode === "glob" ? "通配符" : "正则",
+                  nameHidden ? "含隐藏" : "跳过隐藏",
+                  nameCase ? "区分大小写" : "不区分大小写",
+                  fdEnabled ? "尊重 .gitignore" : `共 ${entries.length} 项`,
+                ].join(" · ")}
+              </p>
             </>
           ) : (
             <>
@@ -416,33 +539,39 @@ export function SearchPanel({
                 ref={contentInputRef}
                 value={cQuery}
                 onChange={(e) => setCQuery(e.target.value)}
-                placeholder="搜索文件内容…"
+                placeholder={cRegex ? "搜索文件内容（正则）…" : "搜索文件内容…"}
                 className="h-7 text-xs"
                 autoFocus
               />
-              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <label className="flex cursor-pointer items-center gap-1">
-                  <input
-                    type="checkbox"
-                    checked={recursive}
-                    onChange={(e) => setRecursive(e.target.checked)}
-                    className="h-3 w-3 accent-primary"
-                  />
-                  递归子目录
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setCaseSensitive((v) => !v)}
-                  className={cn(
-                    "flex items-center gap-0.5 rounded border px-1 py-0.5",
-                    caseSensitive
-                      ? "border-transparent bg-accent text-accent-foreground"
-                      : "border-border text-muted-foreground",
-                  )}
+              <div className="flex items-center gap-1.5">
+                <ToggleChip
+                  on={recursive}
+                  color="blue"
+                  label="递归"
+                  title="递归搜索子目录内容"
+                  onClick={() => setRecursive((v) => !v)}
+                />
+                <ToggleChip
+                  on={cHidden}
+                  color="green"
+                  label="隐藏"
+                  title="包含隐藏文件 / 目录（. 开头）"
+                  onClick={() => setCHidden((v) => !v)}
+                />
+                <ToggleChip
+                  on={caseSensitive}
+                  color="amber"
+                  label="Aa"
                   title="区分大小写"
-                >
-                  <CaseSensitive className="h-3 w-3" /> Aa
-                </button>
+                  onClick={() => setCaseSensitive((v) => !v)}
+                />
+                <ToggleChip
+                  on={cRegex}
+                  color="purple"
+                  label=".* 正则"
+                  title="查询词按正则解析（默认字面量匹配）"
+                  onClick={() => setCRegex((v) => !v)}
+                />
               </div>
             </>
           )}
@@ -573,7 +702,7 @@ export function SearchPanel({
                     <span className="text-xs">
                       输入关键词搜索文件内容
                       <br />
-                      默认仅当前层，可勾选递归
+                      默认仅当前层，点亮「递归」深入子目录
                     </span>
                   </>
                 )}

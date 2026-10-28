@@ -165,23 +165,34 @@ export interface ExtractOutcome {
 export const extractArchive = (path: string, targetDir: string, mode: "smart" | "folder", password?: string) =>
   invoke<ExtractOutcome>("extract_archive", { path, targetDir, mode, password: password ?? null });
 
-/** 内容搜索（字面量关键词，可递归/大小写开关） */
+/** 内容搜索（默认字面量关键词；includeHidden 含 `.` 开头项，useRegex 按正则解析） */
 export const searchContent = (
   query: string,
   dir: string,
   recursive: boolean,
   caseSensitive: boolean,
+  includeHidden: boolean,
+  useRegex: boolean,
 ) =>
-  invoke<SearchMatch[]>("search_content", { query, dir, recursive, caseSensitive });
+  invoke<SearchMatch[]>("search_content", {
+    query,
+    dir,
+    recursive,
+    caseSensitive,
+    includeHidden,
+    useRegex,
+  });
 
-/** fd 快速文件检索（正则 + smart case + 递归） */
+/** fd 快速文件检索（glob=true 通配符否则正则；显式大小写开关；递归） */
 export const findFiles = (
   pattern: string,
   dir: string,
   showHidden: boolean,
   maxDepth: number | null,
+  glob: boolean,
+  caseSensitive: boolean,
 ) =>
-  invoke<FindEntry[]>("find_files", { pattern, dir, showHidden, maxDepth });
+  invoke<FindEntry[]>("find_files", { pattern, dir, showHidden, maxDepth, glob, caseSensitive });
 
 // ==================== SFTP 远程服务器 ====================
 

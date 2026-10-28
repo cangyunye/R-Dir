@@ -1,7 +1,7 @@
 {
   "name": "rust-file-manager",
   "private": true,
-  "version": "0.33.0",
+  "version": "0.34.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -1,8 +1,10 @@
-//! 内容搜索（VSCode 风格，字面量关键词）。
+//! 内容搜索（VSCode 风格）。
 //!
 //! 行为设计（对齐 ripgrep 常用直觉但刻意简化）：
-//! - 关键词按字面量处理（`regex::escape`），不做正则解析；
-//! - 默认跳过隐藏文件/目录（名称以 `.` 开头）；
+//! - 默认关键词按字面量处理（`regex::escape`）；`use_regex = true` 时按正则解析
+//!   （等价 rg 默认行为，字面量对应 rg `-F`）；
+//! - 默认跳过隐藏文件/目录（名称以 `.` 开头），`include_hidden = true` 时包含
+//!   （等价 rg `--hidden`）；
 //! - 跳过二进制文件（前 8KB 含 NUL 字节即视为二进制）；
 //! - 超过 `MAX_FILE_BYTES` 的文件不搜内容；
 //! - 每文件最多 `MAX_PER_FILE` 条命中，总计最多 `MAX_TOTAL` 条，防止大目录卡死；
@@ -37,6 +39,8 @@ pub fn search_content(
     dir: &str,
     recursive: bool,
     case_sensitive: bool,
+    include_hidden: bool,
+    use_regex: bool,
 ) -> Result<Vec<SearchMatch>, String> {
     let root = Path::new(dir);
     if !root.is_dir() {
@@ -46,7 +50,13 @@ pub fn search_content(
         return Ok(Vec::new());
     }
 
-    let pattern = regex::escape(query.trim());
+    // 字面量关键词做 regex::escape；正则模式直接编译（编译错误原样返回给 UI）
+    let trimmed = query.trim();
+    let pattern = if use_regex {
+        trimmed.to_string()
+    } else {
+        regex::escape(trimmed)
+    };
     let re = Regex::new(&pattern)
         .map(|r| {
             if case_sensitive {
@@ -60,7 +70,7 @@ pub fn search_content(
 
     let mut out = Vec::new();
     let mut total = 0usize;
-    walk(&root, &root, recursive, &re, &mut out, &mut total);
+    walk(&root, &root, recursive, include_hidden, &re, &mut out, &mut total);
     Ok(out)
 }
 
@@ -68,6 +78,7 @@ fn walk(
     dir: &Path,
     root: &Path,
     recursive: bool,
+    include_hidden: bool,
     re: &Regex,
     out: &mut Vec<SearchMatch>,
     total: &mut usize,
@@ -85,12 +96,12 @@ fn walk(
         }
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
+        if !include_hidden && name.starts_with('.') {
             continue; // 跳过隐藏项
         }
         if path.is_dir() {
             if recursive {
-                walk(&path, root, recursive, re, out, total);
+                walk(&path, root, recursive, include_hidden, re, out, total);
             }
         } else {
             search_file(&path, root, re, out, total);
@@ -210,7 +221,7 @@ mod tests {
         std::fs::write(sub.join("big.log"), "x".repeat(5 * 1024 * 1024)).unwrap();
 
         // 非递归：只命中 a.txt 的一行
-        let hits = search_content("hello", root.to_str().unwrap(), false, false).unwrap();
+        let hits = search_content("hello", root.to_str().unwrap(), false, false, false, false).unwrap();
         assert!(hits.iter().any(|m| m.rel_path == "a.txt" && m.line_number == 1));
         assert!(!hits.iter().any(|m| m.rel_path == "sub/c.md"), "非递归不应进入子目录");
         assert!(!hits.iter().any(|m| m.rel_path == ".hidden.txt"), "应跳过隐藏文件");
@@ -218,18 +229,33 @@ mod tests {
         assert!(!hits.iter().any(|m| m.rel_path == "big.log"), "应跳过超大文件");
 
         // 递归：命中 c.md
-        let hits = search_content("hello", root.to_str().unwrap(), true, false).unwrap();
+        let hits = search_content("hello", root.to_str().unwrap(), true, false, false, false).unwrap();
         assert!(hits.iter().any(|m| m.rel_path == "sub/c.md"));
 
         // 大小写不敏感命中 Hello；敏感时不命中
-        assert!(search_content("HELLO", root.to_str().unwrap(), false, false)
+        assert!(search_content("HELLO", root.to_str().unwrap(), false, false, false, false)
             .unwrap()
             .iter()
             .any(|m| m.rel_path == "a.txt"));
-        assert!(!search_content("HELLO", root.to_str().unwrap(), false, true)
+        assert!(!search_content("HELLO", root.to_str().unwrap(), false, true, false, false)
             .unwrap()
             .iter()
             .any(|m| m.rel_path == "a.txt"));
+
+        // include_hidden：命中 .hidden.txt
+        let hits = search_content("hidden", root.to_str().unwrap(), false, false, true, false).unwrap();
+        assert!(hits.iter().any(|m| m.rel_path == ".hidden.txt"), "应包含隐藏文件");
+
+        // use_regex：正则 hel+o 命中 hello；字面量模式下 hel+o 无命中
+        assert!(search_content(r"hel+o", root.to_str().unwrap(), false, false, false, true)
+            .unwrap()
+            .iter()
+            .any(|m| m.rel_path == "a.txt"));
+        assert!(search_content(r"hel+o", root.to_str().unwrap(), false, false, false, false)
+            .unwrap()
+            .is_empty());
+        // 正则语法错误返回 Err（UI 显示错误提示）
+        assert!(search_content("(unclosed", root.to_str().unwrap(), false, false, false, true).is_err());
 
         std::fs::remove_dir_all(&root).ok();
     }

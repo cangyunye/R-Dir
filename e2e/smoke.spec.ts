@@ -511,8 +511,8 @@ test.describe("16. 搜索结果内联重命名（v0.21.0）", () => {
   test("R3 递归检索结果右键重命名：改名生效、面板与主列表同步更新", async ({ page }) => {
     await page.keyboard.press(`${MOD}+f`);
     await page.getByPlaceholder("搜索当前层文件名…").fill("photo");
-    // 开启 fd 递归检索后再输入触发检索
-    await page.getByText("递归检索（fd 引擎）").click();
+    // 点亮「递归」灯钮（蓝）启用 fd 递归检索后再输入触发检索
+    await page.getByRole("button", { name: "递归" }).click();
     const input = page.getByPlaceholder("检索文件（fd 正则）…");
     await input.fill("photo");
 
@@ -581,7 +581,7 @@ test.describe("18. 搜索起始目录回归（点击选中后 Ctrl+F）", () => 
     await expect(page.locator(`span[title="${HOME}"]`).first()).toBeVisible();
 
     // 递归检索从本层级起搜：能命中子目录 Documents 下的 readme.md
-    await page.locator("input[type=checkbox]").first().check();
+    await page.getByRole("button", { name: "递归" }).click();
     await page.getByPlaceholder("检索文件（fd 正则）…").fill("readme");
     await expect(page.locator(`[data-search-path="${HOME}/Documents/readme.md"]`)).toBeVisible();
   });

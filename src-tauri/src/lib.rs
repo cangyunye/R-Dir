@@ -1828,31 +1828,35 @@ async fn create_file(parent: String, name: String) -> Result<String, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// 内容搜索（VSCode 风格，字面量关键词；默认仅当前层）。
+/// 内容搜索（VSCode 风格，默认字面量关键词；默认仅当前层）。
 #[tauri::command]
 async fn search_content(
     query: String,
     dir: String,
     recursive: bool,
     case_sensitive: bool,
+    include_hidden: bool,
+    use_regex: bool,
 ) -> Result<Vec<SearchMatch>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        search::search_content(&query, &dir, recursive, case_sensitive)
+        search::search_content(&query, &dir, recursive, case_sensitive, include_hidden, use_regex)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// 快速文件检索（fd 语义：正则 + smart case + 递归）。
+/// 快速文件检索（fd 语义：正则 / 通配符 + 递归）。
 #[tauri::command]
 async fn find_files(
     pattern: String,
     dir: String,
     show_hidden: bool,
     max_depth: Option<usize>,
+    glob: bool,
+    case_sensitive: bool,
 ) -> Result<Vec<FindEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        find::find_files(&pattern, &dir, show_hidden, max_depth)
+        find::find_files(&pattern, &dir, show_hidden, max_depth, glob, case_sensitive)
     })
     .await
     .map_err(|e| e.to_string())?
