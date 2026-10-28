@@ -929,6 +929,79 @@ async fn read_text_file(
     .map_err(|e| format!("读取任务失败：{e}"))?
 }
 
+/// 拆 SFTP URL 为 (所在目录 URL, 文件名)：sftp://user@host:22/a/b/c.txt → (sftp://user@host:22/a/b/, c.txt)
+#[cfg(feature = "sftp")]
+fn split_sftp_dir_name(path: &str) -> Result<(String, String), String> {
+    let rest = path.strip_prefix("sftp://").ok_or("非 SFTP 路径")?;
+    let slash = rest.find('/').ok_or("SFTP 路径缺少目录部分")?;
+    let (authority, full) = rest.split_at(slash);
+    let name = full.rsplit('/').next().unwrap_or("").to_string();
+    if name.is_empty() {
+        return Err("SFTP 路径缺少文件名".into());
+    }
+    let dir = format!("sftp://{authority}{}", &full[..full.len() - name.len()]);
+    Ok((dir, name))
+}
+
+/// v0.34 文本比较编辑保存：把编辑后的整份行数组写回一侧。
+/// 本地直写；SFTP 先落临时文件再 upload_path 原名覆盖回传；HTTP 远端只读不可写。
+/// eol / encoding 语义见 text_diff::encode_lines。
+#[tauri::command]
+async fn write_text_file(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    lines: Vec<String>,
+    eol: String,
+    encoding: Option<String>,
+) -> Result<(), String> {
+    if path.starts_with("http://") || path.starts_with("https://") {
+        return Err("HTTP 远端文件只读，无法保存".into());
+    }
+    let bytes = text_diff::encode_lines(&lines, &eol, encoding.as_deref())?;
+    if path.starts_with("sftp://") {
+        #[cfg(feature = "sftp")]
+        {
+            ensure_plugin(&state, "sftp")?;
+            let (dir, name) = split_sftp_dir_name(&path)?;
+            let tmpdir = std::env::temp_dir().join(format!(
+                "r-dir-save-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            ));
+            std::fs::create_dir_all(&tmpdir).map_err(|e| format!("创建临时目录失败：{e}"))?;
+            let tmpfile = tmpdir.join(&name);
+            let write_result = std::fs::write(&tmpfile, &bytes)
+                .map_err(|e| format!("写临时文件失败：{e}"));
+            let result = match write_result {
+                Ok(()) => {
+                    let pool = state.sftp_pool.lock().await;
+                    let mut nocb = |_ev: sftp::XferEvent| true;
+                    sftp::upload_path(&pool, &tmpfile.to_string_lossy(), &dir, &name, &mut nocb)
+                        .await
+                        .map(|_: String| ())
+                }
+                Err(e) => Err(e),
+            };
+            let _ = std::fs::remove_dir_all(&tmpdir);
+            result
+        }
+        #[cfg(not(feature = "sftp"))]
+        {
+            let _ = state;
+            Err("SFTP 插件未编译，无法保存远程文件".into())
+        }
+    } else {
+        tauri::async_runtime::spawn_blocking(move || {
+            std::fs::write(std::path::Path::new(&path), &bytes).map_err(|e| format!("写入失败：{e}"))
+        })
+        .await
+        .map_err(|e| format!("写入任务失败：{e}"))?
+    }
+}
+
 /// 读取单个路径的元信息（「属性」统计当前目录用）。
 #[tauri::command]
 fn stat_entry(path: String) -> Result<fs_ops::FileEntry, String> {
@@ -1951,6 +2024,7 @@ pub fn run() {
         cancel_diff,
         diff_text_files,
         read_text_file,
+        write_text_file,
         stat_entry,
         // 插件注册表（v0.5）
         list_plugins,
@@ -2296,5 +2370,29 @@ mod backend_tests {
         assert_eq!(clamp(BackendKind::Sftp, BackendKind::Sftp, 3), 2);
         assert_eq!(clamp(BackendKind::Local, BackendKind::Http, 3), 1);
         assert_eq!(clamp(BackendKind::Local, BackendKind::Local, 3), 3);
+    }
+}
+
+/// v0.34 文本比较编辑保存：SFTP URL 拆目录/文件名（回传覆盖用）
+#[cfg(all(test, feature = "sftp"))]
+mod write_text_tests {
+    use super::*;
+
+    #[test]
+    fn split_sftp_dir_name_cases() {
+        assert_eq!(
+            split_sftp_dir_name("sftp://u@h:2222/a/b/c.txt").unwrap(),
+            ("sftp://u@h:2222/a/b/".to_string(), "c.txt".to_string())
+        );
+        // 根目录下的文件
+        assert_eq!(
+            split_sftp_dir_name("sftp://u@h/f.md").unwrap(),
+            ("sftp://u@h/".to_string(), "f.md".to_string())
+        );
+        // 以 / 结尾（目录）→ 无文件名
+        assert!(split_sftp_dir_name("sftp://u@h/a/").is_err());
+        // 缺目录部分 / 非 sftp
+        assert!(split_sftp_dir_name("sftp://u@h").is_err());
+        assert!(split_sftp_dir_name("/local/path").is_err());
     }
 }

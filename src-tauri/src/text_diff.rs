@@ -232,6 +232,30 @@ pub fn detect_eol(s: &str) -> &'static str {
     }
 }
 
+/// v0.34 编辑保存：行数组 → 按行尾格式拼接并编码为字节（read_local_text 的逆向）。
+/// eol："crlf" 用 \r\n，其余（lf / mixed——原混合分布已不可知）用 \n；
+/// 非空且 eol != "none" 时结尾补一个换行（与 split_lines 去掉结尾换行的语义对称）。
+/// encoding：None / utf-8 → UTF-8（不写 BOM）；其他 WhatWG 标签经 encoding_rs 编码，
+/// 不可映射字符按 HTML 数字实体替换（尽力而为，不报错）。
+pub fn encode_lines(lines: &[String], eol: &str, encoding: Option<&str>) -> Result<Vec<u8>, String> {
+    let sep = if eol == "crlf" { "\r\n" } else { "\n" };
+    let mut text = lines.join(sep);
+    if !lines.is_empty() && eol != "none" {
+        text.push_str(sep);
+    }
+    let label = encoding
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("utf-8") && !s.eq_ignore_ascii_case("utf8"));
+    match label {
+        Some(label) => {
+            let enc = encoding_rs::Encoding::for_label(label.as_bytes())
+                .ok_or_else(|| format!("不支持的编码：{label}"))?;
+            Ok(enc.encode(&text).0.into_owned())
+        }
+        None => Ok(text.into_bytes()),
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Op {
     Eq,
@@ -690,5 +714,26 @@ mod tests {
         assert_eq!(detect_eol("a\nb\r\n"), "mixed");
         assert_eq!(detect_eol("abc"), "none");
         assert_eq!(detect_eol(""), "none");
+    }
+
+    #[test]
+    fn encode_lines_roundtrips_split_lines() {
+        // 与 split_lines 对称：lf / crlf 结尾补换行，none 不补，空数组得空文件
+        let l = lines(&["a", "b"]);
+        assert_eq!(encode_lines(&l, "lf", None).unwrap(), b"a\nb\n");
+        assert_eq!(encode_lines(&l, "crlf", None).unwrap(), b"a\r\nb\r\n");
+        assert_eq!(encode_lines(&l, "mixed", None).unwrap(), b"a\nb\n");
+        assert_eq!(encode_lines(&lines(&["only"]), "none", None).unwrap(), b"only");
+        assert_eq!(encode_lines(&[], "lf", None).unwrap(), b"");
+        // 往返：split_lines(encode) == 原行
+        let bytes = encode_lines(&l, "crlf", Some("utf-8")).unwrap();
+        assert_eq!(split_lines(std::str::from_utf8(&bytes).unwrap()), l);
+    }
+
+    #[test]
+    fn encode_lines_gbk_and_unknown_label() {
+        let bytes = encode_lines(&lines(&["你好"]), "lf", Some("gbk")).unwrap();
+        assert_eq!(bytes, [0xC4, 0xE3, 0xBA, 0xC3, 0x0A]);
+        assert!(encode_lines(&lines(&["x"]), "lf", Some("no-such-encoding")).is_err());
     }
 }

@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildDisplayItems,
   parseUnifiedDiff,
+  rediffRegion,
+  renumberRows,
   rowsFromSegments,
   rowsStats,
+  zipRows,
   type TextSegment,
 } from "./text-diff";
 
@@ -140,5 +143,122 @@ describe("buildDisplayItems", () => {
     const items = buildDisplayItems(rows, { onlyDiff: true });
     expect(items.filter((i) => i.type === "row")).toHaveLength(1);
     expect(items.filter((i) => i.type === "gap")).toHaveLength(2);
+  });
+});
+
+describe("zipRows / renumberRows / rediffRegion（v0.34 编辑与局部补丁）", () => {
+  it("zipRows：del/add 相邻即 zip，规则与 rowsFromSegments 一致", () => {
+    // eq(1) del(2) add(3,4) eq(5)
+    const rows = zipRows(["a", "old", "z"], ["a", "n1", "n2", "z"], [
+      "eq",
+      "del",
+      "add",
+      "add",
+      "eq",
+    ]);
+    expect(rows.map((r) => r.kind)).toEqual(["eq", "pair", "add", "eq"]);
+    expect(rowsStats(rows)).toEqual({ additions: 2, deletions: 1 });
+  });
+
+  it("renumberRows：按行序累计左右行号", () => {
+    const rows = zipRows(["a", "old"], ["a", "new"], ["eq", "del", "add"]);
+    renumberRows(rows);
+    expect(rows.map((r) => r.kind)).toEqual(["eq", "pair"]);
+    expect(rows[0].left?.no).toBe(1);
+    expect(rows[0].right?.no).toBe(1);
+    expect(rows[1].left?.no).toBe(2);
+    expect(rows[1].right?.no).toBe(2);
+  });
+
+  it("rediffRegion：编辑单行后区域重建，行号全表重排", () => {
+    const rows = rowsFromSegments([
+      seg("eq", 1, 1, ["a"]),
+      seg("del", 2, null, ["old"]),
+      seg("add", null, 2, ["new"]),
+      seg("eq", 3, 3, ["b"]),
+      seg("eq", 4, 4, ["c"]),
+    ]);
+    const rightLines = ["a", "new", "b", "c"];
+    // 左侧第 2 行改为 "new" → 与右侧相同 → del/add 变 eq，后续 eq 行号保持
+    const left2 = ["a", "new", "b", "c"];
+    const next = rediffRegion(rows, 1, 2, left2, rightLines);
+    expect(next.map((r) => r.kind)).toEqual(["eq", "eq", "eq", "eq"]);
+    expect(next[1].left?.no).toBe(2);
+    expect(next[1].right?.no).toBe(2);
+    expect(next[2].left?.text).toBe("b");
+  });
+
+  it("rediffRegion：插入行经 mutation 延伸区域终点（模拟 insertLineBelow）", () => {
+    const rows = rowsFromSegments([
+      seg("eq", 1, 1, ["a"]),
+      seg("add", null, 2, ["x"]),
+      seg("eq", 2, 3, ["b"]),
+    ]);
+    const rightLines = ["a", "x", "b"];
+    // 左侧在 a 后插入 x → 全等
+    const next = rediffRegion(rows, 0, 1, ["a", "x", "b"], rightLines, {
+      left: { start: 1, removed: 0, inserted: 1 },
+    });
+    expect(next.map((r) => r.kind)).toEqual(["eq", "eq", "eq"]);
+    expect(next.map((r) => r.left?.no)).toEqual([1, 2, 3]);
+    expect(next.map((r) => r.right?.no)).toEqual([1, 2, 3]);
+  });
+
+  it("rediffRegion：无 mutation 时空区域（纯 add 行区间）按空范围重建", () => {
+    const rows = rowsFromSegments([
+      seg("eq", 1, 1, ["a"]),
+      seg("add", null, 2, ["x"]),
+      seg("eq", 2, 3, ["b"]),
+    ]);
+    const next = rediffRegion(rows, 1, 2, ["a", "b"], ["a", "x", "b"]);
+    expect(next.map((r) => r.kind)).toEqual(["eq", "add", "eq"]);
+    expect(next[1].right?.text).toBe("x");
+  });
+
+  it("rediffRegion：删除行经 mutation 收缩区域终点（模拟 deleteLine）", () => {
+    const rows = rowsFromSegments([
+      seg("eq", 1, 1, ["a"]),
+      seg("eq", 2, 2, ["b"]),
+      seg("eq", 3, 3, ["c"]),
+    ]);
+    // 左侧删除 b → 右侧 b 变成纯新增行，行号重排
+    const next = rediffRegion(rows, 1, 2, ["a", "c"], ["a", "b", "c"], {
+      left: { start: 1, removed: 1, inserted: 0 },
+    });
+    expect(next.map((r) => r.kind)).toEqual(["eq", "add", "eq"]);
+    expect(next[1].left).toBeNull();
+    expect(next[1].right?.no).toBe(2);
+    expect(next[2].left?.no).toBe(2);
+    expect(next[2].right?.no).toBe(3);
+  });
+
+  it("rediffRegion：文件末尾 hunk（缺后锚点）重建（模拟 applyHunk l2r）", () => {
+    const rows = rowsFromSegments([
+      seg("eq", 1, 1, ["a"]),
+      seg("del", 2, null, ["gone"]),
+    ]);
+    // 右侧末尾插入 "gone"（纯插入：目标侧区间为空）→ 全等
+    const next = rediffRegion(rows, 1, 2, ["a", "gone"], ["a", "gone"], {
+      right: { start: 1, removed: 0, inserted: 1 },
+    });
+    expect(next.map((r) => r.kind)).toEqual(["eq", "eq"]);
+    expect(next[1].left?.no).toBe(2);
+    expect(next[1].right?.no).toBe(2);
+  });
+
+  it("rediffRegion：超大差异区域退化为整块替换（与后端 coarse 策略一致）", () => {
+    const big = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag}${i}`);
+    const rows = rowsFromSegments([
+      seg("eq", 1, 1, ["head"]),
+      seg("del", 2, null, big(1600, "A")),
+      seg("add", null, 2, big(1600, "B")),
+    ]);
+    const leftLines = ["head", ...big(1600, "C")];
+    const rightLines = ["head", ...big(1600, "B")];
+    const next = rediffRegion(rows, 1, 2, leftLines, rightLines);
+    // 不抛错、行号覆盖完整（del+add 粗略块）
+    expect(next[0].kind).toBe("eq");
+    expect(next[next.length - 1].left?.no).toBe(1601);
+    expect(rowsStats(next).deletions).toBe(1600);
   });
 });

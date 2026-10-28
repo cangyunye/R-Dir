@@ -494,6 +494,8 @@ export async function installTauriMock(page: Page): Promise<void> {
         same: false,
         coarse: false,
       }),
+      // v0.34 文本比较编辑保存（mock 环境不落盘）
+      write_text_file: () => {},
       // ---- v0.29.0 右键 VSCode / Git 打开（mock 环境一律未安装，仅验证菜单渲染） ----
       vscode_detected: () => false,
       open_vscode: () => {},

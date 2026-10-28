@@ -331,6 +331,19 @@ export const diffTextFiles = (left: string, right: string, encoding?: string) =>
 export const readTextFile = (path: string) =>
   invoke<import("./types").TextFileContent>("read_text_file", { path });
 
+/**
+ * v0.34 保存文本比较一侧的编辑：整份行数组写回原文件。
+ * 本地直写；SFTP 写临时文件后原名覆盖回传；HTTP 远端只读（后端拒绝）。
+ * eol 为该侧原行尾格式（lf/crlf/mixed/none）；encoding 为当前比较编码（WhatWG 标签）。
+ */
+export const writeTextSide = (path: string, lines: string[], eol: string, encoding?: string) =>
+  invoke<void>("write_text_file", {
+    path,
+    lines,
+    eol,
+    encoding: encoding && encoding !== "utf-8" ? encoding : null,
+  });
+
 /** 读取单个路径的元信息（「属性」统计当前目录用） */
 export const statEntry = (path: string) =>
   invoke<FileEntry>("stat_entry", { path });
