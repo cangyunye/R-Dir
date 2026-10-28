@@ -11,8 +11,10 @@ import {
   Link2,
   Pencil,
   RefreshCw,
+  Scissors,
   Search,
   Terminal,
+  TextSelect,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -120,6 +122,9 @@ export function Toolbar({
   const timerRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const crumbsRef = useRef<HTMLDivElement>(null);
+  /** v0.34 编辑态右键菜单：打开时的选区快照 + 「焦点被菜单移走」挂起标记 */
+  const selRef = useRef<[number, number]>([0, 0]);
+  const menuOpeningRef = useRef(false);
 
   useEffect(() => setDraft(path), [path]);
 
@@ -186,6 +191,22 @@ export function Toolbar({
       }, 120);
     },
     [cwd, isSftpConnected],
+  );
+
+  /** v0.34 编辑态右键菜单的统一落地：按变换函数生成新草稿（触发补全），
+   *  焦点与光标回到输入框。菜单项点击时输入框已失焦，选区用打开时的快照。 */
+  const editSel = useCallback(
+    (fn: (draft: string, sel: [number, number]) => [string, number]) => {
+      const [next, caret] = fn(draft, selRef.current);
+      setDraft(next);
+      setPathError(null);
+      fetchCompletions(next);
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.setSelectionRange(caret, caret);
+      });
+    },
+    [draft, fetchCompletions],
   );
 
   const closeCompletion = useCallback(() => {
@@ -346,56 +367,114 @@ export function Toolbar({
         }}
       >
         <div className="relative">
-          <Input
-            ref={inputRef}
-            id="rdir-addr-input"
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              setPathError(null);
-              fetchCompletions(e.target.value);
-            }}
-            onBlur={() => {
-              // 延迟关闭，允许点击下拉项；若 150ms 内已重新聚焦（Esc 后立刻点铅笔/Ctrl+L），
-              // 说明用户又进入了编辑，放弃本次收起
-              window.setTimeout(() => {
-                if (document.activeElement === inputRef.current) return;
-                setDraft(path);
-                closeCompletion();
-                setEditing(false);
-              }, 150);
-            }}
-            onKeyDown={(e) => {
-              const total = completions.length + cmds.length;
-              if (e.key === "ArrowDown" && compOpen && total > 0) {
-                e.preventDefault();
-                setCompIndex((i) => Math.min(i + 1, total - 1));
-              } else if (e.key === "ArrowUp" && compOpen) {
-                e.preventDefault();
-                setCompIndex((i) => Math.max(i - 1, -1));
-              } else if (e.key === "Tab" && compOpen && total > 0) {
-                e.preventDefault();
-                const idx = compIndex >= 0 ? compIndex : 0;
-                if (idx < completions.length) {
-                  choose(completions[idx], false);
-                } else {
-                  const c = cmds[idx - completions.length];
-                  if (c) chooseCmd(c, false);
-                }
-              } else if (e.key === "Escape") {
-                closeCompletion();
-                setDraft(path);
-                setPathError(null);
-                setEditing(false);
+          {/* v0.34 编辑态右键统一应用内菜单（剪切/复制/粘贴/全选）：
+              此前输入框放行系统菜单，WebView2 上是经典浏览器格式，与全程序风格割裂 */}
+          <ContextMenu
+            onOpenChange={(open) => {
+              if (open) {
+                // 菜单打开会移走输入框焦点：快照选区供菜单项使用，并挂起
+                // onBlur 的「150ms 后退出编辑」重置（否则菜单还没点，输入框已收起）
+                const el = inputRef.current;
+                selRef.current = [el?.selectionStart ?? 0, el?.selectionEnd ?? 0];
+                menuOpeningRef.current = true;
+                window.setTimeout(() => {
+                  menuOpeningRef.current = false;
+                }, 800);
               }
             }}
-            className={cn(
-              "h-7 pr-12 text-xs",
-              pathError && "border-destructive focus-visible:ring-destructive/40",
-            )}
-            placeholder="输入路径回车跳转；输入命令回车在终端执行；Tab 补全"
-            spellCheck={false}
-          />
+          >
+            <ContextMenuTrigger asChild>
+              <Input
+                ref={inputRef}
+                id="rdir-addr-input"
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  setPathError(null);
+                  fetchCompletions(e.target.value);
+                }}
+                onBlur={() => {
+                  // 延迟关闭，允许点击下拉项；若 150ms 内已重新聚焦（Esc 后立刻点铅笔/Ctrl+L），
+                  // 说明用户又进入了编辑，放弃本次收起；右键菜单刚打开时也挂起（焦点被菜单移走）
+                  window.setTimeout(() => {
+                    if (document.activeElement === inputRef.current) return;
+                    if (menuOpeningRef.current) return;
+                    setDraft(path);
+                    closeCompletion();
+                    setEditing(false);
+                  }, 150);
+                }}
+                onKeyDown={(e) => {
+                  const total = completions.length + cmds.length;
+                  if (e.key === "ArrowDown" && compOpen && total > 0) {
+                    e.preventDefault();
+                    setCompIndex((i) => Math.min(i + 1, total - 1));
+                  } else if (e.key === "ArrowUp" && compOpen) {
+                    e.preventDefault();
+                    setCompIndex((i) => Math.max(i - 1, -1));
+                  } else if (e.key === "Tab" && compOpen && total > 0) {
+                    e.preventDefault();
+                    const idx = compIndex >= 0 ? compIndex : 0;
+                    if (idx < completions.length) {
+                      choose(completions[idx], false);
+                    } else {
+                      const c = cmds[idx - completions.length];
+                      if (c) chooseCmd(c, false);
+                    }
+                  } else if (e.key === "Escape") {
+                    closeCompletion();
+                    setDraft(path);
+                    setPathError(null);
+                    setEditing(false);
+                  }
+                }}
+                className={cn(
+                  "h-7 pr-12 text-xs",
+                  pathError && "border-destructive focus-visible:ring-destructive/40",
+                )}
+                placeholder="输入路径回车跳转；输入命令回车在终端执行；Tab 补全"
+                spellCheck={false}
+              />
+            </ContextMenuTrigger>
+            <ContextMenuContent className="min-w-36">
+              <ContextMenuItem
+                onSelect={() => editSel((d, [s, e]) => [d.slice(0, s) + d.slice(e), s])}
+                disabled={selRef.current[0] === selRef.current[1]}
+              >
+                <Scissors className="mr-2 h-4 w-4" /> 剪切
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => {
+                  const [s, e] = selRef.current;
+                  if (e > s) navigator.clipboard?.writeText(draft.slice(s, e)).catch(() => {});
+                }}
+                disabled={selRef.current[0] === selRef.current[1]}
+              >
+                <Clipboard className="mr-2 h-4 w-4" /> 复制
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => {
+                  void navigator.clipboard
+                    ?.readText()
+                    .then((t) => {
+                      if (t) editSel((d, [s, e]) => [d.slice(0, s) + t + d.slice(e), s + t.length]);
+                    })
+                    .catch(() => {});
+                }}
+              >
+                <ClipboardPaste className="mr-2 h-4 w-4" /> 粘贴
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onSelect={() => {
+                  inputRef.current?.focus();
+                  inputRef.current?.setSelectionRange(0, draft.length);
+                }}
+              >
+                <TextSelect className="mr-2 h-4 w-4" /> 全选
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
           <Button
             type="button"
             variant="ghost"

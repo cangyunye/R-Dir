@@ -174,7 +174,8 @@ function HScrollBar({
  * 文件模式与 patch 解析模式共用本渲染器。
  * v0.29.1：打开即最大化；左右双栏恒定等宽同屏。
  * v0.34：双横向滚动条（联动 + 方向键/滚轮横移，长行不再把对侧挤出屏幕）；
- * 双侧可编辑保存（vimdiff 式）；中轴差异块可一键局部 patch（左→右 / 右→左）。
+ * 双侧可编辑保存（vimdiff 式）；中轴差异块可一键局部 patch（左→右 / 右→左）；
+ * 中轴可拖动调整两栏宽度；「采用左侧/右侧」整份传输（覆盖对侧后统一保存）。
  */
 export function TextDiffDialog({
   source,
@@ -216,6 +217,9 @@ export function TextDiffDialog({
   // ---- v0.34 双横向滚动条：左右两条绑定同一偏移 ----
   const [hScroll, setHScrollState] = useState(0);
   const [contentW, setContentW] = useState<{ left: number; right: number }>({ left: 0, right: 0 });
+  // ---- v0.34 中轴可拖动：左栏占内容区宽度的比例（0.2–0.8，默认对半） ----
+  const [axisRatio, setAxisRatio] = useState(0.5);
+  const axisDragRef = useRef<{ startX: number; startRatio: number; total: number } | null>(null);
   // ---- v0.34 行内编辑 ----
   const [editing, setEditing] = useState<{ rowIdx: number; side: Side } | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -391,8 +395,13 @@ export function TextDiffDialog({
     return () => ro.disconnect();
   }, [loading]);
 
-  const paneW = Math.max(0, (viewport.w - GUTTER * 2) / 2);
-  const maxScroll = Math.max(0, Math.ceil(Math.max(contentW.left, contentW.right) - paneW));
+  const contentW_px = Math.max(0, viewport.w - GUTTER * 2);
+  /** v0.34 中轴可拖动：左右栏宽度随比例伸缩（fr 网格，rows/表头/滚动条共用一套列宽） */
+  const axisPct = Math.round(Math.min(0.8, Math.max(0.2, axisRatio)) * 100);
+  const gridCols = `48px ${axisPct}fr 48px ${100 - axisPct}fr`;
+  const leftPaneW = Math.round(contentW_px * (axisPct / 100));
+  const rightPaneW = Math.max(0, contentW_px - leftPaneW);
+  const maxScroll = Math.max(0, Math.ceil(Math.max(contentW.left - leftPaneW, contentW.right - rightPaneW)));
   const hMaxRef = useRef(0);
   hMaxRef.current = maxScroll;
   const hScrollRef = useRef(0);
@@ -610,6 +619,32 @@ export function TextDiffDialog({
       },
     );
     applyEdit(dst, lines, newRows);
+  };
+
+  /** 整侧采用（差异文件左右传输的整份版）：把 src 侧全部行覆盖到 dst 侧，
+   *  覆盖后两侧行序一致（统计归零），dst 记为未保存，可「保存修改」写盘或「放弃修改」反悔。
+   *  逐块挑选用中轴补丁按钮；这里一次到位。 */
+  const adoptSide = (src: Side) => {
+    const dst: Side = src === "left" ? "right" : "left";
+    if (!filesMode || !sections[0] || saving) return;
+    if (!sideEditable(dst) || lossySides[src] || lossySides[dst]) return;
+    setConfirmReq({
+      title: src === "left" ? "以左侧为准覆盖右侧？" : "以右侧为准覆盖左侧？",
+      message: `${dst === "right" ? "右侧" : "左侧"}的当前内容（含已应用的补丁与未保存编辑）将被整份替换为${
+        src === "left" ? "左" : "右"
+      }侧内容；替换后需点「保存修改」才写入文件，也可「放弃修改」反悔。`,
+      confirmLabel: dst === "right" ? "覆盖右侧" : "覆盖左侧",
+      danger: true,
+    });
+    confirmActionRef.current = () => {
+      const lines = [...sideLines[src]];
+      const newRows: DiffRow[] = lines.map((t, i) => ({
+        kind: "eq",
+        left: { no: i + 1, text: t },
+        right: { no: i + 1, text: t },
+      }));
+      applyEdit(dst, lines, newRows);
+    };
   };
 
   const saveAll = async () => {
@@ -902,17 +937,20 @@ export function TextDiffDialog({
           </div>
         )}
 
-        {/* 内容：纵向原生滚动；横向由双栏各自的裁剪 + 联动滚动条承担 */}
+        {/* 内容：纵向原生滚动；横向由双栏各自的裁剪 + 联动滚动条承担。
+            中轴可拖动（v0.34）：拖动条覆盖滚动区全高（z-10，低于中轴补丁按钮的 z-20，
+            悬停差异块时按钮仍可点）。 */}
         <div className="flex min-h-0 flex-1 flex-col">
-          <div
-            ref={scrollRef}
-            className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
-            onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-            onWheel={(e) => {
-              // 触摸板横向滑动 / Shift+滚轮（浏览器转成 deltaX）：与滚动条同一偏移
-              if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) setHScroll(hScrollRef.current + e.deltaX);
-            }}
-          >
+          <div className="relative min-h-0 flex-1">
+            <div
+              ref={scrollRef}
+              className="h-full min-h-0 overflow-y-auto overflow-x-hidden"
+              onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+              onWheel={(e) => {
+                // 触摸板横向滑动 / Shift+滚轮（浏览器转成 deltaX）：与滚动条同一偏移
+                if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) setHScroll(hScrollRef.current + e.deltaX);
+              }}
+            >
             {loading ? (
               <div className="flex h-32 items-center justify-center gap-2 text-xs text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -930,8 +968,8 @@ export function TextDiffDialog({
                     return (
                       <div
                         key={key}
-                        className="grid w-full grid-cols-[48px_1fr_48px_1fr] items-center border-y bg-muted/40 px-0 font-medium text-muted-foreground"
-                        style={{ height: ROW_H }}
+                        className="grid w-full items-center border-y bg-muted/40 px-0 font-medium text-muted-foreground"
+                        style={{ gridTemplateColumns: gridCols, height: ROW_H }}
                       >
                         <span className="col-span-2 truncate px-2 font-mono" title={s.leftName}>
                           {s.leftName}
@@ -959,8 +997,8 @@ export function TextDiffDialog({
                   return (
                     <div
                       key={key}
-                      className="group/row relative grid w-full grid-cols-[48px_1fr_48px_1fr] items-start"
-                      style={{ height: ROW_H }}
+                      className="group/row relative grid w-full items-start"
+                      style={{ gridTemplateColumns: gridCols, height: ROW_H }}
                     >
                       {renderGutter(row, it.rowIdx, "left")}
                       {renderCell(row, it.rowIdx, "left")}
@@ -998,24 +1036,62 @@ export function TextDiffDialog({
               </div>
             )}
           </div>
-          {/* 双横向滚动条：同一偏移，拖/点任意一条两侧同步 */}
-          {maxScroll > 0 && !loading && !error && (
-            <div className="grid shrink-0 grid-cols-[48px_1fr_48px_1fr] items-center border-t bg-muted/20 py-1 text-xs">
-              <div />
-              <HScrollBar side="left" value={hScroll} max={maxScroll} onChange={setHScroll} />
-              <div className="flex items-center justify-center">
-                <GripVertical className="h-3 w-3 text-muted-foreground/40" />
+          {/* 中轴拖动条：按住左右拖调整两栏宽度（0.2–0.8 倍内容区宽） */}
+          {!loading && !error && (
+            <div
+              data-axis-drag=""
+              title="拖动调整左右栏宽度"
+              className="group/axis absolute inset-y-0 z-10 w-2 -translate-x-1/2 cursor-col-resize"
+              style={{ left: GUTTER + leftPaneW }}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                e.currentTarget.setPointerCapture(e.pointerId);
+                axisDragRef.current = { startX: e.clientX, startRatio: axisRatio, total: contentW_px };
+              }}
+              onPointerMove={(e) => {
+                const d = axisDragRef.current;
+                if (!d || d.total <= 0) return;
+                // clientX 与渲染宽度同处布局像素系，位移按占比直接换算
+                setAxisRatio(Math.min(0.8, Math.max(0.2, d.startRatio + (e.clientX - d.startX) / d.total)));
+              }}
+              onPointerUp={(e) => {
+                axisDragRef.current = null;
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              }}
+              onPointerCancel={(e) => {
+                axisDragRef.current = null;
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              }}
+            >
+              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border/40 transition-colors group-hover/axis:bg-primary/50" />
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-sm border bg-background p-px opacity-0 shadow-sm transition-opacity group-hover/axis:opacity-100">
+                <GripVertical className="h-3 w-3 text-muted-foreground" />
               </div>
-              <HScrollBar side="right" value={hScroll} max={maxScroll} onChange={setHScroll} />
             </div>
           )}
+        </div>
+        {/* 双横向滚动条：同一偏移，拖/点任意一条两侧同步 */}
+        {maxScroll > 0 && !loading && !error && (
+          <div
+            className="grid shrink-0 items-center border-t bg-muted/20 py-1 text-xs"
+            style={{ gridTemplateColumns: gridCols }}
+          >
+            <div />
+            <HScrollBar side="left" value={hScroll} max={maxScroll} onChange={setHScroll} />
+            <div className="flex items-center justify-center">
+              <GripVertical className="h-3 w-3 text-muted-foreground/40" />
+            </div>
+            <HScrollBar side="right" value={hScroll} max={maxScroll} onChange={setHScroll} />
+          </div>
+        )}
         </div>
 
         {/* 底部 */}
         <div className="flex shrink-0 items-center gap-2 border-t px-4 py-2">
           <span className="text-[11px] text-muted-foreground">
             行高亮：红 = 左侧（删除），绿 = 右侧（新增）
-            {filesMode && " · 悬停行号可编辑/插入/删除，双击单元格编辑，中轴按钮可按块应用一侧"}
+            {filesMode &&
+              " · 悬停行号可编辑/插入/删除，双击单元格编辑，中轴按钮可按块应用一侧，或用「采用左侧/右侧」整份传输；拖中轴调整两栏宽度"}
           </span>
           {saveNote && (
             <span
@@ -1029,6 +1105,26 @@ export function TextDiffDialog({
           )}
           {filesMode && (
             <>
+              <span className="flex shrink-0 items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={loading || lossy || !sideEditable("right")}
+                  onClick={() => adoptSide("left")}
+                  title="整份以左侧为准覆盖右侧（右侧记为未保存，可继续编辑或保存）"
+                >
+                  采用左侧
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={loading || lossy || !sideEditable("left")}
+                  onClick={() => adoptSide("right")}
+                  title="整份以右侧为准覆盖左侧（左侧记为未保存，可继续编辑或保存）"
+                >
+                  采用右侧
+                </Button>
+              </span>
               <Button
                 size="sm"
                 variant="outline"

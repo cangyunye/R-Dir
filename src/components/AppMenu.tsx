@@ -27,6 +27,7 @@ import {
   RefreshCw,
   RotateCcw,
   RotateCw,
+  Save,
   Scissors,
   Search,
   Settings,
@@ -35,6 +36,7 @@ import {
   Trash2,
   Undo2,
   Upload,
+  Wrench,
   Redo2,
   X,
 } from "lucide-react";
@@ -54,6 +56,8 @@ export interface AppMenuActions {
   // 文件
   onNewTab: () => void;
   onCloseTab: () => void;
+  /** v0.34 主动保存会话布局（快捷键 saveSession） */
+  onSaveSession: () => void;
   onQuit: () => void;
   onNewFolder: () => void;
   onNewFile: () => void;
@@ -195,14 +199,48 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * 右上角常驻区：设置 / 主题切换 / ⋮ 应用菜单。
+ * 右上角常驻区：工具 ▾ / 设置 / 主题切换 / ⋮ 应用菜单。
  * v0.20 撤掉常驻菜单条后的完整功能入口：命令面板覆盖高频动作（Ctrl+K），
  * ⋮ 菜单平铺保留全部功能用于发现（原 MenuBar 七个下拉摊平为分组列表）。
+ * v0.34「工具」分组（收藏夹 / 差异比对 / 同步比对 / Git Diff / SFTP 服务器与主密钥）
+ * 从 ⋮ 长菜单底部提出来，独立成右上角扳手下拉钮——不用再滚到菜单最下方找。
  */
 export function AppMenu(actions: AppMenuActions) {
   const [open, setOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   return (
     <div className="flex items-center gap-0.5" data-keymap-version={actions.keymapVersion ?? 0}>
+      <DropdownMenu open={toolsOpen} onOpenChange={setToolsOpen} modal={false}>
+        <DropdownMenuTrigger asChild>
+          <button
+            title="工具"
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Wrench className="h-4 w-4" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[240px]">
+          {actions.onOpenFavorites && (
+            <Item icon={<Star />} label="收藏夹…" shortcutId="openFavorites" onClick={actions.onOpenFavorites} />
+          )}
+          <Item icon={<GitCompare />} label="差异比对…" onClick={actions.onOpenDiff} />
+          <Item
+            icon={actions.syncDiffActive ? <Link2Off /> : <Link2 />}
+            label={actions.syncDiffActive ? "断开同步比对" : "同步比对"}
+            onClick={actions.onOpenSyncDiff}
+          />
+          <Item icon={<FileDiff />} label="打开 Git Diff…" onClick={actions.onOpenGitDiff} />
+          <DropdownMenuSeparator />
+          <Item icon={<Plus />} label="添加 SFTP 服务器…" onClick={actions.onAddSftp} />
+          {actions.onExportServers && (
+            <Item icon={<Download />} label="导出服务器列表…" onClick={actions.onExportServers} />
+          )}
+          {actions.onImportServers && (
+            <Item icon={<Upload />} label="导入服务器列表…" onClick={actions.onImportServers} />
+          )}
+          <Item icon={<KeyRound />} label="SFTP 主密钥…" onClick={actions.onMasterKey} />
+        </DropdownMenuContent>
+      </DropdownMenu>
       <button
         onClick={actions.onOpenSettings}
         title="设置（快捷键录制）"
@@ -245,6 +283,7 @@ export function AppMenu(actions: AppMenuActions) {
           <Item icon={<FolderPlus />} label="新建文件夹" shortcutId="newFolder" onClick={actions.onNewFolder} />
           <Item icon={<FilePlus2 />} label="新建文件" shortcutId="newFile" onClick={actions.onNewFile} />
           <DropdownMenuSeparator />
+          <Item icon={<Save />} label="保存会话" shortcutId="saveSession" onClick={actions.onSaveSession} />
           <Item icon={<X />} label="退出" onClick={actions.onQuit} />
 
           <GroupLabel>编辑</GroupLabel>
@@ -301,25 +340,7 @@ export function AppMenu(actions: AppMenuActions) {
           />
           <Item icon={<ArrowLeftRight />} label="聚焦下一窗格" shortcutId="focusNextPane" onClick={actions.onFocusNextPane} />
 
-          <GroupLabel>工具</GroupLabel>
-          {actions.onOpenFavorites && (
-            <Item icon={<Star />} label="收藏夹…" shortcutId="openFavorites" onClick={actions.onOpenFavorites} />
-          )}
-          <Item icon={<GitCompare />} label="差异比对…" onClick={actions.onOpenDiff} />
-          <Item
-            icon={actions.syncDiffActive ? <Link2Off /> : <Link2 />}
-            label={actions.syncDiffActive ? "断开同步比对" : "同步比对"}
-            onClick={actions.onOpenSyncDiff}
-          />
-          <Item icon={<FileDiff />} label="打开 Git Diff…" onClick={actions.onOpenGitDiff} />
-          <Item icon={<Plus />} label="添加 SFTP 服务器…" onClick={actions.onAddSftp} />
-          {actions.onExportServers && (
-            <Item icon={<Download />} label="导出服务器列表…" onClick={actions.onExportServers} />
-          )}
-          {actions.onImportServers && (
-            <Item icon={<Upload />} label="导入服务器列表…" onClick={actions.onImportServers} />
-          )}
-          <Item icon={<KeyRound />} label="SFTP 主密钥…" onClick={actions.onMasterKey} />
+          {/* 「工具」分组已提出到右上角扳手下拉钮（v0.34），不再在此重复 */}
 
           <GroupLabel>帮助</GroupLabel>
           <DropdownMenuLabel className="px-2 font-normal text-muted-foreground">

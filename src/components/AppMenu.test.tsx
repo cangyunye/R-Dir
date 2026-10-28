@@ -12,6 +12,7 @@ function makeActions(overrides: Partial<AppMenuActions> = {}): AppMenuActions {
   return {
     onNewTab: () => {},
     onCloseTab: () => {},
+    onSaveSession: () => {},
     onQuit: () => {},
     onNewFolder: () => {},
     onNewFile: () => {},
@@ -73,6 +74,13 @@ function openMenu() {
   fireEvent.keyDown(trigger, { key: "Enter" });
 }
 
+/** 打开右上角「工具」下拉（v0.34 从 ⋮ 菜单提出的分组：收藏夹 / 比对 / Git Diff / SFTP） */
+function openTools() {
+  const trigger = screen.getByTitle("工具");
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: "Enter" });
+}
+
 describe("AppMenu 菜单项点击", () => {
   beforeEach(() => cleanup());
 
@@ -95,6 +103,18 @@ describe("AppMenu 菜单项点击", () => {
     expect(onQuit).toHaveBeenCalledWith();
   });
 
+  it("「保存会话」触发 onSaveSession 并显示键位提示", () => {
+    const onSaveSession = vi.fn();
+    render(<AppMenu {...makeActions({ onSaveSession })} />);
+    openMenu();
+    // 可访问名含键位提示后缀（"保存会话 Ctrl+S"），按前缀匹配
+    const item = screen.getByRole("menuitem", { name: /^保存会话/ });
+    fireEvent.click(item);
+    expect(onSaveSession).toHaveBeenCalledTimes(1);
+    // 键位提示跟随 keymap 当前平台绑定（jsdom 走 Windows 分支：saveSession = Ctrl+S）
+    expect(item.textContent).toContain("Ctrl+S");
+  });
+
   it("开关型菜单项（显示隐藏文件）正常触发", () => {
     const onToggleHidden = vi.fn();
     render(<AppMenu {...makeActions({ onToggleHidden })} />);
@@ -103,10 +123,10 @@ describe("AppMenu 菜单项点击", () => {
     expect(onToggleHidden).toHaveBeenCalledTimes(1);
   });
 
-  it("传入 onOpenFavorites 时工具组显示「收藏夹…」并显示键位提示", () => {
+  it("传入 onOpenFavorites 时「工具」下拉显示「收藏夹…」并显示键位提示", () => {
     const onOpenFavorites = vi.fn();
     render(<AppMenu {...makeActions({ onOpenFavorites })} />);
-    openMenu();
+    openTools();
     const item = screen.getByRole("menuitem", { name: /^收藏夹…/ });
     fireEvent.click(item);
     expect(onOpenFavorites).toHaveBeenCalledTimes(1);
@@ -114,9 +134,27 @@ describe("AppMenu 菜单项点击", () => {
     expect(item.textContent).toContain("Ctrl+B");
   });
 
-  it("未传 onOpenFavorites 时不显示收藏夹菜单项", () => {
+  it("未传 onOpenFavorites 时「工具」下拉不显示收藏夹菜单项", () => {
     render(<AppMenu {...makeActions()} />);
-    openMenu();
+    openTools();
     expect(screen.queryByRole("menuitem", { name: /^收藏夹…/ })).toBeNull();
+  });
+
+  it("「工具」下拉承载原工具组全部条目，⋮ 菜单不再重复", () => {
+    const onMasterKey = vi.fn();
+    const onExportServers = vi.fn();
+    render(<AppMenu {...makeActions({ onMasterKey, onExportServers, onOpenFavorites: () => {} })} />);
+    openTools();
+    for (const name of ["差异比对…", "同步比对", "打开 Git Diff…", "添加 SFTP 服务器…", "导出服务器列表…", "SFTP 主密钥…"]) {
+      expect(screen.getByRole("menuitem", { name })).toBeTruthy();
+    }
+    fireEvent.click(screen.getByRole("menuitem", { name: "SFTP 主密钥…" }));
+    expect(onMasterKey).toHaveBeenCalledTimes(1);
+    // ⋮ 应用菜单：工具组已移出，文件 / 帮助等分组照旧
+    openMenu();
+    expect(screen.queryByRole("menuitem", { name: "SFTP 主密钥…" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /^收藏夹…/ })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: /^新建标签页/ })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /^设置/ })).toBeTruthy();
   });
 });

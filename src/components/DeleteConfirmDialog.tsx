@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Loader2, Trash2 } from "lucide-react";
 import type { FileEntry, SizeProgress, SizeStat } from "@/lib/types";
 import { computeSize, cancelSize } from "@/lib/api";
+import { needsRemoteStat, statEntriesWalk } from "@/lib/remote-size";
 import { formatSize } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { FileIcon } from "@/components/FileIcon";
@@ -52,25 +53,38 @@ export function DeleteConfirmDialog({
     const id = `size-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     let disposed = false;
     let un: (() => void) | undefined;
-    void listen<SizeProgress>("size-progress", (e) => {
-      if (disposed || e.payload.id !== id) return;
-      setStat({
-        bytes: e.payload.bytes,
-        files: e.payload.files,
-        dirs: e.payload.dirs,
-        computing: !e.payload.done,
+    // 远程条目（sftp:// 等）：后端 sizestat 读不到虚拟路径，走前端 listDir 遍历
+    if (needsRemoteStat(entries)) {
+      void statEntriesWalk(
+        entries,
+        (s) => {
+          if (!disposed) setStat({ ...s, computing: true });
+        },
+        () => disposed,
+      ).then((s) => {
+        if (!disposed) setStat({ ...s, computing: false });
       });
-    }).then((u) => {
-      un = u;
-    });
-    void computeSize(id, entries.map((e) => e.path))
-      .then((s) => {
-        if (disposed) return;
-        setStat({ bytes: s.bytes, files: s.files, dirs: s.dirs, computing: false });
-      })
-      .catch(() => {
-        if (!disposed) setStat((p) => ({ ...p, computing: false }));
+    } else {
+      void listen<SizeProgress>("size-progress", (e) => {
+        if (disposed || e.payload.id !== id) return;
+        setStat({
+          bytes: e.payload.bytes,
+          files: e.payload.files,
+          dirs: e.payload.dirs,
+          computing: !e.payload.done,
+        });
+      }).then((u) => {
+        un = u;
       });
+      void computeSize(id, entries.map((e) => e.path))
+        .then((s) => {
+          if (disposed) return;
+          setStat({ bytes: s.bytes, files: s.files, dirs: s.dirs, computing: false });
+        })
+        .catch(() => {
+          if (!disposed) setStat((p) => ({ ...p, computing: false }));
+        });
+    }
     const onKey = (e: KeyboardEvent) => actionRef.current(e);
     window.addEventListener("keydown", onKey, { capture: true });
     return () => {

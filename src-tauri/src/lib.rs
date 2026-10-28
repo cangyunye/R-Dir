@@ -599,6 +599,23 @@ async fn session_load(app: tauri::AppHandle) -> Result<Option<SessionLayout>, St
     .map_err(|e| e.to_string())?
 }
 
+/// 清除已保存会话（「不保存并退出」用）。前端自动保存会持续更新 session.json，
+/// 不保存退出必须显式删除，下次启动才回到默认布局而非最近自动保存的状态。
+#[tauri::command]
+async fn session_clear(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = session_path(&app)?;
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            // 本来就没有会话（首次启动后直接退出）视作已清除
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("清除会话失败：{e}")),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ==================== 标签收藏夹（独立于会话保存的标签级快照） ====================
 
 /// 标签收藏项。tab 为前端 SessionTab 快照原样 JSON 透传（zoom/viewMode/iconSize
@@ -1757,6 +1774,12 @@ fn drag_out_files(paths: Vec<String>) -> Result<u32, String> {
     drag_out::start(paths)
 }
 
+/// 修饰键实时状态（v0.34：Windows 原生拖放投放时判定 Alt=移动）。
+#[tauri::command]
+fn query_modifiers() -> drag_out::Modifiers {
+    drag_out::modifiers()
+}
+
 /// 重命名条目，返回新路径。
 #[tauri::command]
 async fn rename_entry(path: String, new_name: String) -> Result<String, String> {
@@ -1933,6 +1956,7 @@ pub fn run() {
         clipboard_read_files,
         clipboard_clear_files,
         drag_out_files,
+        query_modifiers,
         rename_entry,
         delete_entries,
         permanent_delete_entries,
@@ -2010,6 +2034,7 @@ pub fn run() {
         // 会话保存 / 恢复
         session_save,
         session_load,
+        session_clear,
         // 标签收藏夹
         favorites_load,
         favorites_save,

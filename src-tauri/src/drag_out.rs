@@ -178,3 +178,32 @@ pub fn start(paths: Vec<String>) -> Result<u32, String> {
 pub fn start(_paths: Vec<String>) -> Result<u32, String> {
     Err("原生拖出仅支持 Windows（macOS 走 HTML5 拖出）".into())
 }
+
+/// 修饰键实时状态（v0.34）。Windows 上启用 Tauri 原生拖放后（tauri.windows.conf.json
+/// `dragDropEnabled: true`）拖放事件不再携带按键状态——应用内拖出「按住 Alt = 移动」
+/// 改为投放时查询。GetAsyncKeyState 可在任意线程调用。
+#[derive(serde::Serialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Modifiers {
+    pub alt: bool,
+    pub ctrl: bool,
+    pub shift: bool,
+}
+
+#[cfg(windows)]
+pub fn modifiers() -> Modifiers {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_SHIFT,
+    };
+    let down = |vk: u16| unsafe { (GetAsyncKeyState(vk as i32) as u16 & 0x8000) != 0 };
+    Modifiers {
+        alt: down(VK_MENU.0),
+        ctrl: down(VK_CONTROL.0),
+        shift: down(VK_SHIFT.0),
+    }
+}
+
+/// 非 Windows：HTML5 拖放事件自带 altKey，这里恒返回未按下。
+#[cfg(not(windows))]
+pub fn modifiers() -> Modifiers {
+    Modifiers::default()
+}

@@ -311,6 +311,32 @@ describe("openFavorites 收藏夹快捷键", () => {
   });
 });
 
+// ---- 保存会话布局（saveSession）----
+describe("saveSession 保存会话快捷键", () => {
+  it("已注册且默认绑定 mod+s", () => {
+    const a = ACTIONS.find((x) => x.id === "saveSession");
+    expect(a).toBeTruthy();
+    expect(a!.win).toBe("mod+s");
+    expect(a!.mac).toBe("mod+s");
+    expect(bindingOf(a!)).toBe("mod+s");
+  });
+
+  it("mod+s 与现有全部动作无冲突", () => {
+    expect(findConflicts("mod+s", "saveSession")).toEqual([]);
+  });
+
+  it("findAction 能从 Ctrl+S 事件解析到 saveSession", () => {
+    const e = {
+      key: "s",
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+    } as KeyboardEvent;
+    expect(findAction(keyEventString(e))?.id).toBe("saveSession");
+  });
+});
+
 // ---- formatBinding ----
 describe("formatBinding", () => {
   it("mod+shift+n → Ctrl+Shift+N", () => {

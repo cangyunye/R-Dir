@@ -6,9 +6,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName, getVersion } from "@tauri-apps/api/app";
 import {
   open as openDialog,
-  confirm as confirmDialog,
-  ask as askDialog,
-  message as messageDialog,
 } from "@tauri-apps/plugin-dialog";
 import {
   listOpeners as apiListOpeners,
@@ -87,6 +84,7 @@ import {
   listDir,
   moveEntries,
   moveEntriesPlan,
+  queryModifiers,
   scanConflicts,
   scanDirDuplicates,
   type DirDuplicate,
@@ -110,6 +108,7 @@ import {
   sftpUpload,
   sessionLoad,
   sessionSave,
+  sessionClear,
   favoritesLoad,
   favoritesSave,
   allowExit,
@@ -141,8 +140,10 @@ import {
   swapPanes,
 } from "@/lib/paneTree";
 import { ACTIONS, bindingOf, findAction, isMac, keyEventString } from "@/lib/keymap";
-import { getNativeDragOut, probeNativeDragOut, setNativeDragOut, getHtml5Drag, setHtml5Drag } from "@/lib/native-drag";
+import { serializeSession, serializeSessionTab, sessionSignature } from "@/lib/session";
+import { getNativeDragOut, probeNativeDragOut, setNativeDragOut, getHtml5Drag, setHtml5Drag, canNativeDragOut } from "@/lib/native-drag";
 import { dropTargetAt, type DropTarget } from "@/lib/drop-target";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { fetchLatestRelease, REPO_URL } from "@/lib/update";
 import {
   loadCustomQuick,
@@ -213,55 +214,8 @@ import {
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
 const VIRTUAL_TAG_RE = /^tags:\/\/([a-z0-9_-]+)$/;
 
-/** 从 sftp://user@host:port/path 提取 authority（= 服务器 id） */
-function sftpAuthorityId(path: string): string | null {
-  const rest = path.startsWith("sftp://") ? path.slice("sftp://".length) : path;
-  const authority = rest.split("/")[0] ?? "";
-  if (!authority || !authority.includes("@")) return null;
-  return authority;
-}
-
-/** 序列化当前标签页布局为会话快照（SFTP 只存 serverId，不含任何凭据） */
 /** 非活动标签 keep-alive 上限（LRU）：超出后最久未激活的标签树卸载，退回「激活时重建」 */
 const KEEP_ALIVE_MAX = 8;
-
-/** 单个标签页 → SessionTab 快照（退出会话保存与标签收藏共用；
- *  SFTP 只存 serverId，不含任何凭据） */
-function serializeSessionTab(t: TabState): SessionTab {
-  return {
-    id: t.id,
-    title: t.title,
-    customTitle: t.customTitle,
-    activePane: t.activePane,
-    root: t.root,
-    panes: Object.values(t.panes).map((p) => {
-      if (p.path.startsWith("sftp://")) {
-        return {
-          id: p.id,
-          path: p.path,
-          kind: "sftp",
-          serverId: sftpAuthorityId(p.path) ?? undefined,
-          zoom: p.zoom,
-          viewMode: p.viewMode,
-          iconSize: p.iconSize,
-        };
-      }
-      if (p.tagId)
-        return { id: p.id, path: p.path, kind: "tag", tagId: p.tagId, zoom: p.zoom, viewMode: p.viewMode, iconSize: p.iconSize };
-      return { id: p.id, path: p.path, kind: "local", zoom: p.zoom, viewMode: p.viewMode, iconSize: p.iconSize };
-    }),
-  };
-}
-
-function serializeSession(tabs: TabState[], activeId: number): SessionLayout {
-  const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === activeId));
-  return {
-    version: 1,
-    savedAt: new Date().toISOString(),
-    activeTab: activeIdx,
-    tabs: tabs.map(serializeSessionTab),
-  };
-}
 
 /** 恢复时把旧 paneId 重映射到本次新分配的 id（分屏树原样保留比例/方向） */
 function remapNode(node: PaneNode, remap: Map<number, number>): PaneNode {
@@ -807,6 +761,8 @@ useEffect(() => {
   /**
    * 检查更新：GitHub Releases API 比对最新 tag。
    * silent=true 用于启动后台静默检查（仅在有新版时提示，不弹对话框）。
+   * v0.34 弹窗统一应用内风格：发现新版走 appConfirm 卡片，已是最新走中央轻提示
+   * （此前 plugin-dialog 的系统消息框是经典样式，与应用内自绘弹窗割裂）。
    */
   const checkUpdate = useCallback(
     async (silent = false) => {
@@ -814,25 +770,25 @@ useEffect(() => {
       try {
         const info = await fetchLatestRelease(current);
         if (!info) {
-          if (!silent) {
-            await messageDialog(`当前已是最新版本 v${current}`, { title: "检查更新" });
-          }
+          if (!silent) flashClipboardTip(`当前已是最新版本 v${current}`, 2000);
           return;
         }
         if (silent) {
           showError(`发现新版本 v${info.version}（帮助 → 检查更新）`);
           return;
         }
-        const go = await askDialog(
-          `发现新版本 v${info.version}（当前 v${current}），是否前往下载？`,
-          { title: "检查更新", kind: "info" },
-        );
+        const go = await appConfirm({
+          title: `发现新版本 v${info.version}`,
+          message: `当前版本 v${current}。是否前往下载页获取新版本？`,
+          confirmLabel: "前往下载",
+          cancelLabel: "以后再说",
+        });
         if (go) void openUrl(info.url);
       } catch (e) {
         if (!silent) showError(`检查更新失败：${e}`);
       }
     },
-    [appVersion, showError],
+    [appVersion, showError, appConfirm, flashClipboardTip],
   );
 
   // 启动后静默检查一次更新（3s 延迟，避免与首屏加载抢网络）
@@ -1031,11 +987,17 @@ useEffect(() => {
     [openers, refreshOpeners, showError],
   );
 
-  /** 设置面板：删除某个自定义打开方式 */
+  /** 设置面板：删除某个自定义打开方式（应用内确认框；关联该扩展名的条目随之失效） */
   const handleRemoveCustomOpener = useCallback(
     async (id: string) => {
       const o = openers.find((x) => x.id === id);
-      if (!(await confirmDialog(`删除打开方式「${o?.name ?? id}」？`))) return;
+      const ok = await appConfirm({
+        title: "删除打开方式",
+        message: `确定删除「${o?.name ?? id}」？`,
+        confirmLabel: "删除",
+        danger: true,
+      });
+      if (!ok) return;
       try {
         await apiRemoveCustomOpener(id);
         refreshOpeners();
@@ -1043,7 +1005,7 @@ useEffect(() => {
         showError(`删除打开方式失败：${e}`);
       }
     },
-    [openers, refreshOpeners, showError],
+    [openers, refreshOpeners, showError, appConfirm],
   );
 
   /** 设置面板：覆盖设置某打开方式的关联扩展名 */
@@ -1487,20 +1449,62 @@ useEffect(() => {
     });
   }, [activePane, patchPane]);
 
+  /** 最近一次写盘的会话内容签名（sessionSignature）：自动保存脏检查用 */
+  const lastSessionSigRef = useRef<string | null>(null);
+  /** 退出流程置位后停用自动保存：避免「不保存并退出」清除会话后定时器又写回去 */
+  const sessionAutosaveOffRef = useRef(false);
+
+  /** 立即保存会话布局：Ctrl+S 主动保存 / 退出前保存 / 崩溃恢复自动保存共用。
+   *  成功后记录签名供脏检查；silent 模式（自动保存）不弹提示不打扰。 */
+  const saveSessionNow = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const sig = sessionSignature(tabsRef.current, activeIdRef.current);
+      try {
+        await sessionSave(serializeSession(tabsRef.current, activeIdRef.current));
+        lastSessionSigRef.current = sig;
+        if (!opts?.silent) flashClipboardTip("会话已保存");
+      } catch (e) {
+        if (!opts?.silent) showError(`保存会话失败：${e}`);
+      }
+    },
+    [flashClipboardTip, showError],
+  );
+
+  // 崩溃恢复自动保存（v0.34）：每 15s 比对会话签名，布局有变化才写盘
+  // （session.json 原子写，见后端 session_save）。窗口隐藏（最小化/切走）时立即补存，
+  // 意外中断（崩溃 / 断电 / 强杀）后下次启动可恢复最近布局，不再依赖「保存并退出」。
+  useEffect(() => {
+    const saveIfChanged = () => {
+      if (sessionAutosaveOffRef.current) return;
+      const sig = sessionSignature(tabsRef.current, activeIdRef.current);
+      if (sig === lastSessionSigRef.current) return;
+      void saveSessionNow({ silent: true });
+    };
+    const timer = window.setInterval(saveIfChanged, 15000);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") saveIfChanged();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [saveSessionNow]);
+
   /** 退出：保存当前会话布局后退出进程（exit 兜底，避免 destroy 链路挂起）。
    *  v0.23 先 allow_exit 放行 Rust 侧 ExitRequested 拦截，否则 prevent_exit 会拦住 exit(0) */
   const handleExitWithSave = useCallback(async () => {
-    try {
-      await sessionSave(serializeSession(tabsRef.current, activeIdRef.current));
-    } catch {
-      /* 保存失败不阻塞退出 */
-    }
+    sessionAutosaveOffRef.current = true;
+    await saveSessionNow({ silent: true });
     await allowExit().catch(() => {});
     await exit(0).catch(() => getCurrentWindow().destroy());
-  }, []);
+  }, [saveSessionNow]);
 
-  /** 退出：不保存，直接退出进程 */
+  /** 退出：不保存，清除已保存会话后退出进程。
+   *  自动保存会持续更新 session.json，必须显式清除，下次启动才回到默认布局。 */
   const handleExitNoSave = useCallback(async () => {
+    sessionAutosaveOffRef.current = true;
+    await sessionClear().catch(() => {});
     await allowExit().catch(() => {});
     await exit(0).catch(() => getCurrentWindow().destroy());
   }, []);
@@ -1699,20 +1703,16 @@ useEffect(() => {
     [favorites, persistFavorites],
   );
 
-  /** 删除收藏（应用内确认框确认一次；标签页本身不受影响） */
+  /** 删除收藏：一键直删不再二次确认（收藏是可随手重建的轻量对象，确认框徒增点击），
+   *  删除后中央轻提示反馈。标签页本身不受影响。 */
   const removeFavorite = useCallback(
-    async (id: string) => {
+    (id: string) => {
       const fav = favorites.find((f) => f.id === id);
       if (!fav) return;
-      const ok = await appConfirm({
-        title: "删除收藏",
-        message: `确定删除收藏「${fav.name}」？标签页本身不受影响。`,
-        confirmLabel: "删除",
-      });
-      if (!ok) return;
       persistFavorites(favorites.filter((f) => f.id !== id));
+      flashClipboardTip(`已删除收藏「${fav.name}」`, 1400);
     },
-    [appConfirm, favorites, persistFavorites],
+    [favorites, persistFavorites, flashClipboardTip],
   );
 
   /** 用当前活动标签的布局覆盖收藏快照（名称与创建时间不变） */
@@ -3174,8 +3174,105 @@ useEffect(() => {
   // x-rdir-dnd 标记，用 nativeDragOut 会话标记区分"自己发起的拖拽"与"资源管理器拖入"。
   // Windows 原生拖出能力探测：drag_out_files([]) 空列表 no-op。jsdom / e2e-mock（未桩化
   // 命令 throw）/ 纯浏览器预览都会失败 → 回落 HTML5 拖出；真实 Windows 应用成功 → dragstart 走原生
+  //
+  // v0.34 Windows 原生拖放接管（tauri.windows.conf.json `dragDropEnabled: true`）：
+  // Tauri 替换 WebView2 的拖放处理器后，HTML5 drag 事件在 Windows 上不再触发——
+  // 应用内原生拖出（CF_HDROP）回落本窗口与资源管理器拖入都改从 Tauri 拖放事件收口：
+  // - nativeDragOut 会话存在 = 应用内拖拽：高亮/投放与 HTML5 链路同一套（Alt=移动经
+  //   query_modifiers 在投放时查询，事件本身不带按键状态）；
+  // - 否则 = 资源管理器拖入（此前只拦住 WebView2 导航、不做任何事）：带真实路径，
+  //   投放到窗格/目录 = 复制进去（固定复制：外部来源不做移动，避免误删源文件）。
+  // macOS / e2e / 纯浏览器：探测失败不订阅，HTML5 链路照旧（WKWebView 拖入无真实路径，仍不导入）。
+  const dropActionsRef = useRef({ doDropPaths, doDropIntoDir });
+  dropActionsRef.current = { doDropPaths, doDropIntoDir };
   useEffect(() => {
-    void probeNativeDragOut();
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void probeNativeDragOut().then(async () => {
+      if (disposed || !canNativeDragOut()) return;
+      let lastKey = "";
+      let lastAlt = false;
+      let altPollAt = 0;
+      const clear = () => {
+        setDragOver(null);
+        setDragDir(null);
+        lastKey = "";
+      };
+      /** Tauri 位置是窗口物理像素；elementFromPoint 要的是布局像素（÷ DPR ÷ 根 CSS zoom） */
+      const toClient = (p: { x: number; y: number }) => {
+        const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+        const s = (window.devicePixelRatio || 1) * zoom;
+        return { x: p.x / s, y: p.y / s };
+      };
+      const highlight = (srcPaneId: number | null, t: DropTarget | null, op: "copy" | "move") => {
+        const key = `${t?.paneId ?? ""}|${t?.dirPath ?? ""}|${op}`;
+        if (key === lastKey) return;
+        lastKey = key;
+        setDragOver(t && t.paneId !== srcPaneId ? { targetPaneId: t.paneId, op } : null);
+        setDragDir(t?.dirPath ? { paneId: t.paneId, path: t.dirPath } : null);
+      };
+      const drop = (source: number, paths: string[], op: "copy" | "move", x: number, y: number) => {
+        if (paths.length === 0) return;
+        const t = dropTargetAt(x, y, paths);
+        if (!t) return;
+        const { doDropPaths: dp, doDropIntoDir: dd } = dropActionsRef.current;
+        if (t.dirPath) void dd(source, paths, op, t.dirPath, t.paneId);
+        else if (t.paneId !== source) void dp(source, paths, op, t.paneId);
+      };
+      try {
+        unlisten = await getCurrentWebview().onDragDropEvent((ev) => {
+          const p = ev.payload;
+          if (p.type === "leave") {
+            clear();
+            return;
+          }
+          const c = toClient(p.position);
+          const native = getNativeDragOut();
+          if (native) {
+            if (p.type === "drop") {
+              void queryModifiers()
+                .catch(() => ({ alt: lastAlt }))
+                .then((m) => {
+                  clear();
+                  drop(native.sourcePaneId, native.paths, m.alt ? "move" : "copy", c.x, c.y);
+                  setNativeDragOut(null);
+                });
+              return;
+            }
+            // over 高频：Alt 状态 120ms 轮询一次驱动提示条文案，投放时再精确查一次
+            const now = Date.now();
+            if (now - altPollAt > 120) {
+              altPollAt = now;
+              void queryModifiers()
+                .then((m) => {
+                  lastAlt = m.alt;
+                })
+                .catch(() => {});
+            }
+            highlight(
+              native.sourcePaneId,
+              dropTargetAt(c.x, c.y, native.paths),
+              lastAlt ? "move" : "copy",
+            );
+            return;
+          }
+          // 资源管理器拖入
+          if (p.type === "drop") {
+            clear();
+            drop(-1, p.paths, "copy", c.x, c.y);
+            return;
+          }
+          highlight(null, dropTargetAt(c.x, c.y, []), "copy");
+        });
+        if (disposed) unlisten();
+      } catch (e) {
+        console.warn("[rdir] 原生拖放事件订阅失败（回落 HTML5）：", e);
+      }
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   /** v0.30 拖窗格头到另一窗格：互换两者在布局树中的位置。
@@ -4074,6 +4171,8 @@ useEffect(() => {
     commandPalette: () => setPaletteOpen((v) => !v),
     // 标签收藏夹面板（mod+b，与命令面板同款开关语义）
     openFavorites: () => setFavoritesOpen((v) => !v),
+    // v0.34 主动保存会话布局（mod+s，与退出保存 / 自动保存共用同一入口）
+    saveSession: () => void saveSessionNow(),
     // v0.23 「退出」统一走确认对话框（与窗口 X 一致），不再静默保存退出
     quit: () => setCloseDialogOpen(true),
     openDiff: () => openDiff(),
@@ -4103,7 +4202,7 @@ useEffect(() => {
       { id: "toggleExtensions", label: "显示 / 隐藏文件扩展名", group: "视图 / 全局" },
       { id: "checkUpdate", label: "检查更新…", group: "帮助" },
       { id: "openRepo", label: "打开 GitHub 仓库", group: "帮助" },
-      { id: "quit", label: "保存会话并退出", group: "文件" },
+      { id: "quit", label: "退出（询问是否保存会话）", group: "文件" },
     ],
     // keymapVer：bindingOf 读模块级自定义键位（非响应式），键位变化后重算
     [syncLink, keymapVer],
@@ -4408,6 +4507,7 @@ useEffect(() => {
             onOpenFavorites={() => setFavoritesOpen(true)}
             onNewTab={() => newTab()}
             onCloseTab={() => activeTab && closeTab(activeTab.id)}
+            onSaveSession={() => void saveSessionNow()}
             onQuit={() => setCloseDialogOpen(true)}
             onNewFolder={() => activePane && void createAndRename(activePane.id, "dir")}
             onNewFile={() => activePane && void createAndRename(activePane.id, "file")}
@@ -4782,7 +4882,7 @@ useEffect(() => {
         onOpenFavorite={openFavorite}
         onAddFavorite={() => activeTab && addFavorite(activeTab.id)}
         onRenameFavorite={renameFavorite}
-        onRemoveFavorite={(id) => void removeFavorite(id)}
+        onRemoveFavorite={removeFavorite}
         onUpdateFavorite={updateFavorite}
       />
 
@@ -4991,7 +5091,8 @@ useEffect(() => {
           <div className="w-[360px] max-w-[92vw] rounded-lg border bg-background p-4 shadow-xl">
             <div className="text-sm font-semibold">保存会话布局？</div>
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              下次启动可恢复当前标签页、分屏布局与各窗格路径。
+              会话已随使用自动保存，程序意外中断后下次启动会恢复最近布局。
+              「保存并退出」立即保存当前布局；「不保存」将清除已保存会话，下次启动回到默认页。
               <br />
               SFTP 远程目录需验证主密钥后恢复，否则显示占位。
             </p>

@@ -897,6 +897,12 @@ export function IconGrid({
                                 });
                               return;
                             }
+                            if (canNativeDragOut()) {
+                              // v0.34 Windows 原生拖放接管后 HTML5 投放不再到达页面：虚拟路径
+                              // （sftp/http）保留自研鼠标拖拽（按下即是拖拽候选），只需阻止 HTML5 拖拽
+                              e.preventDefault();
+                              return;
+                            }
                             // macOS / 非 Tauri 环境：HTML5 拖出（WKWebView 把 file:// uri-list 映射为 NSURL）
                             // 选中文本为空时拖当前项，否则拖选中项
                             const uriList = paths

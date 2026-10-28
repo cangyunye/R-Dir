@@ -106,6 +106,18 @@ export const clipboardClearFiles = () =>
 export const dragOutFiles = (paths: string[]) =>
   invoke<number>("drag_out_files", { paths });
 
+/**
+ * 修饰键实时状态（v0.34）：Windows 启用 Tauri 原生拖放后事件不带按键状态，
+ * 应用内拖出「按住 Alt = 移动」在投放时查询。非 Windows 恒为未按下。
+ */
+export interface ModifierState {
+  alt: boolean;
+  ctrl: boolean;
+  shift: boolean;
+}
+
+export const queryModifiers = () => invoke<ModifierState>("query_modifiers");
+
 export const renameEntry = (path: string, newName: string) =>
   invoke<string>("rename_entry", { path, newName });
 
@@ -274,6 +286,10 @@ export const sessionSave = (layout: SessionLayout) =>
 
 export const sessionLoad = () =>
   invoke<SessionLayout | null>("session_load");
+
+/** 清除已保存会话（v0.34「不保存并退出」用；文件不存在时静默成功） */
+export const sessionClear = () =>
+  invoke<void>("session_clear");
 
 // ---- 标签收藏夹（favorites.json，独立于退出时的整体会话保存） ----
 export const favoritesLoad = async (): Promise<TabFavorite[] | null> => {

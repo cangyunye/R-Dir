@@ -125,13 +125,13 @@ test.describe("31B. 标签视图重命名文件夹本体", () => {
 });
 
 test.describe("31C. 服务器清单导出/导入", () => {
-  test("⋮ → 导出服务器列表：save 对话框给路径后调用后端导出", async ({ page }) => {
+  test("工具 ▾ → 导出服务器列表：save 对话框给路径后调用后端导出", async ({ page }) => {
     // 桩在 invoke 时读 window：直接在活动页注入（addInitScript 在 goto 后不再执行）
     await page.evaluate(() => {
       (window as unknown as { __rdirDialogSave?: string | null }).__rdirDialogSave =
         "/mock/home/servers-backup.json";
     });
-    await page.getByTitle("应用菜单").click();
+    await page.getByTitle("工具").click();
     await page.getByRole("menuitem", { name: "导出服务器列表…" }).click();
 
     const mock = await page.evaluate(
@@ -147,12 +147,12 @@ test.describe("31C. 服务器清单导出/导入", () => {
     await expect(toast(page)).toContainText("已导出");
   });
 
-  test("⋮ → 导入服务器列表：无密文直接导入并提示跳过统计", async ({ page }) => {
+  test("工具 ▾ → 导入服务器列表：无密文直接导入并提示跳过统计", async ({ page }) => {
     await page.evaluate(() => {
       (window as unknown as { __rdirDialogOpen?: string | null }).__rdirDialogOpen =
         "/mock/home/servers.json";
     });
-    await page.getByTitle("应用菜单").click();
+    await page.getByTitle("工具").click();
     await page.getByRole("menuitem", { name: "导入服务器列表…" }).click();
 
     const mock = await page.evaluate(
@@ -176,7 +176,7 @@ test.describe("31C. 服务器清单导出/导入", () => {
       w.__rdirDialogOpen = "/mock/home/servers-enc.json";
       w.__rdirImportNeedsKey = true;
     });
-    await page.getByTitle("应用菜单").click();
+    await page.getByTitle("工具").click();
     await page.getByRole("menuitem", { name: "导入服务器列表…" }).click();
 
     // NEED_MASTER_KEY → 弹主密码框（描述说明为什么需要）
@@ -206,7 +206,7 @@ test.describe("31C. 服务器清单导出/导入", () => {
       w.__rdirDialogSave = "/mock/home/servers-backup.json";
       w.__rdirExportNeedsKey = true;
     });
-    await page.getByTitle("应用菜单").click();
+    await page.getByTitle("工具").click();
     await page.getByRole("menuitem", { name: "导出服务器列表…" }).click();
 
     // NEED_MASTER_KEY → 主密码框（本机未设过主密钥 → 标题为「设置主密码」）

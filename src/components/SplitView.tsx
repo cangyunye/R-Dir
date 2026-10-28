@@ -1,4 +1,4 @@
-﻿import { Fragment, memo, useEffect, useState } from "react";
+﻿import { Fragment, memo, useEffect, useRef, useState } from "react";
 import {
   ArrowLeftRight,
   ChevronRight,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { hasScheme } from "@/lib/cmdline";
+import { canNativeDragOut } from "@/lib/native-drag";
 import { splitPathSegments } from "@/lib/path-segments";
 import type { IconSize, PaneNode, PaneState, SplitDir, ViewMode } from "@/lib/types";
 import type { IconPositionMap } from "@/lib/api";
@@ -201,6 +202,15 @@ function PaneHead({
   const [segmentTarget, setSegmentTarget] = useState<string | null>(null);
   const [termOpen, setTermOpen] = useState(false);
   const seg = splitPathSegments(segmentTarget ?? path).at(-1);
+  /** v0.34 Windows 原生拖放接管（dragDropEnabled）后 HTML5 dragover/drop 不再触发：
+   *  窗格头交换改由指针事件驱动，并合成同一套 DragEvent 链交给 App 的 window 监听
+   *  （dragstart → dragover → drop → dragend，与 e2e 用例同构），分流/高亮/交换逻辑零改动。
+   *  仅在原生拖出可用（真实 Windows 应用）时启用；macOS / 浏览器照旧走真 HTML5 拖拽。 */
+  const swapPtr = useRef<{ x: number; y: number; active: boolean; dt: DataTransfer } | null>(null);
+  /** 合成 dragstart 派发期间置位：onDragStart 据此放行（真 HTML5 拖拽才拦） */
+  const synthRef = useRef(false);
+  const dragEv = (type: string, dt: DataTransfer, x?: number, y?: number) =>
+    new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y });
   return (
     <ContextMenu
       onOpenChange={(open) => {
@@ -220,9 +230,53 @@ function PaneHead({
               e.preventDefault();
               return;
             }
+            // Windows 原生模式：阻止真 HTML5 拖拽（投放事件到不了页面），交给下方指针链；
+            // 指针链合成的 dragstart 走到这里时 synthRef 已置位，照常写入标记数据
+            if (canNativeDragOut() && !synthRef.current) {
+              e.preventDefault();
+              return;
+            }
             e.dataTransfer.setData(PANE_SWAP_DND_TYPE, String(paneId));
             e.dataTransfer.setData("text/plain", path);
             e.dataTransfer.effectAllowed = "move";
+          }}
+          onPointerDown={(e) => {
+            if (!canNativeDragOut() || e.button !== 0) return;
+            if ((e.target as HTMLElement).closest("[data-view-switch],[data-panehead-close]")) return;
+            // 此时不捕获指针：捕获会把 click 目标改成窗格头，面包屑分段点击失效；
+            // 超过拖动阈值真正开始拖拽时再捕获
+            swapPtr.current = { x: e.clientX, y: e.clientY, active: false, dt: new DataTransfer() };
+          }}
+          onPointerMove={(e) => {
+            const s = swapPtr.current;
+            if (!s) return;
+            if (!s.active) {
+              if (Math.hypot(e.clientX - s.x, e.clientY - s.y) < 5) return;
+              s.active = true;
+              e.currentTarget.setPointerCapture(e.pointerId);
+              synthRef.current = true;
+              try {
+                e.currentTarget.dispatchEvent(dragEv("dragstart", s.dt));
+              } finally {
+                synthRef.current = false;
+              }
+            }
+            window.dispatchEvent(dragEv("dragover", s.dt, e.clientX, e.clientY));
+          }}
+          onPointerUp={(e) => {
+            const s = swapPtr.current;
+            swapPtr.current = null;
+            if (!s?.active) return;
+            e.currentTarget.releasePointerCapture(e.pointerId);
+            window.dispatchEvent(dragEv("drop", s.dt, e.clientX, e.clientY));
+            e.currentTarget.dispatchEvent(dragEv("dragend", s.dt, e.clientX, e.clientY));
+          }}
+          onPointerCancel={(e) => {
+            const s = swapPtr.current;
+            swapPtr.current = null;
+            if (!s?.active) return;
+            e.currentTarget.releasePointerCapture(e.pointerId);
+            e.currentTarget.dispatchEvent(dragEv("dragend", s.dt));
           }}
           className={cn(
             "flex h-7 shrink-0 items-center gap-0.5 border-b bg-sidebar px-1.5 text-xs select-none",

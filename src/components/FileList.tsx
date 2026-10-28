@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -66,6 +66,12 @@ import { isMac } from "@/lib/keymap";
 import { isSftpPath, isHttpPath } from "@/lib/sftp-path";
 import { dragOutFiles } from "@/lib/api";
 import { canNativeDragOut, setNativeDragOut, setHtml5Drag } from "@/lib/native-drag";
+import {
+  getNameColumnWidth,
+  resetNameColumnWidth,
+  setNameColumnWidth,
+  subscribeNameColumnWidth,
+} from "@/lib/columns";
 import { QuickJump, type QuickJumpRow } from "@/components/QuickJump";
 
 /** 快速定位结果窗口大小。 */
@@ -354,7 +360,74 @@ export function FileList({
     const el = e.currentTarget;
     setScrollTop(el.scrollTop);
     setViewportH(el.clientHeight);
+    hideNameTip();
   };
+
+  // ---- v0.34 名称列宽：拖表头分隔线调整，全局共享（所有窗格一致）、localStorage 持久化 ----
+  const nameColW = useSyncExternalStore(subscribeNameColumnWidth, getNameColumnWidth);
+  /** 名称列固定像素宽时，最右「权限」列改吃剩余空间，行不再留右侧空白 */
+  const gridCols =
+    nameColW > 0
+      ? `${nameColW}px 84px 132px 80px minmax(88px, 1fr)`
+      : COLUMNS.map((c) => c.width).join(" ");
+  const colResizeRef = useRef<{ startX: number; startW: number } | null>(null);
+  const startColResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const headEl = e.currentTarget.parentElement;
+    const startW =
+      nameColW > 0 ? nameColW : (headEl?.getBoundingClientRect().width ?? 0);
+    colResizeRef.current = { startX: e.clientX, startW };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const moveColResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = colResizeRef.current;
+    if (!d) return;
+    // clientX 与渲染宽度同处 CSS 缩放后的布局像素系，位移可直接相加
+    setNameColumnWidth(d.startW + e.clientX - d.startX);
+  };
+  const endColResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!colResizeRef.current) return;
+    colResizeRef.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  // ---- v0.34 名称悬停 1 秒的完整名提示：仅当文本被截断时出现，
+  //      行内浮层覆盖显示（替代原生 title 的长延迟与全局乱飘） ----
+  const [nameTip, setNameTip] = useState<{
+    text: string;
+    x: number;
+    y: number;
+    h: number;
+  } | null>(null);
+  const nameTipTimer = useRef<number | null>(null);
+  const hideNameTip = () => {
+    if (nameTipTimer.current) {
+      window.clearTimeout(nameTipTimer.current);
+      nameTipTimer.current = null;
+    }
+    setNameTip(null);
+  };
+  const nameTipHandlers = (text: string) => ({
+    onMouseEnter: (e: React.MouseEvent<HTMLSpanElement>) => {
+      const el = e.currentTarget;
+      if (nameTipTimer.current) window.clearTimeout(nameTipTimer.current);
+      nameTipTimer.current = window.setTimeout(() => {
+        nameTipTimer.current = null;
+        if (el.scrollWidth <= el.clientWidth) return; // 未截断不提示
+        const r = el.getBoundingClientRect();
+        setNameTip({ text, x: r.left, y: r.top, h: r.height });
+      }, 1000);
+    },
+    onMouseLeave: hideNameTip,
+    onMouseDown: hideNameTip,
+  });
+  useEffect(
+    () => () => {
+      if (nameTipTimer.current) window.clearTimeout(nameTipTimer.current);
+    },
+    [],
+  );
   // 挂载后用 ResizeObserver 校正实际高度
   useEffect(() => {
     const el = listScrollRef.current;
@@ -826,6 +899,16 @@ export function FileList({
           {Math.round(zoomTip * 100)}%
         </div>
       )}
+      {/* v0.34 名称完整名提示：悬停 1 秒且文本被截断时，覆盖显示在名称行上 */}
+      {nameTip && (
+        <div
+          data-name-tip=""
+          className="pointer-events-none fixed z-[60] flex max-w-[min(60vw,520px)] items-center whitespace-pre-wrap break-all rounded-md border bg-popover px-2 py-1 text-xs shadow-elevate"
+          style={{ left: nameTip.x, top: nameTip.y - 2 }}
+        >
+          {nameTip.text}
+        </div>
+      )}
       {/* 空白处右键：新建 / 粘贴 / 全选等（行上右键由行内菜单接管） */}
       <ContextMenu
         modal={false}
@@ -838,19 +921,37 @@ export function FileList({
             {/* 表头 */}
       <div
         className="grid shrink-0 items-center border-b bg-background text-xs font-medium text-muted-foreground select-none"
-        style={{ gridTemplateColumns: COLUMNS.map((c) => c.width).join(" ") }}
+        style={{ gridTemplateColumns: gridCols }}
       >
         {COLUMNS.map((col) => (
           <button
             key={col.label}
             className={cn(
-              "flex h-7 items-center gap-1 px-2 text-left hover:bg-muted",
+              "relative flex h-7 items-center gap-1 px-2 text-left hover:bg-muted",
               col.key === null && "cursor-default hover:bg-transparent",
             )}
             onClick={() => col.key && onSort(col.key)}
             disabled={col.key === null}
           >
             {col.label}
+            {/* v0.34 名称列宽拖动分隔线：按住左右拖调宽，双击恢复自动。
+                pointer 事件 stopPropagation 避免触发排序/表头悬停样式误闪 */}
+            {col.key === "name" && (
+              <div
+                data-name-col-resize=""
+                title="拖动调整名称列宽（双击恢复自动）"
+                className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize after:absolute after:inset-y-1 after:right-0 after:w-px after:bg-border hover:after:w-0.5 hover:after:bg-primary/50"
+                onPointerDown={startColResize}
+                onPointerMove={moveColResize}
+                onPointerUp={endColResize}
+                onPointerCancel={endColResize}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  resetNameColumnWidth();
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
             {/* v0.18 同步比对链接标识（v0.21.1 加大：彩色徽章替代小点） */}
             {col.key === "name" && linkBadge && (
               <span
@@ -954,10 +1055,19 @@ export function FileList({
                         });
                       return;
                     }
-                    console.info(
-                      "[rdir] drag-out: HTML5 文本拖拽",
-                      canNativeDragOut() ? "（sftp/http 路径）" : "（原生拖出不可用）",
-                    );
+                    if (canNativeDragOut()) {
+                      // v0.34 Windows 原生拖放接管（dragDropEnabled）后，wry 替换了 WebView2 的
+                      // IDropTarget，HTML5 文本拖拽的投放不再到达页面：sftp/http 等虚拟路径
+                      // 无法 CF_HDROP 原生拖出，改走自研鼠标拖拽（窗格级投放 + 提示条，Alt=移动）。
+                      // 阻止 HTML5 拖拽；从未选中行拖动时 startRowPress 开的是框选，这里升级为拖拽候选
+                      console.info("[rdir] drag-out: 虚拟路径走应用内鼠标拖拽", paths.length, "项");
+                      e.preventDefault();
+                      rubberRef.current = null;
+                      setRubber(null);
+                      dragCandRef.current = { x: e.clientX, y: e.clientY, paths };
+                      return;
+                    }
+                    console.info("[rdir] drag-out: HTML5 文本拖拽（原生拖出不可用）");
                     // macOS / 非 Tauri 环境：HTML5 拖出（WKWebView 把 file:// uri-list 映射为 NSURL）
                     // 选中文本为空时拖当前项，否则拖选中项
                     const uriList = paths.map(p => 'file://' + p.replace(/\\/g, '/')).join('\r\n');
@@ -1033,7 +1143,7 @@ export function FileList({
                       "bg-primary/15 ring-2 ring-inset ring-primary",
                   )}
                   style={{
-                    gridTemplateColumns: COLUMNS.map((c) => c.width).join(" "),
+                    gridTemplateColumns: gridCols,
                     height: ROW_HEIGHT,
                   }}
                 >
@@ -1062,7 +1172,9 @@ export function FileList({
                           entry.is_symlink && "italic",
                           selected && "font-semibold",
                         )}
-                        title={entry.name}
+                        {...nameTipHandlers(
+                          showExtensions ? entry.name : hideExtension(entry.name, entry.is_dir),
+                        )}
                       >
                         {showExtensions ? entry.name : hideExtension(entry.name, entry.is_dir)}
                       </span>
