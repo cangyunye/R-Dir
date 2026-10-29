@@ -2,8 +2,6 @@
 //! 覆盖：列目录 / stat / 打开下载 / 新建 / 删除 / 重命名 / 上传。
 //! 报文格式：u32 length(不含自身) + u8 type + 内容，请求均带 u32 request-id。
 
-
-
 // 请求类型（v3）
 pub const INIT: u8 = 1;
 pub const OPEN: u8 = 3;
@@ -235,3 +233,242 @@ pub fn parse_version(data: &[u8]) -> Result<u32, String> {
 pub const DEFAULT_DIR_PERM: u32 = 0o40755;
 pub const DEFAULT_FILE_PERM: u32 = 0o100644;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---------- Buf / Reader roundtrip ----------
+
+    #[test]
+    fn u32_u64_str_roundtrip() {
+        let mut b = Buf::new();
+        b.u32(7);
+        b.u64(u64::MAX);
+        b.str("");
+        b.str("路径/测试🎉");
+
+        let mut r = Reader::new(&b.data);
+        assert_eq!(r.u32().unwrap(), 7);
+        assert_eq!(r.u64().unwrap(), u64::MAX);
+        assert_eq!(r.str().unwrap(), "");
+        assert_eq!(r.str().unwrap(), "路径/测试🎉");
+        assert_eq!(r.remaining(), 0);
+    }
+
+    #[test]
+    fn finalize_prefixes_length_excluding_self() {
+        let mut b = Buf::new();
+        b.u32(1);
+        let framed = b.finalize();
+        assert_eq!(framed.len(), 8);
+        assert_eq!(u32::from_be_bytes(framed[..4].try_into().unwrap()), 4);
+        assert_eq!(&framed[4..], &[0, 0, 0, 1]);
+    }
+
+    // ---------- 截断 / 坏包：必须 Err 不 panic ----------
+
+    #[test]
+    fn reader_truncated_returns_err() {
+        let mut b = Buf::new();
+        b.u32(1);
+        b.u64(2);
+        let full = b.data.clone();
+        for cut in 0..full.len() {
+            let mut r = Reader::new(&full[..cut]);
+            let ok = r.u32().is_ok() && r.u64().is_ok();
+            assert!(!ok, "截断到 {cut} 字节不应同时读出 u32+u64");
+        }
+
+        let mut b2 = Buf::new();
+        b2.str("abc");
+        let full2 = b2.data.clone();
+        // 长度字段未完整或数据不足的每个截断点都要 Err
+        for cut in 0..full2.len() - 1 {
+            let mut r = Reader::new(&full2[..cut]);
+            assert!(r.str().is_err(), "str 截断到 {cut} 字节应报错");
+        }
+    }
+
+    #[test]
+    fn reader_str_length_overrun_is_err_not_panic() {
+        // 长度字段撒谎（声称 1MB，实际没有数据）
+        let mut b = Buf::new();
+        b.u32(1_048_576);
+        let mut r = Reader::new(&b.data);
+        assert!(r.str().is_err());
+    }
+
+    // ---------- parse_attrs ----------
+
+    #[test]
+    fn attrs_all_flags_roundtrip() {
+        let mut b = Buf::new();
+        b.u32(ATTR_SIZE | ATTR_UIDGID | ATTR_PERMISSIONS | ATTR_ACMODTIME);
+        b.u64(12345);
+        b.u32(1000); // uid
+        b.u32(1000); // gid
+        b.u32(0o040755); // drwxr-xr-x
+        b.u32(1700000000); // atime
+        b.u32(1700000001); // mtime
+
+        let mut r = Reader::new(&b.data);
+        let a = parse_attrs(&mut r).unwrap();
+        assert_eq!(a.size, 12345);
+        assert!(a.is_dir);
+        assert!(!a.is_symlink);
+        assert_eq!(a.permissions, 0o040755);
+        assert_eq!(a.mtime, Some(1700000001));
+        assert_eq!(r.remaining(), 0);
+    }
+
+    #[test]
+    fn attrs_no_flags_is_default() {
+        let mut b = Buf::new();
+        b.u32(0);
+        let mut r = Reader::new(&b.data);
+        let a = parse_attrs(&mut r).unwrap();
+        assert_eq!(a.size, 0);
+        assert!(!a.is_dir);
+        assert_eq!(a.mtime, None);
+    }
+
+    #[test]
+    fn attrs_symlink_permissions() {
+        let mut b = Buf::new();
+        b.u32(ATTR_PERMISSIONS);
+        b.u32(0o120777);
+        let mut r = Reader::new(&b.data);
+        let a = parse_attrs(&mut r).unwrap();
+        assert!(a.is_symlink);
+        assert!(!a.is_dir);
+        assert_eq!(a.perm_string(), "lrwxrwxrwx");
+    }
+
+    #[test]
+    fn attrs_truncated_is_err() {
+        // flags 声称有 SIZE 但缺 8 字节
+        let mut b = Buf::new();
+        b.u32(ATTR_SIZE);
+        b.u32(0);
+        let mut r = Reader::new(&b.data);
+        assert!(parse_attrs(&mut r).is_err());
+    }
+
+    #[test]
+    fn perm_string_variants() {
+        let a = SftpAttrs {
+            is_dir: true,
+            permissions: 0o040755,
+            ..Default::default()
+        };
+        assert_eq!(a.perm_string(), "drwxr-xr-x");
+        let f = SftpAttrs {
+            permissions: 0o100644,
+            ..Default::default()
+        };
+        assert_eq!(f.perm_string(), "-rw-r--r--");
+    }
+
+    // ---------- parse_name ----------
+
+    #[test]
+    fn name_roundtrip_two_entries() {
+        let mut b = Buf::new();
+        b.u32(2); // count
+        for name in ["a.txt", "目录"] {
+            b.str(name);
+            b.str(&format!("{name} longname"));
+            b.u32(ATTR_SIZE | ATTR_PERMISSIONS);
+            b.u64(42);
+            b.u32(0o100644);
+        }
+        let entries = parse_name(&b.data).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, "a.txt");
+        assert_eq!(entries[0].1.size, 42);
+        assert!(!entries[0].1.is_dir);
+        assert_eq!(entries[1].0, "目录");
+    }
+
+    #[test]
+    fn name_zero_count_empty_ok() {
+        let mut b = Buf::new();
+        b.u32(0);
+        let entries = parse_name(&b.data).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn name_truncated_is_err() {
+        // count 声称 1 但没有条目数据
+        let mut b = Buf::new();
+        b.u32(1);
+        assert!(parse_name(&b.data).is_err());
+        // 条目缺 attrs
+        let mut b2 = Buf::new();
+        b2.u32(1);
+        b2.str("x");
+        b2.str("");
+        assert!(parse_name(&b2.data).is_err());
+    }
+
+    // ---------- parse_status ----------
+
+    #[test]
+    fn status_zero_is_none() {
+        let mut b = Buf::new();
+        b.u32(0);
+        b.str("");
+        b.str("");
+        assert_eq!(parse_status(&b.data).unwrap(), None);
+    }
+
+    #[test]
+    fn status_error_with_and_without_message() {
+        let mut b = Buf::new();
+        b.u32(err::NO_SUCH_FILE);
+        b.str("");
+        b.str("en");
+        assert_eq!(parse_status(&b.data).unwrap(), Some("文件不存在".into()));
+
+        let mut b2 = Buf::new();
+        b2.u32(err::PERMISSION_DENIED);
+        b2.str("locked");
+        b2.str("en");
+        assert_eq!(
+            parse_status(&b2.data).unwrap(),
+            Some("权限不足（locked）".into())
+        );
+
+        // 未知错误码
+        let mut b3 = Buf::new();
+        b3.u32(9999);
+        b3.str("");
+        b3.str("");
+        assert_eq!(parse_status(&b3.data).unwrap(), Some("未知错误".into()));
+    }
+
+    #[test]
+    fn status_truncated_is_err() {
+        let mut b = Buf::new();
+        b.u32(err::EOF);
+        assert!(parse_status(&b.data).is_err()); // 缺 msg/lang
+    }
+
+    // ---------- parse_version ----------
+
+    #[test]
+    fn version_and_extensions() {
+        let mut b = Buf::new();
+        b.u32(3);
+        b.u32(1); // 扩展数
+        b.str("ext-name");
+        b.str("1");
+        assert_eq!(parse_version(&b.data).unwrap(), 3);
+
+        // 无扩展段（截断的 ext_count 容忍——unwrap_or(0)）
+        let mut b2 = Buf::new();
+        b2.u32(3);
+        assert_eq!(parse_version(&b2.data).unwrap(), 3);
+    }
+}

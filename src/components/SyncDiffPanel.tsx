@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import { basename, formatSize } from "@/lib/format";
 import type { DiffEntry } from "@/lib/types";
 import type { DiffMark, LinkAlignment, SyncLink } from "@/lib/sync-link";
+import { useModalLayer } from "@/hooks/useModalLayer";
+import { isTopModalLayer } from "@/lib/modal-stack";
 
 /** 行首色条与方位点标配色（仅左=琥珀 / 仅右=天蓝 / 不同=红） */
 export const MARK_COLORS = {
@@ -179,11 +181,14 @@ export function SyncDiffModal({
 }: SyncDiffModalProps) {
   const [onlyDiff, setOnlyDiff] = useState(false);
 
-  // Esc 关闭(捕获阶段,与 SettingsDialog 同模式)
+  // Esc 关闭(捕获阶段,与 SettingsDialog 同模式)。
+  // v0.34.1 弹层栈登记：更高层弹层（文本比对等）打开时让位，避免一次 Esc 关多层
+  useModalLayer("syncDiffModal", 85, open);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (!isTopModalLayer("syncDiffModal")) return;
         e.stopPropagation();
         onClose();
       }

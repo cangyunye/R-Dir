@@ -365,6 +365,8 @@ export function Sidebar({
           placeholder="显示名"
           data-testid="rename-quick-input"
           onKeyDown={(e) => {
+            // IME 组合中的回车是确认候选词，不作为提交（四处改名/新增输入框同）
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") submitRenameQuick();
             if (e.key === "Escape") setRenameQuickOpen(false);
           }}
@@ -417,6 +419,7 @@ export function Sidebar({
           onChange={(e) => setRenameTagInput(e.target.value)}
           placeholder="标签名称"
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") submitRenameTag();
             if (e.key === "Escape") setRenameTagOpen(false);
           }}
@@ -454,6 +457,7 @@ export function Sidebar({
           onChange={(e) => setRenameGroupInput(e.target.value)}
           placeholder="新分组名"
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") submitRenameGroup();
             if (e.key === "Escape") setRenameGroupOpen(false);
           }}
@@ -504,6 +508,7 @@ export function Sidebar({
           onChange={(e) => setAddTagName(e.target.value)}
           placeholder="标签名称"
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") submitAddTag();
             if (e.key === "Escape") setAddTagOpen(false);
           }}

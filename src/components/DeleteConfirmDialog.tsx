@@ -8,6 +8,8 @@ import { formatSize } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { FileIcon } from "@/components/FileIcon";
 import { RollingNumber } from "@/components/PropertiesDialog";
+import { useModalLayer } from "@/hooks/useModalLayer";
+import { isTopModalLayer } from "@/lib/modal-stack";
 
 /**
  * 删除确认弹窗：与右键「属性」同一套统计引擎（compute_size 递归统计），
@@ -31,10 +33,15 @@ export function DeleteConfirmDialog({
     computing: true,
   }));
 
+  // v0.34.1 弹层栈登记：更高层弹层（比对模态 z-85 等）打开时本框不抢 Esc/Enter，
+  // 避免确认框隐形地替用户按 Enter 执行删除
+  useModalLayer("deleteConfirm", 60, true);
+
   /** 弹窗级键位回调走 ref：onConfirm/onCancel 每次渲染都是新引用，
    *  作 effect 依赖会反复退订/重订，与真实按键派发撞车时按键被跳过 */
   const actionRef = useRef<(e: KeyboardEvent) => void>(() => {});
   actionRef.current = (e: KeyboardEvent) => {
+    if (!isTopModalLayer("deleteConfirm")) return;
     // capture 阶段拦截并阻断传播：否则同一按键继续冒泡到全局 keymap
     // （Enter=打开选中项、Esc=清空选中）——回车确认删除会顺带打开（刚删除的）选中文件，
     // 或全局「打开」抢先吞掉回车导致删除根本没执行。

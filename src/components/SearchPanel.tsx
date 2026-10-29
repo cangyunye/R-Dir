@@ -23,6 +23,8 @@ import {
 } from "@/components/ui/context-menu";
 import { FileIcon } from "@/components/FileIcon";
 import { RenameInput } from "@/components/RenameInput";
+import { useModalLayer } from "@/hooks/useModalLayer";
+import { isTopModalLayer } from "@/lib/modal-stack";
 import { findFiles, renameEntry, searchContent } from "@/lib/api";
 import { isSftpPath } from "@/lib/sftp-path";
 import type { FileEntry, FindEntry, SearchMatch } from "@/lib/types";
@@ -254,6 +256,8 @@ export function SearchPanel({
   /** 关闭搜索模态框（右上角 × / 遮罩点击 / Esc） */
   onClose: () => void;
 }) {
+  // v0.34.1 弹层栈登记（条件渲染，挂载即打开）
+  useModalLayer("searchPanel", 50, true);
   const [mode, setMode] = useState("name");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -421,6 +425,7 @@ export function SearchPanel({
   return (
     // v0.29.0 模态框化：原右侧 256px 停靠栏在递归检索时 rel_path 截断严重，
     // 改为居中浮层（640×70vh），点遮罩或 Esc 关闭；内容结构不变。
+    // v0.34.1 弹层栈登记：更高层弹层打开时 Esc 让位
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onMouseDown={(e) => {
@@ -433,7 +438,10 @@ export function SearchPanel({
         // Esc 关闭搜索框；行内重命名的 Esc 已被 RenameInput stopPropagation 挡住。
         // radix 右键/下拉菜单开着时不能关：radix 的 document 级监听晚于 React 根容器，
         // 这里看到 defaultPrevented 恒为 false，只能按「浮层是否在 DOM」判断。
+        // IME 组合中的 Esc 是取消候选词，不关面板。
         if (e.key !== "Escape" || e.defaultPrevented || renaming) return;
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+        if (!isTopModalLayer("searchPanel")) return;
         if (
           document.querySelector(
             '[data-slot="context-menu-content"],[data-slot="dropdown-menu-content"],[data-radix-popper-content-wrapper]',

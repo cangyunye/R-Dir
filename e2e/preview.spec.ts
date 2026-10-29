@@ -30,12 +30,26 @@ async function enablePreview(page: import("@playwright/test").Page) {
 }
 
 test.describe("预览栏（右侧拉门）", () => {
-  test("P1 默认关闭：空格提示去设置开启，点文件不出预览", async ({ page }) => {
+  test("P1 默认关闭：行内空格=切换选中（不再弹「未开启」错误），点文件不出预览", async ({ page }) => {
     await page.locator(`[data-path="${HOME}/photo.png"]`).click();
+    await page.keyboard.press("Space");
+    // v0.34.1 行为修正：预览未启用时行内空格只做选中切换并阻断冒泡——
+    // 此前同一按键既切选中又冒泡到全局 togglePreview 弹「预览栏未开启」错误提示
+    await expect(page.getByText("预览栏未开启：设置 → 预览 → 启用预览栏")).toHaveCount(0);
+    await expect(page.getByTestId("preview-drawer")).toHaveCount(0);
+    await expect(page.locator(`[data-path="${HOME}/photo.png"]`)).toHaveClass(/bg-selected/);
+    // 空格不作为首字母拉起 QuickJump 搜索浮层（与预览键冲突的回归点）
+    await expect(page.locator("[data-quickjump]")).toHaveCount(0);
+  });
+
+  test("P1b 焦点在列表空白处（无行聚焦）按空格：仍提示去设置开启预览栏", async ({ page }) => {
+    // 全局 togglePreview 的提示语义保留给「没有行内消费者」的场景（列表体聚焦）
+    const body = page.locator("[data-filelist-body]").first();
+    const box = (await body.boundingBox())!;
+    await body.click({ position: { x: 120, y: box.height - 14 } });
     await page.keyboard.press("Space");
     await expect(page.getByText("预览栏未开启：设置 → 预览 → 启用预览栏")).toBeVisible();
     await expect(page.getByTestId("preview-drawer")).toHaveCount(0);
-    // 空格不作为首字母拉起 QuickJump 搜索浮层（与预览键冲突的回归点）
     await expect(page.locator("[data-quickjump]")).toHaveCount(0);
   });
 

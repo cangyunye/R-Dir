@@ -16,20 +16,7 @@
  *   QuickJump 后续版本接入。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  CheckSquare,
-  Clipboard,
-  FolderPlus,
-  FilePlus2,
-  GitBranch,
-  LayoutGrid,
-  Link2,
-  RefreshCw,
-  Info,
-  Undo2,
-  Redo2,
-  ArrowLeftRight,
-} from "lucide-react";
+import { LayoutGrid } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FileEntry, IconSize, SortKey } from "@/lib/types";
 import { sortEntries } from "@/lib/entry-sort";
@@ -56,13 +43,12 @@ import { ThumbImage } from "@/components/ThumbImage";
 import { TagDots } from "@/components/TagView";
 import { type RenameState } from "@/components/FileList";
 import { RenameInput } from "@/components/RenameInput";
-import { EntryContextMenuContent, QuickToolsStrip, quickStripVisible } from "@/components/EntryContextMenu";
+import { BlankContextMenuContent, EntryContextMenuContent } from "@/components/EntryContextMenu";
 import type { QuickToolItem } from "@/lib/openerApi";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { MenuGroup } from "@/components/MenuGroup";
@@ -362,6 +348,29 @@ export function IconGrid({
   }, [slotsByName]);
   const { startRow, endRow, totalH } = visibleGridRange(totalRows, cell.h, scrollTop, viewportH);
 
+  // v0.34.1 性能：按行分组可视条目。此前对全部 sorted map、越界 return null——
+  // 10k 条目时每个滚动帧 React 都要 reconcile 一万个 keyed child（虚拟化只省了
+  // 挂载没省 reconcile）；分组后每帧只遍历可视行内的条目。
+  const rowsByIndex = useMemo(() => {
+    const m = new Map<number, FileEntry[]>();
+    for (const e of sorted) {
+      const s = slotsByName.get(e.name);
+      if (!s) continue;
+      const arr = m.get(s.r);
+      if (arr) arr.push(e);
+      else m.set(s.r, [e]);
+    }
+    return m;
+  }, [sorted, slotsByName]);
+  const visibleEntries = useMemo(() => {
+    const out: FileEntry[] = [];
+    for (let r = startRow; r < endRow; r++) {
+      const row = rowsByIndex.get(r);
+      if (row) out.push(...row);
+    }
+    return out;
+  }, [rowsByIndex, startRow, endRow]);
+
   const selectionSet = useMemo(() => new Set(selection), [selection]);
   const primary = selection.length > 0 ? selection[0] : null;
 
@@ -381,6 +390,21 @@ export function IconGrid({
     else if (target > bottom) el.scrollTop = target - el.clientHeight + rowH * 2;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [primary]);
+
+  // v0.35 新建文件/文件夹后滚动定位（与 FileList 同语义）：重命名行在视口外时推过去
+  useEffect(() => {
+    if (!renaming) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const slot = slotsByName.get(sorted.find((x) => x.path === renaming.path)?.name ?? "");
+    if (!slot) return;
+    const target = slot.r * rowH;
+    const top = el.scrollTop;
+    const bottom = top + el.clientHeight - rowH;
+    if (target < top) el.scrollTop = target;
+    else if (target > bottom) el.scrollTop = target - el.clientHeight + rowH * 2;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renaming?.path, sorted]);
 
   // ---- 用 ref 保存最新 props（window 监听器闭包防过期） ----
   const propsRef = useRef({
@@ -749,6 +773,8 @@ export function IconGrid({
         const p = sorted.find((x) => x.path === primary);
         if (p) {
           e.preventDefault();
+          // 阻断冒泡：全局 keymap「open」会再开一次（文件双开 / SFTP 双下载）
+          e.stopPropagation();
           onOpen(p);
         }
         break;
@@ -759,6 +785,8 @@ export function IconGrid({
         const p = sorted.find((x) => x.path === primary);
         if (p) {
           e.preventDefault();
+          // 预览未启用时这里语义是切换选中；阻断冒泡避免全局 togglePreview 弹「未开启」提示
+          e.stopPropagation();
           onSelect(p, true);
         }
         break;
@@ -846,10 +874,8 @@ export function IconGrid({
                 </div>
               )}
               <div className="relative" style={{ height: totalH }}>
-                {sorted.map((entry) => {
-                  const slot = slotsByName.get(entry.name);
-                  if (!slot) return null;
-                  if (slot.r < startRow || slot.r >= endRow) return null;
+                {visibleEntries.map((entry) => {
+                  const slot = slotsByName.get(entry.name)!;
                   const selected = selectionSet.has(entry.path);
                   const isPrimary = primary === entry.path;
                   const isRenaming = renaming?.path === entry.path;
@@ -1131,138 +1157,90 @@ export function IconGrid({
           className="max-h-[var(--radix-context-menu-content-available-height)] min-w-48 overflow-y-auto [scrollbar-width:thin]"
           collisionPadding={10}
         >
-          {/* 常用工具条（与条目右键菜单第一行同款）：空白处 = 当前目录，一步用常用工具打开 */}
-          {quickStripVisible(pluginOpener, currentDir) && (
-            <QuickToolsStrip
-              path={currentDir}
-              tools={quickTools}
-              onOpen={onOpenQuickTool}
-              onConfigure={onConfigureQuickTools}
-            />
-          )}
-          {pluginTerminal && shells.length > 0 && (
-            <MenuGroup
-              id="terminalEmpty"
-              label="在此处打开终端"
-              icon={<span className="mr-2 h-4 w-4" />}
-              expanded={expandedMenu === "terminalEmpty"}
-              onToggle={toggleMenuGroup}
-            >
-              {shells.map((sh) => (
-                <ContextMenuItem
-                  key={sh.id}
-                  disabled={!sh.detected}
-                  onClick={() => onOpenTerminal(sh.id, currentDir)}
+          <BlankContextMenuContent
+            currentDir={currentDir}
+            pluginOpener={pluginOpener}
+            pluginTerminal={pluginTerminal}
+            showTerminal={pluginTerminal && shells.length > 0}
+            terminalIcon={<span className="mr-2 h-4 w-4" />}
+            terminalSeparator={false}
+            quickTools={quickTools}
+            onOpenQuickTool={onOpenQuickTool}
+            onConfigureQuickTools={onConfigureQuickTools}
+            shells={shells}
+            gitBash={gitBash}
+            onOpenTerminal={onOpenTerminal}
+            onOpenGitTool={onOpenGitTool}
+            expandedMenu={expandedMenu}
+            onToggleGroup={toggleMenuGroup}
+            onNewFolder={onNewFolder}
+            onNewFile={onNewFile}
+            canPaste={canPaste}
+            onPaste={onPaste}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={onUndo}
+            onRedo={onRedo}
+            onSelectAll={onSelectAll}
+            onInvertSelection={onInvertSelection}
+            onDiff={onDiff}
+            onSyncDiff={onSyncDiff}
+            onRefresh={onRefresh}
+            onPropertiesDir={onPropertiesDir}
+            gridExtras={
+              <>
+                <MenuGroup
+                  id="sortGrid"
+                  label="排序方式"
+                  icon={<LayoutGrid className="mr-2 h-4 w-4" />}
+                  expanded={expandedMenu === "sortGrid"}
+                  onToggle={toggleMenuGroup}
                 >
-                  <span className="flex-1">{sh.name}</span>
-                  {!sh.detected && <span className="text-[10px] text-muted-foreground">未安装</span>}
-                </ContextMenuItem>
-              ))}
-              {/* Git Bash 本质是终端：空白处即当前目录内，同样可开（与目录右键「Git 打开」同源探测） */}
-              {gitBash && (
-                <ContextMenuItem
-                  disabled={!gitBash.detected}
-                  onClick={() => onOpenGitTool(gitBash.id, currentDir)}
+                  {(
+                    [
+                      ["name", "名称"],
+                      ["size", "大小"],
+                      ["modified", "修改时间"],
+                      ["type", "类型"],
+                    ] as [SortKey, string][]
+                  ).map(([key, label]) => (
+                    <ContextMenuItem key={key} onSelect={() => onSort(key)}>
+                      {label}
+                      {sortKey === key && " ✓"}
+                    </ContextMenuItem>
+                  ))}
+                </MenuGroup>
+                <MenuGroup
+                  id="iconSize"
+                  label="图标大小"
+                  icon={<LayoutGrid className="mr-2 h-4 w-4" />}
+                  expanded={expandedMenu === "iconSize"}
+                  onToggle={toggleMenuGroup}
                 >
-                  <GitBranch className="mr-2 h-4 w-4" />
-                  <span className="flex-1">{gitBash.name}</span>
-                  {!gitBash.detected && (
-                    <span className="text-[10px] text-muted-foreground">未安装</span>
-                  )}
-                </ContextMenuItem>
-              )}
-            </MenuGroup>
-          )}
-          <ContextMenuItem onClick={onNewFolder}>
-            <FolderPlus className="mr-2 h-4 w-4" /> 新建文件夹
-          </ContextMenuItem>
-          <ContextMenuItem onClick={onNewFile}>
-            <FilePlus2 className="mr-2 h-4 w-4" /> 新建文本文件
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={onPaste} disabled={!canPaste}>
-            <Clipboard className="mr-2 h-4 w-4" /> 粘贴
-          </ContextMenuItem>
-          <ContextMenuItem onClick={onUndo} disabled={!canUndo}>
-            <Undo2 className="mr-2 h-4 w-4" /> 撤销
-          </ContextMenuItem>
-          <ContextMenuItem onClick={onRedo} disabled={!canRedo}>
-            <Redo2 className="mr-2 h-4 w-4" /> 重做
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <MenuGroup
-            id="sortGrid"
-            label="排序方式"
-            icon={<LayoutGrid className="mr-2 h-4 w-4" />}
-            expanded={expandedMenu === "sortGrid"}
-            onToggle={toggleMenuGroup}
-          >
-            {(
-              [
-                ["name", "名称"],
-                ["size", "大小"],
-                ["modified", "修改时间"],
-                ["type", "类型"],
-              ] as [SortKey, string][]
-            ).map(([key, label]) => (
-              <ContextMenuItem key={key} onSelect={() => onSort(key)}>
-                {label}
-                {sortKey === key && " ✓"}
-              </ContextMenuItem>
-            ))}
-          </MenuGroup>
-          <MenuGroup
-            id="iconSize"
-            label="图标大小"
-            icon={<LayoutGrid className="mr-2 h-4 w-4" />}
-            expanded={expandedMenu === "iconSize"}
-            onToggle={toggleMenuGroup}
-          >
-            {([48, 64, 96, 128] as IconSize[]).map((s) => (
-              <ContextMenuItem key={s} onSelect={() => onIconSizeChange(s)}>
-                {s === 48 ? "小" : s === 64 ? "中" : s === 96 ? "大" : "超大"}
-                {iconSize === s && " ✓"}
-              </ContextMenuItem>
-            ))}
-          </MenuGroup>
-          {mode === "icons" && (
-            <ContextMenuItem
-              onSelect={onToggleAutoArrange}
-              data-auto-arrange-item=""
-            >
-              <LayoutGrid className="mr-2 h-4 w-4" /> 自动排列
-              {autoArrange && <span className="ml-1">✓</span>}
-            </ContextMenuItem>
-          )}
-          {hasPositions && !autoArrange && mode === "icons" && (
-            <ContextMenuItem onSelect={onClearIconPositions}>
-              <LayoutGrid className="mr-2 h-4 w-4" /> 整理图标
-            </ContextMenuItem>
-          )}
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={onSelectAll}>
-            <CheckSquare className="mr-2 h-4 w-4" /> 全选
-          </ContextMenuItem>
-          <ContextMenuItem onClick={onInvertSelection}>
-            <CheckSquare className="mr-2 h-4 w-4" /> 反向选择
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={onDiff}>
-            <ArrowLeftRight className="mr-2 h-4 w-4" /> 与另一窗格差异比对…
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          {/* 同步比对：与详情列表空白菜单对齐 */}
-          <ContextMenuItem onClick={onSyncDiff}>
-            <Link2 className="mr-2 h-4 w-4" /> 同步比对（左右窗格）
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={onRefresh}>
-            <RefreshCw className="mr-2 h-4 w-4" /> 刷新
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={() => onPropertiesDir(currentDir)}>
-            <Info className="mr-2 h-4 w-4" /> 属性（当前目录）
-          </ContextMenuItem>
+                  {([48, 64, 96, 128] as IconSize[]).map((s) => (
+                    <ContextMenuItem key={s} onSelect={() => onIconSizeChange(s)}>
+                      {s === 48 ? "小" : s === 64 ? "中" : s === 96 ? "大" : "超大"}
+                      {iconSize === s && " ✓"}
+                    </ContextMenuItem>
+                  ))}
+                </MenuGroup>
+                {mode === "icons" && (
+                  <ContextMenuItem
+                    onSelect={onToggleAutoArrange}
+                    data-auto-arrange-item=""
+                  >
+                    <LayoutGrid className="mr-2 h-4 w-4" /> 自动排列
+                    {autoArrange && <span className="ml-1">✓</span>}
+                  </ContextMenuItem>
+                )}
+                {hasPositions && !autoArrange && mode === "icons" && (
+                  <ContextMenuItem onSelect={onClearIconPositions}>
+                    <LayoutGrid className="mr-2 h-4 w-4" /> 整理图标
+                  </ContextMenuItem>
+                )}
+              </>
+            }
+          />
         </ContextMenuContent>
       </ContextMenu>
     </div>

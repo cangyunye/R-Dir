@@ -423,11 +423,13 @@ export function uiFontZoom(n: number): number {
 }
 
 // ---- v0.8.1 字体族 ----
+// 宋体/黑体是 Windows 字体名，mac 回退到同族系统字体（Songti SC / Heiti SC）
 export const UI_FONT_FAMILIES: { id: string; label: string; stack: string }[] = [
   { id: "system", label: "系统默认", stack: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' },
   { id: "msyahei", label: "微软雅黑", stack: '"Microsoft YaHei", "微软雅黑", system-ui, sans-serif' },
   { id: "pingfang", label: "苹方", stack: '"PingFang SC", "Hiragino Sans GB", system-ui, sans-serif' },
-  { id: "simsun", label: "宋体", stack: '"SimSun", "宋体", serif' },
+  { id: "simsun", label: "宋体", stack: '"SimSun", "宋体", "Songti SC", "STSong", serif' },
+  { id: "simhei", label: "黑体", stack: '"SimHei", "黑体", "Heiti SC", "STHeiti", sans-serif' },
   { id: "menlo", label: "等宽", stack: '"JetBrains Mono", Menlo, Consolas, monospace' },
   { id: "custom", label: "自定义...", stack: "" },
 ];

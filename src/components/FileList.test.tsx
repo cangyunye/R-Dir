@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { FileList, qjWindowStart, QJ_MAX_ROWS } from "./FileList";
@@ -445,5 +445,115 @@ describe("详情列表目录行 = 拖放目标（v0.31.2 拖入目录）", () =>
     expect(
       c2.querySelector('[data-path="/mock/dir/Documents"]')!.className,
     ).not.toContain("ring-primary");
+  });
+});
+
+describe("FileList 橡皮筋框选（v0.34.1 补充回归：手势状态机此前零测试）", () => {
+  const ORIG_GBCR = Element.prototype.getBoundingClientRect;
+  afterEach(() => {
+    (Element.prototype as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect =
+      ORIG_GBCR;
+  });
+
+  /** 布局桩：窗格容器在 (0,0) 800×600，行高 26（ROW_HEIGHT）逐行排布 */
+  function stubLayout(container: HTMLElement) {
+    container.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600, x: 0, y: 0 }) as DOMRect;
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-path]"));
+    rows.forEach((row, i) => {
+      row.getBoundingClientRect = () =>
+        ({
+          left: 0,
+          top: i * 26,
+          right: 800,
+          bottom: i * 26 + 26,
+          width: 800,
+          height: 26,
+          x: 0,
+          y: i * 26,
+        }) as DOMRect;
+    });
+    return rows;
+  }
+
+  it("空白按下拖出矩形覆盖前两行 → onSelectRange 收到这两行路径", () => {
+    const utils = renderList();
+    const pane = utils.container.querySelector("[data-pane-id]") as HTMLElement;
+    const rows = stubLayout(pane);
+
+    fireEvent.mouseDown(utils.body, { button: 0, clientX: 10, clientY: 5 });
+    fireEvent.mouseMove(window, { clientX: 700, clientY: 50 });
+    fireEvent.mouseUp(window, { clientX: 700, clientY: 50 });
+
+    expect(utils.props.onSelectRange).toHaveBeenCalledWith([
+      rows[0].dataset.path,
+      rows[1].dataset.path,
+    ]);
+  });
+
+  it("矩形太小（<3px）视为空白单击 → onClearSelection（fromRow=false 语义）", () => {
+    const utils = renderList();
+    const pane = utils.container.querySelector("[data-pane-id]") as HTMLElement;
+    stubLayout(pane);
+
+    fireEvent.mouseDown(utils.body, { button: 0, clientX: 10, clientY: 5 });
+    fireEvent.mouseMove(window, { clientX: 11, clientY: 6 });
+    fireEvent.mouseUp(window, { clientX: 11, clientY: 6 });
+
+    expect(utils.props.onClearSelection).toHaveBeenCalled();
+    expect(utils.props.onSelectRange).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+拖出 = 附加框选：与既有 selection 合并去重", () => {
+    const utils = renderList({ selection: ["/mock/dir/photo.png"] });
+    const pane = utils.container.querySelector("[data-pane-id]") as HTMLElement;
+    const rows = stubLayout(pane);
+
+    fireEvent.mouseDown(utils.body, { button: 0, clientX: 10, clientY: 5, ctrlKey: true });
+    fireEvent.mouseMove(window, { clientX: 700, clientY: 50 });
+    fireEvent.mouseUp(window, { clientX: 700, clientY: 50 });
+
+    expect(utils.props.onSelectRange).toHaveBeenCalledWith([
+      "/mock/dir/photo.png",
+      rows[0].dataset.path,
+      rows[1].dataset.path,
+    ]);
+  });
+});
+
+describe("FileList 重命名行滚动定位（v0.35 新建文件/文件夹后可见性）", () => {
+  /** jsdom 无布局：scrollTop 赋值会被丢弃，改用存取器捕获组件的滚动指令 */
+  function captureScroll(el: HTMLElement, clientHeight: number) {
+    let v = 0;
+    Object.defineProperty(el, "scrollTop", { get: () => v, set: (n) => (v = n), configurable: true });
+    Object.defineProperty(el, "clientHeight", { value: clientHeight, configurable: true });
+    return () => v;
+  }
+
+  it("renaming 指向视口外条目 → scrollTop 推到能看到该行的位置", () => {
+    const utils = renderList();
+    // 视口高 52px = 两行：photo.png 在 idx=2（target=52）→ 超出 bottom(26) → 滚到 52
+    const get = captureScroll(utils.body, 52);
+    utils.rerender(
+      <FileList {...makeProps({ renaming: { path: "/mock/dir/photo.png", name: "photo.png" } })} />,
+    );
+    expect(get()).toBe(52);
+  });
+
+  it("renaming 行已在视口内 → 不动滚动位置", () => {
+    const utils = renderList();
+    // idx=1 target=26，未超出 bottom=26 → 不产生滚动
+    const get = captureScroll(utils.body, 52);
+    utils.rerender(
+      <FileList {...makeProps({ renaming: { path: "/mock/dir/main.rs", name: "main.rs" } })} />,
+    );
+    expect(get()).toBe(0);
+  });
+
+  it("renaming 条目尚未出现在列表（目录还在加载）→ 不滚动也不报错", () => {
+    const utils = renderList({
+      renaming: { path: "/mock/dir/新建文件夹", name: "新建文件夹" },
+    });
+    expect(utils.body.scrollTop).toBe(0);
   });
 });

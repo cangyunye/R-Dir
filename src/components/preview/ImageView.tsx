@@ -10,8 +10,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { previewData } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-const MAX_CACHE = 24;
+/** v0.34.1 内存缓存上限改按总字节数：base64 比原字节膨胀 33%，后端单图上限 30MB，
+ *  此前按张数（24 张）缓存连翻大图最坏可驻留 ~1GB；256MB 上限 + 单图超限不缓存。 */
+const MAX_CACHE_BYTES = 256 * 1024 * 1024;
 const cache = new Map<string, string>();
+let cacheBytes = 0;
 
 function cacheGet(key: string): string | undefined {
   const hit = cache.get(key);
@@ -23,11 +26,21 @@ function cacheGet(key: string): string | undefined {
 }
 
 function cacheSet(key: string, url: string) {
+  const bytes = url.length; // data URL 为 ASCII，length ≈ 字节数
+  if (bytes > MAX_CACHE_BYTES) {
+    // 超大单图不缓存，只展示
+    cacheBytes -= cache.get(key)?.length ?? 0;
+    cache.delete(key);
+    return;
+  }
+  cacheBytes -= cache.get(key)?.length ?? 0;
   cache.delete(key);
   cache.set(key, url);
-  while (cache.size > MAX_CACHE) {
+  cacheBytes += bytes;
+  while (cacheBytes > MAX_CACHE_BYTES) {
     const oldest = cache.keys().next().value;
     if (oldest === undefined) break;
+    cacheBytes -= cache.get(oldest)?.length ?? 0;
     cache.delete(oldest);
   }
 }

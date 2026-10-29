@@ -221,6 +221,18 @@ const CODE_KEY: Record<string, string> = {
   Equal: "=",
   Backquote: "`",
   Space: "space",
+  // macOS 按 Option 时数字键产生死字符（alt+1 → "¡"、alt+2 → "™"），
+  // 按 e.code 归一化后 alt+1 / alt+2（视图切换）在 mac 上才能命中
+  Digit0: "0",
+  Digit1: "1",
+  Digit2: "2",
+  Digit3: "3",
+  Digit4: "4",
+  Digit5: "5",
+  Digit6: "6",
+  Digit7: "7",
+  Digit8: "8",
+  Digit9: "9",
 };
 
 /** 事件的“主键字符”：优先按物理键位（e.code）归一化，回落 e.key */

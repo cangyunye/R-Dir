@@ -153,11 +153,8 @@ fn save_config(app: &tauri::AppHandle, cfg: &OpenersConfig) -> Result<(), String
         std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败：{e}"))?;
     }
     // 原子写：先写临时文件再 rename
-    let tmp = p.with_extension("json.tmp");
     let data = serde_json::to_string_pretty(cfg).map_err(|e| format!("序列化失败：{e}"))?;
-    std::fs::write(&tmp, data).map_err(|e| format!("写入配置失败：{e}"))?;
-    std::fs::rename(&tmp, &p).map_err(|e| format!("保存配置失败：{e}"))?;
-    Ok(())
+    crate::json_store::write_atomic(&p, &data, "写入配置失败", "保存配置失败")
 }
 
 /// 归一化扩展名列表：去空白、去前导点、小写、去重（保留顺序）

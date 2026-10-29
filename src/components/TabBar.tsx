@@ -361,6 +361,8 @@ export function TabBar({
                   onBlur={commitRename}
                   onKeyDown={(e) => {
                     e.stopPropagation();
+                    // IME 组合中的回车是确认候选词，不作为提交
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                     if (e.key === "Enter") commitRename();
                     else if (e.key === "Escape") setEditingId(null);
                   }}

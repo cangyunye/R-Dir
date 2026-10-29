@@ -70,6 +70,8 @@ import {
   type SyncLink,
 } from "@/lib/sync-link";
 import { useSftp } from "@/hooks/useSftp";
+import { useModalLayer } from "@/hooks/useModalLayer";
+import { isTopModalLayer } from "@/lib/modal-stack";
 import {
   cancelDiff,
   copyEntries,
@@ -1543,9 +1545,12 @@ useEffect(() => {
   // v0.21.1 退出询问的对话框级快捷键（仅 closeDialogOpen 时挂载，避免与全局键位冲突）：
   // Esc=取消 / Ctrl+S(或 ⌘S)=保存并退出 / Ctrl+C=不保存。capture 阶段拦截，
   // 压制全局 keymap 分发（否则 Esc 会顺带清空文件选中）。
+  useModalLayer("quitConfirm", 70, closeDialogOpen);
   useEffect(() => {
     if (!closeDialogOpen) return;
     const onKey = (e: KeyboardEvent) => {
+      // 栈顶仲裁：更高层弹层（如密码框）打开时让位，避免一次 Esc 关多层
+      if (!isTopModalLayer("quitConfirm")) return;
       const key = e.key.toLowerCase();
       const save = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && key === "s";
       const noSave = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && key === "c";
@@ -4208,32 +4213,68 @@ useEffect(() => {
     [syncLink, keymapVer],
   );
 
+  // v0.34.1 弹层打开时暂停全局快捷键分发。syncResultsOpen / browseOpen 不算弹层：
+  // mod+shift+x / mod+shift+e 是它们文档化的开关键位，保持可切换。
+  const modalActive =
+    searchOpen ||
+    settingsOpen ||
+    paletteOpen ||
+    favoritesOpen ||
+    shareDialogOpen ||
+    sharePanelOpen ||
+    closeDialogOpen ||
+    gitDiffOpen ||
+    !!comparePickFor ||
+    !!diffTarget ||
+    !!textDiffSource ||
+    !!conflictReq ||
+    !!appConfirmReq ||
+    !!confirmDelete ||
+    !!propertiesEntries ||
+    sftp.connectOpen ||
+    sftp.masterKeyOpen ||
+    sftp.importPwOpen ||
+    sftp.exportPwOpen ||
+    !!extractPw;
+  const modalActiveRef = useRef(false);
+  modalActiveRef.current = modalActive;
+  // 面板类（命令面板 / 收藏夹）打开时，输入框内 mod+k / mod+b 仍放行以便收起
+  const paletteKeyRef = useRef(false);
+  paletteKeyRef.current = paletteOpen || favoritesOpen;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const typing =
         target?.tagName === "INPUT" ||
         target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT" ||
         target?.isContentEditable === true;
-      // 输入框聚焦时拦截"刷新"类快捷键，避免漏到 WebView 触发整页重载（状态全丢）
+      // v0.34.1 任意弹层打开时暂停全局分发（syncResultsOpen/browseOpen 除外：
+      // mod+shift+x / mod+shift+e 是文档化的开关键位）。否则 Delete 会在比对模态
+      // 后面拉起隐形确认框、⌘⇧F 会隔着弹层打开搜索面板、Esc 还会顺带清空文件选中。
+      // 弹层自身的 Esc/Enter 由各组件的监听器处理，不经过这里。
       if (typing) {
         const combo = keyEventString(e);
-        if (combo === "f5" || combo === "mod+r") {
+        // 输入框聚焦时拦截"刷新"类快捷键，避免漏到 WebView 触发整页重载（状态全丢）
+        if ((combo === "f5" || combo === "mod+r") && !modalActiveRef.current) {
           e.preventDefault();
           actionsRef.current.refresh?.();
         }
-        // 命令面板开关在输入框内也放行（地址栏/搜索框中 Ctrl+K 直达）
-        if (combo === "mod+k" || combo === "mod+shift+p") {
+        // 命令面板开关在输入框内也放行（地址栏/搜索框中 Ctrl+K 直达）；
+        // 面板自身打开时放行以便再次按键收起，其余弹层打开时拦截
+        if ((combo === "mod+k" || combo === "mod+shift+p") && (!modalActiveRef.current || paletteKeyRef.current)) {
           e.preventDefault();
           actionsRef.current.commandPalette?.();
         }
         // 收藏夹面板同理放行（地址栏打字时 Ctrl+B 直达）
-        if (combo === "mod+b") {
+        if (combo === "mod+b" && (!modalActiveRef.current || paletteKeyRef.current)) {
           e.preventDefault();
           actionsRef.current.openFavorites?.();
         }
         return;
       }
+      if (modalActiveRef.current) return;
       const combo = keyEventString(e);
       const action = findAction(combo);
       if (!action) return;

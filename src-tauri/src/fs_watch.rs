@@ -33,8 +33,12 @@ pub fn fs_watch_set(dirs: Vec<String>) {
         .collect();
 }
 
-/// 目录内容签名：条目名 + 目录标记 `/`，排序后拼接。目录不可读（已删除/无权限）返回 None。
-fn dir_signature(dir: &Path) -> Option<String> {
+/// 目录内容签名：条目名 + 目录标记，排序后增量哈希为 64 位摘要。
+/// v0.34.1 性能：此前拼接整目录签名字符串（10k 条目 ≈ 数百 KB 分配/目录/每 2 秒），
+/// 改为边排序边喂 DefaultHasher，仅 8 字节结果。语义不变：集合/名字/类型任一变化 → 签名变。
+/// 目录不可读（已删除/无权限）返回 None。
+fn dir_signature(dir: &Path) -> Option<u64> {
+    use std::hash::Hasher;
     let rd = std::fs::read_dir(dir).ok()?;
     let mut items: Vec<(String, bool)> = rd
         .flatten()
@@ -44,15 +48,12 @@ fn dir_signature(dir: &Path) -> Option<String> {
         })
         .collect();
     items.sort();
-    let mut sig = String::new();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for (name, is_dir) in items {
-        sig.push_str(&name);
-        if is_dir {
-            sig.push('/');
-        }
-        sig.push('\u{2}');
+        hasher.write(name.as_bytes());
+        hasher.write_u8(if is_dir { 1 } else { 0 });
     }
-    Some(sig)
+    Some(hasher.finish())
 }
 
 /// 后台轮询：签名变化的目录批量经 `fs://changed` 推送（载荷为目录路径数组）。
@@ -60,7 +61,7 @@ pub fn spawn_fs_watcher(app: tauri::AppHandle) {
     use tauri::Emitter;
     thread::spawn(move || {
         // dir → 上次签名；None 签名（目录消失）也记录，避免每轮重复推送
-        let mut last: BTreeMap<String, Option<String>> = BTreeMap::new();
+        let mut last: BTreeMap<String, Option<u64>> = BTreeMap::new();
         loop {
             thread::sleep(Duration::from_secs(2));
             let Ok(w) = WATCH_DIRS.lock() else {
@@ -110,21 +111,26 @@ mod tests {
         std::fs::write(base.join("a.txt"), b"x").unwrap();
         std::fs::create_dir(base.join("sub")).unwrap();
 
+        // v0.34.1 签名改为 64 位哈希，无法反查条目名；改用「变化语义」断言
         let s1 = dir_signature(&base).unwrap();
-        assert!(s1.contains("a.txt"));
-        assert!(s1.contains("sub/"), "目录应带 / 标记：{s1}");
 
         // 新增文件 → 签名变化
         std::fs::write(base.join("b.txt"), b"y").unwrap();
-        let s2 = dir_signature(&base).unwrap();
-        assert_ne!(s1, s2);
+        assert_ne!(dir_signature(&base).unwrap(), s1);
 
-        // 删除文件 → 签名变化
+        // 删除文件 → 签名回到原值
         std::fs::remove_file(base.join("b.txt")).unwrap();
         assert_eq!(dir_signature(&base).unwrap(), s1);
 
         // 改名 → 签名变化
         std::fs::rename(base.join("a.txt"), base.join("c.txt")).unwrap();
+        assert_ne!(dir_signature(&base).unwrap(), s1);
+        std::fs::rename(base.join("c.txt"), base.join("a.txt")).unwrap();
+        assert_eq!(dir_signature(&base).unwrap(), s1);
+
+        // 同名条目目录 ⇄ 文件互换 → 签名变化（类型标记参与哈希）
+        std::fs::remove_dir(base.join("sub")).unwrap();
+        std::fs::write(base.join("sub"), b"d").unwrap();
         assert_ne!(dir_signature(&base).unwrap(), s1);
 
         // 目录消失 → None

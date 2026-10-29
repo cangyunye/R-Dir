@@ -150,6 +150,28 @@ export async function installTauriMock(page: Page): Promise<void> {
       return i <= 0 ? "/" : p.slice(0, i);
     };
 
+    /** 虚拟 FS 内移动：从源目录摘下条目追加到 dest，子树清单跟随改键；返回 [from, to] 对 */
+    const moveInFs = (paths: string[], dest: string): [string, string][] => {
+      const d = FS[dest];
+      if (!d) throw new Error(`ENOENT: ${dest}`);
+      const pairs: [string, string][] = [];
+      for (const p of paths) {
+        const parent = parentOf(p);
+        const src = FS[parent];
+        const idx = src?.findIndex((x) => `${parent}/${x.name}` === p) ?? -1;
+        if (!src || idx < 0) continue;
+        const [f] = src.splice(idx, 1);
+        d.push(f);
+        const to = `${dest}/${f.name}`;
+        if (FS[p]) {
+          FS[to] = FS[p];
+          delete FS[p];
+        }
+        pairs.push([p, to]);
+      }
+      return pairs;
+    };
+
     const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
       get_home_dir: () => HOME,
       get_volumes: () => [{ name: "Macintosh HD", path: "/", kind: "disk" }],
@@ -228,6 +250,29 @@ export async function installTauriMock(page: Page): Promise<void> {
           created.push(`${dest}/${name}`);
         }
         return created;
+      },
+      // v0.34.1 Alt=移动 跨窗格 / 撤销移动 回归：源目录移除、目标目录追加，返回 [from, to] 对
+      move_entries_plan: (a) => {
+        const paths = (a.paths as string[]) ?? [];
+        const dest = String(a.dest);
+        movePlans.push({ paths, dest });
+        return moveInFs(paths, dest);
+      },
+      move_entries: (a) => moveInFs((a.paths as string[]) ?? [], String(a.dest)),
+      // v0.34.1 压缩回归：目标目录追加 <首项去扩展名>.<zip|tar|tar.gz> 归档条目，返回归档路径
+      compress_items: (a) => {
+        const paths = (a.paths as string[]) ?? [];
+        const targetDir = String(a.targetDir);
+        const format = String(a.format);
+        compressCalls.push({ paths, targetDir, format });
+        const d = FS[targetDir];
+        if (!d) throw new Error(`ENOENT: ${targetDir}`);
+        const base = (paths[0] ?? "archive").split("/").pop() ?? "archive";
+        const stem = base.replace(/\.[^.]+$/, "");
+        const ext = format === "tgz" ? "tar.gz" : format;
+        const name = `${stem}.${ext}`;
+        if (!d.some((x) => x.name === name)) d.push({ name, size: 1024 });
+        return `${targetDir}/${name}`;
       },
       // 无同名冲突（夹具固定不冲突）；用例可经 __rdirConflicts 注入
       scan_conflicts: (a) => {
@@ -714,6 +759,9 @@ export async function installTauriMock(page: Page): Promise<void> {
       dest: string;
       resolutions: Record<string, { action: string; name?: string }>;
     }[] = [];
+    /** v0.34.1 move_entries_plan / compress_items 调用记录（Alt=移动、压缩回归用） */
+    const movePlans: { paths: string[]; dest: string }[] = [];
+    const compressCalls: { paths: string[]; targetDir: string; format: string }[] = [];
     /** extract_archive 调用记录（v0.32 解压回归用） */
     const extractCalls: {
       path: string;
@@ -769,6 +817,6 @@ export async function installTauriMock(page: Page): Promise<void> {
       }
       return origFetch ? origFetch(input, init) : Promise.reject(new Error("fetch unavailable"));
     }) as typeof window.fetch;
-    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, sftpSetGroup, sftpConnects, copyPlans, extractCalls, servers: SFTP_SERVERS };
+    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, sftpSetGroup, sftpConnects, copyPlans, movePlans, compressCalls, extractCalls, servers: SFTP_SERVERS };
   });
 }

@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { formatBinding } from "@/lib/keymap";
+import { useModalLayer } from "@/hooks/useModalLayer";
 
 /** 命令面板条目：ACTIONS 注册表动作 + 无默认键位的应用命令（退出 / 比对工具 / 检查更新…） */
 export interface CommandItem {
@@ -32,6 +33,9 @@ export function CommandPalette({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // v0.34.1 弹层栈登记：Esc 由 Radix 处理，登记只为让下层弹层（设置等）让位
+  useModalLayer("palette", 50, open);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

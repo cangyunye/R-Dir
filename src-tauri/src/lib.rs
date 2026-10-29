@@ -8,6 +8,7 @@ mod find;
 mod fs_ops;
 mod fs_watch;
 mod iconpos;
+mod json_store;
 mod ops;
 mod preview;
 mod progress;
@@ -575,10 +576,7 @@ async fn session_save(app: tauri::AppHandle, layout: SessionLayout) -> Result<()
     tauri::async_runtime::spawn_blocking(move || {
         let path = session_path(&app)?;
         let json = serde_json::to_string_pretty(&layout).map_err(|e| e.to_string())?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).map_err(|e| format!("写入会话失败：{e}"))?;
-        std::fs::rename(&tmp, &path).map_err(|e| format!("保存会话失败：{e}"))?;
-        Ok::<(), String>(())
+        json_store::write_atomic(&path, &json, "写入会话失败", "保存会话失败")
     })
     .await
     .map_err(|e| e.to_string())?
@@ -589,11 +587,7 @@ async fn session_save(app: tauri::AppHandle, layout: SessionLayout) -> Result<()
 async fn session_load(app: tauri::AppHandle) -> Result<Option<SessionLayout>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = session_path(&app)?;
-        if !path.exists() {
-            return Ok(None);
-        }
-        let raw = std::fs::read_to_string(&path).map_err(|e| format!("读取会话失败：{e}"))?;
-        serde_json::from_str(&raw).map(Some).map_err(|e| format!("解析会话失败：{e}"))
+        json_store::read_json(&path, "读取会话失败", "解析会话失败")
     })
     .await
     .map_err(|e| e.to_string())?
@@ -650,13 +644,7 @@ fn favorites_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> 
 async fn favorites_load(app: tauri::AppHandle) -> Result<Option<FavoritesFile>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = favorites_path(&app)?;
-        if !path.exists() {
-            return Ok(None);
-        }
-        let raw = std::fs::read_to_string(&path).map_err(|e| format!("读取收藏夹失败：{e}"))?;
-        serde_json::from_str(&raw)
-            .map(Some)
-            .map_err(|e| format!("解析收藏夹失败：{e}"))
+        json_store::read_json(&path, "读取收藏夹失败", "解析收藏夹失败")
     })
     .await
     .map_err(|e| e.to_string())?
@@ -672,10 +660,7 @@ async fn favorites_save(app: tauri::AppHandle, items: Vec<TabFavorite>) -> Resul
         };
         let path = favorites_path(&app)?;
         let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).map_err(|e| format!("写入收藏夹失败：{e}"))?;
-        std::fs::rename(&tmp, &path).map_err(|e| format!("保存收藏夹失败：{e}"))?;
-        Ok::<(), String>(())
+        json_store::write_atomic(&path, &json, "写入收藏夹失败", "保存收藏夹失败")
     })
     .await
     .map_err(|e| e.to_string())?
@@ -698,11 +683,10 @@ fn prefs_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 async fn prefs_load(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = prefs_path(&app)?;
-        if !path.exists() {
-            return Ok(serde_json::Value::Object(serde_json::Map::new()));
-        }
-        let raw = std::fs::read_to_string(&path).map_err(|e| format!("读取配置失败：{e}"))?;
-        serde_json::from_str(&raw).map_err(|e| format!("解析配置失败：{e}"))
+        Ok(
+            json_store::read_json::<serde_json::Value>(&path, "读取配置失败", "解析配置失败")?
+                .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -714,10 +698,7 @@ async fn prefs_save(app: tauri::AppHandle, value: serde_json::Value) -> Result<(
     tauri::async_runtime::spawn_blocking(move || {
         let path = prefs_path(&app)?;
         let json = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).map_err(|e| format!("写入配置失败：{e}"))?;
-        std::fs::rename(&tmp, &path).map_err(|e| format!("保存配置失败：{e}"))?;
-        Ok::<(), String>(())
+        json_store::write_atomic(&path, &json, "写入配置失败", "保存配置失败")
     })
     .await
     .map_err(|e| e.to_string())?

@@ -46,10 +46,8 @@ pub fn icon_positions_save(app: tauri::AppHandle, positions: Value) -> Result<()
         return Err("位置表格式错误".to_string());
     }
     let path = positions_file(&app)?;
-    let tmp = path.with_extension("json.tmp");
     let body = serde_json::to_string_pretty(&positions).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp, body).map_err(|e| format!("写入失败: {e}"))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("保存失败: {e}"))
+    crate::json_store::write_atomic(&path, &body, "写入失败", "保存失败")
 }
 
 /// 目录维度上限防御：异常大的表（历史脏数据）在读取侧不截断（避免丢数据），

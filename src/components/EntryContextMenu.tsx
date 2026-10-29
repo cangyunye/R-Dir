@@ -6,12 +6,16 @@
  */
 import {
   ArchiveRestore,
+  ArrowLeftRight,
   Check,
+  CheckSquare,
   Clipboard,
   Copy,
   FileArchive,
   FileDiff,
+  FilePlus2,
   FolderInput,
+  FolderPlus,
   GitBranch,
   GitCompare,
   Crosshair,
@@ -30,6 +34,7 @@ import {
   Tag as TagIcon,
   Undo2,
   Redo2,
+  Link2,
 } from "lucide-react";
 import type { FileEntry } from "@/lib/types";
 import type { FileTags, TagNames } from "@/lib/persist";
@@ -500,5 +505,183 @@ export function EntryContextMenuContent({
         <Info className="mr-2 h-4 w-4" /> 属性
       </ContextMenuItem>
     </ContextMenuContent>
+  );
+}
+
+// ───────────────── v0.34.1 空白处右键菜单（从 FileList / IconGrid 空白菜单收敛） ─────────────────
+
+/**
+ * 空白处右键菜单共享内容：两个视图约 70% 相同的部分（常用工具条、终端组、新建、
+ * 粘贴、撤销/重做、全选/反向选择、差异/同步比对、刷新、属性）。
+ * 视图差异以插槽注入，保持渲染结果与抽取前逐字节一致：
+ * - FileList：终端组图标 TerminalSquare、组后带分隔线、「分享此目录」（selectionExtras）
+ * - IconGrid：终端组空图标且 shells 为空时隐藏、排序/图标大小/自动排列/整理图标（gridExtras）
+ */
+export function BlankContextMenuContent({
+  currentDir,
+  pluginOpener,
+  pluginTerminal,
+  showTerminal,
+  terminalIcon,
+  terminalSeparator,
+  quickTools,
+  onOpenQuickTool,
+  onConfigureQuickTools,
+  shells,
+  gitBash,
+  onOpenTerminal,
+  onOpenGitTool,
+  expandedMenu,
+  onToggleGroup,
+  onNewFolder,
+  onNewFile,
+  canPaste,
+  onPaste,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  onSelectAll,
+  onInvertSelection,
+  onDiff,
+  onSyncDiff,
+  onRefresh,
+  onPropertiesDir,
+  gridExtras,
+  selectionExtras,
+}: {
+  currentDir: string;
+  pluginOpener: boolean;
+  pluginTerminal: boolean;
+  /** 终端组可见性：FileList = pluginTerminal；IconGrid = pluginTerminal && shells.length > 0 */
+  showTerminal: boolean;
+  /** 折叠组头图标（两视图不同：TerminalSquare / 占位 span） */
+  terminalIcon: React.ReactNode;
+  /** FileList 终端组后有分隔线，IconGrid 没有 */
+  terminalSeparator: boolean;
+  quickTools: QuickToolItem[];
+  onOpenQuickTool: (id: string, path: string) => void;
+  onConfigureQuickTools: () => void;
+  shells: ShellItem[];
+  /** Git Bash 特判：既是终端也是 Git 工具，收进终端组（两视图同） */
+  gitBash?: GitToolItem;
+  onOpenTerminal: (shellId: string, path: string) => void;
+  onOpenGitTool: (toolId: string, path: string) => void;
+  expandedMenu: string | null;
+  onToggleGroup: (id: string) => void;
+  onNewFolder: () => void;
+  onNewFile: () => void;
+  canPaste: boolean;
+  onPaste: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  onSelectAll: () => void;
+  onInvertSelection: () => void;
+  onDiff: () => void;
+  onSyncDiff: () => void;
+  onRefresh: () => void;
+  onPropertiesDir: (dir: string) => void;
+  /** 「重做」分隔线之后、「全选」之前：IconGrid 的排序/图标大小/自动排列/整理图标 */
+  gridExtras?: React.ReactNode;
+  /** 「反向选择」分隔线之后、「差异比对」之前：FileList 的「分享此目录」 */
+  selectionExtras?: React.ReactNode;
+}) {
+  return (
+    <>
+      {/* 常用工具条（与条目右键菜单第一行同款）：空白处 = 当前目录，一步用常用工具打开 */}
+      {quickStripVisible(pluginOpener, currentDir) && (
+        <QuickToolsStrip
+          path={currentDir}
+          tools={quickTools}
+          onOpen={onOpenQuickTool}
+          onConfigure={onConfigureQuickTools}
+        />
+      )}
+      {pluginTerminal && showTerminal && (
+        <>
+          <MenuGroup
+            id="terminalEmpty"
+            label="在此处打开终端"
+            icon={terminalIcon}
+            expanded={expandedMenu === "terminalEmpty"}
+            onToggle={onToggleGroup}
+          >
+            {shells.map((sh) => (
+              <ContextMenuItem
+                key={sh.id}
+                disabled={!sh.detected}
+                onClick={() => onOpenTerminal(sh.id, currentDir)}
+              >
+                <span className="flex-1">{sh.name}</span>
+                {!sh.detected && (
+                  <span className="text-[10px] text-muted-foreground">未安装</span>
+                )}
+              </ContextMenuItem>
+            ))}
+            {/* Git Bash 本质是终端：空白处即当前目录内，同样可开（与目录右键「Git 打开」同源探测） */}
+            {gitBash && (
+              <ContextMenuItem
+                disabled={!gitBash.detected}
+                onClick={() => onOpenGitTool(gitBash.id, currentDir)}
+              >
+                <GitBranch className="mr-2 h-4 w-4" />
+                <span className="flex-1">{gitBash.name}</span>
+                {!gitBash.detected && (
+                  <span className="text-[10px] text-muted-foreground">未安装</span>
+                )}
+              </ContextMenuItem>
+            )}
+          </MenuGroup>
+          {terminalSeparator && <ContextMenuSeparator />}
+        </>
+      )}
+      <ContextMenuItem onClick={onNewFolder}>
+        <FolderPlus className="mr-2 h-4 w-4" /> 新建文件夹
+      </ContextMenuItem>
+      <ContextMenuItem onClick={onNewFile}>
+        <FilePlus2 className="mr-2 h-4 w-4" /> 新建文本文件
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={onPaste} disabled={!canPaste}>
+        <Clipboard className="mr-2 h-4 w-4" /> 粘贴
+      </ContextMenuItem>
+      {/* 撤销 / 重做作用于全局操作栈（粘贴/移动/重命名/新建/删除） */}
+      <ContextMenuItem onClick={onUndo} disabled={!canUndo}>
+        <Undo2 className="mr-2 h-4 w-4" /> 撤销
+      </ContextMenuItem>
+      <ContextMenuItem onClick={onRedo} disabled={!canRedo}>
+        <Redo2 className="mr-2 h-4 w-4" /> 重做
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      {gridExtras}
+      <ContextMenuItem onClick={onSelectAll}>
+        <CheckSquare className="mr-2 h-4 w-4" /> 全选
+      </ContextMenuItem>
+      <ContextMenuItem onClick={onInvertSelection}>
+        <CheckSquare className="mr-2 h-4 w-4" /> 反向选择
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      {selectionExtras}
+      {/* v0.18 与另一窗格差异比对（需活动标签正好两个本地窗格） */}
+      <ContextMenuItem onClick={onDiff}>
+        <ArrowLeftRight className="mr-2 h-4 w-4" /> 与另一窗格差异比对…
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      {/* v0.18 同步比对（左右窗格）：开启/断开底部实时比对面板 */}
+      <ContextMenuItem onClick={onSyncDiff}>
+        <Link2 className="mr-2 h-4 w-4" /> 同步比对（左右窗格）
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={onRefresh}>
+        <RefreshCw className="mr-2 h-4 w-4" /> 刷新
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      {/* 空白处右键：统计「当前目录」属性（与地址栏显示的选中路径无关） */}
+      <ContextMenuItem onClick={() => onPropertiesDir(currentDir)}>
+        <Info className="mr-2 h-4 w-4" /> 属性（当前目录）
+      </ContextMenuItem>
+    </>
   );
 }

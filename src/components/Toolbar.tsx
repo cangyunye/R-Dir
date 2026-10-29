@@ -405,6 +405,8 @@ export function Toolbar({
                   }, 150);
                 }}
                 onKeyDown={(e) => {
+                  // IME 组合中的按键（回车上屏/取消候选词的 Esc）不驱动地址栏逻辑
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                   const total = completions.length + cmds.length;
                   if (e.key === "ArrowDown" && compOpen && total > 0) {
                     e.preventDefault();
@@ -434,6 +436,14 @@ export function Toolbar({
                 )}
                 placeholder="输入路径回车跳转；输入命令回车在终端执行；Tab 补全"
                 spellCheck={false}
+                /* v0.35 关 WebView 自动填充：WKWebView/WebView2 会在地址栏输入时弹
+                   「保存的信息」建议列表，盖住应用自己的补全下拉（应用内右键已有剪切/复制） */
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                data-form-type="other"
+                data-lpignore="true"
+                data-1p-ignore
               />
             </ContextMenuTrigger>
             <ContextMenuContent className="min-w-36">

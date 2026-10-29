@@ -26,9 +26,14 @@ const PREFIX_BONUS = 12; // 整段前缀命中
 const LENGTH_PENALTY = -0.5; // 目标越长越轻微降权
 
 export function fuzzyMatch(query: string, target: string): FuzzyMatch | null {
-  if (!query) return { score: 0, positions: [] };
-  const q = query.toLowerCase();
-  const t = target.toLowerCase();
+  return matchPrepared(query.toLowerCase(), target.toLowerCase(), target);
+}
+
+/** 匹配核心：q/t 为已小写形式，original 供分隔符/驼峰边界判断。
+ *  v0.34.1 性能：rank 循环里 query 与 target 各只小写化一次——
+ *  10k 条目目录快速打字时，此前每键要产生 2 万次 toLowerCase 临时串。 */
+function matchPrepared(q: string, t: string, original: string): FuzzyMatch | null {
+  if (!q) return { score: 0, positions: [] };
   const positions: number[] = [];
   let qi = 0;
   let score = 0;
@@ -46,9 +51,9 @@ export function fuzzyMatch(query: string, target: string): FuzzyMatch | null {
     }
     if (ti === 0) {
       bonus += FIRST_CHAR_BONUS;
-    } else if (SEPARATORS.has(target[ti - 1])) {
+    } else if (SEPARATORS.has(original[ti - 1])) {
       bonus += BOUNDARY_BONUS;
-    } else if (/[a-z]/.test(target[ti - 1]) && /[A-Z]/.test(target[ti])) {
+    } else if (/[a-z]/.test(original[ti - 1]) && /[A-Z]/.test(original[ti])) {
       bonus += BOUNDARY_BONUS;
     }
     score += bonus;
@@ -68,7 +73,7 @@ export function fuzzyMatch(query: string, target: string): FuzzyMatch | null {
     }
     if (contiguous) score += PREFIX_BONUS;
   }
-  score += LENGTH_PENALTY * target.length;
+  score += LENGTH_PENALTY * original.length;
   return { score, positions };
 }
 
@@ -80,9 +85,11 @@ export function rank<T>(
   if (!query) {
     return items.map((item) => ({ item, score: 0, positions: [] }));
   }
+  const q = query.toLowerCase();
   const scored: { r: Ranked<T>; i: number }[] = [];
   items.forEach((item, i) => {
-    const m = fuzzyMatch(query, toText(item));
+    const text = toText(item);
+    const m = matchPrepared(q, text.toLowerCase(), text);
     if (m) scored.push({ r: { item, score: m.score, positions: m.positions }, i });
   });
   // 稳定排序：分数降序，同分保持输入顺序

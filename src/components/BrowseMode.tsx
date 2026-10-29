@@ -16,6 +16,8 @@ import { sortEntries } from "@/lib/entry-sort";
 import { isPreviewable, previewKindOf } from "@/lib/preview";
 import { cn } from "@/lib/utils";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
+import { useModalLayer } from "@/hooks/useModalLayer";
+import { isTopModalLayer } from "@/lib/modal-stack";
 
 export function BrowseMode({
   entries,
@@ -56,9 +58,13 @@ export function BrowseMode({
     tileRefs.current[index]?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
   }, [index]);
 
+  // v0.34.1 弹层栈登记：更高层弹层（删除确认等）打开时按键让位
+  useModalLayer("browse", 40, true);
+
   // 键盘导航（capture，避免落回全局快捷键分发，如 ESC=取消选择）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!isTopModalLayer("browse")) return;
       const step = (d: number) => {
         if (list.length === 0) return;
         const next = Math.min(list.length - 1, Math.max(0, index + d));

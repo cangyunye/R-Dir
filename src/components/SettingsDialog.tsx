@@ -38,6 +38,8 @@ import { quickInitials, quickTileColor } from "@/components/EntryContextMenu";
 import type { QuickToolItem, EditorCandidate } from "@/lib/openerApi";
 import type { OpenerItem, PluginInfo } from "@/lib/openerApi";
 import { normalizeExts } from "@/lib/openers";
+import { useModalLayer } from "@/hooks/useModalLayer";
+import { isTopModalLayer } from "@/lib/modal-stack";
 import {
   PREVIEW_WIDTH_MAX,
   PREVIEW_WIDTH_MIN,
@@ -197,19 +199,26 @@ export function SettingsDialog({
     setSection((prev) => (prev === current ? prev : current));
   }, []);
 
+  // v0.34.1 弹层栈登记：本框 Esc 只在栈顶时生效（更高层弹层打开时让位）
+  useModalLayer("settings", 50, open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // 录制中 Esc = 取消录制，由下方录制监听器处理，不关整个对话框
+        // （此前监听注册顺序更早先执行，按 Esc 会把整个设置一起关掉）
+        if (recordingId !== null) return;
+        // 栈顶仲裁：更高层弹层打开时让位，避免一次 Esc 关多层
+        if (!isTopModalLayer("settings")) return;
         e.stopPropagation();
-        setRecordingId(null);
         setConflict(null);
         onClose();
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, onClose]);
+  }, [open, onClose, recordingId]);
 
   // 打开/关闭时重置录制状态
   useEffect(() => {

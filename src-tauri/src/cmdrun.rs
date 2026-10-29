@@ -320,10 +320,8 @@ fn save_index(cache: &ExecCache, file: &Option<PathBuf>) {
         sentinels: cache.sentinels.clone(),
     };
     if let Ok(s) = serde_json::to_string(&idx) {
-        let tmp = p.with_extension("json.tmp");
-        if std::fs::write(&tmp, s).is_ok() {
-            let _ = std::fs::rename(&tmp, p);
-        }
+        // 失败静默——持久化只是加速，不可靠也能跑（错误文案占位不会被展示）
+        let _ = crate::json_store::write_atomic(p, &s, "写入索引失败", "保存索引失败");
     }
 }
 

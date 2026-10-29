@@ -208,10 +208,15 @@ describe("字体族配置", () => {
     expect(uiFontFamilyStack("custom")).toContain("Consolas");
   });
 
-  it("UI_FONT_FAMILIES 包含 5 种预设 + 自定义", () => {
-    expect(UI_FONT_FAMILIES.length).toBe(6);
+  it("UI_FONT_FAMILIES 包含 6 种预设 + 自定义（v0.35 加入黑体）", () => {
+    expect(UI_FONT_FAMILIES.length).toBe(7);
     expect(UI_FONT_FAMILIES.map((f) => f.id)).toContain("msyahei");
     expect(UI_FONT_FAMILIES.map((f) => f.id)).toContain("custom");
+  });
+
+  it("宋体/黑体的字体栈带 mac 回退（SimSun/SimHei 是 Windows 字体名）", () => {
+    expect(uiFontFamilyStack("simsun")).toContain("Songti SC");
+    expect(uiFontFamilyStack("simhei")).toContain("Heiti SC");
   });
 
   it("未知 id 回落到 system", () => {

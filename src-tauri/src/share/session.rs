@@ -147,3 +147,107 @@ impl ShareManager {
         n
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 测试会话（server_task = None：不启动真实服务器）
+    fn test_session(id: &str, token: &str, root: &std::path::Path) -> ShareSession {
+        ShareSession {
+            id: id.to_string(),
+            token: token.to_string(),
+            roots: vec![ShareRoot {
+                id: "r0".into(),
+                path: root.to_path_buf(),
+            }],
+            perm: SharePerm::Read,
+            allow_parent: false,
+            max_conns: 3,
+            expires_at: None,
+            created_at: SystemTime::now(),
+            port: 0,
+            server_task: None,
+            conns: Mutex::new(Vec::new()),
+        }
+    }
+
+    // ---------- gen_token ----------
+
+    #[test]
+    fn token_is_32_hex_and_unique() {
+        let m = ShareManager::default();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let t = m.gen_token();
+            assert_eq!(t.len(), 32, "{t}");
+            assert!(t.chars().all(|c| c.is_ascii_hexdigit()), "{t}");
+            assert!(seen.insert(t), "token 不应重复");
+        }
+    }
+
+    #[test]
+    fn token_seq_increments_into_token_body() {
+        // 中段 8 hex 是序号：同一 manager 连续生成的 token 序号段递增
+        let m = ShareManager::default();
+        let t1 = m.gen_token();
+        let t2 = m.gen_token();
+        let seq1 = u64::from_str_radix(&t1[16..24], 16).unwrap();
+        let seq2 = u64::from_str_radix(&t2[16..24], 16).unwrap();
+        assert_eq!(seq2, seq1 + 1);
+    }
+
+    // ---------- stop / stop_by_root ----------
+
+    #[test]
+    fn stop_removes_session_and_reports_miss() {
+        let m = ShareManager::default();
+        let root = std::env::temp_dir().join("rdir-share-stop");
+        m.sessions.lock().unwrap().insert("s1".into(), test_session("s1", "t1", &root));
+
+        assert!(m.stop("s1"), "存在的会话应返回 true");
+        assert!(!m.stop("s1"), "已移除的会话再 stop 返回 false");
+        assert!(!m.stop("ghost"));
+        assert!(m.sessions.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn stop_by_root_only_removes_matching_and_counts() {
+        let m = ShareManager::default();
+        let root_a = std::env::temp_dir().join("rdir-share-a");
+        let root_b = std::env::temp_dir().join("rdir-share-b");
+        {
+            let mut s = m.sessions.lock().unwrap();
+            s.insert("a1".into(), test_session("a1", "t1", &root_a));
+            s.insert("a2".into(), test_session("a2", "t2", &root_a));
+            s.insert("b1".into(), test_session("b1", "t3", &root_b));
+        }
+
+        assert_eq!(m.stop_by_root(&root_a), 2);
+        let sessions = m.sessions.lock().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions.contains_key("b1"));
+    }
+
+    #[test]
+    fn stop_by_root_no_match_is_zero() {
+        let m = ShareManager::default();
+        let root = std::env::temp_dir().join("rdir-share-none");
+        assert_eq!(m.stop_by_root(&root), 0);
+    }
+
+    // ---------- 数据模型 ----------
+
+    #[test]
+    fn perm_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&SharePerm::Read).unwrap(),
+            "\"read\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SharePerm::Write).unwrap(),
+            "\"write\""
+        );
+        assert_eq!(SharePerm::Delete.as_str(), "delete");
+    }
+}

@@ -5,6 +5,7 @@ import { Input } from "./ui/input";
 import { basename } from "../lib/format";
 import { applyConflictAction, type ConflictAction } from "../lib/transfer";
 import type { ResolutionPlan, TransferConflict } from "../lib/types";
+import { useModalLayer } from "../hooks/useModalLayer";
 
 /**
  * 同名冲突裁决弹窗（Windows 风格）：覆盖 / 全部覆盖 / 改名 / 停止。
@@ -20,6 +21,9 @@ export function ConflictDialog({
   const [index, setIndex] = useState(0);
   const [plan, setPlan] = useState<ResolutionPlan>({});
   const [name, setName] = useState(conflicts[0]?.suggest ?? "");
+
+  // v0.34.1 弹层栈登记（条件渲染，挂载即打开）：本框打开期间 App 暂停全局分发
+  useModalLayer("conflict", 65, true);
 
   const cur = conflicts[index];
   if (!cur) return null;
@@ -77,6 +81,8 @@ export function ConflictDialog({
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
+              // IME 组合中的回车是确认候选词，不作为改名提交
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === "Enter") {
                 e.preventDefault();
                 doRename();

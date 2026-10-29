@@ -25,6 +25,8 @@ import { AppConfirmDialog, type AppConfirmRequest } from "@/components/AppConfir
 import { Button } from "@/components/ui/button";
 import { isMac } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
+import { useModalLayer } from "@/hooks/useModalLayer";
+import { isTopModalLayer } from "@/lib/modal-stack";
 
 /** 文本比较的来源：任意两侧文件 / 粘贴的 diff 文本 / .patch 文件 */
 export type TextDiffSource =
@@ -199,6 +201,8 @@ export function TextDiffDialog({
   const [onlyDiff, setOnlyDiff] = useState(false);
   // v0.29.1 打开即最大化：差异阅读吃屏幕空间，1400px 窗口两侧各 ~650px，长行必须横向拖动
   const [maximized, setMaximized] = useState(true);
+  // v0.34.1 弹层栈登记（条件渲染，挂载即打开）；App 暂停全局分发期间 ⌘⇧F 归本框独占
+  useModalLayer("textDiff", 85, true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState({ w: 1200, h: 400 });
@@ -323,6 +327,10 @@ export function TextDiffDialog({
   // 焦点在输入框内时不劫持。
   const keyActionRef = useRef<(e: KeyboardEvent) => void>(() => {});
   keyActionRef.current = (e: KeyboardEvent) => {
+    // IME 组合中的按键（取消候选词的 Esc 等）一律不劫持
+    if (e.isComposing || e.keyCode === 229) return;
+    // 栈顶仲裁：更高层弹层打开时让位（差异比对窗可叠在本框上方，同 z-85 后开者在上）
+    if (!isTopModalLayer("textDiff")) return;
     if (e.key === "Escape") {
       requestClose();
       return;

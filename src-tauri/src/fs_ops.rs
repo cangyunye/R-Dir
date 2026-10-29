@@ -98,11 +98,11 @@ pub fn list_dir(path: &str) -> Result<Vec<FileEntry>, String> {
         })
         .map(FileEntry::from_direntry)
         .collect();
-    entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+    // v0.34.1 性能：sort_by_cached_key 每条目只做一次 to_lowercase 分配，
+    // 此前比较器每次比较分配两个临时 String（10k 条目 ≈ 26 万次堆分配）。
+    // 稳定排序两连：先名称，再目录在前——组内保持名称序，与原单次比较等价。
+    entries.sort_by_cached_key(|e| e.name.to_lowercase());
+    entries.sort_by_key(|e| !e.is_dir);
     Ok(entries)
 }
 

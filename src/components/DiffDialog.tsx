@@ -28,6 +28,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { isMac } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
+import { useModalLayer } from "@/hooks/useModalLayer";
+import { isTopModalLayer } from "@/lib/modal-stack";
 
 const LEVELS: { id: DiffLevel; label: string; hint: string }[] = [
   { id: 1, label: "一层·名称", hint: "仅比对文件夹与文件名" },
@@ -130,6 +132,11 @@ export function DiffDialog({
   /** 当前比对任务 id（取消与进度过滤用） */
   const idRef = useRef<string>("");
 
+  // v0.34.1 弹层栈登记（条件渲染，挂载即打开）：本框打开期间 App 暂停全局分发，
+  // ⌘⇧F 只由本监听器处理——此前会同时命中全局「切换内容搜索」，把搜索面板
+  // 开在本框后面成为隐形层
+  useModalLayer("diff", 85, true);
+
   // F11 / ⌘⇧F 全屏切换：仅在比对窗口打开期间注册，天然限定生效范围。
   // v0.29.1：macOS 把 F11 绑定为「调度中心 → 显示桌面」，按键在系统层就被吃掉、
   // 页面收不到（表现为 F11 无效），补一路 mod+shift+F（mac ⌘⇧F / win Ctrl+Shift+F）。
@@ -139,7 +146,10 @@ export function DiffDialog({
         e.key === "F11" ||
         (e.key === "F" && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.altKey);
       if (maximizeKey) {
+        // 栈顶仲裁：文本比对窗（z-85 同层）叠在上面时让位
+        if (!isTopModalLayer("diff")) return;
         e.preventDefault();
+        e.stopPropagation();
         setMaximized((m) => !m);
       }
     };

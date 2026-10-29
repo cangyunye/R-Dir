@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { formatTime } from "@/lib/format";
 import { searchFavorites } from "@/lib/favorites";
 import type { TabFavorite } from "@/lib/types";
+import { useModalLayer } from "@/hooks/useModalLayer";
 
 /** 行内操作按钮（更新为当前标签 / 重命名 / 删除）：激活行常显，其余 hover 显示 */
 function RowAction({
@@ -81,6 +82,9 @@ export function FavoritesPalette({
   /** 行内重命名会话：{收藏 id, 草稿}；Enter 提交 / Esc 或失焦取消（空名取消） */
   const [renaming, setRenaming] = useState<{ id: string; draft: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // v0.34.1 弹层栈登记：Esc 由 Radix 处理，登记只为让下层弹层（设置等）让位
+  useModalLayer("favorites", 50, open);
 
   const rows = useMemo(() => searchFavorites(favorites, query), [favorites, query]);
 

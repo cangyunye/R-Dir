@@ -209,7 +209,11 @@ export function TagView({
                       if (!isRenaming) onOpen(p);
                     }}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !isRenaming) onOpen(p);
+                      if (e.key === "Enter" && !isRenaming) {
+                        // 阻断冒泡：全局 keymap「open」作用于窗格选中项，会再开一次
+                        e.stopPropagation();
+                        onOpen(p);
+                      }
                     }}
                     title={`${p}\n双击跳转所在目录（当前：${currentPath}）`}
                     className="flex w-full cursor-default items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"

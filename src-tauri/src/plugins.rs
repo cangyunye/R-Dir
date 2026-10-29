@@ -180,11 +180,8 @@ pub fn save_file(app: &tauri::AppHandle, file: &PluginStateFile) -> Result<(), S
     let path = plugins_path(app)?;
     let dir = path.parent().ok_or("配置目录无效")?;
     std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败：{e}"))?;
-    let tmp = path.with_extension("json.tmp");
     let json = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp, json).map_err(|e| format!("写入失败：{e}"))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("落盘失败：{e}"))?;
-    Ok(())
+    crate::json_store::write_atomic(&path, &json, "写入失败", "落盘失败")
 }
 
 /// 启动时初始化：载入 plugins.json → 填充 PluginState
