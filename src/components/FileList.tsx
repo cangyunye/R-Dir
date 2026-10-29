@@ -29,6 +29,7 @@ import { isMac } from "@/lib/keymap";
 import { isSftpPath, isHttpPath } from "@/lib/sftp-path";
 import { dragOutFiles } from "@/lib/api";
 import { canNativeDragOut, setNativeDragOut, setHtml5Drag } from "@/lib/native-drag";
+import { useDragRubberBand } from "@/hooks/useDragRubberBand";
 import {
   getNameColumnWidth,
   resetNameColumnWidth,
@@ -313,24 +314,39 @@ export function FileList({
       ? propsRef.current.selection
       : [entry.path];
 
-  // ---- 自实现拖拽 + 矩形框选（WKWebView 的 HTML5 DnD 不可靠） ----
+  // ---- 自实现拖拽 + 矩形框选（WKWebView 的 HTML5 DnD 不可靠）----
+  // 引擎抽在 useDragRubberBand（与 IconGrid 共用）；本侧注入按压语义、
+  // [data-path] 行命中、窗格级落点解析（含本窗格——悬停上报语义与基线一致，
+  // 提示条/描边由 SplitView 按 dragOver.targetPaneId === pane.id 决定显示）
   const containerRef = useRef<HTMLDivElement>(null);
-  const ghostRef = useRef<HTMLDivElement>(null);
-  const dragCandRef = useRef<{ x: number; y: number; paths: string[] } | null>(null);
-  const dragActiveRef = useRef(false);
-  const lastTargetRef = useRef<number | null>(null);
-  const lastOpRef = useRef<"copy" | "move">("copy");
-  const rubberRef = useRef<{
-    x0: number;
-    y0: number;
-    additive: boolean;
-    /** true = 从行上按下（未选中项），false = 从空白按下 */
-    fromRow: boolean;
-  } | null>(null);
-  /** 框选激活后抑制随后的 click（避免单行选择覆盖框选结果） */
-  const suppressClickRef = useRef(false);
   /** 慢速双击重命名：记录上次单击的条目与时间 */
   const lastClickRef = useRef<{ path: string; time: number } | null>(null);
+  const {
+    rubber,
+    suppressClickRef,
+    ghostRef,
+    startRubber,
+    beginDragCandidate,
+    beginRubber,
+    resetRubber,
+    armDragListeners,
+    cleanupDrag,
+  } = useDragRubberBand({
+    rectRef: containerRef,
+    hitRootRef: containerRef,
+    hitSelector: "[data-path]",
+    paneId,
+    selection,
+    resolveTarget: (x, y) => {
+      const el = document.elementFromPoint(x, y) as HTMLElement | null;
+      const paneEl = el?.closest?.("[data-pane-id]") as HTMLElement | null;
+      return { paneId: paneEl ? Number(paneEl.dataset.paneId) : null, dirPath: null };
+    },
+    onSelectRange,
+    onClearSelection,
+    onDropPaths,
+    onDragOverChange,
+  });
   /** 列表滚动容器 */
   const listScrollRef = useRef<HTMLDivElement>(null);
   /** v0.8.3 虚拟滚动：固定行高，只渲染可视区 +/- buffer 行（行高见 lib/virtual-scroll） */
@@ -551,154 +567,19 @@ export function FileList({
     setQjOpen(false);
     setQjQuery("");
   }, [currentDir]);
-  const [rubber, setRubber] = useState<{
-    left: number;
-    top: number;
-    right: number;
-    bottom: number;
-  } | null>(null);
-
   // 选中集合：渲染路径每行都要判断，全选万级条目时 O(n)×行数 的字符串比较换成 Set
   const selectionSet = useMemo(() => new Set(selection), [selection]);
 
-  // 用 ref 保存最新 props，避免监听器闭包拿到过期值
+  // 用 ref 保存最新 props，避免监听器闭包拿到过期值（拖拽/框选引擎的回调由 useDragRubberBand 保鲜）
   const propsRef = useRef({
-    onDropPaths,
-    onDragOverChange,
-    onClearSelection,
-    onSelectRange,
     onSelect,
+    onSelectRange,
+    onClearSelection,
     onOpen,
     selection,
     selectionSet,
-    paneId,
   });
-  propsRef.current = { onDropPaths, onDragOverChange, onClearSelection, onSelectRange, onSelect, onOpen, selection, selectionSet, paneId };
-
-  const cleanupDrag = () => {
-    window.removeEventListener("mousemove", onWinMouseMove);
-    window.removeEventListener("mouseup", onWinMouseUp);
-    document.body.style.userSelect = "";
-    dragActiveRef.current = false;
-    // dragstart 接管（原生/HTML5 拖拽）时手势可能已画出橡皮筋选框或留下按压候选——
-    // 不清掉的话选框滞留整个拖拽过程，下一次空白框选还会被过期 dragCandRef 劫持成幽灵拖拽
-    dragCandRef.current = null;
-    rubberRef.current = null;
-    setRubber(null);
-    lastTargetRef.current = null;
-    lastOpRef.current = "copy";
-    if (ghostRef.current) ghostRef.current.style.opacity = "0";
-    propsRef.current.onDragOverChange(null);
-  };
-
-  const onWinMouseMove = (e: MouseEvent) => {
-    const cand = dragCandRef.current;
-    if (cand) {
-      const dx = e.clientX - cand.x;
-      const dy = e.clientY - cand.y;
-      if (Math.hypot(dx, dy) > 5) {
-        if (!dragActiveRef.current) {
-          dragActiveRef.current = true;
-          document.body.style.userSelect = "none";
-          if (ghostRef.current) ghostRef.current.style.opacity = "1";
-        }
-        e.preventDefault();
-        const op: "copy" | "move" = e.altKey ? "move" : "copy";
-        if (ghostRef.current) {
-          ghostRef.current.style.transform = `translate(${e.clientX + 10}px, ${e.clientY + 10}px)`;
-          ghostRef.current.textContent = `${op === "move" ? "移动" : "复制"} ${cand.paths.length} 项`;
-        }
-        // 目标窗格检测（仅变化时通知，避免高频重渲染）
-        const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
-        const paneEl = el?.closest?.("[data-pane-id]") as HTMLElement | null;
-        const targetId = paneEl ? Number(paneEl.dataset.paneId) : null;
-        if (targetId !== lastTargetRef.current || op !== lastOpRef.current) {
-          lastTargetRef.current = targetId;
-          lastOpRef.current = op;
-          propsRef.current.onDragOverChange(
-            targetId !== null ? { targetPaneId: targetId, op } : null,
-          );
-        }
-      }
-      return;
-    }
-    const rb = rubberRef.current;
-    if (rb) {
-      const cRect = containerRef.current?.getBoundingClientRect();
-      if (cRect) {
-        setRubber({
-          left: Math.min(rb.x0, e.clientX) - cRect.left,
-          top: Math.min(rb.y0, e.clientY) - cRect.top,
-          right: Math.max(rb.x0, e.clientX) - cRect.left,
-          bottom: Math.max(rb.y0, e.clientY) - cRect.top,
-        });
-      }
-    }
-  };
-
-  const onWinMouseUp = (e: MouseEvent) => {
-    const cand = dragCandRef.current;
-    if (cand) {
-      dragCandRef.current = null;
-      const wasActive = dragActiveRef.current;
-      if (wasActive) {
-        const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
-        const paneEl = el?.closest?.("[data-pane-id]") as HTMLElement | null;
-        const targetId = paneEl ? Number(paneEl.dataset.paneId) : null;
-        const op = lastOpRef.current;
-        cleanupDrag();
-        if (targetId !== null && targetId !== propsRef.current.paneId && cand.paths.length > 0) {
-          propsRef.current.onDropPaths(propsRef.current.paneId, cand.paths, op, targetId);
-        }
-      } else {
-        cleanupDrag();
-      }
-      return;
-    }
-    const rb = rubberRef.current;
-    if (rb) {
-      rubberRef.current = null;
-      const cRect = containerRef.current?.getBoundingClientRect();
-      setRubber(null);
-      cleanupDrag();
-      if (!cRect) return;
-      const rx0 = Math.min(rb.x0, e.clientX) - cRect.left;
-      const rx1 = Math.max(rb.x0, e.clientX) - cRect.left;
-      const ry0 = Math.min(rb.y0, e.clientY) - cRect.top;
-      const ry1 = Math.max(rb.y0, e.clientY) - cRect.top;
-      const moved = Math.hypot(e.clientX - rb.x0, e.clientY - rb.y0) > 3;
-      if (!moved) {
-        // 单击空白 → 取消选择；单击行 → 交给 click 正常选择
-        if (!rb.fromRow) propsRef.current.onClearSelection();
-        return;
-      }
-      // 框选已发生，抑制随后的 click（否则单行选择会覆盖框选结果）
-      suppressClickRef.current = true;
-      const hit: string[] = [];
-      containerRef.current?.querySelectorAll<HTMLElement>("[data-path]").forEach((row) => {
-        const r = row.getBoundingClientRect();
-        const rel = {
-          left: r.left - cRect.left,
-          top: r.top - cRect.top,
-          right: r.right - cRect.left,
-          bottom: r.bottom - cRect.top,
-        };
-        if (rel.right >= rx0 && rel.left <= rx1 && rel.bottom >= ry0 && rel.top <= ry1) {
-          const p = row.dataset.path;
-          if (p) hit.push(p);
-        }
-      });
-      if (rb.additive) {
-        propsRef.current.onSelectRange([
-          ...new Set([...propsRef.current.selection, ...hit]),
-        ]);
-      } else {
-        propsRef.current.onSelectRange(hit);
-      }
-      return;
-    }
-    cleanupDrag();
-  };
+  propsRef.current = { onSelect, onSelectRange, onClearSelection, onOpen, selection, selectionSet };
 
   const startRowPress = (e: React.MouseEvent, entry: FileEntry) => {
     if (e.button !== 0) return;
@@ -707,35 +588,15 @@ export function FileList({
     const additive = e.metaKey || e.ctrlKey;
     if (fromSelected) {
       // 从已选中项按下 → 文件拖拽（复制/移动）
-      dragCandRef.current = { x: e.clientX, y: e.clientY, paths: targetsFor(entry) };
+      beginDragCandidate(e.clientX, e.clientY, targetsFor(entry));
     } else {
       // 立即选中（无修饰键）：按下即高亮，避免"松开才选中"的延迟感；
       // 随后若拖动框选，会由框选结果覆盖；修饰键/Shift 交给 click 处理，避免双触发
       if (!additive && !e.shiftKey) propsRef.current.onSelect(entry, false);
       // 从未选中项按下 → 框选起点（Windows 资源管理器语义）
-      rubberRef.current = {
-        x0: e.clientX,
-        y0: e.clientY,
-        additive: additive || e.shiftKey,
-        fromRow: true,
-      };
+      beginRubber(e.clientX, e.clientY, additive || e.shiftKey, true);
     }
-    window.addEventListener("mousemove", onWinMouseMove);
-    window.addEventListener("mouseup", onWinMouseUp);
-  };
-
-  const startRubber = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    if (e.target !== e.currentTarget) return;
-    e.preventDefault();
-    rubberRef.current = {
-      x0: e.clientX,
-      y0: e.clientY,
-      additive: e.metaKey || e.ctrlKey || e.shiftKey,
-      fromRow: false,
-    };
-    window.addEventListener("mousemove", onWinMouseMove);
-    window.addEventListener("mouseup", onWinMouseUp);
+    armDragListeners();
   };
 
   return (
@@ -1042,9 +903,8 @@ export function FileList({
                       // 阻止 HTML5 拖拽；从未选中行拖动时 startRowPress 开的是框选，这里升级为拖拽候选
                       console.info("[rdir] drag-out: 虚拟路径走应用内鼠标拖拽", paths.length, "项");
                       e.preventDefault();
-                      rubberRef.current = null;
-                      setRubber(null);
-                      dragCandRef.current = { x: e.clientX, y: e.clientY, paths };
+                      resetRubber();
+                      beginDragCandidate(e.clientX, e.clientY, paths);
                       return;
                     }
                     console.info("[rdir] drag-out: HTML5 文本拖拽（原生拖出不可用）");

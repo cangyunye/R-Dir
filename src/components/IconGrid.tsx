@@ -38,6 +38,7 @@ import {
   setNativeDragOut,
   setHtml5Drag,
 } from "@/lib/native-drag";
+import { useDragRubberBand } from "@/hooks/useDragRubberBand";
 import { FileIcon } from "@/components/FileIcon";
 import { ThumbImage } from "@/components/ThumbImage";
 import { TagDots } from "@/components/TagView";
@@ -406,59 +407,7 @@ export function IconGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renaming?.path, sorted]);
 
-  // ---- 用 ref 保存最新 props（window 监听器闭包防过期） ----
-  const propsRef = useRef({
-    paneId,
-    selection,
-    selectionSet,
-    sorted,
-    slotsByName,
-    onDropPaths,
-    onDropIntoDir,
-    onDragOverChange,
-    onClearSelection,
-    onSelectRange,
-    onSelect,
-    onOpen,
-    onSetIconPosition,
-    autoArrange,
-  });
-  propsRef.current = {
-    paneId,
-    selection,
-    selectionSet,
-    sorted,
-    slotsByName,
-    onDropPaths,
-    onDropIntoDir,
-    onDragOverChange,
-    onClearSelection,
-    onSelectRange,
-    onSelect,
-    onOpen,
-    onSetIconPosition,
-    autoArrange,
-  };
-
-  // ---- 自研拖拽 + 橡皮筋（骨架与 FileList 一致，落点增加「文件夹图标」与「空槽」） ----
-  const ghostRef = useRef<HTMLDivElement>(null);
-  const dragCandRef = useRef<{ x: number; y: number; paths: string[] } | null>(null);
-  const dragActiveRef = useRef(false);
-  const lastTargetRef = useRef<number | null>(null);
-  const lastOpRef = useRef<"copy" | "move">("copy");
-  const folderHoverRef = useRef<string | null>(null);
-  const [folderHover, setFolderHover] = useState<string | null>(null);
-  const rubberRef = useRef<{ x0: number; y0: number; additive: boolean; fromItem: boolean } | null>(
-    null,
-  );
-  const suppressClickRef = useRef(false);
   const lastClickRef = useRef<{ path: string; time: number } | null>(null);
-  const [rubber, setRubber] = useState<{
-    left: number;
-    top: number;
-    right: number;
-    bottom: number;
-  } | null>(null);
   const [expandedMenu, setExpandedMenu] = useState<string | null>(null);
   const toggleMenuGroup = (id: string) => setExpandedMenu((cur) => (cur === id ? null : id));
   const [zoomTip, setZoomTip] = useState<number | null>(null);
@@ -467,87 +416,6 @@ export function IconGrid({
     setZoomTip(z);
     if (zoomTipTimer.current) window.clearTimeout(zoomTipTimer.current);
     zoomTipTimer.current = window.setTimeout(() => setZoomTip(null), 1200);
-  };
-
-  const cleanupDrag = () => {
-    window.removeEventListener("mousemove", onWinMouseMove);
-    window.removeEventListener("mouseup", onWinMouseUp);
-    document.body.style.userSelect = "";
-    dragActiveRef.current = false;
-    dragCandRef.current = null;
-    rubberRef.current = null;
-    setRubber(null);
-    lastTargetRef.current = null;
-    lastOpRef.current = "copy";
-    if (folderHoverRef.current !== null) {
-      folderHoverRef.current = null;
-      setFolderHover(null);
-    }
-    if (ghostRef.current) ghostRef.current.style.opacity = "0";
-    propsRef.current.onDragOverChange(null);
-  };
-
-  /** 指针落点解析：文件夹图标（本窗格）→ {dir}；其他窗格 → {pane}；否则 null */
-  const hitTarget = (x: number, y: number, draggedPaths: string[]) => {
-    const el = document.elementFromPoint(x, y) as HTMLElement | null;
-    if (!el) return null;
-    const dirEl = el.closest("[data-grid-item][data-drop-dir]") as HTMLElement | null;
-    if (dirEl) {
-      const p = dirEl.dataset.path;
-      if (p && !draggedPaths.includes(p)) return { kind: "dir" as const, path: p };
-    }
-    const paneEl = el.closest("[data-pane-id]") as HTMLElement | null;
-    if (paneEl) {
-      const id = Number(paneEl.dataset.paneId);
-      if (id !== propsRef.current.paneId) return { kind: "pane" as const, paneId: id };
-    }
-    return null;
-  };
-
-  const onWinMouseMove = (e: MouseEvent) => {
-    const cand = dragCandRef.current;
-    if (cand) {
-      if (Math.hypot(e.clientX - cand.x, e.clientY - cand.y) > 5) {
-        if (!dragActiveRef.current) {
-          dragActiveRef.current = true;
-          document.body.style.userSelect = "none";
-          if (ghostRef.current) ghostRef.current.style.opacity = "1";
-        }
-        e.preventDefault();
-        const op: "copy" | "move" = e.altKey ? "move" : "copy";
-        if (ghostRef.current) {
-          ghostRef.current.style.transform = `translate(${e.clientX + 10}px, ${e.clientY + 10}px)`;
-          ghostRef.current.textContent = `${op === "move" ? "移动" : "复制"} ${cand.paths.length} 项`;
-        }
-        const hit = hitTarget(e.clientX, e.clientY, cand.paths);
-        const folder = hit?.kind === "dir" ? hit.path : null;
-        if (folder !== folderHoverRef.current) {
-          folderHoverRef.current = folder;
-          setFolderHover(folder);
-        }
-        const paneId = hit?.kind === "pane" ? hit.paneId : null;
-        if (paneId !== lastTargetRef.current || op !== lastOpRef.current) {
-          lastTargetRef.current = paneId;
-          lastOpRef.current = op;
-          propsRef.current.onDragOverChange(
-            paneId !== null ? { targetPaneId: paneId, op } : null,
-          );
-        }
-      }
-      return;
-    }
-    const rb = rubberRef.current;
-    if (rb) {
-      const cRect = containerRef.current?.getBoundingClientRect();
-      if (cRect) {
-        setRubber({
-          left: Math.min(rb.x0, e.clientX) - cRect.left,
-          top: Math.min(rb.y0, e.clientY) - cRect.top,
-          right: Math.max(rb.x0, e.clientX) - cRect.left,
-          bottom: Math.max(rb.y0, e.clientY) - cRect.top,
-        });
-      }
-    }
   };
 
   /** 指针位置 → 最近槽位（相对滚动内容坐标）。 */
@@ -622,70 +490,47 @@ export function IconGrid({
     slotDropRef.current(paths, e.clientX, e.clientY);
   };
 
-  const onWinMouseUp = (e: MouseEvent) => {
-    const cand = dragCandRef.current;
-    if (cand) {
-      dragCandRef.current = null;
-      if (dragActiveRef.current) {
-        const hit = hitTarget(e.clientX, e.clientY, cand.paths);
-        const op = lastOpRef.current;
-        const folder = folderHoverRef.current;
-        cleanupDrag();
-        if (hit?.kind === "dir") {
-          propsRef.current.onDropIntoDir(cand.paths, op, hit.path);
-        } else if (hit?.kind === "pane") {
-          propsRef.current.onDropPaths(propsRef.current.paneId, cand.paths, op, hit.paneId);
-        } else if (folder === null) {
-          slotDropRef.current(cand.paths, e.clientX, e.clientY);
-        }
-      } else {
-        cleanupDrag();
+  // ---- 自研拖拽 + 橡皮筋（引擎抽在 useDragRubberBand，与 FileList 共用）----
+  // 本侧注入：文件夹图标命中（[data-grid-item][data-drop-dir]，排除被拖路径自身）、
+  // 窗格级落点排除本窗格、空槽重摆回落与 folderHover 高亮
+  const [folderHover, setFolderHover] = useState<string | null>(null);
+  const {
+    rubber,
+    suppressClickRef,
+    ghostRef,
+    startRubber,
+    beginDragCandidate,
+    armDragListeners,
+    cleanupDrag,
+  } = useDragRubberBand({
+    rectRef: containerRef,
+    hitRootRef: scrollRef,
+    hitSelector: "[data-grid-item]",
+    paneId,
+    selection,
+    resolveTarget: (x, y, draggedPaths) => {
+      const el = document.elementFromPoint(x, y) as HTMLElement | null;
+      if (!el) return { paneId: null, dirPath: null };
+      const dirEl = el.closest("[data-grid-item][data-drop-dir]") as HTMLElement | null;
+      if (dirEl) {
+        const p = dirEl.dataset.path;
+        if (p && !draggedPaths.includes(p)) return { paneId: null, dirPath: p };
       }
-      return;
-    }
-    const rb = rubberRef.current;
-    if (rb) {
-      rubberRef.current = null;
-      const cRect = containerRef.current?.getBoundingClientRect();
-      setRubber(null);
-      cleanupDrag();
-      if (!cRect) return;
-      const rx0 = Math.min(rb.x0, e.clientX) - cRect.left;
-      const rx1 = Math.max(rb.x0, e.clientX) - cRect.left;
-      const ry0 = Math.min(rb.y0, e.clientY) - cRect.top;
-      const ry1 = Math.max(rb.y0, e.clientY) - cRect.top;
-      const moved = Math.hypot(e.clientX - rb.x0, e.clientY - rb.y0) > 3;
-      if (!moved) {
-        if (!rb.fromItem) propsRef.current.onClearSelection();
-        return;
+      const paneEl = el.closest("[data-pane-id]") as HTMLElement | null;
+      if (paneEl) {
+        const id = Number(paneEl.dataset.paneId);
+        if (id !== paneId) return { paneId: id, dirPath: null };
       }
-      suppressClickRef.current = true;
-      const hit: string[] = [];
-      scrollRef.current
-        ?.querySelectorAll<HTMLElement>("[data-grid-item]")
-        .forEach((item) => {
-          const r = item.getBoundingClientRect();
-          if (
-            r.right >= rx0 + cRect.left &&
-            r.left <= rx1 + cRect.left &&
-            r.bottom >= ry0 + cRect.top &&
-            r.top <= ry1 + cRect.top
-          ) {
-            const p = item.dataset.path;
-            if (p) hit.push(p);
-          }
-        });
-      if (rb.additive) {
-        propsRef.current.onSelectRange([
-          ...new Set([...propsRef.current.selection, ...hit]),
-        ]);
-      } else {
-        propsRef.current.onSelectRange(hit);
-      }
-      return;
-    }
-    cleanupDrag();
-  };
+      return { paneId: null, dirPath: null };
+    },
+    onSelectRange,
+    onClearSelection,
+    onDropPaths,
+    onDropIntoDir,
+    onSlotDrop: (paths, clientX, clientY) => slotDropRef.current(paths, clientX, clientY),
+    onHoverChange: setFolderHover,
+    onDragOverChange,
+  });
 
   const startItemPress = (e: React.MouseEvent, entry: FileEntry) => {
     if (e.button !== 0) return;
@@ -695,27 +540,12 @@ export function IconGrid({
     // 图标视图语义（访达一致）：按下未选中图标 = 立即选中并直接成为拖拽候选；
     // 已选中图标按下 = 携带全部选中项拖拽。空白处按下才是框选（startRubber）。
     if (!selectionSet.has(entry.path)) onSelect(entry, false);
-    dragCandRef.current = {
-      x: e.clientX,
-      y: e.clientY,
-      paths: selectionSet.has(entry.path) ? selection : [entry.path],
-    };
-    window.addEventListener("mousemove", onWinMouseMove);
-    window.addEventListener("mouseup", onWinMouseUp);
-  };
-
-  const startRubber = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    if (e.target !== e.currentTarget) return;
-    e.preventDefault();
-    rubberRef.current = {
-      x0: e.clientX,
-      y0: e.clientY,
-      additive: e.metaKey || e.ctrlKey || e.shiftKey,
-      fromItem: false,
-    };
-    window.addEventListener("mousemove", onWinMouseMove);
-    window.addEventListener("mouseup", onWinMouseUp);
+    beginDragCandidate(
+      e.clientX,
+      e.clientY,
+      selectionSet.has(entry.path) ? selection : [entry.path],
+    );
+    armDragListeners();
   };
 
   // ---- 键盘：方向键网格导航（基于槽位），Enter 打开，Space 加选 ----
