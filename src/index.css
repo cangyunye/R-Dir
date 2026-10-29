@@ -97,9 +97,10 @@
   }
   /* 默认字体栈挂在 html：设置 → 字体族切换时 App 把用户选择写到
      documentElement.style.fontFamily；body 必须 inherit 才不会盖掉它
-     （此前 body 自带 font-family，切换选择器无效） */
+     （此前 body 自带 font-family，切换选择器无效）。
+     Windows 首选用默认版微软雅黑（非 YaHei UI 变体），mac 无雅黑落到苹方 */
   html {
-    font-family: "Microsoft YaHei UI", "微软雅黑", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+    font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Segoe UI", system-ui, sans-serif;
   }
   body {
     @apply bg-background text-foreground;

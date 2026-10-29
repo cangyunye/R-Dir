@@ -203,6 +203,14 @@ describe("字体族配置", () => {
     expect(uiFontFamilyStack("menlo")).toContain("Menlo");
   });
 
+  it("系统默认在 Windows 显式接微软雅黑（否则中文回退宋体）", () => {
+    // jsdom 的 navigator.platform 是 Win32 → 走 Windows 分支
+    const stack = uiFontFamilyStack("system");
+    expect(stack).toContain("Microsoft YaHei");
+    // Segoe UI 在前保拉丁观感，中文无字形自然落到雅黑
+    expect(stack.indexOf("Segoe UI")).toBeLessThan(stack.indexOf("Microsoft YaHei"));
+  });
+
   it("自定义字体返回 custom stack", () => {
     localStorage.setItem("rfm.ui-font-family-custom", "Consolas");
     expect(uiFontFamilyStack("custom")).toContain("Consolas");

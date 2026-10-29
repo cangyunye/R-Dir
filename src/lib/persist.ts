@@ -424,8 +424,20 @@ export function uiFontZoom(n: number): number {
 
 // ---- v0.8.1 字体族 ----
 // 宋体/黑体是 Windows 字体名，mac 回退到同族系统字体（Songti SC / Heiti SC）
+const IS_MAC =
+  typeof navigator !== "undefined" && /Mac|iPhone/.test(navigator.platform ?? "");
+
 export const UI_FONT_FAMILIES: { id: string; label: string; stack: string }[] = [
-  { id: "system", label: "系统默认", stack: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' },
+  // 「系统默认」在 Windows 显式接微软雅黑：不写的话中文字符没有字体可命中，
+  // WebView 会回退到宋体（SimSun）——选系统默认的用户看到的中文不是雅黑。
+  // Segoe UI 在前保住拉丁字符的系统观感（Segoe 无 CJK 字形，中文自然落到雅黑）。
+  {
+    id: "system",
+    label: "系统默认",
+    stack: IS_MAC
+      ? 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+      : '"Segoe UI", "Microsoft YaHei", "微软雅黑", system-ui, sans-serif',
+  },
   { id: "msyahei", label: "微软雅黑", stack: '"Microsoft YaHei", "微软雅黑", system-ui, sans-serif' },
   { id: "pingfang", label: "苹方", stack: '"PingFang SC", "Hiragino Sans GB", system-ui, sans-serif' },
   { id: "simsun", label: "宋体", stack: '"SimSun", "宋体", "Songti SC", "STSong", serif' },
