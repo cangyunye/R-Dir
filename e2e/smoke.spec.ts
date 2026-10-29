@@ -256,7 +256,7 @@ test.describe("8. 快捷键不崩溃（全量冒烟）", () => {
 test.describe("9. 设置对话框滑动分区", () => {
   test("S1 左栏为锚点跳转，对话框高度不随分区变化", async ({ page }) => {
     await page.getByTitle("设置（快捷键录制）").click();
-    await expect(page.getByText("配置自动保存在本机")).toBeVisible();
+    await expect(page.getByText("更改会自动保存")).toBeVisible();
 
     const dialog = page.locator(".fixed.inset-0 > div").first();
     const scroller = dialog.locator(".overflow-y-auto").last();

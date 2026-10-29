@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  BookOpen,
   Check,
   Download,
   ExternalLink,
@@ -14,6 +15,7 @@ import {
   Wrench,
   Puzzle,
   RotateCcw,
+  Settings,
   Share2,
   Sun,
   Trash2,
@@ -102,6 +104,7 @@ export function SettingsDialog({
   appName,
   appVersion,
   onOpenRepo,
+  onOpenDocs,
   onCheckUpdate,
   onOpenFavorites,
 }: {
@@ -145,6 +148,8 @@ export function SettingsDialog({
   appName: string;
   appVersion: string;
   onOpenRepo: () => void;
+  /** 打开使用指南站点 */
+  onOpenDocs: () => void;
   onCheckUpdate: () => void;
   /** 打开收藏夹面板（收藏夹分区入口按钮；先关设置再弹面板） */
   onOpenFavorites: () => void;
@@ -282,15 +287,15 @@ export function SettingsDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="settings-overlay fixed inset-0 z-50 flex items-center justify-center"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex h-[min(600px,85vh)] w-[720px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl">
+      <div className="settings-glass flex h-[min(600px,85vh)] w-[720px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-4 py-2.5">
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <Keyboard className="h-4 w-4" /> 设置
+            <Settings className="h-4 w-4" /> 设置
           </div>
           <button
             onClick={onClose}
@@ -330,97 +335,101 @@ export function SettingsDialog({
             <div
               ref={(el) => { sectionRefs.current.appearance = el; }}
               data-settings-section="appearance"
-              className="scroll-mt-3 mb-6 border-b pb-5"
+              className="scroll-mt-3 mb-6"
             >
                 {/* 外观：主题（浅色 / 深色 / 跟随系统） */}
-                <div className="mb-4">
-                  <div className="mb-1.5 text-xs font-semibold text-primary">主题</div>
-                  <div className="flex items-center justify-between rounded-md border px-3 py-2 text-xs">
-                    <span className="text-foreground">颜色模式</span>
-                    <div className="flex gap-1">
-                      {(
-                        [
-                          ["light", <Sun key="s" className="h-3.5 w-3.5" />, "浅色"],
-                          ["dark", <Moon key="m" className="h-3.5 w-3.5" />, "深色"],
-                          ["system", <Monitor key="w" className="h-3.5 w-3.5" />, "跟随系统"],
-                        ] as [ThemeMode, React.ReactNode, string][]
-                      ).map(([mode, icon, label]) => (
-                        <button
-                          key={mode}
-                          aria-pressed={themeMode === mode}
-                          onClick={() => onThemeModeChange(mode)}
-                          className={cn(
-                            "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors",
-                            themeMode === mode
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-muted text-muted-foreground hover:bg-accent",
-                          )}
-                        >
-                          {icon} {label}
-                        </button>
-                      ))}
+                <div className="mb-5">
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">主题</div>
+                  <div className="overflow-hidden rounded-md border bg-card">
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+                      <span className="text-foreground">颜色模式</span>
+                      <div className="flex gap-1">
+                        {(
+                          [
+                            ["light", <Sun key="s" className="h-3.5 w-3.5" />, "浅色"],
+                            ["dark", <Moon key="m" className="h-3.5 w-3.5" />, "深色"],
+                            ["system", <Monitor key="w" className="h-3.5 w-3.5" />, "跟随系统"],
+                          ] as [ThemeMode, React.ReactNode, string][]
+                        ).map(([mode, icon, label]) => (
+                          <button
+                            key={mode}
+                            aria-pressed={themeMode === mode}
+                            onClick={() => onThemeModeChange(mode)}
+                            className={cn(
+                              "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors",
+                              themeMode === mode
+                                ? "bg-primary text-primary-foreground"
+                                : "bg-muted text-muted-foreground hover:bg-accent",
+                            )}
+                          >
+                            {icon} {label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
 
                 {/* 外观：界面字体（v0.8，整体缩放等效，13px = 100%） */}
-                <div className="mb-4">
-                  <div className="mb-1.5 text-xs font-semibold text-primary">界面字体</div>
-                  <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs">
-                    <span className="flex items-center gap-1.5 text-foreground">
-                      <Type className="h-3.5 w-3.5 text-muted-foreground" />
-                      字体大小（整体缩放，作用于整个界面）
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="range"
-                        min={10}
-                        max={18}
-                        step={1}
-                        value={uiFontSize}
-                        onChange={(e) => onUiFontChange(Number(e.target.value))}
-                        className="w-32"
-                        title="10–18px（默认 13）"
-                      />
-                      <span className="w-9 rounded border bg-muted px-1 py-0.5 text-center font-mono text-[11px]">
-                        {uiFontSize}px
+                <div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">界面字体</div>
+                  <div className="overflow-hidden rounded-md border bg-card">
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+                      <span className="flex items-center gap-1.5 text-foreground">
+                        <Type className="h-3.5 w-3.5 text-muted-foreground" />
+                        字体大小
                       </span>
-                    </div>
-                  </div>
-                  <p className="mt-1 pl-1 text-[11px] text-muted-foreground">
-                    默认 15px；与窗口内 Ctrl+滚轮缩放相互叠加（如 80% 字体 × 130% 窗口 = 104%）。
-                  </p>
-                  <div className="mt-2 flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs">
-                    <span className="flex items-center gap-1.5 text-foreground">
-                      <Type className="h-3.5 w-3.5 text-muted-foreground" />
-                      字体族
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={uiFontFamily}
-                        onChange={(e) => onUiFontFamilyChange(e.target.value)}
-                        className="rounded border bg-background px-2 py-1 text-xs"
-                      >
-                        {fontFamilies.map((f) => (
-                          <option key={f.id} value={f.id}>{f.label}</option>
-                        ))}
-                      </select>
-                      {uiFontFamily === "custom" && (
+                      <div className="flex items-center gap-2">
                         <input
-                          type="text"
-                          placeholder="输入字体名，如 Consolas"
-                          className="w-40 rounded border bg-background px-2 py-1 text-xs"
-                          onBlur={(e) => {
-                            if (e.target.value.trim()) {
-                              saveUiFontFamilyCustom(e.target.value.trim());
-                              // 触发重渲染
-                              onUiFontFamilyChange("custom");
-                            }
-                          }}
+                          type="range"
+                          min={10}
+                          max={18}
+                          step={1}
+                          value={uiFontSize}
+                          onChange={(e) => onUiFontChange(Number(e.target.value))}
+                          className="w-32"
+                          title="10–18px（默认 13）"
                         />
-                      )}
+                        <span className="w-9 rounded bg-muted px-1 py-0.5 text-center font-mono text-[11px] tabular-nums">
+                          {uiFontSize}px
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
+                      <span className="flex items-center gap-1.5 text-foreground">
+                        <Type className="h-3.5 w-3.5 text-muted-foreground" />
+                        字体族
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={uiFontFamily}
+                          onChange={(e) => onUiFontFamilyChange(e.target.value)}
+                          className="rounded border bg-background px-2 py-1 text-xs"
+                        >
+                          {fontFamilies.map((f) => (
+                            <option key={f.id} value={f.id}>{f.label}</option>
+                          ))}
+                        </select>
+                        {uiFontFamily === "custom" && (
+                          <input
+                            type="text"
+                            placeholder="输入字体名，如 Consolas"
+                            className="w-40 rounded border bg-background px-2 py-1 text-xs"
+                            onBlur={(e) => {
+                              if (e.target.value.trim()) {
+                                saveUiFontFamilyCustom(e.target.value.trim());
+                                // 触发重渲染
+                                onUiFontFamilyChange("custom");
+                              }
+                            }}
+                          />
+                        )}
+                      </div>
                     </div>
                   </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    整体缩放，作用于整个界面；默认 13px，与窗口内 Ctrl+滚轮缩放相互叠加（如 80% 字体 × 130% 窗口 = 104%）。
+                  </p>
                 </div>
             </div>
 
@@ -428,38 +437,22 @@ export function SettingsDialog({
             <div
               ref={(el) => { sectionRefs.current.preview = el; }}
               data-settings-section="preview"
-              className="scroll-mt-3 mb-6 border-b pb-5"
+              className="scroll-mt-3 mb-6"
             >
-                <div className="mb-4">
-                  <div className="mb-1.5 text-xs font-semibold text-primary">预览栏</div>
-                  <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
-                    开启后右侧滑出预览栏（悬浮拉门，不挤压布局；全应用共用，跟随焦点窗格的选中项）。
-                    点文件不会直接预览；图片/文本/PDF/Office 可预览，其余类型显示信息卡。
-                  </div>
-                  <div className="space-y-2">
+                <div className="mb-5">
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">预览栏</div>
+                  <div className="overflow-hidden rounded-md border bg-card">
                     <label
                       role="switch"
                       aria-checked={previewEnabled}
                       data-testid="preview-toggle"
-                      className="flex cursor-pointer items-center justify-between rounded-md border px-3 py-2 text-xs"
+                      className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2.5 text-xs"
                       onClick={() => onPreviewEnabledChange(!previewEnabled)}
                     >
                       <span>启用预览栏</span>
-                      <span
-                        className={cn(
-                          "relative h-4.5 w-8 shrink-0 rounded-full transition-colors",
-                          previewEnabled ? "bg-primary" : "bg-muted",
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "absolute top-0.5 h-3.5 w-3.5 rounded-full bg-background shadow transition-all",
-                            previewEnabled ? "left-4" : "left-0.5",
-                          )}
-                        />
-                      </span>
+                      <SwitchVisual checked={previewEnabled} />
                     </label>
-                    <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs">
+                    <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
                       <span>预览栏默认宽度</span>
                       <div className="flex items-center gap-2">
                         <input
@@ -472,17 +465,20 @@ export function SettingsDialog({
                           className="w-32"
                           title={`${PREVIEW_WIDTH_MIN}–${PREVIEW_WIDTH_MAX}px`}
                         />
-                        <span className="w-12 rounded border bg-muted px-1 py-0.5 text-center font-mono text-[11px]">
+                        <span className="w-12 rounded bg-muted px-1 py-0.5 text-center font-mono text-[11px] tabular-nums">
                           {previewWidth}px
                         </span>
                       </div>
                     </div>
                   </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    开启后右侧滑出预览栏（悬浮拉门，不挤压布局；全应用共用，跟随焦点窗格的选中项），点文件不会直接预览；图片/文本/PDF/Office 可预览，其余类型显示信息卡。
+                  </p>
                 </div>
 
                 <div>
-                  <div className="mb-1.5 text-xs font-semibold text-primary">预览键位</div>
-                  <div className="overflow-hidden rounded-md border">
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">预览键位</div>
+                  <div className="overflow-hidden rounded-md border bg-card">
                     {["togglePreview", "toggleBrowse"].map((id, i, arr) => {
                       const a = ACTIONS.find((x) => x.id === id);
                       if (!a) return null;
@@ -493,8 +489,7 @@ export function SettingsDialog({
                           key={a.id}
                           className={
                             "flex items-center justify-between gap-3 px-3 py-1.5 text-xs " +
-                            (i < arr.length - 1 ? "border-b " : "") +
-                            (i % 2 === 0 ? "bg-muted/30" : "")
+                            (i < arr.length - 1 ? "border-b" : "")
                           }
                         >
                           <span className="flex min-w-0 items-center gap-1.5 text-foreground">
@@ -546,10 +541,10 @@ export function SettingsDialog({
             <div
               ref={(el) => { sectionRefs.current.keys = el; }}
               data-settings-section="keys"
-              className="scroll-mt-3 mb-6 border-b pb-5"
+              className="scroll-mt-3 mb-6"
             >
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="text-xs font-semibold text-primary">快捷键</div>
+                  <div className="sec-t text-[11px] font-medium text-muted-foreground">快捷键</div>
                   <button
                     onClick={handleResetAll}
                     className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -583,8 +578,8 @@ export function SettingsDialog({
 
                 {groups.map((g) => (
                   <div key={g} className="mb-4">
-                    <div className="mb-1.5 text-xs font-semibold text-primary">{g}</div>
-                    <div className="overflow-hidden rounded-md border">
+                    <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{g}</div>
+                    <div className="overflow-hidden rounded-md border bg-card">
                       {ACTIONS.filter((a) => a.group === g).map((a, i, arr) => {
                         const custom = hasCustomBinding(a.id);
                         const recording = recordingId === a.id;
@@ -593,8 +588,7 @@ export function SettingsDialog({
                             key={a.id}
                             className={
                               "flex items-center justify-between gap-3 px-3 py-1.5 text-xs " +
-                              (i < arr.length - 1 ? "border-b " : "") +
-                              (i % 2 === 0 ? "bg-muted/30" : "")
+                              (i < arr.length - 1 ? "border-b" : "")
                             }
                           >
                             <span className="flex min-w-0 items-center gap-1.5 text-foreground">
@@ -649,10 +643,10 @@ export function SettingsDialog({
             <div
               ref={(el) => { sectionRefs.current.openers = el; }}
               data-settings-section="openers"
-              className="scroll-mt-3 mb-6 border-b pb-5"
+              className="scroll-mt-3 mb-6"
             >
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="text-xs font-semibold text-primary">打开方式</div>
+                  <div className="sec-t text-[11px] font-medium text-muted-foreground">打开方式</div>
                   <button
                     onClick={onAddOpener}
                     className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -667,13 +661,13 @@ export function SettingsDialog({
                 </p>
 
                 {openers.length === 0 ? (
-                  <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                  <div className="rounded-md border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
                     还没有自定义打开方式。右键文件 → 打开方式 → 选择其他应用… 添加。
                   </div>
                 ) : (
                   <div className="space-y-2">
                     {openers.map((o) => (
-                      <div key={o.id} className="rounded-md border px-3 py-2">
+                      <div key={o.id} className="rounded-md border bg-card px-3 py-2">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex min-w-0 items-center gap-2">
                             <span className="truncate text-xs font-medium">{o.name}</span>
@@ -761,10 +755,10 @@ export function SettingsDialog({
             <div
               ref={(el) => { sectionRefs.current.quickTools = el; }}
               data-settings-section="quickTools"
-              className="scroll-mt-3 mb-6 border-b pb-5"
+              className="scroll-mt-3 mb-6"
             >
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="text-xs font-semibold text-primary">常用工具</div>
+                  <div className="sec-t text-[11px] font-medium text-muted-foreground">常用工具</div>
                   <button
                     onClick={onAddQuickTool}
                     className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -788,13 +782,13 @@ export function SettingsDialog({
                 </p>
 
                 {quickTools.length === 0 ? (
-                  <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                  <div className="rounded-md border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
                     还没有常用工具。点右上角「添加」选择应用，或从下方检测列表一键加入。
                   </div>
                 ) : (
                   <div className="space-y-1.5">
                     {quickTools.map((t, i) => (
-                      <div key={t.id} className="flex items-center gap-2 rounded-md border px-2 py-1.5">
+                      <div key={t.id} className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5">
                         <span
                           className={cn(
                             "flex h-6 w-6 shrink-0 items-center justify-center rounded text-[9px] font-bold text-white",
@@ -883,17 +877,17 @@ export function SettingsDialog({
             <div
               ref={(el) => { sectionRefs.current.favorites = el; }}
               data-settings-section="favorites"
-              className="scroll-mt-3 mb-6 border-b pb-5"
+              className="scroll-mt-3 mb-6"
             >
-                <div className="mb-4">
-                  <div className="mb-1.5 text-xs font-semibold text-primary">收藏夹</div>
-                  <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
+                <div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">收藏夹</div>
+                  <p className="mb-2.5 text-[11px] text-muted-foreground">
                     收藏 = 单个标签页的命名布局快照：全部窗格路径、分屏结构、视图/缩放状态。
                     打开收藏会在新标签页还原（本地路径直接加载，SFTP 窗格自动重连）。
                     与「保存并退出」的整体会话互不影响。
-                  </div>
+                  </p>
                   <div className="space-y-2">
-                    <p className="pl-1 text-[11px] text-muted-foreground">
+                    <p className="text-[11px] text-muted-foreground">
                       入口：右键标签页「收藏此标签页」、空白处右键「收藏夹…」、
                       快捷键
                       <kbd className="mx-1 rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">
@@ -918,26 +912,31 @@ export function SettingsDialog({
             <div
               ref={(el) => { sectionRefs.current.share = el; }}
               data-settings-section="share"
-              className="scroll-mt-3 mb-6 border-b pb-5"
+              className="scroll-mt-3 mb-6"
             >
-                <div className="mb-4">
-                  <div className="mb-1.5 text-xs font-semibold text-primary">分享</div>
-                  <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
+                <div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">分享</div>
+                  <p className="mb-2.5 text-[11px] text-muted-foreground">
                     分享为链接时的默认行为：是否允许接收方上溯父目录（默认关闭，严格锁定分享根内）、默认有效期。
-                  </div>
-                  <div className="space-y-2">
-                    <label className="flex items-center justify-between rounded-md border px-3 py-2 text-xs">
+                  </p>
+                  <div className="overflow-hidden rounded-md border bg-card">
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
                       <span>允许接收方上溯到父目录（仅浏览）</span>
-                      <input
-                        type="checkbox"
-                        checked={shareAllowParent}
-                        onChange={(e) => {
-                          setShareAllowParent(e.target.checked);
-                          saveShareAllowParent(e.target.checked);
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={shareAllowParent}
+                        aria-label="允许接收方上溯到父目录"
+                        className="flex cursor-pointer"
+                        onClick={() => {
+                          setShareAllowParent(!shareAllowParent);
+                          saveShareAllowParent(!shareAllowParent);
                         }}
-                      />
-                    </label>
-                    <label className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs">
+                      >
+                        <SwitchVisual checked={shareAllowParent} />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
                       <span>默认有效期（小时）</span>
                       <input
                         type="number"
@@ -957,33 +956,33 @@ export function SettingsDialog({
                         }}
                         className="w-24 rounded border bg-background px-2 py-1 text-right"
                       />
-                    </label>
-                    <p className="pl-1 text-[11px] text-muted-foreground">
-                      留空 = 永久（直到关闭客户端或主动停止分享）。
-                    </p>
+                    </div>
                   </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    留空 = 永久（直到关闭客户端或主动停止分享）。
+                  </p>
                 </div>
             </div>
 
             <div
               ref={(el) => { sectionRefs.current.plugins = el; }}
               data-settings-section="plugins"
-              className="scroll-mt-3 mb-6 border-b pb-5"
+              className="scroll-mt-3 mb-6"
             >
-                <div className="mb-4">
-                  <div className="mb-1.5 text-xs font-semibold text-primary">插件</div>
-                  <div className="mb-2 rounded-md border px-3 py-2 text-[11px] text-muted-foreground">
+                <div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">插件</div>
+                  <p className="mb-2.5 text-[11px] text-muted-foreground">
                     内置插件按统一契约登记（协议前缀 + 操作集 + 启用开关）。禁用后对应入口隐藏、
                     路由拒绝；未来外置插件（如 http-autoindex）沿用同一注册表接入。
-                  </div>
+                  </p>
                   <div className="space-y-2">
                     {plugins === null ? (
-                      <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                      <div className="rounded-md border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
                         正在加载插件清单…
                       </div>
                     ) : (
                       plugins.map((p) => (
-                        <div key={p.id} className="rounded-md border px-3 py-2">
+                        <div key={p.id} className="rounded-md border bg-card px-3 py-2">
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex min-w-0 items-center gap-2">
                               <span className="truncate text-xs font-medium">{p.name}</span>
@@ -1000,20 +999,13 @@ export function SettingsDialog({
                               )}
                             </div>
                             <button
+                              type="button"
                               role="switch"
                               aria-checked={p.enabled}
                               onClick={() => onTogglePlugin(p.id, !p.enabled)}
-                              className={cn(
-                                "relative h-4.5 w-8 shrink-0 rounded-full transition-colors",
-                                p.enabled ? "bg-primary" : "bg-muted",
-                              )}
+                              className="flex shrink-0 cursor-pointer"
                             >
-                              <span
-                                className={cn(
-                                  "absolute top-0.5 h-3.5 w-3.5 rounded-full bg-background shadow transition-all",
-                                  p.enabled ? "left-4" : "left-0.5",
-                                )}
-                              />
+                              <SwitchVisual checked={p.enabled} />
                             </button>
                           </div>
                           <div className="mt-1 text-[11px] text-muted-foreground">{p.description}</div>
@@ -1070,6 +1062,12 @@ export function SettingsDialog({
                     <Download className="h-3.5 w-3.5" /> 检查更新
                   </button>
                   <button
+                    onClick={onOpenDocs}
+                    className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
+                  >
+                    <BookOpen className="h-3.5 w-3.5" /> 使用指南
+                  </button>
+                  <button
                     onClick={onOpenRepo}
                     className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
                   >
@@ -1086,7 +1084,7 @@ export function SettingsDialog({
 
         <div className="flex items-center justify-between border-t px-4 py-2 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1">
-            <Check className="h-3 w-3" /> 配置自动保存在本机（localStorage）
+            <Check className="h-3 w-3" /> 更改会自动保存
           </span>
           <span>
             {appName} v{appVersion || "—"} · {isMac ? "macOS" : "Windows"}
@@ -1094,6 +1092,26 @@ export function SettingsDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+/** 开关视觉：填充轨道 + 滑块（交互语义由外层 label / button 承担）。
+ *  滑块用白色（而非 --background）：深色主题下关闭态轨道与背景同层，深色滑块会看不清。 */
+function SwitchVisual({ checked }: { checked: boolean }) {
+  return (
+    <span
+      className={cn(
+        "flex h-4.5 w-8 shrink-0 items-center rounded-full border px-0.5 transition-colors",
+        checked ? "border-transparent bg-primary" : "border-border bg-muted",
+      )}
+    >
+      <span
+        className={cn(
+          "h-3.5 w-3.5 rounded-full bg-white shadow transition-transform",
+          checked ? "translate-x-3" : "translate-x-0",
+        )}
+      />
+    </span>
   );
 }
 

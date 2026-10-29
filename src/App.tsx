@@ -146,7 +146,7 @@ import { serializeSession, serializeSessionTab, sessionSignature } from "@/lib/s
 import { getNativeDragOut, probeNativeDragOut, setNativeDragOut, getHtml5Drag, setHtml5Drag, canNativeDragOut } from "@/lib/native-drag";
 import { dropTargetAt, type DropTarget } from "@/lib/drop-target";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { fetchLatestRelease, REPO_URL } from "@/lib/update";
+import { fetchLatestRelease, DOCS_URL, REPO_URL } from "@/lib/update";
 import {
   loadCustomQuick,
   loadFileTags,
@@ -758,6 +758,11 @@ useEffect(() => {
   /** 打开 GitHub 仓库 */
   const openRepo = useCallback(() => {
     void openUrl(REPO_URL).catch((e) => showError(`打开仓库失败：${e}`));
+  }, [showError]);
+
+  /** 打开使用指南站点 */
+  const openDocs = useCallback(() => {
+    void openUrl(DOCS_URL).catch((e) => showError(`打开使用指南失败：${e}`));
   }, [showError]);
 
   /**
@@ -4186,6 +4191,7 @@ useEffect(() => {
     toggleExtensions: () => toggleExtensions(),
     checkUpdate: () => void checkUpdate(false),
     openRepo: () => openRepo(),
+    openDocs: () => openDocs(),
   };
 
   /** 命令面板条目 = ACTIONS 注册表（键位提示跟随自定义键位）+ 无键位的应用命令 */
@@ -4207,6 +4213,7 @@ useEffect(() => {
       { id: "toggleExtensions", label: "显示 / 隐藏文件扩展名", group: "视图 / 全局" },
       { id: "checkUpdate", label: "检查更新…", group: "帮助" },
       { id: "openRepo", label: "打开 GitHub 仓库", group: "帮助" },
+      { id: "openDocs", label: "打开使用指南", group: "帮助" },
       { id: "quit", label: "退出（询问是否保存会话）", group: "文件" },
     ],
     // keymapVer：bindingOf 读模块级自定义键位（非响应式），键位变化后重算
@@ -4603,6 +4610,7 @@ useEffect(() => {
             onOpenSettings={() => setSettingsOpen(true)}
             onCheckUpdate={() => void checkUpdate(false)}
             onOpenRepo={openRepo}
+            onOpenDocs={openDocs}
             appName={appName}
             appVersion={appVersion}
             dark={dark}
@@ -4903,6 +4911,7 @@ useEffect(() => {
         appName={appName}
         appVersion={appVersion}
         onOpenRepo={openRepo}
+        onOpenDocs={openDocs}
         onCheckUpdate={() => void checkUpdate(false)}
         onOpenFavorites={() => setFavoritesOpen(true)}
       />

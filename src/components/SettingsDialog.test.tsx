@@ -49,6 +49,7 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
       appName="R-Dir"
       appVersion="0.0.0-test"
       onOpenRepo={() => {}}
+      onOpenDocs={() => {}}
       onCheckUpdate={() => {}}
       onOpenFavorites={() => {}}
       {...over}

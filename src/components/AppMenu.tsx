@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   ArrowLeftRight,
+  BookOpen,
   Check,
   Clipboard,
   Command,
@@ -119,6 +120,8 @@ export interface AppMenuActions {
   onOpenSettings: () => void;
   onCheckUpdate: () => void;
   onOpenRepo: () => void;
+  /** 打开使用指南站点 */
+  onOpenDocs: () => void;
   appName: string;
   appVersion: string;
   dark: boolean;
@@ -348,6 +351,7 @@ export function AppMenu(actions: AppMenuActions) {
           </DropdownMenuLabel>
           <Item icon={<Settings />} label="设置" shortcutId="openSettings" onClick={actions.onOpenSettings} />
           <Item icon={<Download />} label="检查更新…" onClick={actions.onCheckUpdate} />
+          <Item icon={<BookOpen />} label="使用指南" onClick={actions.onOpenDocs} />
           <Item icon={<Globe />} label="GitHub 仓库" onClick={actions.onOpenRepo} />
           <Item icon={<Info />} label={<>版本 {actions.appVersion || pkg.version}（Tauri 2 + React）</>} disabled onClick={() => {}} />
         </DropdownMenuContent>

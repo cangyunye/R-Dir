@@ -58,6 +58,7 @@ function makeActions(overrides: Partial<AppMenuActions> = {}): AppMenuActions {
     onOpenSettings: () => {},
     onCheckUpdate: () => {},
     onOpenRepo: () => {},
+    onOpenDocs: () => {},
     appName: "R-Dir",
     appVersion: "0.0.0-test",
     dark: false,

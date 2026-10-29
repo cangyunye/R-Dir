@@ -39,7 +39,7 @@ test.describe("主题颜色模式（浅色/深色/跟随系统）", () => {
 
     // 打开设置 → 外观分区（对话框无 role=dialog，按文本确认打开）
     await page.getByTitle("设置（快捷键录制）").click();
-    await expect(page.getByText("配置自动保存在本机")).toBeVisible();
+    await expect(page.getByText("更改会自动保存")).toBeVisible();
     await page.getByRole("button", { name: "外观", exact: true }).click();
 
     // 当前浅色高亮；点「跟随系统」→ 立即变暗 + localStorage 写回

@@ -165,3 +165,147 @@
 [data-slot="dropdown-menu-content"] {
   max-height: calc(var(--radix-popper-available-height, 100vh) / var(--rdir-zoom, 1));
 }
+
+/* ═══ 设置面板皮肤：浅色「云舒云卷」磨砂玻璃 / 深色「黑金纹琉璃」 ═══
+   做法：设置框根元素挂 .settings-glass、页面遮罩挂 .settings-overlay，在两者子树内
+   重定义主题 token（--background/--card/--border/--primary/…）。@theme inline 让
+   bg-card / border / bg-primary 等工具类直接引用这些变量，因此面板内全部控件
+   （分段选中、滑杆、开关、横幅、徽章）自动随皮肤换色，无需逐个改 JSX。
+   - 浅色：透亮云白玻璃（约 60% 不透明 + 大半径 backdrop-blur），::before 三团
+     天蓝云影光斑、::after 顶部高光，强调色沿用品牌蓝；
+   - 深色：玄黑玻璃换金 —— --primary 局部改为金色（滑杆/分段/开关/录制横幅整体
+     跟金），--border 换金发丝，::before 金纹（低透明 SVG 流线）、::after 顶部金晕。
+   可读性：正文沿用全局 --foreground（近黑/近白）；次级文字（--muted-foreground）
+   在皮肤内各自调深/调亮一档；玻璃在两种主题下都保持 ≥55% 有效不透明度。
+   本文件规则未分层（unlayered），优先级高于 Tailwind 工具类，可覆盖
+   shadow-xl / rounded-lg / text-muted-foreground 等。 */
+
+/* —— 页面遮罩：浅色天光洗白（透出应用轮廓供玻璃取样），深色暖黑 —— */
+.settings-overlay {
+  background: linear-gradient(
+    160deg,
+    oklch(0.96 0.03 235 / 50%),
+    oklch(0.99 0.01 250 / 38%) 55%,
+    oklch(0.94 0.04 210 / 46%)
+  );
+}
+.dark .settings-overlay {
+  background: radial-gradient(
+    120rem 80rem at 70% 0%,
+    oklch(0.1 0.02 260 / 52%),
+    oklch(0.05 0.01 260 / 66%)
+  );
+}
+
+/* —— 浅色 · 云舒云卷磨砂玻璃 —— */
+.settings-glass {
+  --background: oklch(1 0.008 240 / 60%);
+  --card: oklch(1 0.004 240 / 55%);
+  --popover: oklch(1 0.004 240 / 88%);
+  --muted: oklch(0.96 0.014 240 / 72%);
+  --muted-foreground: oklch(0.44 0.035 255);
+  --accent: oklch(0.92 0.035 235 / 78%);
+  --accent-foreground: oklch(0.3 0.09 240);
+  --border: oklch(0.56 0.05 248 / 20%);
+  --input: oklch(0.5 0.03 255 / 22%);
+  --ring: oklch(0.6 0.12 235 / 65%);
+  border-radius: 1rem;
+  backdrop-filter: blur(30px) saturate(1.5);
+  -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  box-shadow:
+    0 0 0 1px oklch(1 0 0 / 55%),
+    0 24px 64px -16px oklch(0.5 0.08 240 / 38%);
+}
+
+/* 原生 range 不走 token（Chrome 默认蓝），绑到 --primary：浅色品牌蓝、深色金 */
+.settings-glass input[type="range"] {
+  accent-color: var(--primary);
+}
+
+/* 云影：三团大光斑（超大半径 + blur，oversize 防边缘露馅），压在玻璃底色上、内容下 */
+.settings-glass::before {
+  content: "";
+  position: absolute;
+  inset: -12%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(44rem 22rem at 84% -10%, oklch(0.85 0.075 230 / 72%), transparent 62%),
+    radial-gradient(38rem 20rem at -14% 34%, oklch(0.92 0.055 205 / 62%), transparent 62%),
+    radial-gradient(32rem 26rem at 52% 118%, oklch(0.87 0.065 250 / 58%), transparent 60%);
+  filter: blur(22px);
+}
+
+/* 玻璃高光：左上斜向一道天光 */
+.settings-glass::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(163deg, oklch(1 0 0 / 52%) 0%, oklch(1 0 0 / 0%) 36%);
+}
+
+/* 左栏：比内容更透一层，像独立玻璃片 */
+.settings-glass nav {
+  background: linear-gradient(180deg, oklch(1 0.01 240 / 46%), oklch(1 0.01 240 / 12%));
+}
+
+/* 分区标题：浅色压成青灰、深色镀金（配 .sec-t 类，见 SettingsDialog） */
+.settings-glass .sec-t {
+  color: oklch(0.46 0.055 250);
+  letter-spacing: 0.03em;
+}
+.dark .settings-glass .sec-t {
+  color: oklch(0.85 0.09 92);
+}
+
+/* —— 深色 · 黑金纹琉璃 —— */
+.dark .settings-glass {
+  --background: oklch(0.155 0.012 260 / 74%);
+  --card: oklch(0.205 0.016 260 / 58%);
+  --popover: oklch(0.205 0.016 260 / 92%);
+  --muted: oklch(1 0 0 / 8%);
+  --muted-foreground: oklch(0.77 0.025 260);
+  --accent: oklch(0.33 0.06 88 / 55%);
+  --accent-foreground: oklch(0.91 0.09 92);
+  --border: oklch(0.81 0.11 88 / 26%);
+  --input: oklch(1 0 0 / 12%);
+  --primary: oklch(0.82 0.13 88);
+  --primary-foreground: oklch(0.17 0.025 90);
+  --ring: oklch(0.82 0.13 88 / 60%);
+  backdrop-filter: blur(30px) saturate(1.2) brightness(0.94);
+  -webkit-backdrop-filter: blur(30px) saturate(1.2) brightness(0.94);
+  box-shadow:
+    0 0 0 1px oklch(0.82 0.13 88 / 16%),
+    0 0 48px -8px oklch(0.72 0.12 88 / 20%),
+    0 28px 72px -20px rgb(0 0 0 / 82%);
+}
+
+/* 金纹：低透明金色流线（手绘感贝塞尔），铺满玻璃底层 */
+.dark .settings-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 720 600' fill='none'%3E%3Cg stroke='%23d8b45a' stroke-linecap='round'%3E%3Cpath d='M-20 88 C 140 56, 238 152, 380 118 S 640 58, 760 106' stroke-width='1.5' opacity='.2'/%3E%3Cpath d='M-30 196 C 120 168, 262 258, 420 208 S 660 148, 770 208' stroke-width='1' opacity='.13'/%3E%3Cpath d='M-20 428 C 158 398, 282 502, 460 438 S 680 378, 770 438' stroke-width='1.7' opacity='.17'/%3E%3Cpath d='M-30 522 C 140 500, 298 572, 480 520 S 688 468, 770 518' stroke-width='1' opacity='.12'/%3E%3Cpath d='M330 620 C 360 480, 300 400, 380 300 S 470 180, 430 60' stroke-width='1' opacity='.09'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 100% 100%;
+}
+
+/* 顶部金晕：像琉璃内侧的反光 */
+.dark .settings-glass::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(34rem 15rem at 76% -12%, oklch(0.74 0.13 88 / 17%), transparent 62%),
+    radial-gradient(26rem 12rem at -8% 112%, oklch(0.6 0.1 88 / 10%), transparent 58%);
+}
+
+/* 深色左栏：暖黑玻璃片 */
+.dark .settings-glass nav {
+  background: linear-gradient(180deg, oklch(1 0 0 / 6%), oklch(1 0 0 / 2%));
+}

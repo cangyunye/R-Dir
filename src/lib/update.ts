@@ -8,6 +8,8 @@ export const REPO = "cangyunye/R-Dir";
 export const REPO_URL = `https://github.com/${REPO}`;
 export const RELEASES_URL = `${REPO_URL}/releases`;
 export const LATEST_RELEASE_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+/** 使用指南站点（GitHub Pages，v0.34.2 设置 / 菜单 / 命令面板共用入口） */
+export const DOCS_URL = "https://cangyunye.github.io/R-Dir-Docs/";
 
 export interface UpdateInfo {
   version: string;
