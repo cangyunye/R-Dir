@@ -209,6 +209,10 @@
   --border: oklch(0.56 0.05 248 / 20%);
   --input: oklch(0.5 0.03 255 / 22%);
   --ring: oklch(0.6 0.12 235 / 65%);
+  /* 主色微渐变：蓝 → 靛青（135°，色相 +24°、亮度微降），替代大面积纯色蓝 */
+  --primary-grad: linear-gradient(135deg, oklch(0.6 0.135 242), oklch(0.52 0.135 266));
+  --accent-grad: linear-gradient(135deg, oklch(0.93 0.045 235 / 0.82), oklch(0.9 0.06 266 / 0.82));
+  --primary-grad-wash: linear-gradient(135deg, oklch(0.6 0.135 242 / 0.11), oklch(0.52 0.135 266 / 0.11));
   border-radius: 1rem;
   backdrop-filter: blur(30px) saturate(1.5);
   -webkit-backdrop-filter: blur(30px) saturate(1.5);
@@ -220,6 +224,20 @@
 /* 原生 range 不走 token（Chrome 默认蓝），绑到 --primary：浅色品牌蓝、深色金 */
 .settings-glass input[type="range"] {
   accent-color: var(--primary);
+}
+
+/* 主色微渐变挂载点：分段选中（aria-pressed）、侧栏当前项（aria-current）、
+   primary 淡底（关于图标底 / 徽章 / 录制横幅，bg-primary/10 工具类）。
+   渐变 token 按主题各自取值：浅色蓝→靛青，深色金→琥珀 */
+.settings-glass button[aria-pressed="true"] {
+  background-image: var(--primary-grad);
+}
+.settings-glass nav button[aria-current="true"] {
+  background-image: var(--accent-grad);
+}
+.settings-glass .bg-primary\/10 {
+  background-color: transparent;
+  background-image: var(--primary-grad-wash);
 }
 
 /* 云影：三团大光斑（超大半径 + blur，oversize 防边缘露馅），压在玻璃底色上、内容下 */
@@ -274,6 +292,10 @@
   --primary: oklch(0.82 0.13 88);
   --primary-foreground: oklch(0.17 0.025 90);
   --ring: oklch(0.82 0.13 88 / 60%);
+  /* 深色对应微渐变：金 → 琥珀（与浅色蓝→靛青同构） */
+  --primary-grad: linear-gradient(135deg, oklch(0.85 0.115 95), oklch(0.77 0.125 80));
+  --accent-grad: linear-gradient(135deg, oklch(0.36 0.07 98 / 0.6), oklch(0.3 0.06 82 / 0.6));
+  --primary-grad-wash: linear-gradient(135deg, oklch(0.84 0.12 92 / 0.13), oklch(0.74 0.12 78 / 0.13));
   backdrop-filter: blur(30px) saturate(1.2) brightness(0.94);
   -webkit-backdrop-filter: blur(30px) saturate(1.2) brightness(0.94);
   box-shadow:
