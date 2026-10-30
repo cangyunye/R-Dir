@@ -368,6 +368,30 @@ export async function installTauriMock(page: Page): Promise<void> {
           return "missing";
         });
       },
+      // v0.37 覆盖确认弹窗文件指纹：按虚拟 FS 返回大小 + 确定性伪 MD5（32 hex，
+      // 由路径派生；mock 无真实内容，同路径恒同值即可满足展示断言）
+      file_fingerprints: (a) => {
+        const paths = (a.paths as string[]) ?? [];
+        return paths.map((p) => {
+          for (const dir of Object.keys(FS)) {
+            const f = FS[dir].find((x) => `${dir}/${x.name}` === p);
+            if (!f) continue;
+            let h = 2166136261;
+            const seed = `${p}:${f.size ?? 0}`;
+            for (let i = 0; i < seed.length; i++) {
+              h ^= seed.charCodeAt(i);
+              h = Math.imul(h, 16777619);
+            }
+            const hex = (h >>> 0).toString(16).padStart(8, "0");
+            return {
+              path: p,
+              size: f.dir ? null : (f.size ?? 0),
+              md5: f.dir ? null : hex.repeat(4),
+            };
+          }
+          return { path: p, size: null, md5: null };
+        });
+      },
       // ---- 目录大小统计（v0.16 右键「属性」）：按虚拟 FS 递归统计 ----
       compute_size: (a) => {
         const paths = (a.paths as string[]) ?? [];
@@ -676,15 +700,19 @@ export async function installTauriMock(page: Page): Promise<void> {
         sftpImport.push({ filePath: String(a.filePath), hasKey: a.masterKey != null });
         return { imported: 2, skipped: 1 };
       },
-      // ---- v0.31 远程打开临时目录（虚拟占用：2 个文件 3MB） ----
-      sftp_temp_info: () => ({ path: "/tmp/r-dir-sftp", files: 2, bytes: 3 * 1024 * 1024 }),
-      sftp_clear_temp: () => 3 * 1024 * 1024,
+      // ---- v0.37 远程打开临时目录（虚拟占用：2 个文件 3MB；localDir = 设置里配置的目录） ----
+      remote_temp_info: (a) => ({
+        path: a.localDir ? String(a.localDir) : "/tmp/r-dir-remote",
+        files: 2,
+        bytes: 3 * 1024 * 1024,
+      }),
+      remote_temp_clear: () => 3 * 1024 * 1024,
       // ---- v0.31 双击打开远程文件：记录下载并回确定性临时路径（断言 open_path 落点） ----
       sftp_download: (a) => {
         const p = String(a.path);
         const name = p.split("/").filter(Boolean).pop() ?? "download";
         sftpDownloads.push(p);
-        return `/tmp/r-dir-sftp/${name}`;
+        return `${a.localDir ? String(a.localDir) : "/tmp/r-dir-remote"}/${name}`;
       },
       share_list: () => [],
       plugin: () => null,

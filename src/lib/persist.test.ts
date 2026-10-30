@@ -38,6 +38,8 @@ import {
   loadEntryAliases,
   saveEntryAliases,
   entryDisplayName,
+  loadRemoteTempDir,
+  saveRemoteTempDir,
 } from "./persist";
 
 beforeEach(() => {
@@ -379,5 +381,23 @@ describe("自定义标签（v0.28.0）", () => {
     const tags = loadCustomTags();
     expect(tags.map((t) => t.id)).toEqual(["c1", "c2"]);
     expect(tags[0].label).toBe("磁盘");
+  });
+});
+
+describe("remoteTempDir（v0.37 远程打开临时目录）", () => {
+  it("默认空串（后端回退默认目录）", () => {
+    expect(loadRemoteTempDir()).toBe("");
+  });
+  it("保存后读回一致；两端空白被去除", () => {
+    saveRemoteTempDir("  /tmp/rdir-cache  ");
+    expect(loadRemoteTempDir()).toBe("/tmp/rdir-cache");
+  });
+  it("保存空串/纯空白 = 恢复默认（移除 key）", () => {
+    saveRemoteTempDir("/tmp/rdir-cache");
+    saveRemoteTempDir("");
+    expect(loadRemoteTempDir()).toBe("");
+    saveRemoteTempDir("/tmp/rdir-cache");
+    saveRemoteTempDir("   ");
+    expect(loadRemoteTempDir()).toBe("");
   });
 });

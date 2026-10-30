@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import {
-  sftpClearTemp,
+  remoteTempClear,
+  remoteTempInfo,
   sftpConnect,
   sftpDisconnect,
   sftpExportServers,
@@ -10,7 +11,6 @@ import {
   sftpRemoveServer,
   sftpSaveServer,
   sftpSetServerGroup,
-  sftpTempInfo,
 } from "@/lib/api";
 import type {
   FileEntry,
@@ -499,15 +499,15 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
     pendingImportFileRef.current = null;
   }, []);
 
-  /** 清空远程文件打开临时目录（确定性路径，提示释放量） */
+  /** 清空远程文件打开临时目录（设置里可配路径，提示释放量） */
   const clearOpenTemp = useCallback(async () => {
     try {
-      const info = await sftpTempInfo();
+      const info = await remoteTempInfo();
       if (info.files === 0) {
         showInfo("远程临时目录已是空的");
         return;
       }
-      const freed = await sftpClearTemp();
+      const freed = await remoteTempClear();
       showInfo(`已清理 ${info.files} 个远程临时文件（释放 ${formatSize(freed)}）`);
     } catch (e) {
       showError(`清理失败：${e}`);

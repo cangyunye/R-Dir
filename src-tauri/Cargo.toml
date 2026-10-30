@@ -1,6 +1,6 @@
 [package]
 name = "rust-file-manager"
-version = "0.36.0"
+version = "0.37.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -37,6 +37,8 @@ ignore = "0.4"
 globset = "0.4"
 # v0.21.1 文本比较编码切换（GBK/Big5/Shift_JIS 等 WhatWG 标准编码解码）
 encoding_rs = "0.8"
+# v0.37 覆盖确认弹窗的单文件指纹：本地文件流式 MD5（源/目标对比展示）
+md-5 = "0.10"
 # v0.27 画廊模式缩略图（本地图片解码缩放；按需特性裁掉不需要的格式）
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 # v0.9 压缩（打包）改为调用系统命令（ditto / powershell / tar / zip），不再依赖 Rust crate

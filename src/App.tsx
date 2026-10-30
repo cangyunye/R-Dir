@@ -98,6 +98,7 @@ import {
   restoreFromTrash,
   cancelTransfer,
   fsWatchSet,
+  remoteTempInfo,
   renameEntry,
   resolvePath,
   sftpConnect,
@@ -128,7 +129,7 @@ import type { SectionId as SettingsSectionId } from "@/components/SettingsDialog
 import { ConflictDialog } from "@/components/ConflictDialog";
 import { AppConfirmDialog, type AppConfirmRequest } from "@/components/AppConfirmDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
-import { basename, isAbsolutePath } from "@/lib/format";
+import { basename, formatSize, isAbsolutePath } from "@/lib/format";
 import { normalizeExts } from "@/lib/openers";
 import {
   collectPaneIds,
@@ -180,6 +181,8 @@ import {
   remapPrefixedPath,
   loadEntryAliases,
   saveEntryAliases,
+  loadRemoteTempDir,
+  saveRemoteTempDir,
   entryDisplayName,
   type EntryAliases,
   type FileTags,
@@ -356,6 +359,15 @@ function parentPath(path: string): string {
   return path.slice(0, idx);
 }
 
+/** 远程协议路径（sftp / http）：交给本地应用前需先取回本地副本（v0.37） */
+function isRemoteSchemePath(path: string): boolean {
+  return (
+    path.startsWith("sftp://") ||
+    path.startsWith("http://") ||
+    path.startsWith("https://")
+  );
+}
+
 export default function App() {
   const [tabs, setTabs] = useState<TabState[]>([]);
   const [activeId, setActiveId] = useState<number>(0);
@@ -507,6 +519,8 @@ export default function App() {
   const [uiFontSize, setUiFontSize] = useState<number>(() => loadUiFontSize());
   /** v0.8.1 字体族 */
   const [uiFontFamily, setUiFontFamily] = useState<string>(() => loadUiFontFamily());
+  /** v0.37 远程打开临时目录（空串 = 后端默认 <系统临时目录>/r-dir-remote） */
+  const [remoteTempDir, setRemoteTempDir] = useState<string>(() => loadRemoteTempDir());
   /** v0.8.5 开屏飞鸟：React mount 后短暂显示，800ms 后淡出 */
   const [splashVisible, setSplashVisible] = useState(true);
   const [splashFading, setSplashFading] = useState(false);
@@ -877,18 +891,43 @@ useEffect(() => {
     }, 300);
     return () => window.clearTimeout(t);
   }, [refreshOpeners, refreshShells, refreshGitTools, refreshQuickTools, refreshPlugins]);
-  const handleOpenWith = useCallback(
-    (toolId: string, path: string) => {
-      void apiOpenWith(toolId, path).catch((e) => showError(`打开失败：${e}`));
+  // v0.37 远程文件交给本地应用前先确保本地副本：下载到打开临时目录再返回本地路径。
+  // 未来远程后端（网盘等）在此加分发分支；本地路径原样返回。
+  const ensureLocalCopy = useCallback(
+    async (path: string): Promise<string> => {
+      if (!isRemoteSchemePath(path)) return path;
+      showError("正在下载远程文件…");
+      if (path.startsWith("sftp://")) return sftpDownload(path);
+      // http(s)：经设置页配置的临时目录中转（sftp 的目录由 api 层内部传入）
+      const { path: dir } = await remoteTempInfo();
+      return httpDownloadTo(dir, path);
     },
     [showError],
+  );
+  const handleOpenWith = useCallback(
+    (toolId: string, path: string) => {
+      if (isRemoteSchemePath(path)) {
+        ensureLocalCopy(path)
+          .then((local) => apiOpenWith(toolId, local))
+          .catch((e) => showError(`远程打开失败：${e}`));
+        return;
+      }
+      void apiOpenWith(toolId, path).catch((e) => showError(`打开失败：${e}`));
+    },
+    [ensureLocalCopy, showError],
   );
   // v0.29.0 右键「用 Visual Studio Code 打开」
   const handleOpenVscode = useCallback(
     (path: string) => {
+      if (isRemoteSchemePath(path)) {
+        ensureLocalCopy(path)
+          .then((local) => apiOpenVscode(local))
+          .catch((e) => showError(`用 VSCode 打开失败：${e}`));
+        return;
+      }
       void apiOpenVscode(path).catch((e) => showError(`用 VSCode 打开失败：${e}`));
     },
-    [showError],
+    [ensureLocalCopy, showError],
   );
   // v0.29.0 右键「Git 打开」折叠组
   const handleOpenGitTool = useCallback(
@@ -978,7 +1017,7 @@ useEffect(() => {
             await apiSetOpenerExtensions(existing.id, merged);
             refreshOpeners();
           }
-          if (path) void apiOpenWith(existing.id, path).catch((e) => showError(`打开失败：${e}`));
+          if (path) handleOpenWith(existing.id, path);
           return;
         }
         // 名称取可执行文件名（去掉 .app），无需再弹输入框（Tauri WKWebView 不支持 window.prompt）
@@ -986,12 +1025,12 @@ useEffect(() => {
         const item = await apiAddCustomOpener(name, picked, wanted);
         refreshOpeners();
         // 选定即用：直接用新注册的应用打开当前文件
-        if (path) void apiOpenWith(item.id, path).catch((e) => showError(`打开失败：${e}`));
+        if (path) handleOpenWith(item.id, path);
       } catch (e) {
         showError(`添加打开方式失败：${e}`);
       }
     },
-    [openers, refreshOpeners, showError],
+    [openers, refreshOpeners, handleOpenWith, showError],
   );
 
   /** 设置面板：删除某个自定义打开方式（应用内确认框；关联该扩展名的条目随之失效） */
@@ -1971,21 +2010,20 @@ useEffect(() => {
     [navigate, openSearchResult],
   );
 
-  /** 用系统关联程序打开文件（按扩展名 / 协议）；http 走浏览器，sftp 先下载到临时目录 */
+  /** 用系统关联程序打开文件（按扩展名 / 协议）；http 走浏览器，sftp 先经
+   *  ensureLocalCopy 下载到打开临时目录（v0.37 起目录可在设置中更改） */
   const openFileExternal = useCallback(
     (path: string) => {
       if (path.startsWith("http://") || path.startsWith("https://")) {
         openUrl(path).catch((e) => showError(`打开 URL 失败：${e}`));
-      } else if (path.startsWith("sftp://")) {
-        showError("正在下载远程文件…");
-        sftpDownload(path)
-          .then((local) => openPath(local))
-          .catch((e) => showError(`远程打开失败：${e}`));
-      } else {
-        openPath(path).catch((e) => showError(`打开失败：${e}`));
+        return;
       }
+      const remote = path.startsWith("sftp://");
+      ensureLocalCopy(path)
+        .then((local) => openPath(local))
+        .catch((e) => showError(remote ? `远程打开失败：${e}` : `打开失败：${e}`));
     },
-    [showError],
+    [ensureLocalCopy, showError],
   );
 
   /** 在激活窗格中定位条目：目录直接进入，文件跳转所在目录并选中（搜索结果右键/双击用） */
@@ -3070,18 +3108,36 @@ useEffect(() => {
         // 远程 → 本地：下载。与 本地→远程 对称：目标已有同名条目先确认，
         // 确认后直接覆盖（默认的自动改名 " (n)" 仅保留给粘贴流程）（v0.22.0）
         if (srcIsSftp && !destIsSftp) {
-          const existing = new Set(
-            (await listDir(dest).catch(() => [] as FileEntry[])).map((e) => e.name),
-          );
-          const clashes = paths.map((p) => basename(p)).filter((n) => existing.has(n));
+          const destEntries = await listDir(dest).catch(() => [] as FileEntry[]);
+          const destByName = new Map(destEntries.map((e) => [e.name, e] as const));
+          const clashPaths = paths.filter((p) => destByName.has(basename(p)));
           let overwrite = false;
-          if (clashes.length > 0) {
-            const preview =
-              clashes.slice(0, 5).join("、") + (clashes.length > 5 ? ` 等 ${clashes.length} 项` : "");
+          if (clashPaths.length > 0) {
+            let message: string;
+            if (clashPaths.length === 1) {
+              // v0.37 单文件覆盖附源/目标大小对比（SFTP 不查 MD5：远程算哈希代价高
+              // 且不普遍支持）；任一侧目录或大小不可知 → 退回仅名单
+              const p = clashPaths[0];
+              const remoteEntry = await listDir(parentPath(p))
+                .then((es) => es.find((e) => e.name === basename(p)))
+                .catch(() => undefined);
+              const destEntry = destByName.get(basename(p));
+              const sizeLine =
+                remoteEntry && destEntry && !remoteEntry.is_dir && !destEntry.is_dir
+                  ? `源 ${formatSize(remoteEntry.size)}　目标 ${formatSize(destEntry.size)}`
+                  : null;
+              message = sizeLine
+                ? `目标目录已有同名条目：${basename(p)}\n${sizeLine}`
+                : `目标目录已有同名条目：${basename(p)}`;
+            } else {
+              message = `目标目录已有同名条目：${clashPaths.map(basename).slice(0, 5).join("、")}${
+                clashPaths.length > 5 ? ` 等 ${clashPaths.length} 项` : ""
+              }`;
+            }
             // v0.28.0 应用内确认框（Windows 原生 confirm 是经典样式弹窗）
             const ok = await appConfirm({
               title: "覆盖下载",
-              message: `目标目录已有同名条目：${preview}`,
+              message,
               confirmLabel: "覆盖",
             });
             if (!ok) return;
@@ -3096,17 +3152,32 @@ useEffect(() => {
         // 本地 → 远程：上传。SFTP 写入用 FXF_TRUNC 会静默覆盖同名远程文件，
         // 先列目标目录核对，存在同名 → 用户确认后才传（v0.22.2）
         if (!srcIsSftp && destIsSftp) {
-          const existing = new Set(
-            (await listDir(dest).catch(() => [] as FileEntry[])).map((e) => e.name),
-          );
-          const clashes = paths.map((p) => basename(p)).filter((n) => existing.has(n));
-          if (clashes.length > 0) {
-            const preview =
-              clashes.slice(0, 5).join("、") + (clashes.length > 5 ? ` 等 ${clashes.length} 项` : "");
+          const existing = await listDir(dest).catch(() => [] as FileEntry[]);
+          const remoteByName = new Map(existing.map((e) => [e.name, e] as const));
+          const clashPaths = paths.filter((p) => remoteByName.has(basename(p)));
+          if (clashPaths.length > 0) {
+            let message: string;
+            if (clashPaths.length === 1) {
+              // v0.37 单文件覆盖附源/目标大小对比（SFTP 不查 MD5）；查不到或涉及目录 → 退回仅名单
+              const p = clashPaths[0];
+              const localEntry = await statEntry(p).catch(() => undefined);
+              const remoteEntry = remoteByName.get(basename(p));
+              const sizeLine =
+                localEntry && remoteEntry && !localEntry.is_dir && !remoteEntry.is_dir
+                  ? `源 ${formatSize(localEntry.size)}　目标 ${formatSize(remoteEntry.size)}`
+                  : null;
+              message = sizeLine
+                ? `目标目录已有同名条目：${basename(p)}\n${sizeLine}`
+                : `目标目录已有同名条目：${basename(p)}`;
+            } else {
+              message = `目标目录已有同名条目：${clashPaths.map(basename).slice(0, 5).join("、")}${
+                clashPaths.length > 5 ? ` 等 ${clashPaths.length} 项` : ""
+              }`;
+            }
             // v0.28.0 应用内确认框（Windows 原生 confirm 是经典样式弹窗）
             const ok = await appConfirm({
               title: "覆盖上传",
-              message: `目标目录已有同名条目：${preview}`,
+              message,
               confirmLabel: "覆盖",
               danger: true,
             });
@@ -4908,6 +4979,12 @@ useEffect(() => {
         onRemoveQuickTool={handleRemoveQuickTool}
         onMoveQuickTool={handleMoveQuickTool}
         onSetQuickToolArgs={handleSetQuickToolArgs}
+        remoteTempDir={remoteTempDir}
+        onRemoteTempDirChange={(d) => {
+          saveRemoteTempDir(d);
+          setRemoteTempDir(d);
+        }}
+        onCleanRemoteTemp={() => sftp.clearOpenTemp()}
         appName={appName}
         appVersion={appVersion}
         onOpenRepo={openRepo}

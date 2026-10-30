@@ -275,6 +275,59 @@ fn perm_string(md: &std::fs::Metadata) -> String {
     }
 }
 
+/// 本地文件指纹（v0.37 覆盖确认弹窗）：大小 + MD5。
+/// 批量一次 IPC（源 + 目标两条）；目录或读取失败时对应字段为 None，不拖垮整批。
+#[derive(Serialize, Clone)]
+pub struct FileFingerprint {
+    pub path: String,
+    /// 字节大小；路径不存在 / 不可读时为 None
+    pub size: Option<u64>,
+    /// 十六进制小写 MD5；目录 / 不可读时为 None
+    pub md5: Option<String>,
+}
+
+/// 流式 MD5：256KB 缓冲顺序读取，大文件不整载内存。
+fn md5_hex(path: &Path) -> std::io::Result<String> {
+    use md5::{Digest, Md5};
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let mut ctx = Md5::new();
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        ctx.update(&buf[..n]);
+    }
+    Ok(ctx
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect())
+}
+
+/// 批量取本地文件指纹：与输入等长返回。
+pub fn file_fingerprints(paths: &[String]) -> Vec<FileFingerprint> {
+    paths
+        .iter()
+        .map(|p| {
+            let path = Path::new(p);
+            let meta = std::fs::metadata(path).ok();
+            let md5 = if meta.as_ref().map(|m| m.is_file()).unwrap_or(false) {
+                md5_hex(path).ok()
+            } else {
+                None
+            };
+            FileFingerprint {
+                path: p.clone(),
+                size: meta.map(|m| m.len()),
+                md5,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,5 +483,48 @@ mod tests {
         assert_eq!(fe.size, 5);
         assert_eq!(fe.name, "a.txt");
         assert_eq!(fe.extension, "txt");
+    }
+
+    #[test]
+    fn file_fingerprints_hash_missing_and_dir() {
+        let base = tmp("fingerprint");
+        std::fs::write(base.join("hello.txt"), b"hello world").unwrap();
+
+        let fps = file_fingerprints(&[
+            base.join("hello.txt").to_string_lossy().to_string(),
+            base.to_string_lossy().to_string(),
+            base.join("nope.txt").to_string_lossy().to_string(),
+        ]);
+        assert_eq!(fps.len(), 3);
+
+        // RFC 1321 标准向量："hello world" 的 MD5
+        assert_eq!(
+            fps[0].md5.as_deref(),
+            Some("5eb63bbbe01eeed093cb22bb8f5acdc3")
+        );
+        assert_eq!(fps[0].size, Some(11));
+
+        // 目录：有大小（None 之外语义即存在），无 MD5
+        assert!(fps[1].md5.is_none());
+        assert!(fps[1].size.is_some());
+
+        // 不存在：全 None，不报错不拖垮整批
+        assert_eq!(fps[2].md5, None);
+        assert_eq!(fps[2].size, None);
+    }
+
+    #[test]
+    fn file_fingerprints_same_content_same_md5() {
+        let base = tmp("fingerprint-same");
+        std::fs::write(base.join("a.bin"), [7u8; 300 * 1024]).unwrap();
+        std::fs::write(base.join("b.bin"), [7u8; 300 * 1024]).unwrap();
+        // 300KB > 256KB 缓冲，覆盖多轮读取路径
+        let fps = file_fingerprints(&[
+            base.join("a.bin").to_string_lossy().to_string(),
+            base.join("b.bin").to_string_lossy().to_string(),
+        ]);
+        assert_eq!(fps[0].md5, fps[1].md5);
+        assert!(fps[0].md5.is_some());
+        assert_eq!(fps[0].size, Some(300 * 1024));
     }
 }

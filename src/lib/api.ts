@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { loadRemoteTempDir } from "./persist";
 import type {
   FileEntry,
   FindEntry,
@@ -224,9 +225,10 @@ export const sftpConnect = (server: SftpServerConfig) =>
 export const sftpDisconnect = (id: string) =>
   invoke<void>("sftp_disconnect", { id });
 
-/** 下载远程文件到临时目录，返回本地路径（供 opener 打开） */
+/** 下载远程文件到打开临时目录，返回本地路径（供 opener 打开）。
+ *  目录取设置 → 远程临时的配置（空 = 后端默认），调用方无需关心 */
 export const sftpDownload = (path: string) =>
-  invoke<string>("sftp_download", { path });
+  invoke<string>("sftp_download", { path, localDir: loadRemoteTempDir() || null });
 
 /** 下载远程文件到指定本地目录（粘贴/拖拽 远程→本地），返回本地路径；
  *  overwrite=true 直接覆盖同名（拖拽经覆盖确认后），false 同名自动加 " (n)" 后缀 */
@@ -249,19 +251,22 @@ export const sftpDelete = (paths: string[]) =>
 export const sftpRename = (path: string, newName: string) =>
   invoke<string>("sftp_rename", { path, newName });
 
-// ---- v0.31 服务器清单导出/导入 + 远程打开临时目录 ----
+// ---- v0.31 远程打开临时目录管理 + 服务器清单导出/导入（v0.37 起后端无关、目录可配置） ----
 
-/** 远程文件「打开」临时目录占用信息（确定性路径，可整体清理） */
-export interface SftpTempInfo {
+/** 远程文件「打开」临时目录占用信息（路径/文件数/字节，可整体清理） */
+export interface RemoteTempInfo {
   path: string;
   files: number;
   bytes: number;
 }
 
-export const sftpTempInfo = () => invoke<SftpTempInfo>("sftp_temp_info");
+/** 查询远程打开临时目录占用（未配置时为后端默认目录） */
+export const remoteTempInfo = () =>
+  invoke<RemoteTempInfo>("remote_temp_info", { localDir: loadRemoteTempDir() || null });
 
 /** 清空远程打开临时目录，返回释放的字节数 */
-export const sftpClearTemp = () => invoke<number>("sftp_clear_temp");
+export const remoteTempClear = () =>
+  invoke<number>("remote_temp_clear", { localDir: loadRemoteTempDir() || null });
 
 /** 导出结果：exported 台数；encrypted = 文件含密文密码（导入时需输入这把主密码） */
 export interface SftpExportSummary {
@@ -374,6 +379,16 @@ export const writeTextSide = (path: string, lines: string[], eol: string, encodi
 /** 读取单个路径的元信息（「属性」统计当前目录用） */
 export const statEntry = (path: string) =>
   invoke<FileEntry>("stat_entry", { path });
+
+/** 本地文件指纹（v0.37 覆盖确认弹窗）：与输入等长返回；目录/不可读条目 size/md5 为 null */
+export interface FileFingerprint {
+  path: string;
+  size: number | null;
+  /** 十六进制小写；目录 / 不可读时为 null */
+  md5: string | null;
+}
+export const fileFingerprints = (paths: string[]) =>
+  invoke<FileFingerprint[]>("file_fingerprints", { paths });
 
 // ---- 窗口分享（v0.7） ----
 export const shareCreate = (

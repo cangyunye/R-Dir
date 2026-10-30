@@ -46,6 +46,9 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
       onAddOpener={onAddOpener}
       onRemoveOpener={onRemoveOpener}
       onSetOpenerExtensions={onSetOpenerExtensions}
+      remoteTempDir=""
+      onRemoteTempDirChange={() => {}}
+      onCleanRemoteTemp={async () => {}}
       appName="R-Dir"
       appVersion="0.0.0-test"
       onOpenRepo={() => {}}

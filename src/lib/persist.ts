@@ -638,3 +638,24 @@ export function savePreviewPrefs(p: PreviewPrefs): void {
     /* ignore */
   }
 }
+// ---- v0.37 远程打开临时目录（SFTP / HTTP 等远程文件「打开」先下载到此再交给外部应用；
+//      空串 = 用后端默认 <系统临时目录>/r-dir-remote，设置 → 远程临时可改） ----
+const REMOTE_TEMP_DIR_KEY = "rfm.remote-temp-dir";
+
+export function loadRemoteTempDir(): string {
+  try {
+    return localStorage.getItem(REMOTE_TEMP_DIR_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveRemoteTempDir(dir: string): void {
+  try {
+    const trimmed = dir.trim();
+    if (trimmed) localStorage.setItem(REMOTE_TEMP_DIR_KEY, trimmed);
+    else localStorage.removeItem(REMOTE_TEMP_DIR_KEY);
+  } catch {
+    /* ignore */
+  }
+}

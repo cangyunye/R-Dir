@@ -12,6 +12,7 @@ mod json_store;
 mod ops;
 mod preview;
 mod progress;
+mod remote_temp;
 mod search;
 mod sizestat;
 mod text_diff;
@@ -1006,6 +1007,15 @@ fn stat_entry(path: String) -> Result<fs_ops::FileEntry, String> {
     fs_ops::stat_entry(&path)
 }
 
+/// 批量本地文件指纹：大小 + MD5（v0.37 覆盖确认弹窗展示源/目标对比）。
+/// 与输入等长返回；目录 / 不可读条目对应字段为 None。spawn_blocking 不卡 UI 线程。
+#[tauri::command]
+async fn file_fingerprints(paths: Vec<String>) -> Vec<fs_ops::FileFingerprint> {
+    tauri::async_runtime::spawn_blocking(move || fs_ops::file_fingerprints(&paths))
+        .await
+        .unwrap_or_default()
+}
+
 /// 传输指示的文件名 label：取路径末段（兼容 sftp:// URL 与本地路径）；取不到时回退默认文案。
 #[cfg(feature = "sftp")]
 fn transfer_label(path: &str, fallback: &str) -> String {
@@ -1069,12 +1079,14 @@ async fn sftp_download(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     path: String,
+    local_dir: Option<String>,
 ) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
+    let temp_dir = remote_temp::resolve_temp_dir(local_dir.as_deref());
     let name = transfer_label(&path, "下载中…");
     let pool = state.sftp_pool.lock().await;
     let mut throttle = progress::Throttle::new();
-    let result = sftp::download(&pool, &path, |done, total| {
+    let result = sftp::download(&pool, &path, &temp_dir, |done, total| {
         if done < total && !throttle.ready() {
             return;
         }
@@ -1258,33 +1270,33 @@ async fn sftp_rename(
     sftp::rename_entry(&pool, &path, &new_name).await
 }
 
-/// 远程文件打开临时目录的占用信息（路径/文件数/字节；清理菜单展示用）
-#[cfg(feature = "sftp")]
+// ==================== 远程打开临时目录（后端无关，服务 SFTP / HTTP 等） ====================
+
+/// 远程文件打开临时目录的占用信息（路径/文件数/字节；设置页与清理菜单展示用）
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SftpTempInfo {
+struct RemoteTempInfo {
     path: String,
     files: u32,
     bytes: u64,
 }
 
-/// 查询远程文件打开临时目录（确定性路径 <temp>/r-dir-sftp）占用
-#[cfg(feature = "sftp")]
+/// 查询远程文件打开临时目录占用（未配置时为默认 <temp>/r-dir-remote）
 #[tauri::command]
-fn sftp_temp_info() -> SftpTempInfo {
-    let (bytes, files) = sftp::temp_usage();
-    SftpTempInfo {
-        path: sftp::open_temp_dir().to_string_lossy().to_string(),
+fn remote_temp_info(local_dir: Option<String>) -> RemoteTempInfo {
+    let dir = remote_temp::resolve_temp_dir(local_dir.as_deref());
+    let (bytes, files) = remote_temp::temp_usage(&dir);
+    RemoteTempInfo {
+        path: dir.to_string_lossy().to_string(),
         files,
         bytes,
     }
 }
 
 /// 清空远程文件打开临时目录，返回释放的字节数
-#[cfg(feature = "sftp")]
 #[tauri::command]
-fn sftp_clear_temp() -> Result<u64, String> {
-    sftp::clear_temp()
+fn remote_temp_clear(local_dir: Option<String>) -> Result<u64, String> {
+    remote_temp::clear_temp(&remote_temp::resolve_temp_dir(local_dir.as_deref()))
 }
 
 /// 导出服务器清单到目标文件（前端 save 对话框给路径）。
@@ -1985,10 +1997,9 @@ pub fn run() {
         sftp_export_servers,
         #[cfg(feature = "sftp")]
         sftp_import_servers,
-        #[cfg(feature = "sftp")]
-        sftp_temp_info,
-        #[cfg(feature = "sftp")]
-        sftp_clear_temp,
+        // v0.37 远程打开临时目录：可配置 / 统计 / 清理（后端无关，无 feature 门控）
+        remote_temp_info,
+        remote_temp_clear,
         // v0.31 服务器分组整理（拖拽换组 / 分组重命名）
         #[cfg(feature = "sftp")]
         sftp_set_server_group,
@@ -2036,6 +2047,7 @@ pub fn run() {
         read_text_file,
         write_text_file,
         stat_entry,
+        file_fingerprints,
         // 插件注册表（v0.5）
         list_plugins,
         set_plugin_enabled,

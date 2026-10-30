@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Eye,
   Globe,
+  HardDrive,
   Info,
   Keyboard,
   Monitor,
@@ -22,6 +23,7 @@ import {
   Type,
   X,
 } from "lucide-react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   ACTIONS,
   bindingOf,
@@ -40,6 +42,8 @@ import { quickInitials, quickTileColor } from "@/components/EntryContextMenu";
 import type { QuickToolItem, EditorCandidate } from "@/lib/openerApi";
 import type { OpenerItem, PluginInfo } from "@/lib/openerApi";
 import { normalizeExts } from "@/lib/openers";
+import { formatSize } from "@/lib/format";
+import { remoteTempInfo, type RemoteTempInfo } from "@/lib/api";
 import { useModalLayer } from "@/hooks/useModalLayer";
 import { isTopModalLayer } from "@/lib/modal-stack";
 import {
@@ -53,7 +57,7 @@ import {
 } from "@/lib/persist";
 
 /** 设置分区标识（左栏导航 + 右栏锚点共用） */
-export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "favorites" | "share" | "plugins" | "about";
+export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "favorites" | "share" | "remoteTemp" | "plugins" | "about";
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
   { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
@@ -63,6 +67,7 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
   { id: "quickTools", label: "常用工具", icon: <Wrench className="h-4 w-4" /> },
   { id: "favorites", label: "收藏夹", icon: <Star className="h-4 w-4" /> },
   { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
+  { id: "remoteTemp", label: "远程临时", icon: <HardDrive className="h-4 w-4" /> },
   { id: "plugins", label: "插件", icon: <Puzzle className="h-4 w-4" /> },
   { id: "about", label: "关于", icon: <Info className="h-4 w-4" /> },
 ];
@@ -101,6 +106,9 @@ export function SettingsDialog({
   onRemoveQuickTool,
   onMoveQuickTool,
   onSetQuickToolArgs,
+  remoteTempDir,
+  onRemoteTempDirChange,
+  onCleanRemoteTemp,
   appName,
   appVersion,
   onOpenRepo,
@@ -144,6 +152,11 @@ export function SettingsDialog({
   onMoveQuickTool: (id: string, up: boolean) => void;
   /** v0.31.1 启动参数串（占位符 {path} / {dir} / $pwd / {name}；空 = 默认行为） */
   onSetQuickToolArgs?: (id: string, args: string) => void;
+  /** v0.37 远程打开临时目录（空串 = 后端默认 <系统临时目录>/r-dir-remote） */
+  remoteTempDir: string;
+  onRemoteTempDirChange: (dir: string) => void;
+  /** 清空远程打开临时目录（App 复用 useSftp.clearOpenTemp：含空目录提示与释放量 toast） */
+  onCleanRemoteTemp: () => Promise<void>;
   /** 应用名 / 版本（getVersion = tauri.conf.json 版本，随 tag 同步） */
   appName: string;
   appVersion: string;
@@ -171,6 +184,42 @@ export function SettingsDialog({
   /** 本地操作反馈（已绑定 / 已恢复） */
   const [tip, setTip] = useState<string | null>(null);
   const tipTimer = useRef<number | null>(null);
+
+  // v0.37 远程打开临时目录占用（打开设置 / 目录变更 / 清理后刷新；无 Tauri 环境静默为空）
+  const [remoteTempUsage, setRemoteTempUsage] = useState<RemoteTempInfo | null>(null);
+  const refreshRemoteTempUsage = useCallback(() => {
+    try {
+      remoteTempInfo()
+        .then(setRemoteTempUsage)
+        .catch(() => setRemoteTempUsage(null));
+    } catch {
+      setRemoteTempUsage(null);
+    }
+  }, []);
+  useEffect(() => {
+    if (open) refreshRemoteTempUsage();
+  }, [open, remoteTempDir, refreshRemoteTempUsage]);
+
+  /** 更改远程临时目录：系统目录选择对话框（取消不动） */
+  const handlePickRemoteTempDir = useCallback(async () => {
+    try {
+      const picked = await openDialog({
+        title: "选择远程临时目录",
+        multiple: false,
+        directory: true,
+      });
+      if (!picked || Array.isArray(picked)) return;
+      onRemoteTempDirChange(picked);
+    } catch {
+      /* ignore */
+    }
+  }, [onRemoteTempDirChange]);
+
+  /** 立即清理：复用 App 的 clearOpenTemp（空目录 / 释放量提示），完成后刷新统计 */
+  const handleCleanRemoteTemp = useCallback(async () => {
+    await onCleanRemoteTemp();
+    refreshRemoteTempUsage();
+  }, [onCleanRemoteTemp, refreshRemoteTempUsage]);
 
   const flashTip = useCallback((msg: string) => {
     setTip(msg);
@@ -960,6 +1009,72 @@ export function SettingsDialog({
                   </div>
                   <p className="mt-1.5 text-[11px] text-muted-foreground">
                     留空 = 永久（直到关闭客户端或主动停止分享）。
+                  </p>
+                </div>
+            </div>
+
+            {/* v0.37 远程临时：远程文件「打开 / 打开方式」下载暂存目录（可配置 / 统计 / 清理） */}
+            <div
+              ref={(el) => { sectionRefs.current.remoteTemp = el; }}
+              data-settings-section="remoteTemp"
+              className="scroll-mt-3 mb-6"
+            >
+                <div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">远程临时目录</div>
+                  <div className="overflow-hidden rounded-md border bg-card">
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+                      <span
+                        className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
+                        title={remoteTempUsage?.path ?? ""}
+                      >
+                        {remoteTempUsage?.path ?? "…"}
+                      </span>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <button
+                          onClick={() => void handlePickRemoteTempDir()}
+                          className="rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          title="选择其他目录作为远程临时目录"
+                        >
+                          更改目录…
+                        </button>
+                        {remoteTempDir && (
+                          <button
+                            onClick={() => onRemoteTempDirChange("")}
+                            className="flex items-center gap-1 rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            title="改回默认（系统临时目录下 r-dir-remote）"
+                          >
+                            <RotateCcw className="h-3 w-3" /> 恢复默认
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
+                      <span className="text-muted-foreground">
+                        {remoteTempUsage
+                          ? `当前占用：${remoteTempUsage.files} 个文件 · 共 ${formatSize(remoteTempUsage.bytes)}`
+                          : "当前占用：统计中…"}
+                      </span>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <button
+                          onClick={refreshRemoteTempUsage}
+                          className="rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          title="重新统计占用"
+                        >
+                          刷新
+                        </button>
+                        <button
+                          onClick={() => void handleCleanRemoteTemp()}
+                          className="flex items-center gap-1 rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground hover:text-destructive"
+                          title="删除临时目录中的全部文件"
+                        >
+                          <Trash2 className="h-3 w-3" /> 立即清理
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    远程文件（SFTP / HTTP 等）通过「打开」或「打开方式」交给外部应用前，会先下载到此目录；
+                    清理只删除本地副本，不影响远程原件。更改目录不迁移旧文件，旧目录可在更改前先清理。
                   </p>
                 </div>
             </div>

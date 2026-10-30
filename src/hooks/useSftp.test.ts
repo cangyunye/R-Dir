@@ -14,8 +14,8 @@ vi.mock("@/lib/api", () => ({
   sftpSetServerGroup: vi.fn(async () => undefined),
   sftpExportServers: vi.fn(async () => "{}"),
   sftpImportServers: vi.fn(async () => "{}"),
-  sftpClearTemp: vi.fn(async () => undefined),
-  sftpTempInfo: vi.fn(async () => null),
+  remoteTempClear: vi.fn(async () => undefined),
+  remoteTempInfo: vi.fn(async () => null),
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   confirm: vi.fn(async () => true),

@@ -259,7 +259,7 @@ test.describe("31D. 远程文件打开与临时目录", () => {
         ).__RDIR_E2E_MOCK__,
     );
     expect(mock.sftpDownloads).toEqual(["sftp://u@127.0.0.1:22/remote/deploy.sh"]);
-    expect(mock.opened).toEqual(["/tmp/r-dir-sftp/deploy.sh"]);
+    expect(mock.opened).toEqual(["/tmp/r-dir-remote/deploy.sh"]);
   });
 
   test("侧边栏远程服务器分组名右键 → 清理远程临时文件，提示释放量", async ({ page }) => {
@@ -269,6 +269,20 @@ test.describe("31D. 远程文件打开与临时目录", () => {
     await expect(menu).toContainText("导入服务器列表…");
     await menu.getByText("清理远程临时文件").click();
 
+    await expect(toast(page)).toContainText("已清理 2 个远程临时文件");
+    await expect(toast(page)).toContainText("3.0M");
+  });
+
+  test("设置 → 远程临时：显示默认目录与占用，一键清理（v0.37）", async ({ page }) => {
+    await page.getByTitle("设置（快捷键录制）").click();
+    await expect(page.getByText("更改会自动保存")).toBeVisible();
+    await page.getByRole("button", { name: "远程临时", exact: true }).click();
+
+    const sec = page.locator('[data-settings-section="remoteTemp"]');
+    await expect(sec).toContainText("/tmp/r-dir-remote");
+    await expect(sec).toContainText("2 个文件 · 共 3.0M");
+
+    await sec.getByRole("button", { name: "立即清理" }).click();
     await expect(toast(page)).toContainText("已清理 2 个远程临时文件");
     await expect(toast(page)).toContainText("3.0M");
   });

@@ -10,8 +10,18 @@ fn is_mac() -> bool {
     cfg!(target_os = "macos")
 }
 
+/// 远程协议路径不交给本地程序：打开方式链路应先下载到临时目录再传本地路径
+/// （v0.37 防呆护栏，此前 sftp:// 串会被原样塞给外部应用）
+fn ensure_local_path(path: &str) -> Result<(), String> {
+    if path.starts_with("sftp://") || path.starts_with("http://") || path.starts_with("https://") {
+        return Err("远程文件需先下载到本地再打开".into());
+    }
+    Ok(())
+}
+
 /// 用内置/Agent 工具打开路径
 pub fn launch_custom(exec: &str, path: &str) -> Result<(), String> {
+    ensure_local_path(path)?;
     if is_mac() && exec.ends_with(".app") {
         // .app 包：open -a（用包名）
         let name = Path::new(exec)
@@ -390,7 +400,16 @@ fn launch_ex(cmd: &Command, cwd: Option<&str>, new_console: bool) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_placeholders, has_placeholder, terminal_kind, TerminalKind};
+    use super::{ensure_local_path, expand_placeholders, has_placeholder, terminal_kind, TerminalKind};
+
+    #[test]
+    fn remote_scheme_paths_are_rejected() {
+        assert!(ensure_local_path("sftp://user@host:22/home/a.txt").is_err());
+        assert!(ensure_local_path("http://example.com/a.txt").is_err());
+        assert!(ensure_local_path("https://example.com/a.txt").is_err());
+        assert!(ensure_local_path("/Users/me/a.txt").is_ok());
+        assert!(ensure_local_path(r"C:\Users\me\a.txt").is_ok());
+    }
 
     #[test]
     fn placeholders_expand_dir_path_name() {
