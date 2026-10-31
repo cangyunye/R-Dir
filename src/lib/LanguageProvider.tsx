@@ -4,7 +4,9 @@
  * Context 带默认值（zh 原样透传）：组件单测不包 Provider 时行为与迁移前完全一致。
  */
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
+import dePack from "@rdir/l10n/packs/de.json";
 import enPack from "@rdir/l10n/packs/en.json";
+import jaPack from "@rdir/l10n/packs/ja.json";
 import {
   setPack,
   t as translate,
@@ -14,7 +16,11 @@ import {
 } from "./i18n";
 
 /** 构建期内置语言包表；zh 不需要包（key 即中文原文），新增内置语言在此挂载 */
-const BUILTIN_PACKS: Record<Exclude<Language, "zh">, Pack> = { en: enPack };
+const BUILTIN_PACKS: Record<Exclude<Language, "zh">, Pack> = {
+  en: enPack,
+  de: dePack,
+  ja: jaPack,
+};
 
 function packFor(language: Language): Pack | null {
   return language === "zh" ? null : (BUILTIN_PACKS[language] ?? null);
