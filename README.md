@@ -1,107 +1,40 @@
-# Rust File Manager
+# R-Dir
 
-**R-Dir** —— 基于 **Tauri 2 + Rust + React + TypeScript + Tailwind v4 + shadcn/ui** 的跨平台文件管理器（macOS / Windows）。
+**R-Dir** 是一款基于 **Tauri 2 + Rust + React** 构建的跨平台文件管理器（Windows / macOS），轻量快速、界面清爽。
 
-> 🚀 最新版本见 [Releases](https://github.com/cangyunye/R-Dir/releases)（GitHub Actions 自动打包 macOS + Windows）。
-> 📖 使用教程见 **[R-Dir 使用手册](https://cangyunye.github.io/R-Dir-Docs/)**（含[功能演示截图](https://cangyunye.github.io/R-Dir-Docs/shots.html)）；逐版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+> 📖 **使用手册与功能图解请移步 → [R-Dir 使用手册](https://cangyunye.github.io/R-Dir-Docs/)**（[使用指南](https://cangyunye.github.io/R-Dir-Docs/guide.html) · [功能演示截图](https://cangyunye.github.io/R-Dir-Docs/shots.html) · [快捷键速查](https://cangyunye.github.io/R-Dir-Docs/keys.html)）
+> 🚀 安装包下载见 [Releases](https://github.com/cangyunye/R-Dir/releases)，逐版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
-### macOS 安装说明
+## 界面预览
 
-应用未使用 Apple 开发者证书签名（个人项目），首次打开若提示「已损坏，无法打开」，执行：
+| 主界面 | 深色主题 · 大图标视图 |
+| --- | --- |
+| ![主界面](https://cangyunye.github.io/R-Dir-Docs/shots/01-main-light.png) | ![深色主题](https://cangyunye.github.io/R-Dir-Docs/shots/19-dark-main.png) |
+| **左右分屏 · 彩色标签页** | **SFTP 远程连接** |
+| ![左右分屏](https://cangyunye.github.io/R-Dir-Docs/shots/07-split-row.png) | ![SFTP 远程](https://cangyunye.github.io/R-Dir-Docs/shots/21-sftp-kali-connected.png) |
 
-```bash
-xattr -cr /Applications/R-Dir.app
-```
+## 功能一览
 
-或右键应用 →「打开」→ 确认即可正常使用。
+- **多标签 + 分屏**：彩色标签页、拖拽排序、双击重命名；VSCode 式左右 / 上下 / 四宫格分屏，跨窗格拖拽即复制（按 Option/Alt 移动）。
+- **浏览与导航**：面包屑地址栏与路径补全、QuickJump 键入即达的模糊定位、侧边栏快速访问 / 磁盘 / Finder 式彩色标签 / 远程服务器、大目录虚拟滚动。
+- **文件操作**：复制 / 剪切 / 粘贴（与系统剪贴板互通）、撤销 / 重做、同名冲突裁决、传输进度与取消、压缩为 zip / tar / tgz、回收站删除、目录属性递归统计。
+- **双引擎搜索**：文件名递归检索（fd 引擎，尊重 `.gitignore`）+ VSCode 风格内容搜索（行号高亮），大小写 / 正则 / 隐藏文件随心切换。
+- **比较与同步**：目录差异比对与多选双向同步、按标签同步浏览联动导航、任意两文件行级文本 diff（UTF-8 / GBK / Big5 / Shift_JIS 等多编码）。
+- **远程与网络**：SFTP / SSH 双认证（密码 AES-GCM 加密存储）、HTTP autoindex 目录浏览与断点续传下载、目录 HTTP 分享（token 凭证 + 二维码 + 访问日志）。
+- **打开方式与终端**：按扩展名自定义打开方式、右键在系统终端打开当前目录、地址栏直达 PATH 命令。
+- **外观与效率**：深 / 浅 / 跟随系统主题、命令面板（`⌘/Ctrl+K`）、自定义快捷键（冲突检测）、窗口缩放、会话保存与恢复、应用内检查更新。
+- **国际化**：简体中文 / 繁體中文 / English / Deutsch / 日本語 / Português / Español。
 
-### Windows 安装 / 升级说明
+完整功能细节与操作图解见 [使用手册](https://cangyunye.github.io/R-Dir-Docs/guide.html)。
 
-- Windows **只发布 NSIS 安装包** `R-Dir_x.y.z_x64-setup.exe`（不发布 `.msi`）。
-- 若升级时弹出 **「Error launching installer」**：通常是此前用 `.msi` 安装过、现在用 `-setup.exe` 升级，NSIS 尝试卸载 MSI（需管理员权限）失败所致。请在「设置 → 应用 → 已安装的应用」中先手动卸载旧版 R-Dir，再运行新的 `-setup.exe`。
-- 从旧版（含 MSI）升级只需手动卸载一次，之后 `-setup.exe` → `-setup.exe` 升级即可正常覆盖。
+## 安装
 
-## 功能特性
+从 [Releases](https://github.com/cangyunye/R-Dir/releases) 下载对应平台安装包：
 
-### 浏览与导航
+- **Windows**：`R-Dir_x.y.z_x64-setup.exe`（NSIS 安装包）。若从旧版 `.msi` 升级时弹出「Error launching installer」，先在系统设置中卸载旧版，再运行新的 `-setup.exe`，之后即可正常覆盖升级。
+- **macOS**：应用未使用 Apple 证书签名，首次打开若提示「已损坏，无法打开」，执行 `xattr -cr /Applications/R-Dir.app`，或右键应用 →「打开」→ 确认。
 
-- **资源管理器式布局**：多标签页 + 地址栏 + 左侧导航 + 右侧搜索面板 + 底部状态栏 / 属性栏。
-- **多标签页**：彩色色块（按标签稳定取色，深色实色块 / 浅色洗色方案）、拖拽排序、双击重命名、鼠标中键或行内 ✕ 关闭、`⋮` 旁的「全部标签」下拉；标签栏右键菜单（新建 / 恢复关闭 / 关闭其他 / 关闭右侧）。
-- **无边框自绘窗口**：标签栏兼任标题栏（空白处拖动移动窗口、双击最大化 / 还原），右上角自绘「最小化 / 最大化 / 关闭」。
-- **地址栏**：路径补全（支持 `~`、相对路径，↑↓ 选择 / Tab 补全）、面包屑分段（点任意段跳转，长路径自动滚到末段）、铅笔图标或 `⌘/Ctrl+L` 进入编辑、输入校验（路径不存在就地红字提示，不切换窗格）。
-- **地址栏命令执行**：输入裸词按 PATH 补全并可在系统终端执行（**路径优先、命令兜底**；带空格的路径不受影响），内置 `cmdrun` 插件可在设置中停用。
-- **左侧导航**：快速访问（主目录 / 桌面 / 文档 / 下载 / 图片 / 音乐 / 影片）+ 磁盘 / 卷枚举 + Finder 风格彩色标签 + SFTP 远程服务器分组。
-- **详情列表**：lsd 风格字段（名称 / 大小 / 修改时间 / 类型 / 权限）、扩展名图标、列头排序、隐藏文件开关、大目录虚拟滚动。
-- **键盘快速定位（QuickJump）**：列表聚焦时键入即弹出 fzf 式模糊匹配浮层，实时高亮并驱动列表滚动定位，回车定位 / 进入，Esc 还原选中。
-- **窗格头路径条**：每个窗格顶部独立面包屑（点段在**该窗格内**导航并激活该窗格，多窗格时提供关闭钮）。
-
-### 文件操作
-
-- **基础操作**：复制 / 剪切 / 粘贴（应用内剪贴板，跨窗格、跨标签共享）、重命名（行内编辑 / Finder 式慢速双击）、删除（回收站）、新建文件夹 / 文本文件、复制路径、复制到当前目录。
-- **系统剪贴板互操作**：`⌘/Ctrl+C` 写系统剪贴板（可直接到 Finder / 资源管理器粘贴），系统里复制的文件可在应用内粘贴（macOS / Windows）。
-- **多选**：Shift 范围、`⌘/Ctrl` 追加、矩形框选、全选 / 反选 / 取消。
-- **撤销 / 重做栈**：复制、移动、重命名、新建、删除（回收站）均可撤销；右键与空白处菜单均带撤销 / 重做入口。
-- **同名冲突裁决**：覆盖 / 全部覆盖 / 改名（`name_1.ext`）/ 停止，目录递归合并、内部同名逐条提示。
-- **进度与取消**：复制 / 移动 / 上传 / 下载 / 压缩均有进度条与「停止」按钮；本地复制走平台快速路径（macOS `clonefile` / Windows `CopyFileExW` / Linux `FICLONE`），不支持时自动回退。
-- **属性**：文件 / 文件夹右键「属性」，文件夹递归统计（文件数 · 文件夹数 · 字节），数字老虎机式滚动；空白处「属性（当前目录）」。
-- **压缩**：右键压缩为 zip / tar / tgz（系统命令，带进度），归档内为相对路径。
-- **删除确认**：所有删除统一弹确认框，目录展示内部的递归统计。
-
-### 分屏
-
-- VSCode 式左右 / 上下 / 四宫格，可继续递归分割，分割条拖拽调整比例。
-- 每个窗格独立拥有路径、历史、排序、选中状态与属性栏。
-- **跨窗格拖拽**：默认复制，按住 Option/Alt 移动，悬停提示「复制 / 移动到此处」；拖到**目录行 / 文件夹图标**上即进入该目录（同窗格、跨窗格皆可，多选一起），详情列表与大图标视图均可拖出到 Finder / 资源管理器或浏览器上传区。
-
-### 搜索
-
-- **文件名搜索**：默认仅当前层，前端本地过滤。
-- **fd 引擎递归检索**：基于 `ignore` crate（尊重 `.gitignore` / `.ignore`），正则 / 通配符匹配，结果上限 500。
-- **灯芯开关按钮**（两 tab 同一套语义）：递归（蓝）· 隐藏（绿，含 `.` 开头项）· Aa（琥珀，区分大小写）· 正则⇄通配 / 正则（紫，fd 侧切换匹配模式、内容侧按正则解析）。
-- **内容搜索**：VSCode 风格，行号 + 关键词高亮；自动跳过二进制 / 超大 / 非 UTF-8 文件（隐藏文件可经绿灯包含）。
-- 搜索结果右键：定位 / 打开（系统关联） / 复制相对与绝对路径 / 内联重命名；双击按扩展名用系统程序打开（目录则进入）。
-
-### 远程与网络
-
-- **SFTP / SSH**：地址栏 `sftp://用户@主机:端口/`、侧边栏或 ⋮ 菜单接入；密码 / 密钥（含 passphrase）双认证，密码支持 AES-256-GCM 主密钥加密存储、master-key 仅驻内存；服务器保存 / 分组（拖拽换组、整体重命名）/ 导出导入迁移 / 编辑 / 删除、连接池复用、一键重连；远程列表 / 上传 / 下载 / 递归文件夹传输（两阶段进度、滑动窗口流水线上传），进度与取消。
-- **HTTP autoindex**：地址栏输入 `http(s)://` 进入 nginx autoindex 或 JSON 索引目录，与本地一致的列表体验；在线打开、拖拽流式下载、`.part` 断点续传与下载停止。只读协议。
-- **目录分享**：把当前目录通过 HTTP 端口分享给他人——token 即凭证、只读浏览与 Range 断点续传下载、并发连接数上限、有效期、可配允许上溯父目录、二维码、访问者 IP 日志。
-- **插件注册表**：内置插件 `sftp` / `http` / `opener` / `terminal` / `cmdrun`，可在设置 → 插件中启停并持久化；`sftp` / `share` 支持 Cargo feature 裁剪（见 [docs/lightweight-build.md](docs/lightweight-build.md)）。
-
-### 比较与同步
-
-- **差异比对窗口**（左右窗格）：一层比对名称、二层比对大小、三层比对内容 hash 与修改时间；可多选差异「向左 / 向右同步」（覆盖复制或删除）。
-- **同步比对 + 同步浏览**（按标签生效）：以两侧目录为映射锚点联动导航（对侧无同名目录时状态栏变琥珀，可一键在对侧新建并进入 / 返回对齐）；状态栏实时摘要（`N 项 · M 差异`）点击或 `⌘/Ctrl+Shift+X` 打开结果模态，文件行内联色条标注。
-- **文本比较**（任意两文件，本地 ↔ 本地 / SFTP / HTTP）：行级 diff 左右对照、折叠相同段；编码下拉（UTF-8 / GBK / Big5 / Shift_JIS / EUC-KR / Latin-1）切换两侧同步重解码；换行符差异（LF ↔ CRLF）显性提示。
-- **Git Diff 直接打开**：菜单「工具 → 打开 Git Diff…」粘贴 unified diff 渲染，或 `.patch` / `.diff` 文件右键查看，无需本机安装 git。
-
-### 打开方式与终端
-
-- **打开方式**：双击 / 右键「打开」走系统默认方式；「打开方式」按扩展名关联用户自定义应用，支持 `*`（所有类型）；「选择其他应用…」选择后自动关联并立即打开，持久化到 `openers.json`。
-- **在此处打开终端**：文件夹 / 空白处右键，用系统终端（macOS Terminal / iTerm2 / zsh；Windows PowerShell / cmd / nushell）打开当前目录。
-
-### 外观、设置与其它
-
-- **主题**：深色 / 浅色 / 跟随系统三态（右上角日 / 月，跟随系统时实时切换），蓝色品牌冷灰设计体系。
-- **缩放与字体**：窗口级缩放（`Ctrl+滚轮`，中央显示百分比）+ 全局字体大小调节。
-- **设置对话框**：滑动页布局（外观 / 预览 / 快捷键 / 打开方式 / 常用工具 / 分享 / 插件 / 关于），固定 720 × min(600px, 85vh)。
-- **快捷键系统**：统一动作注册表，设置 → 快捷键可录制自定义组合键、冲突检测、恢复默认，持久化到本地。
-- **命令面板**：`⌘/Ctrl+K` / `⌘/Ctrl+Shift+P` 呼出；右上角 `⋮` 应用菜单平铺全部入口。
-- **会话保存与恢复**：退出时询问是否保存标签集合、分屏树（方向 / 比例）、各窗格路径与活动标签，启动自动恢复（SFTP 只存 `serverId`，不含凭据）。
-- **标签系统**：以 `tags://` 虚拟目录组织彩色标签内容，可正常跳转与打开。
-- **应用内更新**：帮助菜单「检查更新…」「GitHub 仓库」，基于 GitHub Releases API 比对版本。
-
-### 常用快捷键（默认，可在设置中自定义）
-
-- 导航：`⌘/Ctrl+L` 聚焦地址栏、`Backspace` 返回上级、`F5`（Windows）/ `⌘R`（macOS）刷新
-- 文件：`⌘/Ctrl+C` / `X` / `V` 复制 / 剪切 / 粘贴、`F2` 重命名、`Delete` 删除到回收站（macOS 亦可 `⌘⌫`）、`⌘/Ctrl+Z` 撤销、`Ctrl+Y`（Windows）/ `⌘⇧Z`（macOS）重做
-- 标签页：`⌘/Ctrl+T` 新建、`⌘/Ctrl+W` 关闭、`Ctrl+Tab` 循环切换、`⌘/Ctrl+1..9` 跳转
-- 窗格：`⌘/Ctrl+\` 左右分屏、`⌘/Ctrl+J` 上下分屏
-- 全局：`⌘/Ctrl+K` / `⌘/Ctrl+Shift+P` 命令面板、`⌘/Ctrl+,` 或 `F1` 设置、`⌘/Ctrl+Shift+X` 同步比对结果
-
-屏幕分辨率与字体差异下具体键位以「设置 → 快捷键」一览为准。
-
-## 运行
+## 开发
 
 ```bash
 pnpm install
@@ -109,44 +42,6 @@ pnpm tauri dev      # 开发模式（热更新）
 pnpm tauri build    # 打包
 ```
 
-测试：`pnpm test`（Vitest 单元）/ `pnpm test:e2e`（Playwright）/ `cargo test`（Rust，在 `src-tauri`）。
+测试：`pnpm test`（Vitest 单元）· `pnpm test:e2e`（Playwright）· `cargo test`（Rust，在 `src-tauri`）。
 
-## 目录结构
-
-```
-src/                       # 前端（React + TS）
-├── App.tsx                # 主布局与全局状态（标签 / 窗格树 / 剪贴板 / 快捷键 / 会话）
-├── components/            # 菜单栏、命令面板、标签栏、工具栏、侧栏、分屏、
-│                          #   文件列表、搜索、比较 / 同步、设置与各类对话框
-└── lib/                   # Tauri API 封装、类型、窗格树、键位表、模糊匹配、
-                           #   路径分段、比较 / 传输 / 更新等纯工具
-src-tauri/                 # Rust 后端
-└── src/
-    ├── lib.rs             # 命令注册（统一 generate_handler!，按 feature 裁剪）
-    ├── fs_ops.rs          # 目录扫描、条目元数据、路径补全 / 校验
-    ├── ops.rs             # 复制 / 移动 / 重命名 / 删除（回收站）/ 新建
-    ├── search.rs          # 内容搜索
-    ├── find.rs            # 文件名递归检索（ignore 引擎）
-    ├── diff.rs            # 目录 / 同步比对
-    ├── text_diff.rs       # 行级文本 diff
-    ├── compress.rs        # zip / tar / tgz 压缩
-    ├── sizestat.rs        # 目录递归统计（属性 / 删除确认）
-    ├── cmdrun.rs          # PATH 命令扫描与补全
-    ├── clipboard.rs       # 系统剪贴板文件读写
-    ├── drag_out.rs        # 跨应用拖出
-    ├── progress.rs        # 传输进度与取消
-    ├── plugins.rs         # 插件注册表
-    ├── sftp/              # SFTP 插件（会话池 / 传输）
-    ├── http_autoindex.rs  # HTTP autoindex / JSON 目录插件
-    ├── share/             # 目录分享服务
-    ├── opener/            # 打开方式与终端
-    └── volumes.rs         # 磁盘 / 卷与快速访问
-```
-
-## 路线图
-
-- **视图偏好**：默认字段 / 视图模式等配置持久化。
-- **文本预览**：文本文件快速预览（前若干字符）。
-- **更多访问协议**：S3 / WebDAV / 云盘等，复用既有后端能力表接入。
-- **外置插件机制**：当前均为编译期内置插件，后续支持 wasm / 独立进程外置插件。
-- **Windows**：最大化按钮接入 Win11 Snap Layouts 原生飞出。
+技术栈：Tauri 2 · Rust · React · TypeScript · Tailwind v4 · shadcn/ui。
