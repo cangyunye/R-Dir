@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Copy, Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useT } from "@/lib/LanguageProvider";
 
 /**
  * 无边框窗口（decorations:false）的自绘窗口控制：最小化 / 最大化 / 关闭。
@@ -10,6 +11,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 export function WindowControls() {
   const [available, setAvailable] = useState(false);
   const [maximized, setMaximized] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
@@ -36,21 +38,21 @@ export function WindowControls() {
   return (
     <div className="-mr-1.5 ml-1 flex self-stretch items-stretch">
       <button
-        title="最小化"
+        title={t("最小化")}
         onClick={() => void getCurrentWindow().minimize().catch(() => {})}
         className="flex w-10 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <Minus className="h-3.5 w-3.5" />
       </button>
       <button
-        title={maximized ? "向下还原" : "最大化"}
+        title={maximized ? t("向下还原") : t("最大化")}
         onClick={() => void getCurrentWindow().toggleMaximize().catch(() => {})}
         className="flex w-10 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         {maximized ? <Copy className="h-3 w-3" /> : <Square className="h-3 w-3" />}
       </button>
       <button
-        title="关闭"
+        title={t("关闭")}
         onClick={() => void getCurrentWindow().close().catch(() => {})}
         className="flex w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
       >

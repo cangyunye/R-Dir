@@ -144,7 +144,7 @@ import {
 } from "@/lib/paneTree";
 import { ACTIONS, bindingOf, findAction, isMac, keyEventString } from "@/lib/keymap";
 import { loadLanguage, type Language } from "@/lib/i18n";
-import { isCancelledError, terr } from "@/lib/i18n";
+import { isCancelledError, t, terr } from "@/lib/i18n";
 import { LanguageProvider } from "@/lib/LanguageProvider";
 import { serializeSession, serializeSessionTab, sessionSignature } from "@/lib/session";
 import { getNativeDragOut, probeNativeDragOut, setNativeDragOut, getHtml5Drag, setHtml5Drag, canNativeDragOut } from "@/lib/native-drag";
@@ -281,7 +281,7 @@ function buildTabFromSnapshot(st: SessionTab): {
 function tagTitle(tagId: string, names?: TagNames): string {
   const def = tagById(tagId);
   const n = names ?? loadTagNames();
-  return `标签：${def ? tagLabel(def, n) : tagId}`;
+  return t("标签：{name}", { name: def ? tagLabel(def, n) : tagId });
 }
 import { TabBar } from "@/components/TabBar";
 import { Toolbar } from "@/components/Toolbar";
@@ -756,7 +756,7 @@ useEffect(() => {
           !!p && !p.path.startsWith("sftp://") && !p.path.startsWith("http") && !p.tagId,
       );
     if (local.length !== 2) {
-      showError("差异比对需要正好两个本地窗格（暂不支持本地 ↔ SFTP/HTTP 比对）");
+      showError(t("差异比对需要正好两个本地窗格（暂不支持本地 ↔ SFTP/HTTP 比对）"));
       return;
     }
     setDiffTarget({
@@ -780,12 +780,12 @@ useEffect(() => {
 
   /** 打开 GitHub 仓库 */
   const openRepo = useCallback(() => {
-    void openUrl(REPO_URL).catch((e) => showError(`打开仓库失败：${e}`));
+    void openUrl(REPO_URL).catch((e) => showError(t("打开仓库失败：{msg}", { msg: String(e) })));
   }, [showError]);
 
   /** 打开使用指南站点 */
   const openDocs = useCallback(() => {
-    void openUrl(DOCS_URL).catch((e) => showError(`打开使用指南失败：${e}`));
+    void openUrl(DOCS_URL).catch((e) => showError(t("打开使用指南失败：{msg}", { msg: String(e) })));
   }, [showError]);
 
   /**
@@ -804,18 +804,18 @@ useEffect(() => {
           return;
         }
         if (silent) {
-          showError(`发现新版本 v${info.version}（帮助 → 检查更新）`);
+          showError(t("发现新版本 v{ver}（帮助 → 检查更新）", { ver: info.version }));
           return;
         }
         const go = await appConfirm({
-          title: `发现新版本 v${info.version}`,
-          message: `当前版本 v${current}。是否前往下载页获取新版本？`,
-          confirmLabel: "前往下载",
-          cancelLabel: "以后再说",
+          title: t("发现新版本 v{ver}", { ver: info.version }),
+          message: t("当前版本 v{cur}。是否前往下载页获取新版本？", { cur: current }),
+          confirmLabel: t("前往下载"),
+          cancelLabel: t("以后再说"),
         });
         if (go) void openUrl(info.url);
       } catch (e) {
-        if (!silent) showError(`检查更新失败：${e}`);
+        if (!silent) showError(t("检查更新失败：{msg}", { msg: String(e) }));
       }
     },
     [appVersion, showError, appConfirm, flashClipboardTip],
@@ -847,12 +847,12 @@ useEffect(() => {
   const refreshOpeners = useCallback(() => {
     void apiListOpeners()
       .then(setOpeners)
-      .catch((e) => showError(`检测打开方式失败：${e}`));
+      .catch((e) => showError(t("检测打开方式失败：{msg}", { msg: String(e) })));
   }, [showError]);
   const refreshShells = useCallback(() => {
     void apiListShells()
       .then(setShells)
-      .catch((e) => showError(`检测终端失败：${e}`));
+      .catch((e) => showError(t("检测终端失败：{msg}", { msg: String(e) })));
   }, [showError]);
   // v0.29.0 右键「用 VSCode 打开」/「Git 打开」：探测结果（与终端同批首帧空闲后加载）
   const [vscodeOk, setVscodeOk] = useState(false);
@@ -879,13 +879,13 @@ useEffect(() => {
   const refreshPlugins = useCallback(() => {
     void apiListPlugins()
       .then(setPlugins)
-      .catch((e) => showError(`读取插件清单失败：${e}`));
+      .catch((e) => showError(t("读取插件清单失败：{msg}", { msg: String(e) })));
   }, [showError]);
   const handleTogglePlugin = useCallback(
     (id: string, enabled: boolean) => {
       void apiSetPluginEnabled(id, enabled)
         .then(setPlugins)
-        .catch((e) => showError(`切换插件失败：${e}`));
+        .catch((e) => showError(t("切换插件失败：{msg}", { msg: String(e) })));
     },
     [showError],
   );
@@ -905,7 +905,7 @@ useEffect(() => {
   const ensureLocalCopy = useCallback(
     async (path: string): Promise<string> => {
       if (!isRemoteSchemePath(path)) return path;
-      showError("正在下载远程文件…");
+      showError(t("正在下载远程文件…"));
       if (path.startsWith("sftp://")) return sftpDownload(path);
       // http(s)：经设置页配置的临时目录中转（sftp 的目录由 api 层内部传入）
       const { path: dir } = await remoteTempInfo();
@@ -918,10 +918,10 @@ useEffect(() => {
       if (isRemoteSchemePath(path)) {
         ensureLocalCopy(path)
           .then((local) => apiOpenWith(toolId, local))
-          .catch((e) => showError(`远程打开失败：${e}`));
+          .catch((e) => showError(t("远程打开失败：{msg}", { msg: String(e) })));
         return;
       }
-      void apiOpenWith(toolId, path).catch((e) => showError(`打开失败：${e}`));
+      void apiOpenWith(toolId, path).catch((e) => showError(t("打开失败：{msg}", { msg: String(e) })));
     },
     [ensureLocalCopy, showError],
   );
@@ -931,31 +931,31 @@ useEffect(() => {
       if (isRemoteSchemePath(path)) {
         ensureLocalCopy(path)
           .then((local) => apiOpenVscode(local))
-          .catch((e) => showError(`用 VSCode 打开失败：${e}`));
+          .catch((e) => showError(t("用 VSCode 打开失败：{msg}", { msg: String(e) })));
         return;
       }
-      void apiOpenVscode(path).catch((e) => showError(`用 VSCode 打开失败：${e}`));
+      void apiOpenVscode(path).catch((e) => showError(t("用 VSCode 打开失败：{msg}", { msg: String(e) })));
     },
     [ensureLocalCopy, showError],
   );
   // v0.29.0 右键「Git 打开」折叠组
   const handleOpenGitTool = useCallback(
     (toolId: string, path: string) => {
-      void apiOpenGitTool(toolId, path).catch((e) => showError(`打开 Git 工具失败：${e}`));
+      void apiOpenGitTool(toolId, path).catch((e) => showError(t("打开 Git 工具失败：{msg}", { msg: String(e) })));
     },
     [showError],
   );
   // v0.29.0 常用工具条：菜单图标点击 / 设置页增删排序
   const handleOpenQuickTool = useCallback(
     (id: string, path: string) => {
-      void apiOpenQuickTool(id, path).catch((e) => showError(`打开失败：${e}`));
+      void apiOpenQuickTool(id, path).catch((e) => showError(t("打开失败：{msg}", { msg: String(e) })));
     },
     [showError],
   );
   const handleAddQuickTool = useCallback(async () => {
     try {
       const picked = await openDialog({
-        title: "选择应用程序",
+        title: t("选择应用程序"),
         multiple: false,
         directory: false,
       });
@@ -964,7 +964,7 @@ useEffect(() => {
       await apiAddQuickTool(null, name, picked);
       refreshQuickTools();
     } catch (e) {
-      showError(`添加常用工具失败：${e}`);
+      showError(t("添加常用工具失败：{msg}", { msg: String(e) }));
     }
   }, [showError, refreshQuickTools]);
   const handleAddSuggestedTool = useCallback(
@@ -973,7 +973,7 @@ useEffect(() => {
         await apiAddQuickTool(c.id, c.name, c.exec);
         refreshQuickTools();
       } catch (e) {
-        showError(`添加常用工具失败：${e}`);
+        showError(t("添加常用工具失败：{msg}", { msg: String(e) }));
       }
     },
     [showError, refreshQuickTools],
@@ -982,7 +982,7 @@ useEffect(() => {
     (id: string) => {
       void apiRemoveQuickTool(id)
         .then(refreshQuickTools)
-        .catch((e) => showError(`移除常用工具失败：${e}`));
+        .catch((e) => showError(t("移除常用工具失败：{msg}", { msg: String(e) })));
     },
     [showError, refreshQuickTools],
   );
@@ -990,7 +990,7 @@ useEffect(() => {
     (id: string, up: boolean) => {
       void apiMoveQuickTool(id, up)
         .then(refreshQuickTools)
-        .catch((e) => showError(`调整顺序失败：${e}`));
+        .catch((e) => showError(t("调整顺序失败：{msg}", { msg: String(e) })));
     },
     [showError, refreshQuickTools],
   );
@@ -998,13 +998,13 @@ useEffect(() => {
     (id: string, args: string) => {
       void apiSetQuickToolArgs(id, args)
         .then(refreshQuickTools)
-        .catch((e) => showError(`保存启动参数失败：${e}`));
+        .catch((e) => showError(t("保存启动参数失败：{msg}", { msg: String(e) })));
     },
     [showError, refreshQuickTools],
   );
   const handleOpenTerminal = useCallback(
     (shellId: string, path: string) => {
-      void apiOpenTerminal(shellId, path).catch((e) => showError(`打开终端失败：${e}`));
+      void apiOpenTerminal(shellId, path).catch((e) => showError(t("打开终端失败：{msg}", { msg: String(e) })));
     },
     [showError],
   );
@@ -1012,7 +1012,7 @@ useEffect(() => {
     async (path?: string, ext?: string) => {
       try {
         const picked = await openDialog({
-          title: "选择应用程序",
+          title: t("选择应用程序"),
           multiple: false,
           directory: false,
         });
@@ -1036,7 +1036,7 @@ useEffect(() => {
         // 选定即用：直接用新注册的应用打开当前文件
         if (path) handleOpenWith(item.id, path);
       } catch (e) {
-        showError(`添加打开方式失败：${e}`);
+        showError(t("添加打开方式失败：{msg}", { msg: String(e) }));
       }
     },
     [openers, refreshOpeners, handleOpenWith, showError],
@@ -1047,9 +1047,9 @@ useEffect(() => {
     async (id: string) => {
       const o = openers.find((x) => x.id === id);
       const ok = await appConfirm({
-        title: "删除打开方式",
-        message: `确定删除「${o?.name ?? id}」？`,
-        confirmLabel: "删除",
+        title: t("删除打开方式"),
+        message: t("确定删除「{name}」？", { name: o?.name ?? id }),
+        confirmLabel: t("删除"),
         danger: true,
       });
       if (!ok) return;
@@ -1057,7 +1057,7 @@ useEffect(() => {
         await apiRemoveCustomOpener(id);
         refreshOpeners();
       } catch (e) {
-        showError(`删除打开方式失败：${e}`);
+        showError(t("删除打开方式失败：{msg}", { msg: String(e) }));
       }
     },
     [openers, refreshOpeners, showError, appConfirm],
@@ -1070,7 +1070,7 @@ useEffect(() => {
         await apiSetOpenerExtensions(id, extensions);
         refreshOpeners();
       } catch (e) {
-        showError(`保存扩展名失败：${e}`);
+        showError(t("保存扩展名失败：{msg}", { msg: String(e) }));
       }
     },
     [refreshOpeners, showError],
@@ -1374,7 +1374,7 @@ useEffect(() => {
           sftp.pendingRestoreRef.current.push(sp);
           sftp.setMasterKeyOpen(true);
         } else {
-          patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${msg}）` });
+          patchPane(sp.paneId, { error: t("会话未恢复：SFTP 需要验证（{msg}）", { msg }) });
         }
       }
     },
@@ -1528,7 +1528,7 @@ useEffect(() => {
         lastSessionSigRef.current = sig;
         if (!opts?.silent) flashClipboardTip("会话已保存");
       } catch (e) {
-        if (!opts?.silent) showError(`保存会话失败：${e}`);
+        if (!opts?.silent) showError(t("保存会话失败：{msg}", { msg: String(e) }));
       }
     },
     [flashClipboardTip, showError],
@@ -1724,7 +1724,7 @@ useEffect(() => {
   const persistFavorites = useCallback(
     (next: TabFavorite[]) => {
       setFavorites(next);
-      favoritesSave(next).catch((e) => showError(`保存收藏夹失败：${e}`));
+      favoritesSave(next).catch((e) => showError(t("保存收藏夹失败：{msg}", { msg: String(e) })));
     },
     [showError],
   );
@@ -2033,13 +2033,13 @@ useEffect(() => {
   const openFileExternal = useCallback(
     (path: string) => {
       if (path.startsWith("http://") || path.startsWith("https://")) {
-        openUrl(path).catch((e) => showError(`打开 URL 失败：${e}`));
+        openUrl(path).catch((e) => showError(t("打开 URL 失败：{msg}", { msg: String(e) })));
         return;
       }
       const remote = path.startsWith("sftp://");
       ensureLocalCopy(path)
         .then((local) => openPath(local))
-        .catch((e) => showError(remote ? `远程打开失败：${e}` : `打开失败：${e}`));
+        .catch((e) => showError(remote ? t("远程打开失败：{msg}", { msg: String(e) }) : t("打开失败：{msg}", { msg: String(e) })));
     },
     [ensureLocalCopy, showError],
   );
@@ -2093,7 +2093,7 @@ useEffect(() => {
       const list = paths ?? activePane?.selection ?? [];
       if (p === undefined || list.length === 0) return;
       setClipboard({ op: "copy", paths: list });
-      flashClipboardTip("已复制");
+      flashClipboardTip(t("已复制"));
       // 跨应用：同时写入系统剪贴板文件列表（best-effort，失败不影响应用内粘贴）
       void clipboardWriteFiles(list, false).catch(() => {});
     },
@@ -2106,7 +2106,7 @@ useEffect(() => {
       const list = paths ?? activePane?.selection ?? [];
       if (p === undefined || list.length === 0) return;
       setClipboard({ op: "cut", paths: list });
-      flashClipboardTip("已剪切");
+      flashClipboardTip(t("已剪切"));
       // cut=true：写 Windows DropEffect 剪切标志，资源管理器粘贴时按移动处理
       void clipboardWriteFiles(list, true).catch(() => {});
     },
@@ -2192,10 +2192,10 @@ useEffect(() => {
           const preview =
             names.slice(0, 5).join("、") + (names.length > 5 ? ` 等 ${dups.length} 项` : "");
           const choice = await appConfirmChoice({
-            title: "目标已存在同名文件夹",
-            message: `当前目录已存在同名文件夹：${preview}\n\n「覆盖」保留原文件夹，递归覆盖其中的同名内容；「新增目录」复制为自动命名的新文件夹（如「xx (2)」）；取消则跳过这些文件夹。`,
-            confirmLabel: "新增目录",
-            altLabel: "覆盖",
+            title: t("目标已存在同名文件夹"),
+            message: t("当前目录已存在同名文件夹：{preview}\n\n「覆盖」保留原文件夹，递归覆盖其中的同名内容；「新增目录」复制为自动命名的新文件夹（如「xx (2)」）；取消则跳过这些文件夹。", { preview }),
+            confirmLabel: t("新增目录"),
+            altLabel: t("覆盖"),
           });
           if (choice === "cancel") {
             // 取消 → 整体跳过这些同名目录（连同其子树）
@@ -2304,11 +2304,11 @@ useEffect(() => {
   const handleCompareWithBase = useCallback(
     (entry: FileEntry) => {
       if (!compareBase) {
-        showError("未设置比较基准：请先在另一个文件上右键「设为比较基准」");
+        showError(t("未设置比较基准：请先在另一个文件上右键「设为比较基准」"));
         return;
       }
       if (compareBase.path === entry.path) {
-        showError("与基准是同一个文件，无需比较");
+        showError(t("与基准是同一个文件，无需比较"));
         return;
       }
       openTextDiff(compareBase.path, entry.path, compareBase.name, entry.name);
@@ -2393,7 +2393,7 @@ useEffect(() => {
       .map((id) => activeTab.panes[id])
       .filter((p): p is NonNullable<typeof p> => !!p && !p.tagId && !isHttpPath(p.path));
     if (panes.length !== 2) {
-      showError("同步比对需要当前标签恰好两个路径窗格");
+      showError(t("同步比对需要当前标签恰好两个路径窗格"));
       return;
     }
     setSyncLinks((ls) => ({
@@ -2570,7 +2570,7 @@ useEffect(() => {
       try {
         entries = await listDir(path);
       } catch (e) {
-        showError(`无法进入 ${path}：${String(e)}`);
+        showError(t("无法进入 {path}：{msg}", { path, msg: String(e) }));
         return;
       }
       setTabs((ts) =>
@@ -2664,7 +2664,7 @@ useEffect(() => {
     const fullRel = a.layer ? `${a.layer}/${a.missing}` : a.missing;
     const target = mirrorPath(link, oSide, fullRel);
     if (!backendCaps(backendKind(target)).canMkdir) {
-      showError("该后端不支持创建目录");
+      showError(t("该后端不支持创建目录"));
       return;
     }
     // 共同层在对侧已存在，只需逐级创建缺失段
@@ -2677,7 +2677,7 @@ useEffect(() => {
         parent = created || pathScheme(target).join(parent, seg);
       }
     } catch (e) {
-      showError(`在对侧创建目录失败：${String(e)}`);
+      showError(t("在对侧创建目录失败：{msg}", { msg: String(e) }));
       return;
     }
     await gotoPane(oSide === "left" ? link.leftPaneId : link.rightPaneId, target);
@@ -2782,7 +2782,7 @@ useEffect(() => {
   const addTag = useCallback(
     (def: TagDef): boolean => {
       if (customTags.length + TAG_DEFS.length >= MAX_TAGS) {
-        showError(`标签最多 ${MAX_TAGS} 个（含预设），已达上限`);
+        showError(t("标签最多 {n} 个（含预设），已达上限", { n: MAX_TAGS }));
         return false;
       }
       setCustomTags((prev) => {
@@ -2795,7 +2795,7 @@ useEffect(() => {
     [customTags, showError],
   );
   const tagsFullHint = useCallback(
-    () => showError(`标签最多 ${MAX_TAGS} 个（含预设），已达上限`),
+    () => showError(t("标签最多 {n} 个（含预设），已达上限", { n: MAX_TAGS })),
     [showError],
   );
   /** 自定义快捷访问（持久化）；上限 10 个（v0.28.0），加满后提醒 */
@@ -2804,7 +2804,7 @@ useEffect(() => {
     (path: string) => {
       setCustomQuick((prev) => {
         if (!prev.includes(path) && prev.length >= MAX_QUICK) {
-          showError(`快速访问最多添加 ${MAX_QUICK} 个，已达上限`);
+          showError(t("快速访问最多添加 {n} 个，已达上限", { n: MAX_QUICK }));
           return prev;
         }
         const next = prev.includes(path)
@@ -2985,7 +2985,7 @@ useEffect(() => {
         if (destIsSftp) {
           // 目标远程：仅支持本地 → 远程上传；远程→远程暂不支持
           if (sftpSrcs.length > 0) {
-            showError("双端远程传输暂不支持（方案已评估保留）");
+            showError(t("双端远程传输暂不支持（方案已评估保留）"));
             if (localSrcs.length === 0) return;
           }
           for (const src of localSrcs) {
@@ -3024,7 +3024,7 @@ useEffect(() => {
         }
         if (sftpSrcs.length > 0 && localSrcs.length === 0 && isCut) {
           // 纯远程剪切粘贴：v0.2 按复制处理（不删源）
-          showError("远程剪切暂按复制处理（不删除源文件）");
+          showError(t("远程剪切暂按复制处理（不删除源文件）"));
         }
         setClipboard(null);
         if (pasted.length > 0) {
@@ -3060,7 +3060,7 @@ useEffect(() => {
     const paneId = activePane.id;
     const dest = activePane.path;
     if (isSftpPath(dest)) {
-      showError("远程复制暂不支持（可拖拽到其他窗格）");
+      showError(t("远程复制暂不支持（可拖拽到其他窗格）"));
       return;
     }
     try {
@@ -3099,15 +3099,15 @@ useEffect(() => {
       try {
         // HTTP 为只读协议：远程间传输 / 上传一律拒绝
         if (srcIsHttp && destIsHttp) {
-          showError("HTTP autoindex 为只读协议，不支持远程间传输");
+          showError(t("HTTP autoindex 为只读协议，不支持远程间传输"));
           return;
         }
         if (srcIsHttp && destIsSftp) {
-          showError("HTTP → SFTP 暂不支持");
+          showError(t("HTTP → SFTP 暂不支持"));
           return;
         }
         if (!srcIsHttp && destIsHttp) {
-          showError("HTTP autoindex 为只读协议，不支持上传");
+          showError(t("HTTP autoindex 为只读协议，不支持上传"));
           return;
         }
         // HTTP → 本地：下载
@@ -3120,7 +3120,7 @@ useEffect(() => {
         }
         // 远程 ⇄ 远程：暂不支持（方案已评估保留）
         if (srcIsSftp && destIsSftp) {
-          showError("双端远程传输暂不支持");
+          showError(t("双端远程传输暂不支持"));
           return;
         }
         // 远程 → 本地：下载。与 本地→远程 对称：目标已有同名条目先确认，
@@ -3142,21 +3142,22 @@ useEffect(() => {
               const destEntry = destByName.get(basename(p));
               const sizeLine =
                 remoteEntry && destEntry && !remoteEntry.is_dir && !destEntry.is_dir
-                  ? `源 ${formatSize(remoteEntry.size)}　目标 ${formatSize(destEntry.size)}`
+                  ? t("源 {src}　目标 {dst}", { src: formatSize(remoteEntry.size), dst: formatSize(destEntry.size) })
                   : null;
               message = sizeLine
-                ? `目标目录已有同名条目：${basename(p)}\n${sizeLine}`
-                : `目标目录已有同名条目：${basename(p)}`;
+                ? t("目标目录已有同名条目：{name}\n{size}", { name: basename(p), size: sizeLine })
+                : t("目标目录已有同名条目：{name}", { name: basename(p) });
             } else {
-              message = `目标目录已有同名条目：${clashPaths.map(basename).slice(0, 5).join("、")}${
-                clashPaths.length > 5 ? ` 等 ${clashPaths.length} 项` : ""
-              }`;
+              message = t("目标目录已有同名条目：{names}{more}", {
+                names: clashPaths.map(basename).slice(0, 5).join("、"),
+                more: clashPaths.length > 5 ? t(" 等 {n} 项", { n: clashPaths.length }) : "",
+              });
             }
             // v0.28.0 应用内确认框（Windows 原生 confirm 是经典样式弹窗）
             const ok = await appConfirm({
-              title: "覆盖下载",
+              title: t("覆盖下载"),
               message,
-              confirmLabel: "覆盖",
+              confirmLabel: t("覆盖"),
             });
             if (!ok) return;
             overwrite = true;
@@ -3182,21 +3183,22 @@ useEffect(() => {
               const remoteEntry = remoteByName.get(basename(p));
               const sizeLine =
                 localEntry && remoteEntry && !localEntry.is_dir && !remoteEntry.is_dir
-                  ? `源 ${formatSize(localEntry.size)}　目标 ${formatSize(remoteEntry.size)}`
+                  ? t("源 {src}　目标 {dst}", { src: formatSize(localEntry.size), dst: formatSize(remoteEntry.size) })
                   : null;
               message = sizeLine
-                ? `目标目录已有同名条目：${basename(p)}\n${sizeLine}`
-                : `目标目录已有同名条目：${basename(p)}`;
+                ? t("目标目录已有同名条目：{name}\n{size}", { name: basename(p), size: sizeLine })
+                : t("目标目录已有同名条目：{name}", { name: basename(p) });
             } else {
-              message = `目标目录已有同名条目：${clashPaths.map(basename).slice(0, 5).join("、")}${
-                clashPaths.length > 5 ? ` 等 ${clashPaths.length} 项` : ""
-              }`;
+              message = t("目标目录已有同名条目：{names}{more}", {
+                names: clashPaths.map(basename).slice(0, 5).join("、"),
+                more: clashPaths.length > 5 ? t(" 等 {n} 项", { n: clashPaths.length }) : "",
+              });
             }
             // v0.28.0 应用内确认框（Windows 原生 confirm 是经典样式弹窗）
             const ok = await appConfirm({
-              title: "覆盖上传",
+              title: t("覆盖上传"),
               message,
-              confirmLabel: "覆盖",
+              confirmLabel: t("覆盖"),
               danger: true,
             });
             if (!ok) return;
@@ -3612,7 +3614,7 @@ useEffect(() => {
       if (trimmed === "" || trimmed === r.name) return;
       // HTTP autoindex 只读：此前 URL 直接喂给本地 fs::rename，报一串 ENOENT 让人摸不着头脑
       if (isHttpPath(path)) {
-        showError("HTTP 目录为只读，不能重命名远程条目；可在标签视图中为其设置显示别名");
+        showError(t("HTTP 目录为只读，不能重命名远程条目；可在标签视图中为其设置显示别名"));
         return;
       }
       // 会话未连接（如重启后窗格还停在远程路径）→ 自动重连再改名，而不是报「未连接到该服务器」
@@ -3646,11 +3648,12 @@ useEffect(() => {
             // 回收站失败（被占用/权限/回收站不可用）：对齐资源管理器，给永久删除退路。
             // v0.28.0 应用内确认框（原 Tauri 原生 confirm 在 Windows 是经典样式弹窗）
             const ok = await appConfirm({
-              title: "移入回收站失败",
-              message: `${trashErr}
-
-要永久删除所选 ${list.length} 项吗？此操作不可恢复。`,
-              confirmLabel: "永久删除",
+              title: t("移入回收站失败"),
+              message: t("{err}\n\n要永久删除所选 {n} 项吗？此操作不可恢复。", {
+                err: String(trashErr),
+                n: list.length,
+              }),
+              confirmLabel: t("永久删除"),
               danger: true,
             });
             if (!ok) return;
@@ -3716,15 +3719,15 @@ useEffect(() => {
     const list = activePane?.selection ?? [];
     if (p === undefined || list.length === 0) return;
     if (list.some(isSftpPath)) {
-      showError("远程删除直接生效（服务器无回收站），请使用删除");
+      showError(t("远程删除直接生效（服务器无回收站），请使用删除"));
       return;
     }
     // v0.28.0 应用内确认框（原 Tauri 原生 confirm 在 Windows 是经典样式弹窗）
     if (
       !(await appConfirm({
-        title: "永久删除",
-        message: `永久删除 ${list.length} 项？此操作不可恢复。`,
-        confirmLabel: "永久删除",
+        title: t("永久删除"),
+        message: t("永久删除 {n} 项？此操作不可恢复。", { n: list.length }),
+        confirmLabel: t("永久删除"),
         danger: true,
       }))
     )
@@ -3753,7 +3756,7 @@ useEffect(() => {
       // 虚拟视图没有可写文件系统：不落盘、不进重命名（否则后端会在进程
       // 工作目录下创建名为 tags: / http: 的真实怪目录）
       if (!isSftpPath(pane.path) && (VIRTUAL_TAG_RE.test(pane.path) || isHttpPath(pane.path))) {
-        showError("标签 / HTTP 视图不支持新建，请先进入本地或远程目录");
+        showError(t("标签 / HTTP 视图不支持新建，请先进入本地或远程目录"));
         return;
       }
       const name = kind === "dir" ? "新建文件夹" : "新建文件.txt";
@@ -3808,7 +3811,7 @@ useEffect(() => {
       }
       setRedoStack((s) => [...s.slice(-49), op]);
     } catch (e) {
-      showError(`撤销失败：${e}`);
+      showError(t("撤销失败：{msg}", { msg: String(e) }));
     }
   }, [undoStack, refreshPane, showError]);
 
@@ -3843,7 +3846,7 @@ useEffect(() => {
       }
       setUndoStack((s) => [...s.slice(-49), op]);
     } catch (e) {
-      showError(`重做失败：${e}`);
+      showError(t("重做失败：{msg}", { msg: String(e) }));
     }
   }, [redoStack, refreshPane, showError]);
 
@@ -4092,9 +4095,9 @@ useEffect(() => {
       try {
         const out = await compressItems(paths, pane.path, format);
         refreshPane(paneId);
-        showError(`已生成 ${basename(out)}`);
+        showError(t("已生成 {name}", { name: basename(out) }));
       } catch (e) {
-        showError(`压缩失败：${e}`);
+        showError(t("压缩失败：{msg}", { msg: String(e) }));
       }
     },
     [tabs, refreshPane, showError],
@@ -4119,7 +4122,7 @@ useEffect(() => {
       let targetDir = pane.path;
       if (mode === "choose") {
         const picked = await openDialog({
-          title: "选择解压目标目录",
+          title: t("选择解压目标目录"),
           multiple: false,
           directory: true,
         });
@@ -4142,7 +4145,7 @@ useEffect(() => {
               .map((p) => p.id);
             if (ids.length > 0) refreshPanes(ids);
           }
-          showError(`已解压到 ${basename(out.dest)}（${out.files} 项）`);
+          showError(t("已解压到 {name}（{n} 项）", { name: basename(out.dest), n: out.files }));
         } catch (e) {
           const msg = String(e);
           if (msg === "NEED_PASSWORD" || msg === "WRONG_PASSWORD") {
@@ -4242,7 +4245,7 @@ useEffect(() => {
     openHelp: () => setSettingsOpen(true),
     toggleSyncResults: () => {
       if (!syncLinkRef.current) {
-        showError("未开启同步比对（命令面板或右上 ⋮ 菜单 → 工具 可开启）");
+        showError(t("未开启同步比对（命令面板或右上 ⋮ 菜单 → 工具 可开启）"));
         return;
       }
       setSyncResultsOpen((v) => !v);
@@ -4250,7 +4253,7 @@ useEffect(() => {
     // v0.28 预览栏：总开关关闭时按空格不直接预览，提示去设置开启（点文件同理不预览）
     togglePreview: () => {
       if (!previewPrefs.enabled) {
-        showError("预览栏未开启：设置 → 预览 → 启用预览栏");
+        showError(t("预览栏未开启：设置 → 预览 → 启用预览栏"));
         return;
       }
       updatePreviewPrefs({ expanded: !previewPrefs.expanded });
@@ -4261,7 +4264,7 @@ useEffect(() => {
         return;
       }
       if (browseList.length === 0) {
-        showError("当前目录没有可预览的图片或文档");
+        showError(t("当前目录没有可预览的图片或文档"));
         return;
       }
       setBrowseOpen(true);
@@ -5055,14 +5058,14 @@ useEffect(() => {
       {/* v0.31 导入服务器清单的主密码框：导出文件含加密密码时必须输入导出方主密码解析 */}
       <PasswordDialog
         open={sftp.importPwOpen}
-        title="输入主密码"
+        title={t("输入主密码")}
         description={
           <>
-            导入文件包含加密保存的服务器密码，需输入<b>导出时使用的主密码</b>解析。
-            校验通过后按本机主密钥重新加密合并（同 id 服务器跳过）。
+            {t("导入文件包含加密保存的服务器密码，需输入")}<b>{t("导出时使用的主密码")}</b>{t("解析。")}
+            {t("校验通过后按本机主密钥重新加密合并（同 id 服务器跳过）。")}
           </>
         }
-        submitLabel="导入"
+        submitLabel={t("导入")}
         onSubmit={sftp.submitImportPassword}
         onClose={sftp.closeImportPassword}
       />
@@ -5071,22 +5074,22 @@ useEffect(() => {
           输入主密码就地加密后再写出（首次 = 设置主密码；已设过 = 校验） */}
       <PasswordDialog
         open={sftp.exportPwOpen}
-        title={sftp.masterKeyStatus.configured ? "输入主密码" : "设置主密码"}
+        title={sftp.masterKeyStatus.configured ? t("输入主密码") : t("设置主密码")}
         description={
           sftp.masterKeyStatus.configured ? (
             <>
-              清单中有<b>以明文保存的服务器密码</b>（在主密钥未解锁时保存的）。导出文件会离开本机，
-              需输入主密码把它们加密后再写出；本机清单同时升级为密文。导入时需要同一主密码。
+              {t("清单中有")}<b>{t("以明文保存的服务器密码")}</b>{t("（在主密钥未解锁时保存的）。导出文件会离开本机，")}
+              {t("需输入主密码把它们加密后再写出；本机清单同时升级为密文。导入时需要同一主密码。")}
             </>
           ) : (
             <>
-              清单中有<b>以明文保存的服务器密码</b>。导出文件会离开本机，请设置一个主密码用于加密——
-              导入到其他设备时需要输入同一主密码。本机清单同时升级为密文，之后启动输入此密码解锁。
+              {t("清单中有")}<b>{t("以明文保存的服务器密码")}</b>{t("。导出文件会离开本机，请设置一个主密码用于加密——")}
+              {t("导入到其他设备时需要输入同一主密码。本机清单同时升级为密文，之后启动输入此密码解锁。")}
             </>
           )
         }
-        placeholder={sftp.masterKeyStatus.configured ? "输入主密码" : "设置主密码（请牢记）"}
-        submitLabel="加密并导出"
+        placeholder={sftp.masterKeyStatus.configured ? t("输入主密码") : t("设置主密码（请牢记）")}
+        submitLabel={t("加密并导出")}
         onSubmit={sftp.submitExportPassword}
         onClose={sftp.closeExportPassword}
       />
@@ -5095,26 +5098,26 @@ useEffect(() => {
           成功/关闭时兑现 promise（true = 已解压成功，主循环继续下一个归档） */}
       <PasswordDialog
         open={!!extractPw}
-        title={extractPw?.wrong ? "密码错误，请重试" : "输入归档密码"}
+        title={extractPw?.wrong ? t("密码错误，请重试") : t("输入归档密码")}
         description={
           <>
-            「<b>{extractPw?.name}</b>」是加密压缩包，输入密码继续解压。
+            {t("「")}<b>{extractPw?.name}</b>{t("」是加密压缩包，输入密码继续解压。")}
           </>
         }
-        placeholder="归档密码"
-        submitLabel="解压"
+        placeholder={t("归档密码")}
+        submitLabel={t("解压")}
         onSubmit={async (password) => {
           if (!extractPw) return;
           try {
             const out = await extractArchive(extractPw.archivePath, extractPw.targetDir, "smart", password);
             refreshPane(extractPw.paneId);
-            showError(`已解压到 ${basename(out.dest)}（${out.files} 项）`);
+            showError(t("已解压到 {name}（{n} 项）", { name: basename(out.dest), n: out.files }));
             extractPw.resolve(true);
           } catch (e) {
             const msg = String(e);
             if (msg === "NEED_PASSWORD" || msg === "WRONG_PASSWORD") {
               setExtractPw({ ...extractPw, wrong: true });
-              throw new Error("密码不正确，请重试");
+              throw new Error(t("密码不正确，请重试"));
             }
             if (isCancelledError(msg)) {
               showError("已取消");

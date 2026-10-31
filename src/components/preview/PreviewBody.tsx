@@ -13,19 +13,21 @@ import {
   previewKindOf,
 } from "@/lib/preview";
 import type { FileEntry } from "@/lib/types";
+import { useT } from "@/lib/LanguageProvider";
 import { DocCard } from "./DocCard";
 import { ImageView } from "./ImageView";
 import { TextView } from "./TextView";
 
 function Placeholder() {
+  const t = useT();
   return (
     <div
       className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-muted-foreground"
       data-testid="preview-placeholder"
     >
       <ImageIcon size={40} className="opacity-40" />
-      <div className="text-xs">选择一个文件以预览</div>
-      <div className="text-[10px]">方向键或点选切换，Esc 取消选择</div>
+      <div className="text-xs">{t("选择一个文件以预览")}</div>
+      <div className="text-[10px]">{t("方向键或点选切换，Esc 取消选择")}</div>
     </div>
   );
 }
@@ -39,18 +41,19 @@ function InfoCard({
   entry: FileEntry;
   onOpenExternal?: (path: string) => void;
 }) {
+  const t = useT();
   const sftp = entry.path.startsWith("sftp://");
   const http = entry.path.startsWith("http://") || entry.path.startsWith("https://");
   const remote = isRemotePath(entry.path);
   const hint = entry.is_dir
-    ? "文件夹（Enter 进入）"
+    ? t("文件夹（Enter 进入）")
     : sftp
-      ? "远程文件不支持在线预览：可下载到本地后用系统应用查看（双击文件即可）"
+      ? t("远程文件不支持在线预览：可下载到本地后用系统应用查看（双击文件即可）")
       : http
-        ? "HTTP 文件不支持在线预览：双击可用浏览器打开"
+        ? t("HTTP 文件不支持在线预览：双击可用浏览器打开")
         : remote
-          ? "此视图暂不支持预览"
-          : "此类型暂不支持预览";
+          ? t("此视图暂不支持预览")
+          : t("此类型暂不支持预览");
   const action = !entry.is_dir && onOpenExternal && (sftp || http);
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center" data-testid="preview-info">
@@ -70,11 +73,11 @@ function InfoCard({
         >
           {sftp ? (
             <>
-              <Download className="h-3.5 w-3.5" /> 下载到本地并打开
+              <Download className="h-3.5 w-3.5" /> {t("下载到本地并打开")}
             </>
           ) : (
             <>
-              <ExternalLink className="h-3.5 w-3.5" /> 在浏览器中打开
+              <ExternalLink className="h-3.5 w-3.5" /> {t("在浏览器中打开")}
             </>
           )}
         </button>

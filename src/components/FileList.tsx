@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, Link2, Share2, TerminalSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/LanguageProvider";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
 import { formatSize, formatTime, hideExtension, extLabel } from "@/lib/format";
 import { sortEntries } from "@/lib/entry-sort";
@@ -265,6 +266,7 @@ export function FileList({
   /** v0.18 同步比对链接标识：该窗格的方位（undefined = 未链接） */
   linkBadge?: LinkSide;
 }) {
+  const t = useT();
   const sorted = useMemo(
     () => sortEntries(entries, sortKey, sortDir, showHidden),
     [entries, sortKey, sortDir, showHidden],
@@ -517,8 +519,8 @@ export function FileList({
     if (e.key.length !== 1) return;
     // 空格不作首字母：它是「选中切换/预览开关」的键，误拉起搜索浮层会与预览冲突
     if (e.key === " ") return;
-    const t = e.target as HTMLElement;
-    if (t.closest("input,textarea")) return;
+    const tgt = e.target as HTMLElement;
+    if (tgt.closest("input,textarea")) return;
     e.preventDefault();
     openQuickJump(e.key);
   };
@@ -612,24 +614,24 @@ export function FileList({
           }}
         >
           <DialogHeader>
-            <DialogTitle>重命名标签</DialogTitle>
-            <DialogDescription>自定义标签显示名称（不影响已标记的文件）</DialogDescription>
+            <DialogTitle>{t("重命名标签")}</DialogTitle>
+            <DialogDescription>{t("自定义标签显示名称（不影响已标记的文件）")}</DialogDescription>
           </DialogHeader>
           <div className="flex items-center gap-1.5">
-            {tags.map((t) => (
+            {tags.map((tag) => (
               <button
-                key={t.id}
+                key={tag.id}
                 type="button"
                 onClick={() => {
-                  setRenameTagId(t.id);
-                  setRenameTagInput(tagLabel(t, tagNames));
+                  setRenameTagId(tag.id);
+                  setRenameTagInput(tagLabel(tag, tagNames));
                 }}
                 className={cn(
                   "h-5 w-5 rounded-full transition-transform",
-                  renameTagId === t.id && "scale-125 ring-2 ring-ring ring-offset-2",
+                  renameTagId === tag.id && "scale-125 ring-2 ring-ring ring-offset-2",
                 )}
-                style={{ background: t.color }}
-                title={tagLabel(t, tagNames)}
+                style={{ background: tag.color }}
+                title={tagLabel(tag, tagNames)}
               />
             ))}
           </div>
@@ -637,7 +639,7 @@ export function FileList({
             ref={renameTagInputRef}
             value={renameTagInput}
             onChange={(e) => setRenameTagInput(e.target.value)}
-            placeholder="标签名称"
+            placeholder={t("标签名称")}
             onKeyDown={(e) => {
               if (e.key === "Enter") submitRenameTag();
               if (e.key === "Escape") setRenameTagOpen(false);
@@ -645,10 +647,10 @@ export function FileList({
           />
           <DialogFooter>
             <Button variant="ghost" size="sm" onClick={() => setRenameTagOpen(false)}>
-              取消
+              {t("取消")}
             </Button>
             <Button size="sm" onClick={submitRenameTag} disabled={!renameTagInput.trim()}>
-              保存
+              {t("保存")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -774,13 +776,13 @@ export function FileList({
             onClick={() => col.key && onSort(col.key)}
             disabled={col.key === null}
           >
-            {col.label}
+            {t(col.label)}
             {/* v0.34 名称列宽拖动分隔线：按住左右拖调宽，双击恢复自动。
                 pointer 事件 stopPropagation 避免触发排序/表头悬停样式误闪 */}
             {col.key === "name" && (
               <div
                 data-name-col-resize=""
-                title="拖动调整名称列宽（双击恢复自动）"
+                title={t("拖动调整名称列宽（双击恢复自动）")}
                 className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize after:absolute after:inset-y-1 after:right-0 after:w-px after:bg-border hover:after:w-0.5 hover:after:bg-primary/50"
                 onPointerDown={startColResize}
                 onPointerMove={moveColResize}
@@ -802,10 +804,10 @@ export function FileList({
                     ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
                     : "bg-sky-500/15 text-sky-700 dark:text-sky-400",
                 )}
-                title="同步比对已开启：此窗格与另一侧窗格联动导航，右键或工具栏可断开"
+                title={t("同步比对已开启：此窗格与另一侧窗格联动导航，右键或工具栏可断开")}
               >
                 <Link2 className="h-3 w-3" />
-                同步·{linkBadge === "left" ? "左" : "右"}
+                {t("同步·{side}", { side: linkBadge === "left" ? t("左") : t("右") })}
               </span>
             )}
             {col.key &&
@@ -843,7 +845,9 @@ export function FileList({
           // pointer-events-none + -mb-6：纯展示浮层，不占流式高度、不参与命中测试——进入窗格时内容不在光标下整体下移，
           // 目录行成为投放目标后，提示条若推挤内容会把瞄准的落点顶到相邻行上误投
           <div className="pointer-events-none -mb-6 sticky top-0 z-10 flex h-6 items-center justify-center bg-primary/10 text-[11px] font-medium text-primary">
-            {dragOp === "copy" ? `复制到此处（按住 ${isMac ? "Option" : "Alt"} 切换移动）` : "移动到此处"}
+            {dragOp === "copy"
+              ? t("复制到此处（按住 {key} 切换移动）", { key: isMac ? "Option" : "Alt" })
+              : t("移动到此处")}
           </div>
         )}
         {/* v0.8.3 虚拟滚动：只渲染可视区 +/- buffer 行 */}
@@ -1163,7 +1167,7 @@ export function FileList({
             onPropertiesDir={onPropertiesDir}
             selectionExtras={<>
               <ContextMenuItem onClick={() => onShareDir(currentDir)}>
-                <Share2 className="mr-2 h-4 w-4" /> 分享此目录…
+                <Share2 className="mr-2 h-4 w-4" /> {t("分享此目录…")}
               </ContextMenuItem>
               <ContextMenuSeparator />
             </>}
