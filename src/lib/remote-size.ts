@@ -9,7 +9,7 @@
  */
 import { listDir } from "./api";
 import type { FileEntry } from "./types";
-import { isHttpPath, isSftpPath } from "./sftp-path";
+import { isHttpPath, isSftpPath, isNfsPath } from "./sftp-path";
 
 export interface RemoteSizeStat {
   bytes: number;
@@ -17,7 +17,8 @@ export interface RemoteSizeStat {
   dirs: number;
 }
 
-export const isLocalEntryPath = (p: string): boolean => !isSftpPath(p) && !isHttpPath(p);
+export const isLocalEntryPath = (p: string): boolean =>
+  !isSftpPath(p) && !isNfsPath(p) && !isHttpPath(p);
 
 /** 全部条目都是本地路径 → 仍走后端原生统计（快）；否则用本模块的远程遍历 */
 export const needsRemoteStat = (entries: readonly { path: string }[]): boolean =>

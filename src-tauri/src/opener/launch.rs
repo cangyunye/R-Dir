@@ -11,9 +11,15 @@ fn is_mac() -> bool {
 }
 
 /// 远程协议路径不交给本地程序：打开方式链路应先下载到临时目录再传本地路径
-/// （v0.37 防呆护栏，此前 sftp:// 串会被原样塞给外部应用）
+/// （v0.37 防呆护栏，此前 sftp:// 串会被原样塞给外部应用；v0.39 收纳 nfs://。
+/// smb:// 同为远程——前端拿到的是 UNC 条目路径，此护栏只拦截地址栏直开的极端场景）
 fn ensure_local_path(path: &str) -> Result<(), String> {
-    if path.starts_with("sftp://") || path.starts_with("http://") || path.starts_with("https://") {
+    if path.starts_with("sftp://")
+        || path.starts_with("nfs://")
+        || path.starts_with("http://")
+        || path.starts_with("https://")
+        || path.starts_with("smb://")
+    {
         return Err("远程文件需先下载到本地再打开".into());
     }
     Ok(())

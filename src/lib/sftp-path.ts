@@ -8,6 +8,11 @@ export function isHttpPath(p: string): boolean {
   return p.startsWith("http://") || p.startsWith("https://");
 }
 
+/** NFS 虚拟路径判定（v0.39）：nfs://host[:port]/export/path */
+export function isNfsPath(p: string): boolean {
+  return p.startsWith("nfs://");
+}
+
 export interface SftpAuthority {
   id: string;
   host: string;

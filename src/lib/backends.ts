@@ -3,9 +3,9 @@
  * 新后端（S3/网盘等）接入 = 这里加一个 kind 的能力条目与 PathScheme；
  * 后端 diff_dirs 仍做权威钳制，本表只驱动按钮显隐、层级预期与路径规则。
  */
-import { isSftpPath, isHttpPath } from "./sftp-path";
+import { isSftpPath, isHttpPath, isNfsPath } from "./sftp-path";
 
-export type BackendKind = "local" | "sftp" | "http" | "tags";
+export type BackendKind = "local" | "sftp" | "nfs" | "http" | "tags";
 
 export interface BackendCaps {
   /** 参与比对的最大层级：1 名称 / 2 +大小 / 3 +hash（hash 仅本地可执行） */
@@ -17,6 +17,7 @@ export interface BackendCaps {
 export function backendKind(path: string): BackendKind {
   if (path.startsWith("tags://")) return "tags";
   if (isSftpPath(path)) return "sftp";
+  if (isNfsPath(path)) return "nfs";
   if (isHttpPath(path)) return "http";
   return "local";
 }
@@ -24,6 +25,7 @@ export function backendKind(path: string): BackendKind {
 const CAPS: Record<BackendKind, BackendCaps> = {
   local: { maxDiffLevel: 3, canMkdir: true },
   sftp: { maxDiffLevel: 2, canMkdir: true },
+  nfs: { maxDiffLevel: 2, canMkdir: true },
   http: { maxDiffLevel: 1, canMkdir: false },
   tags: { maxDiffLevel: 1, canMkdir: false },
 };

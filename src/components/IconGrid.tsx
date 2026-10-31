@@ -30,7 +30,7 @@ import {
 } from "@/lib/virtual-scroll";
 import { hideExtension } from "@/lib/format";
 import { isMac } from "@/lib/keymap";
-import { isSftpPath, isHttpPath } from "@/lib/sftp-path";
+import { isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
 import { dragOutFiles } from "@/lib/api";
 import {
   canNativeDragOut,
@@ -735,7 +735,7 @@ export function IconGrid({
                             // （应用内投放两条链路都由 App 的 window 监听完成，目标窗格类型无关）
                             const canNative =
                               canNativeDragOut() &&
-                              paths.every((p) => !isSftpPath(p) && !isHttpPath(p));
+                              paths.every((p) => !isSftpPath(p) && !isNfsPath(p) && !isHttpPath(p));
                             if (canNative) {
                               // Windows 原生拖出（OLE 拖拽携带 CF_HDROP 文件引用）：浏览器上传
                               // 投放区 / 资源管理器只认真实文件，HTML5 的 text/uri-list 文本

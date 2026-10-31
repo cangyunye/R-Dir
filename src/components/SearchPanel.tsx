@@ -26,7 +26,7 @@ import { RenameInput } from "@/components/RenameInput";
 import { useModalLayer } from "@/hooks/useModalLayer";
 import { isTopModalLayer } from "@/lib/modal-stack";
 import { findFiles, renameEntry, searchContent } from "@/lib/api";
-import { isSftpPath } from "@/lib/sftp-path";
+import { isSftpPath, isNfsPath } from "@/lib/sftp-path";
 import { useT } from "@/lib/LanguageProvider";
 import type { FileEntry, FindEntry, SearchMatch } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -208,7 +208,7 @@ function ResultRow({
             <ExternalLink className="mr-2 h-4 w-4" /> {t("打开（默认应用）")}
           </ContextMenuItem>
         )}
-        {onRename && !isSftpPath(path) && (
+        {onRename && !isSftpPath(path) && !isNfsPath(path) && (
           <ContextMenuItem onClick={() => onRename(path, name)}>
             <Pencil className="mr-2 h-4 w-4" /> {t("重命名")}
           </ContextMenuItem>

@@ -2,6 +2,7 @@
 import {
   isSftpPath,
   isHttpPath,
+  isNfsPath,
   parseSftpAuthority,
   joinRemote,
   sftpUrl,
@@ -106,5 +107,16 @@ describe("sftp 新建文件夹路径拼接", () => {
     expect(isSftpPath("sftp://kali@192.168.31.100:22/home/kali")).toBe(true);
     expect(isSftpPath("C:\\Users")).toBe(false);
     expect(isSftpPath("tags://red")).toBe(false);
+  });
+});
+
+describe("isNfsPath（v0.39 nfs:// 判定）", () => {
+  it("识别 nfs:// 前缀", () => {
+    expect(isNfsPath("nfs://192.168.1.5/srv/nfs-share")).toBe(true);
+    expect(isNfsPath("nfs://h1:20490/export/a")).toBe(true);
+    expect(isNfsPath("nfs://h1")).toBe(true);
+    expect(isNfsPath("sftp://h1/a")).toBe(false);
+    expect(isNfsPath("\\\\h1\\share")).toBe(false);
+    expect(isNfsPath("C:\\Users")).toBe(false);
   });
 });
