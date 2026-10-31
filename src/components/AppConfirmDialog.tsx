@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useModalLayer } from "@/hooks/useModalLayer";
+import { useT } from "@/lib/LanguageProvider";
 import { isTopModalLayer } from "@/lib/modal-stack";
 
 /**
@@ -33,6 +34,7 @@ export function AppConfirmDialog({
 }) {
   // v0.34.1 弹层栈登记：更高层弹层打开时本框不抢 Esc/Enter（与 DeleteConfirmDialog 同因）
   useModalLayer("appConfirm", 70, true);
+  const t = useT();
 
   // 键位监听只订阅一次（回调走 ref）：onConfirm/onCancel 每次 App 渲染都是新引用，
   // 若作 effect 依赖会反复退订/重订，与真实按键派发撞车时按键被跳过。
@@ -80,7 +82,7 @@ export function AppConfirmDialog({
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onCancel}>
-            {req.cancelLabel ?? "取消"}
+            {req.cancelLabel ?? t("取消")}
           </Button>
           {req.altLabel && onAlt && (
             <Button variant="outline" size="sm" onClick={onAlt}>
@@ -93,7 +95,7 @@ export function AppConfirmDialog({
             onClick={onConfirm}
             autoFocus
           >
-            {req.confirmLabel ?? "确定"}
+            {req.confirmLabel ?? t("确定")}
           </Button>
         </div>
       </div>

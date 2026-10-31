@@ -11,15 +11,16 @@ import {
 import { shareList, shareStop } from "@/lib/api";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ShareSessionView } from "@/lib/types";
+import { useT } from "@/lib/LanguageProvider";
 
-function fmtTime(unix: number | null): string {
-  if (!unix) return "永久";
+function fmtTime(unix: number | null, t: (key: string, params?: Record<string, string | number>) => string): string {
+  if (!unix) return t("永久");
   const d = new Date(unix * 1000);
   const now = Date.now() / 1000;
-  if (unix < now) return "已过期";
+  if (unix < now) return t("已过期");
   const h = Math.floor((unix - now) / 3600);
-  if (h < 24) return `${h} 小时后`;
-  return `${Math.floor(h / 24)} 天后 · ${d.toLocaleString()}`;
+  if (h < 24) return t("{h} 小时后", { h });
+  return t("{n} 天后 · {time}", { n: Math.floor(h / 24), time: d.toLocaleString() });
 }
 
 /**
@@ -39,6 +40,7 @@ export function SharePanel({
   const [loading, setLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const t = useT();
 
   const refresh = async () => {
     setLoading(true);
@@ -100,15 +102,15 @@ export function SharePanel({
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Share2 className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold">分享管理</h2>
+            <h2 className="text-sm font-semibold">{t("分享管理")}</h2>
             <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-              {sessions.length} 个活跃
+              {t("{n} 个活跃", { n: sessions.length })}
             </span>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => void refresh()}
-              title="刷新"
+              title={t("刷新")}
               className="rounded p-1 hover:bg-muted"
             >
               <RefreshCw
@@ -119,14 +121,14 @@ export function SharePanel({
               onClick={onNewShare}
               className="flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground hover:opacity-90"
             >
-              <Share2 className="h-3 w-3" /> 新建分享
+              <Share2 className="h-3 w-3" /> {t("新建分享")}
             </button>
           </div>
         </div>
 
         {sessions.length === 0 && !loading ? (
           <div className="py-8 text-center text-xs text-muted-foreground">
-            暂无活跃分享。右键文件夹或点「新建分享」把目录分享为链接。
+            {t("暂无活跃分享。右键文件夹或点「新建分享」把目录分享为链接。")}
           </div>
         ) : (
           <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
@@ -138,7 +140,7 @@ export function SharePanel({
                   </p>
                   <div className="flex shrink-0 items-center gap-1">
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                      只读
+                      {t("只读")}
                     </span>
                     <span
                       className={`rounded px-1.5 py-0.5 text-[10px] ${
@@ -146,11 +148,11 @@ export function SharePanel({
                       }`}
                       title={
                         s.allowParent
-                          ? "允许上溯父目录（只读）"
-                          : "锁定分享根内"
+                          ? t("允许上溯父目录（只读）")
+                          : t("锁定分享根内")
                       }
                     >
-                      {s.allowParent ? "可上溯" : "锁定根"}
+                      {s.allowParent ? t("可上溯") : t("锁定根")}
                     </span>
                   </div>
                 </div>
@@ -159,20 +161,20 @@ export function SharePanel({
                 </p>
                 <div className="mb-2 flex items-center gap-2 text-[11px] text-muted-foreground">
                   <span>
-                    连接 {s.conns.length}/{s.maxConns === 0 ? "∞" : s.maxConns}
+                    {t("连接 {n}/{m}", { n: s.conns.length, m: s.maxConns === 0 ? "∞" : s.maxConns })}
                   </span>
-                  <span>· 有效期 {fmtTime(s.expiresAt)}</span>
+                  <span>· {t("有效期")} {fmtTime(s.expiresAt, t)}</span>
                 </div>
                 {s.conns.length > 0 && (
                   <div className="mb-2 max-h-24 overflow-y-auto rounded bg-muted/50 p-2 text-[10px]">
                     <p className="mb-1 flex items-center gap-1 text-muted-foreground">
-                      <MonitorDown className="h-3 w-3" /> 访问者
+                      <MonitorDown className="h-3 w-3" /> {t("访问者")}
                     </p>
                     {s.conns.map((c, i) => (
                       <div key={i} className="flex items-center justify-between gap-2 py-0.5">
                         <span className="font-mono">{c.ip}</span>
                         <span className="truncate text-muted-foreground" title={c.ua}>
-                          {c.ua || "未知客户端"}
+                          {c.ua || t("未知客户端")}
                         </span>
                         <span className="shrink-0 text-muted-foreground">
                           {new Date(c.lastActive * 1000).toLocaleTimeString()}
@@ -187,13 +189,13 @@ export function SharePanel({
                     className="flex items-center gap-1 rounded border px-2 py-1 text-[11px] hover:bg-muted"
                   >
                     <Copy className="h-3 w-3" />
-                    {copiedId === s.id ? "已复制" : "复制"}
+                    {copiedId === s.id ? t("已复制") : t("复制")}
                   </button>
                   <button
                     onClick={() => void openUrl(s.url)}
                     className="flex items-center gap-1 rounded border px-2 py-1 text-[11px] hover:bg-muted"
                   >
-                    <ExternalLink className="h-3 w-3" /> 打开
+                    <ExternalLink className="h-3 w-3" /> {t("打开")}
                   </button>
                   <button
                     onClick={() => void stop(s.id)}
@@ -205,7 +207,7 @@ export function SharePanel({
                     ) : (
                       <Square className="h-3 w-3" />
                     )}
-                    停止
+                    {t("停止")}
                   </button>
                 </div>
               </div>

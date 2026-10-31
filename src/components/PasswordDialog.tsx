@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { KeyRound, Loader2, ShieldCheck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useT } from "@/lib/LanguageProvider";
 
 /**
  * 通用主密码输入框（v0.31 服务器清单导入用）：
@@ -31,6 +32,7 @@ export function PasswordDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const t = useT();
 
   useEffect(() => {
     if (open) {
@@ -38,11 +40,11 @@ export function PasswordDialog({
       setError("");
       setLoading(false);
       // radix 外无 Dialog 包装：手动延迟聚焦，避开遮罩 mousedown 关闭的焦点竞争
-      const t = window.setTimeout(() => {
+      const timer = window.setTimeout(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
       }, 0);
-      return () => window.clearTimeout(t);
+      return () => window.clearTimeout(timer);
     }
   }, [open]);
 
@@ -92,7 +94,7 @@ export function PasswordDialog({
             <span>{description}</span>
           </div>
           <label className="grid grid-cols-[64px_1fr] items-center gap-2 text-xs">
-            <span className="text-muted-foreground">主密码</span>
+            <span className="text-muted-foreground">{t("主密码")}</span>
             <Input
               ref={inputRef}
               type="password"
@@ -101,7 +103,7 @@ export function PasswordDialog({
               onKeyDown={(e) => {
                 if (e.key === "Enter") void submit();
               }}
-              placeholder={placeholder ?? "输入主密码"}
+              placeholder={placeholder ?? t("输入主密码")}
               autoFocus
             />
           </label>
@@ -114,7 +116,7 @@ export function PasswordDialog({
 
           <div className="mt-1 flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={onClose} disabled={loading}>
-              取消
+              {t("取消")}
             </Button>
             <Button size="sm" onClick={() => void submit()} disabled={loading || !password}>
               {loading && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}

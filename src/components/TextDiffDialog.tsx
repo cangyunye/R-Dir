@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { isMac } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
 import { useModalLayer } from "@/hooks/useModalLayer";
+import { useT } from "@/lib/LanguageProvider";
 import { isTopModalLayer } from "@/lib/modal-stack";
 
 /** 文本比较的来源：任意两侧文件 / 粘贴的 diff 文本 / .patch 文件 */
@@ -58,23 +59,23 @@ const ENCODINGS: { value: string; label: string }[] = [
   { value: "windows-1252", label: "Latin-1" },
 ];
 
-const EOL_LABEL: Record<string, string> = {
-  lf: "LF (UNIX)",
-  crlf: "CRLF (DOS)",
-  mixed: "混合行尾",
-  none: "无换行",
-};
+// 以 { id, label } 数组声明（label: 字面量可被 LITERAL_PROP_FILES 提取），还原查找表；
+// 值为展示 key：技术标签（LF (UNIX) 等）保持原样，中文项经 t() 翻译
+const EOL_LABEL = Object.fromEntries(
+  (
+    [
+      { id: "lf", label: "LF (UNIX)" },
+      { id: "crlf", label: "CRLF (DOS)" },
+      { id: "mixed", label: "混合行尾" },
+      { id: "none", label: "无换行" },
+    ] as { id: string; label: string }[]
+  ).map((s) => [s.id, s.label]),
+);
 
 type Item =
   | { type: "section"; si: number }
   | { type: "row"; row: DiffRow; rowIdx: number }
   | { type: "gap"; id: string; count: number };
-
-function titleOf(source: TextDiffSource): string {
-  if (source.kind === "files") return "文本比较";
-  if (source.kind === "patchText") return source.title ?? "Git Diff（粘贴导入）";
-  return "Git Diff";
-}
 
 /**
  * 测一侧内容的最大行宽（px）：等宽字体按 ASCII 单宽、其余双宽估算挑出最长行，
@@ -123,6 +124,7 @@ function HScrollBar({
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [trackW, setTrackW] = useState(0);
+  const t = useT();
   useEffect(() => {
     const el = trackRef.current;
     if (!el) return;
@@ -142,12 +144,13 @@ function HScrollBar({
     const x = clientX - rect.left - thumbW / 2;
     return Math.max(0, Math.min(max, (x / range) * max));
   };
+  const title = side === "left" ? t("左侧横向滚动（与右侧联动）") : t("右侧横向滚动（与左侧联动）");
   return (
     <div
       ref={trackRef}
       data-hscroll={side}
       className="relative mx-1 h-2 cursor-pointer rounded bg-muted/60 hover:bg-muted"
-      title={side === "left" ? "左侧横向滚动（与右侧联动）" : "右侧横向滚动（与左侧联动）"}
+      title={title}
       onPointerDown={(e) => {
         if (max <= 0) return;
         e.preventDefault();
@@ -231,6 +234,7 @@ export function TextDiffDialog({
   const [confirmReq, setConfirmReq] = useState<AppConfirmRequest | null>(null);
   const confirmActionRef = useRef<() => void>(() => {});
   const scrollRef = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   const filesMode = source.kind === "files";
   const anyDirty = dirty.left || dirty.right;
@@ -277,7 +281,7 @@ export function TextDiffDialog({
           if (!alive()) return;
           const parsed = parseUnifiedDiff(text);
           if (parsed.length === 0) {
-            throw new Error("未识别出 diff 内容（需要 unified diff 格式：git diff 输出或 .patch 文件）");
+            throw new Error(t("未识别出 diff 内容（需要 unified diff 格式：git diff 输出或 .patch 文件）"));
           }
           setSections(parsed.map((s) => ({ leftName: s.leftName, rightName: s.rightName, rows: s.rows })));
           const total = parsed.reduce(
@@ -310,7 +314,7 @@ export function TextDiffDialog({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [source, encoding],
+    [source, encoding, t],
   );
 
   useEffect(() => {
@@ -343,10 +347,10 @@ export function TextDiffDialog({
       setMaximized((m) => !m);
       return;
     }
-    const t = e.target as HTMLElement | null;
+    const tgt = e.target as HTMLElement | null;
     if (
-      t &&
-      (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)
+      tgt &&
+      (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.tagName === "SELECT" || tgt.isContentEditable)
     ) {
       return;
     }
@@ -385,8 +389,7 @@ export function TextDiffDialog({
         vMove(el.scrollHeight);
         break;
     }
-  };
-  useEffect(() => {
+  };  useEffect(() => {
     const onKey = (e: KeyboardEvent) => keyActionRef.current(e);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -637,19 +640,20 @@ export function TextDiffDialog({
     if (!filesMode || !sections[0] || saving) return;
     if (!sideEditable(dst) || lossySides[src] || lossySides[dst]) return;
     setConfirmReq({
-      title: src === "left" ? "以左侧为准覆盖右侧？" : "以右侧为准覆盖左侧？",
-      message: `${dst === "right" ? "右侧" : "左侧"}的当前内容（含已应用的补丁与未保存编辑）将被整份替换为${
-        src === "left" ? "左" : "右"
-      }侧内容；替换后需点「保存修改」才写入文件，也可「放弃修改」反悔。`,
-      confirmLabel: dst === "right" ? "覆盖右侧" : "覆盖左侧",
+      title: src === "left" ? t("以左侧为准覆盖右侧？") : t("以右侧为准覆盖左侧？"),
+      message:
+        src === "left"
+          ? t("右侧的当前内容（含已应用的补丁与未保存编辑）将被整份替换为左侧内容；替换后需点「保存修改」才写入文件，也可「放弃修改」反悔。")
+          : t("左侧的当前内容（含已应用的补丁与未保存编辑）将被整份替换为右侧内容；替换后需点「保存修改」才写入文件，也可「放弃修改」反悔。"),
+      confirmLabel: dst === "right" ? t("覆盖右侧") : t("覆盖左侧"),
       danger: true,
     });
     confirmActionRef.current = () => {
       const lines = [...sideLines[src]];
-      const newRows: DiffRow[] = lines.map((t, i) => ({
+      const newRows: DiffRow[] = lines.map((line, i) => ({
         kind: "eq",
-        left: { no: i + 1, text: t },
-        right: { no: i + 1, text: t },
+        left: { no: i + 1, text: line },
+        right: { no: i + 1, text: line },
       }));
       applyEdit(dst, lines, newRows);
     };
@@ -665,9 +669,9 @@ export function TextDiffDialog({
     try {
       await Promise.all(jobs);
       await load(true);
-      setSaveNote({ text: "已保存" });
+      setSaveNote({ text: t("已保存") });
     } catch (e) {
-      setSaveNote({ text: `保存失败：${String(e)}`, err: true });
+      setSaveNote({ text: t("保存失败：{msg}", { msg: String(e) }), err: true });
     } finally {
       setSaving(false);
     }
@@ -675,9 +679,9 @@ export function TextDiffDialog({
 
   const discardEdits = () => {
     setConfirmReq({
-      title: "放弃未保存的修改？",
-      message: "两侧的编辑（含已应用的补丁）将被丢弃，重新从磁盘读取。",
-      confirmLabel: "放弃修改",
+      title: t("放弃未保存的修改？"),
+      message: t("两侧的编辑（含已应用的补丁）将被丢弃，重新从磁盘读取。"),
+      confirmLabel: t("放弃修改"),
       danger: true,
     });
     confirmActionRef.current = () => void load(true);
@@ -686,9 +690,9 @@ export function TextDiffDialog({
   const requestClose = () => {
     if (anyDirty) {
       setConfirmReq({
-        title: "有未保存的修改",
-        message: "关闭将丢弃两侧未保存的编辑。",
-        confirmLabel: "放弃并关闭",
+        title: t("有未保存的修改"),
+        message: t("关闭将丢弃两侧未保存的编辑。"),
+        confirmLabel: t("放弃并关闭"),
         danger: true,
       });
       confirmActionRef.current = onClose;
@@ -700,9 +704,9 @@ export function TextDiffDialog({
   const changeEncoding = (enc: string) => {
     if (anyDirty) {
       setConfirmReq({
-        title: "切换编码将丢弃未保存的修改",
-        message: "切换编码会按新编码重新读取并比较两侧文件，未保存的编辑（含已应用的补丁）将被丢弃。",
-        confirmLabel: "切换",
+        title: t("切换编码将丢弃未保存的修改"),
+        message: t("切换编码会按新编码重新读取并比较两侧文件，未保存的编辑（含已应用的补丁）将被丢弃。"),
+        confirmLabel: t("切换"),
       });
       confirmActionRef.current = () => setEncoding(enc);
     } else {
@@ -736,14 +740,13 @@ export function TextDiffDialog({
   const renderGutter = (row: DiffRow, rowIdx: number, side: Side) => {
     const line = row[side];
     const can = sideEditable(side);
-    const sideName = side === "left" ? "左" : "右";
     return (
       <span className={cn(gutterCls, line ? "" : "bg-muted/10")}>
         {can && (
           <span className="absolute inset-0 z-10 hidden items-center justify-end gap-px pr-0.5 group-hover/row:flex">
             <button
               className={gutterBtn}
-              title={`编辑本行（${sideName}侧）`}
+              title={side === "left" ? t("编辑本行（左侧）") : t("编辑本行（右侧）")}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => startEdit(rowIdx, side)}
             >
@@ -751,7 +754,7 @@ export function TextDiffDialog({
             </button>
             <button
               className={gutterBtn}
-              title={`在下方插入一行（${sideName}侧）`}
+              title={side === "left" ? t("在下方插入一行（左侧）") : t("在下方插入一行（右侧）")}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => insertLineBelow(rowIdx, side)}
             >
@@ -759,7 +762,7 @@ export function TextDiffDialog({
             </button>
             <button
               className={gutterBtn}
-              title={`删除本行（${sideName}侧）`}
+              title={side === "left" ? t("删除本行（左侧）") : t("删除本行（右侧）")}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => deleteLine(rowIdx, side)}
             >
@@ -840,18 +843,28 @@ export function TextDiffDialog({
         <div className="flex shrink-0 items-center justify-between border-b px-4 py-2.5">
           <div className="flex min-w-0 items-center gap-2">
             <FileDiff className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="text-sm font-semibold">{titleOf(source)}</span>
+            <span className="text-sm font-semibold">
+              {source.kind === "files"
+                ? t("文本比较")
+                : source.kind === "patchText"
+                  ? source.title
+                    ? t(source.title)
+                    : t("Git Diff（粘贴导入）")
+                  : t("Git Diff")}
+            </span>
             {same && !loading && (
               <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                两个文件相同
+                {t("两个文件相同")}
               </span>
             )}
             {lossy && (
               <span
                 className="flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-500"
-                title={`文件按 ${encoding === "utf-8" ? "UTF-8" : encoding.toUpperCase()} 解码存在无效字节（可能选错了编码），已按替换符显示；此侧禁止编辑，避免把替换符写回文件`}
+                title={t("文件按 {enc} 解码存在无效字节（可能选错了编码），已按替换符显示；此侧禁止编辑，避免把替换符写回文件", {
+                  enc: encoding === "utf-8" ? "UTF-8" : encoding.toUpperCase(),
+                })}
               >
-                <TriangleAlert className="h-3 w-3" /> 编码
+                <TriangleAlert className="h-3 w-3" /> {t("编码")}
               </span>
             )}
             {source.kind === "files" &&
@@ -860,10 +873,13 @@ export function TextDiffDialog({
               eols.left !== eols.right && (
                 <span
                   className="flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-500"
-                  title={`两侧行尾格式不同：左 ${EOL_LABEL[eols.left] ?? eols.left} · 右 ${EOL_LABEL[eols.right] ?? eols.right}。行级比对已按归一化换行处理，此差异不体现在上方行差异中`}
+                  title={t("两侧行尾格式不同：左 {l} · 右 {r}。行级比对已按归一化换行处理，此差异不体现在上方行差异中", {
+                    l: t(EOL_LABEL[eols.left] ?? eols.left),
+                    r: t(EOL_LABEL[eols.right] ?? eols.right),
+                  })}
                 >
-                  <TriangleAlert className="h-3 w-3" /> 换行符 {EOL_LABEL[eols.left] ?? eols.left} ↔{" "}
-                  {EOL_LABEL[eols.right] ?? eols.right}
+                  <TriangleAlert className="h-3 w-3" /> {t("换行符")} {t(EOL_LABEL[eols.left] ?? eols.left)} ↔{" "}
+                  {t(EOL_LABEL[eols.right] ?? eols.right)}
                 </span>
               )}
           </div>
@@ -871,14 +887,14 @@ export function TextDiffDialog({
             <button
               onClick={() => setMaximized((m) => !m)}
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title={maximized ? `还原窗口（${maximizeHint}）` : `最大化（${maximizeHint}）`}
+              title={maximized ? t("还原窗口（{keys}）", { keys: maximizeHint }) : t("最大化（{keys}）", { keys: maximizeHint })}
             >
               {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </button>
             <button
               onClick={requestClose}
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title="关闭"
+              title={t("关闭")}
             >
               <X className="h-4 w-4" />
             </button>
@@ -890,24 +906,24 @@ export function TextDiffDialog({
           {source.kind === "files" && (
             <>
               <span className="min-w-0 truncate font-mono" title={leftLabel ?? undefined}>
-                <span className="text-[10px]">左：</span>
+                <span className="text-[10px]">{t("左：")}</span>
                 {leftLabel}
-                {dirty.left && <span className="text-amber-500" title="左侧有未保存修改"> ●</span>}
+                {dirty.left && <span className="text-amber-500" title={t("左侧有未保存修改")}> ●</span>}
               </span>
               <span className="min-w-0 truncate font-mono" title={rightLabel ?? undefined}>
-                <span className="text-[10px]">右：</span>
+                <span className="text-[10px]">{t("右：")}</span>
                 {rightLabel}
-                {dirty.right && <span className="text-amber-500" title="右侧有未保存修改"> ●</span>}
+                {dirty.right && <span className="text-amber-500" title={t("右侧有未保存修改")}> ●</span>}
               </span>
             </>
           )}
-          {source.kind !== "files" && <span>共 {sections.length} 个文件段落</span>}
+          {source.kind !== "files" && <span>{t("共 {n} 个文件段落", { n: sections.length })}</span>}
           {source.kind === "files" && (
             <label
               className="flex shrink-0 items-center gap-1"
-              title="选择编码后，左右两侧同时按该编码重新解码并比较"
+              title={t("选择编码后，左右两侧同时按该编码重新解码并比较")}
             >
-              <span>编码</span>
+              <span>{t("编码")}</span>
               <select
                 value={encoding}
                 disabled={loading}
@@ -930,18 +946,18 @@ export function TextDiffDialog({
           <button
             onClick={() => setOnlyDiff((v) => !v)}
             disabled={stats.additions + stats.deletions === 0}
-            title="仅显示有差异的部分"
+            title={t("仅显示有差异的部分")}
             className={cn(
               "shrink-0 rounded border px-2 py-0.5 disabled:opacity-50",
               onlyDiff ? "bg-accent text-accent-foreground" : "hover:bg-accent hover:text-foreground",
             )}
           >
-            只看差异
+            {t("只看差异")}
           </button>
         </div>
         {coarse && (
           <div className="border-b bg-amber-500/5 px-4 py-1 text-[11px] text-amber-600 dark:text-amber-500">
-            差异过大，已按整块替换粗略显示（未做行级对齐）
+            {t("差异过大，已按整块替换粗略显示（未做行级对齐）")}
           </div>
         )}
 
@@ -962,7 +978,7 @@ export function TextDiffDialog({
             {loading ? (
               <div className="flex h-32 items-center justify-center gap-2 text-xs text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                {source.kind === "files" ? "正在读取并比较…" : "正在解析…"}
+                {source.kind === "files" ? t("正在读取并比较…") : t("正在解析…")}
               </div>
             ) : error ? (
               <div className="p-4 text-xs text-destructive">{error}</div>
@@ -996,7 +1012,7 @@ export function TextDiffDialog({
                         className="flex w-full items-center justify-center gap-1 bg-muted/20 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
                         style={{ height: ROW_H }}
                       >
-                        ⋯ 已折叠 {it.count} 行相同 — 点击展开
+                        {t("⋯ 已折叠 {n} 行相同 — 点击展开", { n: it.count })}
                       </button>
                     );
                   }
@@ -1019,7 +1035,7 @@ export function TextDiffDialog({
                             data-patch="l2r"
                             className={cn(gutterBtn, "w-4 disabled:opacity-30")}
                             disabled={!sideEditable("right")}
-                            title="应用到右侧：此差异块以左侧为准（右侧记为未保存）"
+                            title={t("应用到右侧：此差异块以左侧为准（右侧记为未保存）")}
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => applyHunk(hunk.s, hunk.e, "l2r")}
                           >
@@ -1029,7 +1045,7 @@ export function TextDiffDialog({
                             data-patch="r2l"
                             className={cn(gutterBtn, "w-4 disabled:opacity-30")}
                             disabled={!sideEditable("left")}
-                            title="应用到左侧：此差异块以右侧为准（左侧记为未保存）"
+                            title={t("应用到左侧：此差异块以右侧为准（左侧记为未保存）")}
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => applyHunk(hunk.s, hunk.e, "r2l")}
                           >
@@ -1048,7 +1064,7 @@ export function TextDiffDialog({
           {!loading && !error && (
             <div
               data-axis-drag=""
-              title="拖动调整左右栏宽度"
+              title={t("拖动调整左右栏宽度")}
               className="group/axis absolute inset-y-0 z-10 w-2 -translate-x-1/2 cursor-col-resize"
               style={{ left: GUTTER + leftPaneW }}
               onPointerDown={(e) => {
@@ -1097,9 +1113,10 @@ export function TextDiffDialog({
         {/* 底部 */}
         <div className="flex shrink-0 items-center gap-2 border-t px-4 py-2">
           <span className="text-[11px] text-muted-foreground">
-            行高亮：红 = 左侧（删除），绿 = 右侧（新增）
+            {t("行高亮：红 = 左侧（删除），绿 = 右侧（新增）")}
+            {filesMode && " · "}
             {filesMode &&
-              " · 悬停行号可编辑/插入/删除，双击单元格编辑，中轴按钮可按块应用一侧，或用「采用左侧/右侧」整份传输；拖中轴调整两栏宽度"}
+              t("· 悬停行号可编辑/插入/删除，双击单元格编辑，中轴按钮可按块应用一侧，或用「采用左侧/右侧」整份传输；拖中轴调整两栏宽度")}
           </span>
           {saveNote && (
             <span
@@ -1119,18 +1136,18 @@ export function TextDiffDialog({
                   variant="outline"
                   disabled={loading || lossy || !sideEditable("right")}
                   onClick={() => adoptSide("left")}
-                  title="整份以左侧为准覆盖右侧（右侧记为未保存，可继续编辑或保存）"
+                  title={t("整份以左侧为准覆盖右侧（右侧记为未保存，可继续编辑或保存）")}
                 >
-                  采用左侧
+                  {t("采用左侧")}
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={loading || lossy || !sideEditable("left")}
                   onClick={() => adoptSide("right")}
-                  title="整份以右侧为准覆盖左侧（左侧记为未保存，可继续编辑或保存）"
+                  title={t("整份以右侧为准覆盖左侧（左侧记为未保存，可继续编辑或保存）")}
                 >
-                  采用右侧
+                  {t("采用右侧")}
                 </Button>
               </span>
               <Button
@@ -1139,9 +1156,9 @@ export function TextDiffDialog({
                 className="ml-auto"
                 disabled={!anyDirty || saving}
                 onClick={discardEdits}
-                title="丢弃未保存的编辑，重新从磁盘读取"
+                title={t("丢弃未保存的编辑，重新从磁盘读取")}
               >
-                放弃修改
+                {t("放弃修改")}
               </Button>
               <Button
                 size="sm"
@@ -1149,20 +1166,20 @@ export function TextDiffDialog({
                 onClick={() => void saveAll()}
                 title={
                   lossy
-                    ? "存在解码有损的一侧，已禁编辑；仅无损侧可保存"
+                    ? t("存在解码有损的一侧，已禁编辑；仅无损侧可保存")
                     : !anyDirty
-                      ? "无修改"
-                      : "把编辑写入左侧/右侧文件（SFTP 侧自动回传覆盖）"
+                      ? t("无修改")
+                      : t("把编辑写入左侧/右侧文件（SFTP 侧自动回传覆盖）")
                 }
               >
-                {saving ? "保存中…" : "保存修改"}
+                {saving ? t("保存中…") : t("保存修改")}
               </Button>
             </>
           )}
-          {!filesMode && <Button size="sm" className="ml-auto" onClick={requestClose}>关闭</Button>}
+          {!filesMode && <Button size="sm" className="ml-auto" onClick={requestClose}>{t("关闭")}</Button>}
           {filesMode && (
             <Button size="sm" variant="outline" onClick={requestClose}>
-              关闭
+              {t("关闭")}
             </Button>
           )}
         </div>

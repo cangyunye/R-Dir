@@ -20,6 +20,7 @@ import {
   saveShareDefaultExpires,
 } from "@/lib/persist";
 import type { ShareCreateResult } from "@/lib/types";
+import { useT } from "@/lib/LanguageProvider";
 
 /**
  * v0.7 分享弹窗：把当前窗口目录分享为链接。
@@ -54,6 +55,7 @@ export function ShareDialog({
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ShareCreateResult | null>(null);
   const [copied, setCopied] = useState(false);
+  const t = useT();
 
   // 每次打开时重置结果，避免显示上次已停止的旧链接
   useEffect(() => {
@@ -112,7 +114,7 @@ export function ShareDialog({
       >
         <div className="mb-3 flex items-center gap-2">
           <Share2 className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold">分享此目录（只读）</h2>
+          <h2 className="text-sm font-semibold">{t("分享此目录（只读）")}</h2>
         </div>
         <p
           className="mb-3 truncate rounded bg-muted px-2 py-1.5 text-xs text-muted-foreground"
@@ -126,7 +128,7 @@ export function ShareDialog({
             <label className="flex items-center justify-between rounded-lg border px-3 py-2">
               <span className="flex items-center gap-2">
                 <Unlock className="h-3.5 w-3.5 text-amber-500" />
-                允许接收方上溯到父目录
+                {t("允许接收方上溯到父目录")}
               </span>
               <input
                 type="checkbox"
@@ -135,28 +137,28 @@ export function ShareDialog({
               />
             </label>
             <p className="pl-1 text-[11px] text-muted-foreground">
-              默认关闭：对方被锁定在分享根内；开启后父目录及以上仅可浏览（不可写）。
+              {t("默认关闭：对方被锁定在分享根内；开启后父目录及以上仅可浏览（不可写）。")}
             </p>
 
             <label className="block">
               <span className="mb-1 flex items-center gap-2 text-muted-foreground">
-                <Lock className="h-3.5 w-3.5" /> 并发连接数上限
+                <Lock className="h-3.5 w-3.5" /> {t("并发连接数上限")}
               </span>
               <select
                 value={maxConns}
                 onChange={(e) => setMaxConns(Number(e.target.value))}
                 className="w-full rounded-lg border bg-background px-3 py-2"
               >
-                <option value={1}>1 个连接</option>
-                <option value={3}>3 个连接（默认）</option>
-                <option value={10}>10 个连接</option>
-                <option value={0}>不限</option>
+                <option value={1}>{t("1 个连接")}</option>
+                <option value={3}>{t("3 个连接（默认）")}</option>
+                <option value={10}>{t("10 个连接")}</option>
+                <option value={0}>{t("不限")}</option>
               </select>
             </label>
 
             <label className="block">
               <span className="mb-1 flex items-center gap-2 text-muted-foreground">
-                <Timer className="h-3.5 w-3.5" /> 有效期
+                <Timer className="h-3.5 w-3.5" /> {t("有效期")}
               </span>
               <div className="flex gap-2">
                 <select
@@ -166,9 +168,9 @@ export function ShareDialog({
                   }
                   className="flex-1 rounded-lg border bg-background px-3 py-2"
                 >
-                  <option value="24">24 小时（默认）</option>
-                  <option value="custom">自定义小时数</option>
-                  <option value="forever">永久（直到停止/退出）</option>
+                  <option value="24">{t("24 小时（默认）")}</option>
+                  <option value="custom">{t("自定义小时数")}</option>
+                  <option value="forever">{t("永久（直到停止/退出）")}</option>
                 </select>
                 {expiresMode === "custom" && (
                   <input
@@ -192,7 +194,7 @@ export function ShareDialog({
               ) : (
                 <Share2 className="h-4 w-4" />
               )}
-              生成分享链接
+              {t("生成分享链接")}
             </button>
           </div>
         ) : (
@@ -202,7 +204,7 @@ export function ShareDialog({
               <div className="min-w-0 flex-1">
                 <p className="mb-1 flex items-center gap-1 text-[11px] text-muted-foreground">
                   <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-                  链接即凭证，请勿外泄
+                  {t("链接即凭证，请勿外泄")}
                 </p>
                 <p
                   className="break-all rounded bg-muted px-2 py-1.5 text-[11px]"
@@ -220,25 +222,25 @@ export function ShareDialog({
                     ) : (
                       <Copy className="h-3 w-3" />
                     )}
-                    {copied ? "已复制" : "复制链接"}
+                    {copied ? t("已复制") : t("复制链接")}
                   </button>
                   <button
                     onClick={() => void openUrl(result.url)}
                     className="flex items-center gap-1 rounded border px-2 py-1 text-[11px] hover:bg-muted"
                   >
-                    <ExternalLink className="h-3 w-3" /> 打开验证
+                    <ExternalLink className="h-3 w-3" /> {t("打开验证")}
                   </button>
                 </div>
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              访问者 IP 可在状态栏「分享」面板查看；关闭被分享的窗口/标签或到期即自动停止。
+              {t("访问者 IP 可在状态栏「分享」面板查看；关闭被分享的窗口/标签或到期即自动停止。")}
             </p>
             <button
               onClick={onClose}
               className="w-full rounded-lg border py-2 text-xs hover:bg-muted"
             >
-              完成
+              {t("完成")}
             </button>
           </div>
         )}
