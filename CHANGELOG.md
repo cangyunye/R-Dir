@@ -11,7 +11,7 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 - **设置面板皮肤跟随主题包**：面板底色 / 表面 / 主色渐变 / 装饰光斑由包调色板自动派生（`--glass-*` 变量，`index.css` 原值为兜底），包作者无需额外配置；无主题包时「云舒云卷 / 黑金纹琉璃」皮肤与改动前一致。
 - **Rust 存储层**：新增 `themes.rs`（`themes_list` / `theme_install` / `theme_delete`），包存 `app_config_dir()/themes/<id>.json` 并原子写入；id 正则 + 名称长度 + 64 KiB 上限 + token 形态校验，删除仅接受合法 id（防路径穿越）；坏包进列表 `errors`，不阻塞其他包。
 - **示例包**：`examples/themes/` 提供金秋（light）/ 红枫（dark）/ 桃花粉（light），需手动导入，不内嵌进应用。
-- 测试：cargo +6（id 规则 / 安装-列表-删除往返 / 坏包隔离 / base 与空名称 / 超大文件 / 删除穿越）；vitest +14（应用与清除 / base 回落 / 白名单外 key / 非法颜色跳过 / 面板变量派生 / active id / 缩略色 / 设置面板卡片与禁用态）；e2e +3（浅色包 / 深色包 / 设置面板选包与回默认）；全量 vitest 652、e2e 187 通过。
+- 测试：cargo +6（id 规则 / 安装-列表-删除往返 / 坏包隔离 / base 与空名称 / 超大文件 / 删除穿越）；vitest +14（应用与清除 / base 回落 / 白名单外 key / 非法颜色跳过 / 面板变量派生 / active id / 缩略色 / 设置面板卡片与禁用态）；e2e +3（浅色包 / 深色包 / 设置面板选包与回默认）；全量 vitest 652 通过（版本号 tag 用例待 v0.40.0 tag 后可过）、e2e 189 通过。
 
 ## v0.39.0 (2026-10-31)
 
