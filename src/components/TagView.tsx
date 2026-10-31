@@ -22,6 +22,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/LanguageProvider";
 import { hideExtension } from "@/lib/format";
 import { isHttpPath } from "@/lib/sftp-path";
 
@@ -74,6 +75,7 @@ export function TagView({
 }) {
   // v0.28.0 自定义标签也在查找范围（否则新标签视图横幅回落原始 id）
   const allTagDefs = tagsProp ?? TAG_DEFS;
+  const t = useT();
   const findTag = (id: string) => allTagDefs.find((t) => t.id === id);
   const def = findTag(tagId);
   const files = useMemo(
@@ -156,15 +158,15 @@ export function TagView({
           style={{ background: def?.color ?? "#8e8e93" }}
         />
         <span className="font-medium text-foreground">
-          标签：{def ? tagLabel(def, tagNames) : tagId}
+          {t("标签：{name}", { name: def ? tagLabel(def, tagNames) : tagId })}
         </span>
-        <span className="text-muted-foreground">{files.length} 项</span>
+        <span className="text-muted-foreground">{t("{n} 项", { n: files.length })}</span>
         <button
           onClick={onExit}
           className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title="退出标签视图（返回上一目录）"
+          title={t("退出标签视图（返回上一目录）")}
         >
-          <X className="h-3 w-3" /> 退出
+          <X className="h-3 w-3" /> {t("退出")}
         </button>
       </div>
 
@@ -173,8 +175,8 @@ export function TagView({
         {files.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-xs text-muted-foreground">
             <Tag className="h-6 w-6 opacity-40" />
-            此标签下还没有项目
-            <span>在任意文件上右键 → 标签，即可添加</span>
+            {t("此标签下还没有项目")}
+            <span>{t("在任意文件上右键 → 标签，即可添加")}</span>
           </div>
         ) : (
           files.map((p) => {
@@ -215,7 +217,7 @@ export function TagView({
                         onOpen(p);
                       }
                     }}
-                    title={`${p}\n双击跳转所在目录（当前：${currentPath}）`}
+                    title={p + "\n" + t("双击跳转所在目录（当前：{cur}）", { cur: currentPath })}
                     className="flex w-full cursor-default items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent/60"
                   >
                     <FileIcon
@@ -258,15 +260,15 @@ export function TagView({
                   }}
                 >
                   <ContextMenuItem onClick={() => onOpen(p)}>
-                    <FolderOpen className="mr-2 h-4 w-4" /> 打开
+                    <FolderOpen className="mr-2 h-4 w-4" /> {t("打开")}
                   </ContextMenuItem>
                   {!isDir && (
                     <ContextMenuItem onClick={() => onOpenFile(p)}>
-                      <FolderOpen className="mr-2 h-4 w-4" /> 用默认应用打开
+                      <FolderOpen className="mr-2 h-4 w-4" /> {t("用默认应用打开")}
                     </ContextMenuItem>
                   )}
                   <ContextMenuItem onClick={() => onReveal(p, isDir)}>
-                    <Crosshair className="mr-2 h-4 w-4" /> 定位到{isDir ? "文件夹" : "文件"}
+                    <Crosshair className="mr-2 h-4 w-4" /> {isDir ? t("定位到文件夹") : t("定位到文件")}
                   </ContextMenuItem>
                   {/* v0.31 重命名本体（含文件夹）；HTTP 只读后端改的是显示别名（v0.31.1） */}
                   <ContextMenuItem
@@ -278,7 +280,7 @@ export function TagView({
                     }
                   >
                     <Pencil className="mr-2 h-4 w-4" />
-                    {isHttpPath(p) ? "重命名显示名…" : "重命名…"}
+                    {isHttpPath(p) ? t("重命名显示名…") : t("重命名…")}
                   </ContextMenuItem>
                   <ContextMenuSeparator />
                   {/* 标签（内联展开，避免 Radix Sub 在 WKWebView 下的点击丢失） */}
@@ -291,18 +293,18 @@ export function TagView({
                       setExpandedMenu((cur) => (cur === id ? null : id))
                     }
                   >
-                    {(tagsProp ?? TAG_DEFS).map((t) => {
-                      const checked = (fileTags[p] ?? []).includes(t.id);
+                    {(tagsProp ?? TAG_DEFS).map((tag) => {
+                      const checked = (fileTags[p] ?? []).includes(tag.id);
                       return (
                         <ContextMenuItem
-                          key={t.id}
-                          onSelect={() => onToggleTag(p, t.id)}
+                          key={tag.id}
+                          onSelect={() => onToggleTag(p, tag.id)}
                         >
                           <span
                             className="mr-2 h-3 w-3 rounded-full"
-                            style={{ background: t.color }}
+                            style={{ background: tag.color }}
                           />
-                          {tagLabel(t, tagNames)}
+                          {tagLabel(tag, tagNames)}
                           {checked && <Check className="ml-auto h-3.5 w-3.5" />}
                         </ContextMenuItem>
                       );
@@ -310,18 +312,18 @@ export function TagView({
                   </MenuGroup>
                   <ContextMenuSeparator />
                   <ContextMenuItem onClick={() => onCopyPath(p)}>
-                    <Clipboard className="mr-2 h-4 w-4" /> 复制路径
+                    <Clipboard className="mr-2 h-4 w-4" /> {t("复制路径")}
                   </ContextMenuItem>
                   <ContextMenuItem onClick={() => onToggleQuick(p)}>
                     <Star className="mr-2 h-4 w-4" />
-                    {customQuick.includes(p) ? "从快捷访问移除" : "添加到快捷访问"}
+                    {customQuick.includes(p) ? t("从快捷访问移除") : t("添加到快捷访问")}
                   </ContextMenuItem>
                   <ContextMenuSeparator />
                   <ContextMenuItem
                     onSelect={() => onToggleTag(p, tagId)}
                     className="text-destructive focus:text-destructive"
                   >
-                    <Tag className="mr-2 h-4 w-4" /> 移除此标签
+                    <Tag className="mr-2 h-4 w-4" /> {t("移除此标签")}
                   </ContextMenuItem>
                 </ContextMenuContent>
               </ContextMenu>
@@ -344,20 +346,21 @@ export function TagDots({
   /** 全量标签 = 预设 + 自定义（v0.28.0；缺省回落预设） */
   tags?: TagDef[];
 }) {
+  const t = useT();
   const tagIds = fileTags[path] ?? [];
   if (tagIds.length === 0) return null;
   const defs = tagsProp ?? TAG_DEFS;
   return (
     <span className="flex shrink-0 items-center gap-0.5">
       {tagIds
-        .map((id) => defs.find((t) => t.id === id))
+        .map((id) => defs.find((d) => d.id === id))
         .filter((d): d is NonNullable<typeof d> => !!d)
         .map((d) => (
           <span
             key={d.id}
             className="h-2 w-2 rounded-full ring-1 ring-background"
             style={{ background: d.color }}
-            title={`标签：${d.label}`}
+            title={t("标签：{name}", { name: tagLabel(d, {}) })}
           />
         ))}
     </span>

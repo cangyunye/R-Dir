@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import { terr } from "@/lib/i18n";
+import { useT } from "@/lib/LanguageProvider";
 import { completeCommands, completePath, listDir, resolvePath, runCommand, statPath } from "@/lib/api";
 import { firstCommandToken, hasScheme, isCommandToken } from "@/lib/cmdline";
 import { splitPathSegments } from "@/lib/path-segments";
@@ -126,6 +127,7 @@ export function Toolbar({
   /** v0.34 编辑态右键菜单：打开时的选区快照 + 「焦点被菜单移走」挂起标记 */
   const selRef = useRef<[number, number]>([0, 0]);
   const menuOpeningRef = useRef(false);
+  const t = useT();
 
   useEffect(() => setDraft(path), [path]);
 
@@ -303,12 +305,12 @@ export function Toolbar({
     } catch {
       // 路径不存在：首 token 是裸词且当前窗格为本地 → 按 PATH 命令兜底（终端中执行）
       if (!hasScheme(cwd) && firstCommandToken(raw)) {
-        await tryRunCommand(raw, "路径不存在，也不是 PATH 中的命令");
+        await tryRunCommand(raw, t("路径不存在，也不是 PATH 中的命令"));
         return;
       }
-      setPathError(`路径不存在或无法访问：${abs}`);
+      setPathError(t("路径不存在或无法访问：{path}", { path: abs }));
     }
-  }, [draft, cwd, onNavigate, onRevealFile, closeCompletion, tryRunCommand]);
+  }, [draft, cwd, onNavigate, onRevealFile, closeCompletion, tryRunCommand, t]);
 
   return (
     <div className="flex h-10 items-center gap-1 border-b bg-background px-2">
@@ -318,7 +320,7 @@ export function Toolbar({
         className="h-7 w-7"
         onClick={onBack}
         disabled={!canBack}
-        title="后退"
+        title={t("后退")}
       >
         <ChevronLeft className="h-4 w-4" />
       </Button>
@@ -328,7 +330,7 @@ export function Toolbar({
         className="h-7 w-7"
         onClick={onForward}
         disabled={!canForward}
-        title="前进"
+        title={t("前进")}
       >
         <ChevronRight className="h-4 w-4" />
       </Button>
@@ -337,7 +339,7 @@ export function Toolbar({
         size="icon"
         className="h-7 w-7"
         onClick={onUp}
-        title="上级目录"
+        title={t("上级目录")}
       >
         <CornerUpLeft className="h-4 w-4" />
       </Button>
@@ -346,7 +348,7 @@ export function Toolbar({
         size="icon"
         className="h-7 w-7"
         onClick={onRefresh}
-        title="刷新"
+        title={t("刷新")}
       >
         <RefreshCw className="h-4 w-4" />
       </Button>
@@ -436,7 +438,7 @@ export function Toolbar({
                   "h-7 pr-12 text-xs",
                   pathError && "border-destructive focus-visible:ring-destructive/40",
                 )}
-                placeholder="输入路径回车跳转；输入命令回车在终端执行；Tab 补全"
+                placeholder={t("输入路径回车跳转；输入命令回车在终端执行；Tab 补全")}
                 spellCheck={false}
                 /* v0.35 关 WebView 自动填充：WKWebView/WebView2 会在地址栏输入时弹
                    「保存的信息」建议列表，盖住应用自己的补全下拉（应用内右键已有剪切/复制） */
@@ -453,7 +455,7 @@ export function Toolbar({
                 onSelect={() => editSel((d, [s, e]) => [d.slice(0, s) + d.slice(e), s])}
                 disabled={selRef.current[0] === selRef.current[1]}
               >
-                <Scissors className="mr-2 h-4 w-4" /> 剪切
+                <Scissors className="mr-2 h-4 w-4" /> {t("剪切")}
               </ContextMenuItem>
               <ContextMenuItem
                 onSelect={() => {
@@ -462,19 +464,19 @@ export function Toolbar({
                 }}
                 disabled={selRef.current[0] === selRef.current[1]}
               >
-                <Clipboard className="mr-2 h-4 w-4" /> 复制
+                <Clipboard className="mr-2 h-4 w-4" /> {t("复制")}
               </ContextMenuItem>
               <ContextMenuItem
                 onSelect={() => {
                   void navigator.clipboard
                     ?.readText()
-                    .then((t) => {
-                      if (t) editSel((d, [s, e]) => [d.slice(0, s) + t + d.slice(e), s + t.length]);
+                    .then((txt) => {
+                      if (txt) editSel((d, [s, e]) => [d.slice(0, s) + txt + d.slice(e), s + txt.length]);
                     })
                     .catch(() => {});
                 }}
               >
-                <ClipboardPaste className="mr-2 h-4 w-4" /> 粘贴
+                <ClipboardPaste className="mr-2 h-4 w-4" /> {t("粘贴")}
               </ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem
@@ -483,7 +485,7 @@ export function Toolbar({
                   inputRef.current?.setSelectionRange(0, draft.length);
                 }}
               >
-                <TextSelect className="mr-2 h-4 w-4" /> 全选
+                <TextSelect className="mr-2 h-4 w-4" /> {t("全选")}
               </ContextMenuItem>
             </ContextMenuContent>
           </ContextMenu>
@@ -492,7 +494,7 @@ export function Toolbar({
             variant="ghost"
             size="icon"
             className="absolute right-6 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            title={draft.trim() && draft.trim() !== path ? "刷新到输入路径" : "刷新当前目录"}
+            title={draft.trim() && draft.trim() !== path ? t("刷新到输入路径") : t("刷新当前目录")}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -535,7 +537,7 @@ export function Toolbar({
             ))}
             {cmds.length > 0 && (
               <div className="mt-1 border-t px-2 pb-0.5 pt-1.5 text-[10px] text-muted-foreground">
-                命令（回车在终端中执行）
+                {t("命令（回车在终端中执行）")}
               </div>
             )}
             {cmds.map((c, j) => {
@@ -545,7 +547,7 @@ export function Toolbar({
                   key={c.path}
                   type="button"
                   data-cmd-suggest=""
-                  title={`在终端中执行：${c.name}（${c.path}）`}
+                  title={t("在终端中执行：{name}（{path}）", { name: c.name, path: c.path })}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     chooseCmd(c, true);
@@ -634,7 +636,7 @@ export function Toolbar({
                 e.preventDefault();
                 enterEdit();
               }}
-              title="编辑路径（可复制）"
+              title={t("编辑路径（可复制）")}
               className="ml-0.5 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
             >
               <Pencil className="h-3 w-3" />
@@ -643,14 +645,14 @@ export function Toolbar({
         </ContextMenuTrigger>
         <ContextMenuContent className="min-w-40">
           <ContextMenuItem onClick={enterEdit}>
-            <Pencil className="mr-2 h-4 w-4" /> 编辑路径（可复制）
+            <Pencil className="mr-2 h-4 w-4" /> {t("编辑路径（可复制）")}
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => {
               navigator.clipboard?.writeText(path).catch(() => {});
             }}
           >
-            <Clipboard className="mr-2 h-4 w-4" /> 复制路径
+            <Clipboard className="mr-2 h-4 w-4" /> {t("复制路径")}
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => {
@@ -666,17 +668,17 @@ export function Toolbar({
                 .catch(() => {});
             }}
           >
-            <ClipboardPaste className="mr-2 h-4 w-4" /> 粘贴并转到
+            <ClipboardPaste className="mr-2 h-4 w-4" /> {t("粘贴并转到")}
           </ContextMenuItem>
           {!hasScheme(path) && (
             <>
               <ContextMenuSeparator />
               <ContextMenuItem onClick={onRefresh}>
-                <RefreshCw className="mr-2 h-4 w-4" /> 刷新
+                <RefreshCw className="mr-2 h-4 w-4" /> {t("刷新")}
               </ContextMenuItem>
               {onPropertiesDir && (
                 <ContextMenuItem onClick={() => onPropertiesDir(cwd)}>
-                  <Info className="mr-2 h-4 w-4" /> 属性（当前目录）
+                  <Info className="mr-2 h-4 w-4" /> {t("属性（当前目录）")}
                 </ContextMenuItem>
               )}
             </>
@@ -689,7 +691,7 @@ export function Toolbar({
         size="icon"
         className={cn("h-7 w-7", syncDiffActive && "bg-accent text-accent-foreground")}
         onClick={onToggleSyncDiff}
-        title={syncDiffActive ? "断开同步比对" : "同步比对（左右窗格）"}
+        title={syncDiffActive ? t("断开同步比对") : t("同步比对（左右窗格）")}
       >
         <Link2 className="h-4 w-4" />
       </Button>
@@ -699,7 +701,7 @@ export function Toolbar({
         size="icon"
         className={cn("h-7 w-7", searchOpen && "bg-accent text-accent-foreground")}
         onClick={onToggleSearch}
-        title="搜索（当前层）"
+        title={t("搜索（当前层）")}
       >
         <Search className="h-4 w-4" />
       </Button>

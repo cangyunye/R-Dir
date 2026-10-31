@@ -6,6 +6,7 @@ import { isMac } from "@/lib/keymap";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { WindowControls } from "@/components/WindowControls";
+import { useT } from "@/lib/LanguageProvider";
 
 export interface TabItem {
   id: number;
@@ -108,6 +109,7 @@ export function TabBar({
   /** 是否处于按住状态（true 才挂载全局 move/up 监听，避免之前只写 ref 不触发重渲染导致拖不动） */
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<{ idx: number; x: number } | null>(null);
+  const t = useT();
   /** 正在内联重命名的标签 id */
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
@@ -367,10 +369,10 @@ export function TabBar({
                     else if (e.key === "Escape") setEditingId(null);
                   }}
                   className="h-5 w-28 px-1 text-xs"
-                  placeholder="标签名"
+                  placeholder={t("标签名")}
                 />
               ) : (
-                <span className="truncate">{tab.title || "新建标签"}</span>
+                <span className="truncate">{tab.title || t("新建标签")}</span>
               )}
               <span
                 role="button"
@@ -413,7 +415,7 @@ export function TabBar({
           if (listOpen) setListOpen(false);
           else openTabList();
         }}
-        title="全部标签"
+        title={t("全部标签")}
         className={cn(
           "mb-0.5 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground",
           listOpen && "bg-accent text-foreground",
@@ -427,7 +429,7 @@ export function TabBar({
         className="mb-0.5 h-7 w-7 shrink-0 px-0 text-muted-foreground"
         onClick={handleNew}
         onPointerUp={handleNew}
-        title="新建标签页"
+        title={t("新建标签页")}
       >
         <Plus className="h-4 w-4" />
       </Button>
@@ -463,7 +465,7 @@ export function TabBar({
                 }}
                 className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
               >
-                关闭标签
+                {t("关闭标签")}
               </button>
               <button
                 type="button"
@@ -474,7 +476,7 @@ export function TabBar({
                 }}
                 className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
               >
-                关闭其他标签页
+                {t("关闭其他标签页")}
               </button>
               <button
                 type="button"
@@ -485,7 +487,7 @@ export function TabBar({
                 }}
                 className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
               >
-                关闭右侧标签页
+                {t("关闭右侧标签页")}
               </button>
               <div className="my-1 h-px bg-border" />
               <button
@@ -496,7 +498,7 @@ export function TabBar({
                 }}
                 className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
               >
-                收藏此标签页
+                {t("收藏此标签页")}
               </button>
               <button
                 type="button"
@@ -506,7 +508,7 @@ export function TabBar({
                 }}
                 className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
               >
-                重命名
+                {t("重命名")}
               </button>
               <button
                 type="button"
@@ -517,7 +519,7 @@ export function TabBar({
                 }}
                 className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
               >
-                移动到最右边
+                {t("移动到最右边")}
               </button>
             </>
           ) : (
@@ -530,7 +532,7 @@ export function TabBar({
                 }}
                 className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
               >
-                新建标签页
+                {t("新建标签页")}
               </button>
               <button
                 type="button"
@@ -541,7 +543,7 @@ export function TabBar({
                 }}
                 className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
               >
-                恢复关闭的标签页
+                {t("恢复关闭的标签页")}
               </button>
               <div className="my-1 h-px bg-border" />
               <button
@@ -552,7 +554,7 @@ export function TabBar({
                 }}
                 className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
               >
-                全部标签页…
+                {t("全部标签页…")}
               </button>
               <button
                 type="button"
@@ -562,7 +564,7 @@ export function TabBar({
                 }}
                 className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
               >
-                收藏夹…
+                {t("收藏夹…")}
               </button>
             </>
           )}
@@ -603,12 +605,12 @@ export function TabBar({
                   )}
                   style={{ background: tabColorOf(tab.id).solid }}
                 />
-                <span className="truncate">{`${idx + 1}. ${tab.title || "新建标签"}`}</span>
+                <span className="truncate">{`${idx + 1}. ${tab.title || t("新建标签")}`}</span>
               </button>
               <button
                 type="button"
                 data-tabs-close={idx}
-                title="关闭"
+                title={t("关闭")}
                 onClick={(e) => {
                   e.stopPropagation();
                   onClose(tab.id);

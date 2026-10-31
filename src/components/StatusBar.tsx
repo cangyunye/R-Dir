@@ -1,17 +1,24 @@
 import { AlertCircle, Crosshair, FolderOpen, Layers, Loader2, X , Share2 } from "lucide-react";
 import { formatSize } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/LanguageProvider";
 import type { TransferProgress } from "@/lib/types";
 import { SyncDiffStatusBar, type SyncDiffSummary } from "@/components/SyncDiffPanel";
 
-const PHASE_LABEL: Record<TransferProgress["phase"], string> = {
-  copy: "复制",
-  move: "移动",
-  upload: "上传",
-  download: "下载",
-  compress: "压缩",
-  extract: "解压",
-};
+// { id, label } 数组声明（label: 字面量可被 LITERAL_PROP_FILES 提取），还原查找表；
+// label 经 t() 翻译后拼进各阶段文案
+const PHASE_LABEL = Object.fromEntries(
+  (
+    [
+      { id: "copy", label: "复制" },
+      { id: "move", label: "移动" },
+      { id: "upload", label: "上传" },
+      { id: "download", label: "下载" },
+      { id: "compress", label: "压缩" },
+      { id: "extract", label: "解压" },
+    ] as { id: TransferProgress["phase"]; label: string }[]
+  ).map((s) => [s.id, s.label]),
+);
 
 /** 部分后端任务以固定文案作 label（复制/移动/压缩不逐文件改名）；
  *  此时不再拼接阶段名，避免渲染成「复制中：复制中…」（v0.18.1） */
@@ -65,6 +72,9 @@ export function StatusBar({
     transfer && transfer.fileTotal > 0
       ? Math.min(100, Math.round((transfer.fileDone / transfer.fileTotal) * 100))
       : 0;
+  const t = useT();
+  // 阶段名经翻译后参与拼接（GENERIC_LABELS / 「已取消」「传输失败」是后端帧 label 契约，按原文比较）
+  const phaseLabel = transfer ? t(PHASE_LABEL[transfer.phase]) : "";
   // 失败收尾帧会在状态栏停留 1.5 秒，此时若已有具体错误文案，直接让位给它——
   // 否则「复制失败」四个字盖住了真正的原因
   const showTransfer = !!transfer && !(transfer.done && transfer.label === "传输失败" && notice);
@@ -90,13 +100,13 @@ export function StatusBar({
               <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
               {transfer.done
                 ? transfer.label === "已取消"
-                  ? "已取消"
+                  ? t("已取消")
                   : transfer.label === "传输失败"
-                    ? `${PHASE_LABEL[transfer.phase]}失败`
-                    : `${PHASE_LABEL[transfer.phase]}完成`
+                    ? t("{phase}失败", { phase: phaseLabel })
+                    : t("{phase}完成", { phase: phaseLabel })
                 : GENERIC_LABELS.has(transfer.label)
-                  ? `${PHASE_LABEL[transfer.phase]}中…`
-                  : `${PHASE_LABEL[transfer.phase]}中：${transfer.label}`}
+                  ? t("{phase}中…", { phase: phaseLabel })
+                  : t("{phase}中：{label}", { phase: phaseLabel, label: transfer.label })}
               {transfer.totalFiles > 1 && !transfer.done && (
                 <span className="tabular-nums">
                   {transfer.doneFiles + 1}/{transfer.totalFiles}
@@ -130,13 +140,13 @@ export function StatusBar({
           {compareBase && (
             <span
               className="flex items-center gap-1 rounded border border-primary/40 px-1.5 py-0.5 text-primary"
-              title={`文本比较基准：${compareBase.path}`}
+              title={t("文本比较基准：{path}", { path: compareBase.path })}
             >
               <Crosshair className="h-3 w-3 shrink-0" />
               <span className="max-w-32 truncate">{compareBase.name}</span>
               <button
                 onClick={compareBase.onClear}
-                title="清除比较基准"
+                title={t("清除比较基准")}
                 className="shrink-0 hover:text-foreground"
               >
                 <X className="h-3 w-3" />
@@ -147,26 +157,32 @@ export function StatusBar({
           {onSharePanel && (
             <button
               onClick={onSharePanel}
-              title="分享管理"
+              title={t("分享管理")}
               className="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] hover:bg-muted"
             >
-              <Share2 className="h-3 w-3" /> 分享
+              <Share2 className="h-3 w-3" /> {t("分享")}
             </button>
           )}
           {transfer && !transfer.done && transfer.id && onCancelTransfer && CANCELLABLE.has(transfer.phase) && (
             <button
               onClick={() => onCancelTransfer(transfer.id!, transfer.phase)}
-              title={`停止${PHASE_LABEL[transfer.phase]}`}
+              title={t("停止{phase}", { phase: phaseLabel })}
               className="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] text-destructive hover:bg-destructive/10"
             >
-              <X className="h-3 w-3" /> 停止
+              <X className="h-3 w-3" /> {t("停止")}
             </button>
           )}
-          <span>{total} 项{showHidden ? "（含隐藏）" : ""}</span>
+          <span>
+            {t("{n} 项", { n: total })}
+            {showHidden ? t("（含隐藏）") : ""}
+          </span>
           {selected.length > 0 && (
             <span className="flex items-center gap-1">
               <Layers className="h-3 w-3" />
-              已选 {selected.length} 项 · {formatSize(selectedSize)}
+              {t("已选 {n} 项 · {size}", {
+                n: selected.length,
+                size: formatSize(selectedSize),
+              })}
             </span>
           )}
         </div>

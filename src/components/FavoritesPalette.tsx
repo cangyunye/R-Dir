@@ -6,6 +6,7 @@ import { formatTime } from "@/lib/format";
 import { searchFavorites } from "@/lib/favorites";
 import type { TabFavorite } from "@/lib/types";
 import { useModalLayer } from "@/hooks/useModalLayer";
+import { useT } from "@/lib/LanguageProvider";
 
 /** 行内操作按钮（更新为当前标签 / 重命名 / 删除）：激活行常显，其余 hover 显示 */
 function RowAction({
@@ -82,6 +83,7 @@ export function FavoritesPalette({
   /** 行内重命名会话：{收藏 id, 草稿}；Enter 提交 / Esc 或失焦取消（空名取消） */
   const [renaming, setRenaming] = useState<{ id: string; draft: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const t = useT();
 
   // v0.34.1 弹层栈登记：Esc 由 Radix 处理，登记只为让下层弹层（设置等）让位
   useModalLayer("favorites", 50, open);
@@ -132,7 +134,7 @@ export function FavoritesPalette({
           inputRef.current?.focus();
         }}
       >
-        <DialogTitle className="sr-only">收藏夹（标签布局）</DialogTitle>
+        <DialogTitle className="sr-only">{t("收藏夹（标签布局）")}</DialogTitle>
         <div className="flex items-center gap-2 border-b px-3 py-2.5">
           <Star className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
@@ -157,7 +159,7 @@ export function FavoritesPalette({
                 if (row) run(row.item.id);
               }
             }}
-            placeholder="搜索收藏（名称或窗格路径）…"
+            placeholder={t("搜索收藏（名称或窗格路径）…")}
             className="h-6 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
           <kbd className="shrink-0 rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
@@ -216,7 +218,7 @@ export function FavoritesPalette({
                       </div>
                       <div className="truncate text-[11px] text-muted-foreground">
                         <Highlight text={row.path} positions={row.pathPositions} />
-                        {paneCount > 1 ? ` · +${paneCount - 1} 窗格` : ""}
+                        {paneCount > 1 ? " · " + t("+{n} 窗格", { n: paneCount - 1 }) : ""}
                       </div>
                     </div>
                     <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">
@@ -229,15 +231,15 @@ export function FavoritesPalette({
                       )}
                     >
                       <RowAction
-                        title="用当前标签更新此收藏"
+                        title={t("用当前标签更新此收藏")}
                         onClick={() => onUpdateFavorite(fav.id)}
                       >
                         <RotateCw className="h-3.5 w-3.5" />
                       </RowAction>
-                      <RowAction title="重命名" onClick={() => setRenaming({ id: fav.id, draft: fav.name })}>
+                      <RowAction title={t("重命名")} onClick={() => setRenaming({ id: fav.id, draft: fav.name })}>
                         <Pencil className="h-3.5 w-3.5" />
                       </RowAction>
-                      <RowAction title="删除收藏" onClick={() => onRemoveFavorite(fav.id)}>
+                      <RowAction title={t("删除收藏")} onClick={() => onRemoveFavorite(fav.id)}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </RowAction>
                     </div>
@@ -249,8 +251,8 @@ export function FavoritesPalette({
           {rows.length === 0 && (
             <div className="px-3 py-10 text-center text-sm text-muted-foreground">
               {favorites.length === 0
-                ? "暂无收藏：右键标签页「收藏此标签页」，或用下方按钮收藏当前标签"
-                : "无匹配收藏"}
+                ? t("暂无收藏：右键标签页「收藏此标签页」，或用下方按钮收藏当前标签")
+                : t("无匹配收藏")}
             </div>
           )}
         </div>
@@ -261,10 +263,10 @@ export function FavoritesPalette({
             className="flex items-center gap-1.5 rounded-sm px-1.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           >
             <Plus className="h-3.5 w-3.5" />
-            收藏当前标签页
+            {t("收藏当前标签页")}
           </button>
           <span className="text-[11px] text-muted-foreground">
-            {favorites.length} 项收藏 · ↑↓ 选择 · ↵ 打开
+            {t("{n} 项收藏 · ↑↓ 选择 · ↵ 打开", { n: favorites.length })}
           </span>
         </div>
       </DialogContent>

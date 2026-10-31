@@ -15,6 +15,7 @@ import { PreviewBody } from "@/components/preview/PreviewBody";
 import { sortEntries } from "@/lib/entry-sort";
 import { isPreviewable, previewKindOf } from "@/lib/preview";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/LanguageProvider";
 import type { FileEntry, SortDir, SortKey } from "@/lib/types";
 import { useModalLayer } from "@/hooks/useModalLayer";
 import { isTopModalLayer } from "@/lib/modal-stack";
@@ -52,6 +53,7 @@ export function BrowseMode({
   const current: FileEntry | null = list[index] ?? null;
   const stripRef = useRef<HTMLDivElement>(null);
   const tileRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+  const t = useT();
 
   // 当前项滚动居中
   useEffect(() => {
@@ -128,7 +130,7 @@ export function BrowseMode({
       <header className="flex shrink-0 items-center gap-3 px-4 py-2.5">
         {current && <FileIcon entry={current} size={16} />}
         <span className="min-w-0 flex-1 truncate text-sm font-medium" title={current?.path}>
-          {current?.name ?? "当前目录没有可预览的图片或文档"}
+          {current?.name ?? t("当前目录没有可预览的图片或文档")}
         </span>
         <span className="shrink-0 font-mono text-xs text-zinc-400" data-testid="browse-counter">
           {list.length > 0 ? `${index + 1} / ${list.length}` : "0 / 0"}
@@ -138,14 +140,14 @@ export function BrowseMode({
           disabled={!current}
           onClick={() => current && onOpenExternal(current.path)}
         >
-          <ExternalLink className="h-3.5 w-3.5" /> 外部打开
+          <ExternalLink className="h-3.5 w-3.5" /> {t("外部打开")}
         </button>
         <button
           className="flex shrink-0 items-center gap-1.5 rounded-md border border-white/20 px-2 py-1 text-xs transition-colors hover:bg-white/10"
           onClick={onClose}
-          title="退出（Esc）"
+          title={t("退出（Esc）")}
         >
-          <X className="h-3.5 w-3.5" /> 退出
+          <X className="h-3.5 w-3.5" /> {t("退出")}
         </button>
       </header>
 
@@ -205,7 +207,7 @@ export function BrowseMode({
           })}
         </div>
         <div className="pt-1 text-center text-[10px] text-zinc-500">
-          ← → 切换 · Home/End 首尾 · Enter 外部打开 · Esc 退出（滚轮/拖拽横移缩略图条）
+          {t("← → 切换 · Home/End 首尾 · Enter 外部打开 · Esc 退出（滚轮/拖拽横移缩略图条）")}
         </div>
       </footer>
     </div>
