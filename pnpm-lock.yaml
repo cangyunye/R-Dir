@@ -167,8 +167,8 @@ importers:
   .:
     dependencies:
       '@rdir/l10n':
-        specifier: github:cangyunye/R-Dir-L10n#v0.1.1
-        version: https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/32382dcdd162ab99abcadc153572e06baeaadbba
+        specifier: github:cangyunye/R-Dir-L10n#v0.1.2
+        version: https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/a7d8374e4cfafdc4d63c85a934c230f6129407bd
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
@@ -1058,9 +1058,9 @@ packages:
   '@radix-ui/rect@1.1.3':
     resolution: {integrity: sha512-JtyZR+mqgBibTo8xea3B6ZRmzZiM/YeVBtUkas6zMuXjAlfIFIW2FgqeM9eLyvEaYX66vr6DJMK+4U6LV0KhNw==}
 
-  '@rdir/l10n@https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/32382dcdd162ab99abcadc153572e06baeaadbba':
-    resolution: {gitHosted: true, integrity: sha512-WQUC9nREuh0+K1jFdmS/tajXKtDpsMGvvcdSeDEMoyAooKd47PQiTl24rzGp5Bk7BF118QY5mBTQ0i/mHZxfLA==, tarball: https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/32382dcdd162ab99abcadc153572e06baeaadbba}
-    version: 0.1.0
+  '@rdir/l10n@https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/a7d8374e4cfafdc4d63c85a934c230f6129407bd':
+    resolution: {gitHosted: true, integrity: sha512-WI/yIvG/wX8xg6ln3Tyd+heyrQcuyVptEpt1SGRUnWDJzeTm1wfR+DPPyVXN+qk52jt5mf2KZUSiNFJ+DgDF0Q==, tarball: https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/a7d8374e4cfafdc4d63c85a934c230f6129407bd}
+    version: 0.1.1
 
   '@rolldown/binding-android-arm-eabi@1.2.9':
     resolution: {integrity: sha512-tNISae1QEf/vkb3xkRcjV5SEdzPE97We5IVaa2Z8jSszQPZ8U60B/YCYpw4QI7VidYsBtKavczXf+DyDs9WGxw==}
@@ -2918,7 +2918,7 @@ snapshots:
 
   '@radix-ui/rect@1.1.3': {}
 
-  '@rdir/l10n@https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/32382dcdd162ab99abcadc153572e06baeaadbba': {}
+  '@rdir/l10n@https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/a7d8374e4cfafdc4d63c85a934c230f6129407bd': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.9':
     optional: true
