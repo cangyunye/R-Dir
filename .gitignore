@@ -45,3 +45,6 @@ dts/
 # ZCode 会话产物
 .zcode/
 .zcodeignore
+
+# R-Dir-L10n 语言包子仓库（独立 git 仓库临时寄放在此，勿提交；日后迁出为主仓库兄弟目录）
+/R-Dir-L10n/
