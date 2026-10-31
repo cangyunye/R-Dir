@@ -105,6 +105,41 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         configurable: false,
     });
     v.push(PluginInfo {
+        id: "smb".into(),
+        name: "SMB / Windows 网络共享".into(),
+        description: "地址栏 smb://host/share 或 \\\\host\\share 浏览 Windows 共享：UNC 委托本地引擎，认证走系统凭据；smb://host 列出共享（仅 Windows）".into(),
+        version: "0.1".into(),
+        source: "builtin".into(),
+        protocols: vec!["smb://".into()],
+        operations: vec![
+            "list".into(),
+            "read".into(),
+            "write".into(),
+            "delete".into(),
+            "transfer".into(),
+        ],
+        enabled: enabled("smb"),
+        configurable: false,
+    });
+    #[cfg(feature = "nfs")]
+    v.push(PluginInfo {
+        id: "nfs".into(),
+        name: "NFS 网络文件系统".into(),
+        description: "地址栏 nfs://host/export 直连 NFSv3 导出（纯 Rust 客户端，不经系统挂载）：浏览读写、递归上传下载；nfs://host 列出导出".into(),
+        version: "0.1".into(),
+        source: "builtin".into(),
+        protocols: vec!["nfs://".into()],
+        operations: vec![
+            "list".into(),
+            "read".into(),
+            "write".into(),
+            "delete".into(),
+            "transfer".into(),
+        ],
+        enabled: enabled("nfs"),
+        configurable: false,
+    });
+    v.push(PluginInfo {
         id: "opener".into(),
         name: "打开方式".into(),
         description: "右键自定义打开方式：用户自行注册工具，参数数组安全启动".into(),

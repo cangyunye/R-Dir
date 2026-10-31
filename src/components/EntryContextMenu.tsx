@@ -40,7 +40,7 @@ import type { FileEntry } from "@/lib/types";
 import type { FileTags, TagNames } from "@/lib/persist";
 import { TAG_DEFS, tagLabel, type TagDef } from "@/lib/persist";
 import type { OpenerItem, ShellItem, GitToolItem, QuickToolItem } from "@/lib/openerApi";
-import { isSftpPath, isHttpPath } from "@/lib/sftp-path";
+import { isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
 import { openersForEntry } from "@/lib/openers";
 import { isArchiveExt } from "@/lib/filekind";
 import {
@@ -131,7 +131,7 @@ export function QuickToolsStrip({
 
 /** 常用条可见性：仅本地路径（工具只能开本地），受「打开方式」插件开关控制 */
 export function quickStripVisible(pluginOpener: boolean, path: string): boolean {
-  return pluginOpener && !isSftpPath(path) && !isHttpPath(path);
+  return pluginOpener && !isSftpPath(path) && !isNfsPath(path) && !isHttpPath(path);
 }
 
 export interface EntryMenuProps {

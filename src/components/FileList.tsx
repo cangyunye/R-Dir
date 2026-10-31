@@ -27,7 +27,7 @@ import { TagDots } from "@/components/TagView";
 import { BlankContextMenuContent, EntryContextMenuContent } from "@/components/EntryContextMenu";
 import { rank } from "@/lib/fuzzy";
 import { isMac } from "@/lib/keymap";
-import { isSftpPath, isHttpPath } from "@/lib/sftp-path";
+import { isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
 import { dragOutFiles } from "@/lib/api";
 import { canNativeDragOut, setNativeDragOut, setHtml5Drag } from "@/lib/native-drag";
 import { useDragRubberBand } from "@/hooks/useDragRubberBand";
@@ -881,7 +881,7 @@ export function FileList({
                     // 原生拖出仅支持真实文件系统路径；sftp://、http:// 等虚拟路径走 HTML5 文本拖拽
                     // （应用内投放两条链路都由 App 的 window 监听完成，目标窗格类型无关）
                     const canNative =
-                      canNativeDragOut() && paths.every((p) => !isSftpPath(p) && !isHttpPath(p));
+                      canNativeDragOut() && paths.every((p) => !isSftpPath(p) && !isNfsPath(p) && !isHttpPath(p));
                     if (canNative) {
                       // Windows 原生拖出（OLE 拖拽携带 CF_HDROP 文件引用）：浏览器上传
                       // 投放区 / 资源管理器只认真实文件，HTML5 的 text/uri-list 文本

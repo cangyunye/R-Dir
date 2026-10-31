@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { List, Plus, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { cn } from "@/lib/utils";
+import { cn, fgOnTagColor } from "@/lib/utils";
 import { isMac } from "@/lib/keymap";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,6 +82,7 @@ export function TabBar({
   onFavoriteTab,
   onOpenFavorites,
   trailing,
+  tagColors,
 }: {
   tabs: TabItem[];
   activeId: number;
@@ -105,6 +106,8 @@ export function TabBar({
   onOpenFavorites: () => void;
   /** 右上角插槽（设置 / 主题 / 应用菜单），与「新建标签」按钮同行 */
   trailing?: React.ReactNode;
+  /** v0.39 标签虚拟视图 tabId → 标签色：覆盖色相轮，让"标签：xx"页签吃标签本色 */
+  tagColors?: Record<number, string>;
 }) {
   /** 是否处于按住状态（true 才挂载全局 move/up 监听，避免之前只写 ref 不触发重渲染导致拖不动） */
   const [dragging, setDragging] = useState(false);
@@ -306,6 +309,8 @@ export function TabBar({
       >
         {tabs.map((tab, idx) => {
           const color = tabColorOf(tab.id);
+          // 标签虚拟视图：芯片整体换成标签本色（深浅文字按标签色亮度自适应）
+          const tagC = tagColors?.[tab.id];
           const active = tab.id === activeId;
           return (
             <div
@@ -334,9 +339,11 @@ export function TabBar({
               }}
               style={
                 {
-                  "--tab-c": color.solid,
-                  "--tab-fg": color.darkFg,
-                  "--tab-deep": color.lightFg,
+                  "--tab-c": tagC ?? color.solid,
+                  "--tab-fg": tagC ? fgOnTagColor(tagC) : color.darkFg,
+                  "--tab-deep": tagC
+                    ? `color-mix(in oklab, ${tagC} 72%, black)`
+                    : color.lightFg,
                 } as React.CSSProperties
               }
               className={cn(
@@ -603,7 +610,7 @@ export function TabBar({
                     "h-1.5 w-1.5 shrink-0 rounded-full",
                     tab.id !== activeId && "opacity-60",
                   )}
-                  style={{ background: tabColorOf(tab.id).solid }}
+                  style={{ background: tagColors?.[tab.id] ?? tabColorOf(tab.id).solid }}
                 />
                 <span className="truncate">{`${idx + 1}. ${tab.title || t("新建标签")}`}</span>
               </button>

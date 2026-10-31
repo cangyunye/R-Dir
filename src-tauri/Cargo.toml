@@ -1,6 +1,6 @@
 [package]
 name = "rust-file-manager"
-version = "0.38.0"
+version = "0.39.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -55,6 +55,12 @@ ureq = { version = "2", default-features = false, features = ["rustls", "gzip"] 
 # SFTP 远程文件系统插件（内置、可编译期拔出）：去掉 sftp feature 即不编译任何远程代码
 russh = { version = "0.45", optional = true }
 russh-keys = { version = "0.45", optional = true }
+# NFS 网络文件系统插件（内置、可编译期拔出）：纯 Rust NFSv3 客户端（nfs-rs）
+# bytes：nfs-rs read/write 的缓冲类型；percent-encoding：挂载 URL 的段编码；
+# futures-util：readdirplus 流收集（与 share 共用可选依赖）
+nfs-rs = { version = "0.9", optional = true }
+bytes = { version = "1", optional = true }
+percent-encoding = { version = "2", optional = true }
 async-trait = "0.1"
 # v0.7 分享服务（内置插件，feature = "share" 可编译期拔出）：内嵌 HTTP 文件服务
 axum = { version = "0.8", optional = true, features = ["ws", "http1"] }
@@ -95,6 +101,9 @@ windows = { version = "0.62", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
   "Win32_UI_Shell_Common",
+  # v0.39 SMB 插件：NetShareEnum 枚举服务器共享列表（windows 0.62 归在 Storage::FileSystem）
+  "Win32_NetworkManagement_NetManagement",
+  "Win32_Storage_FileSystem",
 ] }
 windows-core = "0.62"
 # 禁用 WebView2 浏览器加速键（Ctrl+J 下载弹窗/Ctrl+F 查找/F5 刷新等劫持应用快捷键）：
@@ -108,8 +117,10 @@ windows-webview = { package = "windows", version = "0.61", features = [] }
 libc = "0.2"
 
 [features]
-default = ["sftp", "share"]
+default = ["sftp", "share", "nfs"]
 sftp = ["dep:russh", "dep:russh-keys", "dep:tokio", "dep:aes-gcm", "dep:sha2", "dep:rand"]
+# v0.39 NFS 插件：去掉 nfs 即不编译 NFS 客户端代码
+nfs = ["dep:nfs-rs", "dep:tokio", "dep:bytes", "dep:futures-util", "dep:percent-encoding"]
 # v0.7 窗口分享（内置插件）：去掉 share 即不编译分享服务
 share = ["dep:axum", "dep:tokio", "dep:local-ip-address", "dep:futures-util"]
 

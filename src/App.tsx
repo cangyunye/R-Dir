@@ -58,7 +58,7 @@ import type {
   VolumeInfo,
 } from "@/lib/types";
 import { dedupeName } from "@/lib/favorites";
-import { parseSftpAuthority, isSftpPath, isHttpPath } from "@/lib/sftp-path";
+import { parseSftpAuthority, isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
 import { backendCaps, backendKind, maxDiffLevelFor, pathScheme } from "@/lib/backends";
 import {
   computeAlignment,
@@ -109,6 +109,12 @@ import {
   sftpMkdir,
   sftpRename,
   sftpUpload,
+  nfsCreateFile,
+  nfsDelete,
+  nfsDownloadTo,
+  nfsMkdir,
+  nfsRename,
+  nfsUpload,
   sessionLoad,
   sessionSave,
   sessionClear,
@@ -2148,7 +2154,7 @@ useEffect(() => {
     ): Promise<{ created?: string[]; moved?: [string, string][] } | null> => {
       const [conflicts, dups] = await Promise.all([
         scanConflicts(paths, dest),
-        op === "copy" && paths.every((p) => !isSftpPath(p))
+        op === "copy" && paths.every((p) => !isSftpPath(p) && !isNfsPath(p))
           ? scanDirDuplicates(paths, dest).catch(() => [] as DirDuplicate[])
           : Promise.resolve([] as DirDuplicate[]),
       ]);
@@ -2673,7 +2679,9 @@ useEffect(() => {
       for (const seg of a.missing.split("/")) {
         const created = isSftpPath(parent)
           ? await sftpMkdir(parent, seg)
-          : await createDir(parent, seg);
+          : isNfsPath(parent)
+            ? await nfsMkdir(parent, seg)
+            : await createDir(parent, seg);
         parent = created || pathScheme(target).join(parent, seg);
       }
     } catch (e) {
@@ -2779,6 +2787,20 @@ useEffect(() => {
   // v0.28.0 用户新增的自定义标签（预设之上，总数上限 MAX_TAGS）
   const [customTags, setCustomTags] = useState<TagDef[]>(() => loadCustomTags());
   const tags = useMemo(() => allTags(customTags), [customTags]);
+
+  /** v0.39 标签虚拟视图 → 芯片本色：活动窗格停在 tags:// 页的 tab，按标签色着色
+   *  （TabBar tagColors prop；随 tabs/tags 变化重算，普通页签不在表内走原色相轮） */
+  const tabTagColors = useMemo(() => {
+    const m: Record<number, string> = {};
+    for (const tab of tabs) {
+      const pane = tab.panes[tab.activePane];
+      const mt = pane?.path.match(VIRTUAL_TAG_RE);
+      if (!mt) continue;
+      const def = tags.find((d) => d.id === mt[1]);
+      if (def) m[tab.id] = def.color;
+    }
+    return m;
+  }, [tabs, tags]);
   const addTag = useCallback(
     (def: TagDef): boolean => {
       if (customTags.length + TAG_DEFS.length >= MAX_TAGS) {
@@ -2884,7 +2906,9 @@ useEffect(() => {
       try {
         const newPath = isSftpPath(path)
           ? await sftpRename(path, trimmed)
-          : await renameEntry(path, trimmed);
+          : isNfsPath(path)
+            ? await nfsRename(path, trimmed)
+            : await renameEntry(path, trimmed);
         setFileTags((prev) => {
           const next: FileTags = {};
           let changed = false;
@@ -2976,20 +3000,24 @@ useEffect(() => {
         fromSystem = sys.cut;
       }
       const isCut = op === "cut";
-      const localSrcs = srcs.filter((p) => !isSftpPath(p));
+      const localSrcs = srcs.filter((p) => !isSftpPath(p) && !isNfsPath(p));
       const sftpSrcs = srcs.filter((p) => isSftpPath(p));
+      const nfsSrcs = srcs.filter((p) => isNfsPath(p));
       const destIsSftp = isSftpPath(dest);
+      const destIsNfs = isNfsPath(dest);
       /** 实际落点（含冲突改名后的路径）：粘贴完成后定位 + 选中 */
       const pasted: string[] = [];
       try {
-        if (destIsSftp) {
+        if (destIsSftp || destIsNfs) {
           // 目标远程：仅支持本地 → 远程上传；远程→远程暂不支持
-          if (sftpSrcs.length > 0) {
+          if (sftpSrcs.length + nfsSrcs.length > 0) {
             showError(t("双端远程传输暂不支持（方案已评估保留）"));
             if (localSrcs.length === 0) return;
           }
           for (const src of localSrcs) {
-            await sftpUpload(src, dest, basename(src));
+            await (destIsSftp
+              ? sftpUpload(src, dest, basename(src))
+              : nfsUpload(src, dest, basename(src)));
             pasted.push(dest.endsWith("/") ? dest + basename(src) : `${dest}/${basename(src)}`);
           }
         setClipboard(null);
@@ -3000,6 +3028,10 @@ useEffect(() => {
         // 目标本地
         for (const src of sftpSrcs) {
           const local = await sftpDownloadTo(dest, src);
+          if (local) pasted.push(local);
+        }
+        for (const src of nfsSrcs) {
+          const local = await nfsDownloadTo(dest, src);
           if (local) pasted.push(local);
         }
         if (localSrcs.length > 0) {
@@ -3022,7 +3054,7 @@ useEffect(() => {
             pasted.push(...r.created);
           }
         }
-        if (sftpSrcs.length > 0 && localSrcs.length === 0 && isCut) {
+        if (sftpSrcs.length + nfsSrcs.length > 0 && localSrcs.length === 0 && isCut) {
           // 纯远程剪切粘贴：v0.2 按复制处理（不删源）
           showError(t("远程剪切暂按复制处理（不删除源文件）"));
         }
@@ -3059,7 +3091,7 @@ useEffect(() => {
     if (!activePane || activePane.selection.length === 0) return;
     const paneId = activePane.id;
     const dest = activePane.path;
-    if (isSftpPath(dest)) {
+    if (isSftpPath(dest) || isNfsPath(dest)) {
       showError(t("远程复制暂不支持（可拖拽到其他窗格）"));
       return;
     }
@@ -3094,6 +3126,8 @@ useEffect(() => {
     ) => {
       const srcIsSftp = paths.some(isSftpPath);
       const destIsSftp = isSftpPath(dest);
+      const srcIsNfs = paths.some(isNfsPath);
+      const destIsNfs = isNfsPath(dest);
       const srcIsHttp = paths.some(isHttpPath);
       const destIsHttp = isHttpPath(dest);
       try {
@@ -3104,6 +3138,10 @@ useEffect(() => {
         }
         if (srcIsHttp && destIsSftp) {
           showError(t("HTTP → SFTP 暂不支持"));
+          return;
+        }
+        if (srcIsHttp && destIsNfs) {
+          showError(t("HTTP autoindex 为只读协议，不支持上传"));
           return;
         }
         if (!srcIsHttp && destIsHttp) {
@@ -3119,13 +3157,13 @@ useEffect(() => {
           return;
         }
         // 远程 ⇄ 远程：暂不支持（方案已评估保留）
-        if (srcIsSftp && destIsSftp) {
+        if ((srcIsSftp || srcIsNfs) && (destIsSftp || destIsNfs)) {
           showError(t("双端远程传输暂不支持"));
           return;
         }
         // 远程 → 本地：下载。与 本地→远程 对称：目标已有同名条目先确认，
         // 确认后直接覆盖（默认的自动改名 " (n)" 仅保留给粘贴流程）（v0.22.0）
-        if (srcIsSftp && !destIsSftp) {
+        if ((srcIsSftp || srcIsNfs) && !destIsSftp && !destIsNfs) {
           const destEntries = await listDir(dest).catch(() => [] as FileEntry[]);
           const destByName = new Map(destEntries.map((e) => [e.name, e] as const));
           const clashPaths = paths.filter((p) => destByName.has(basename(p)));
@@ -3163,14 +3201,16 @@ useEffect(() => {
             overwrite = true;
           }
           for (const p of paths) {
-            await sftpDownloadTo(dest, p, overwrite);
+            await (isSftpPath(p)
+              ? sftpDownloadTo(dest, p, overwrite)
+              : nfsDownloadTo(dest, p, overwrite));
           }
           refreshPanes(refreshIds);
           return;
         }
         // 本地 → 远程：上传。SFTP 写入用 FXF_TRUNC 会静默覆盖同名远程文件，
         // 先列目标目录核对，存在同名 → 用户确认后才传（v0.22.2）
-        if (!srcIsSftp && destIsSftp) {
+        if (!srcIsSftp && !srcIsNfs && (destIsSftp || destIsNfs)) {
           const existing = await listDir(dest).catch(() => [] as FileEntry[]);
           const remoteByName = new Map(existing.map((e) => [e.name, e] as const));
           const clashPaths = paths.filter((p) => remoteByName.has(basename(p)));
@@ -3204,7 +3244,9 @@ useEffect(() => {
             if (!ok) return;
           }
           for (const p of paths) {
-            await sftpUpload(p, dest, basename(p));
+            await (destIsSftp
+              ? sftpUpload(p, dest, basename(p))
+              : nfsUpload(p, dest, basename(p)));
           }
           refreshPanes(refreshIds);
           return;
@@ -3622,8 +3664,10 @@ useEffect(() => {
       try {
         const newPath = isSftpPath(path)
           ? await sftpRename(path, trimmed)
-          : await renameEntry(path, trimmed);
-        if (!isSftpPath(path)) {
+          : isNfsPath(path)
+            ? await nfsRename(path, trimmed)
+            : await renameEntry(path, trimmed);
+        if (!isSftpPath(path) && !isNfsPath(path)) {
           pushOp({ kind: "rename", oldPath: path, newPath, paneId: r.paneId });
         }
         refreshPane(r.paneId);
@@ -3639,6 +3683,8 @@ useEffect(() => {
       try {
         if (list.length > 0 && isSftpPath(list[0])) {
           await sftpDelete(list);
+        } else if (list.length > 0 && isNfsPath(list[0])) {
+          await nfsDelete(list);
         } else {
           try {
             await deleteEntries(list);
@@ -3718,7 +3764,7 @@ useEffect(() => {
     const p = activePane?.id;
     const list = activePane?.selection ?? [];
     if (p === undefined || list.length === 0) return;
-    if (list.some(isSftpPath)) {
+    if (list.some((p) => isSftpPath(p) || isNfsPath(p))) {
       showError(t("远程删除直接生效（服务器无回收站），请使用删除"));
       return;
     }
@@ -3755,7 +3801,7 @@ useEffect(() => {
       if (!pane) return;
       // 虚拟视图没有可写文件系统：不落盘、不进重命名（否则后端会在进程
       // 工作目录下创建名为 tags: / http: 的真实怪目录）
-      if (!isSftpPath(pane.path) && (VIRTUAL_TAG_RE.test(pane.path) || isHttpPath(pane.path))) {
+      if (!isSftpPath(pane.path) && !isNfsPath(pane.path) && (VIRTUAL_TAG_RE.test(pane.path) || isHttpPath(pane.path))) {
         showError(t("标签 / HTTP 视图不支持新建，请先进入本地或远程目录"));
         return;
       }
@@ -3765,10 +3811,14 @@ useEffect(() => {
           ? kind === "dir"
             ? await sftpMkdir(pane.path, name)
             : await sftpCreateFile(pane.path, name)
+          : isNfsPath(pane.path)
+            ? kind === "dir"
+              ? await nfsMkdir(pane.path, name)
+              : await nfsCreateFile(pane.path, name)
           : kind === "dir"
             ? await createDir(pane.path, name)
             : await createFile(pane.path, name);
-        if (!isSftpPath(pane.path)) {
+        if (!isSftpPath(pane.path) && !isNfsPath(pane.path)) {
           pushOp({ kind: "create", path: p, isDir: kind === "dir", paneId });
         }
         refreshPane(paneId);
@@ -4629,6 +4679,7 @@ useEffect(() => {
     >
       <TabBar
         tabs={tabs.map((t) => ({ id: t.id, title: t.customTitle ?? t.title }))}
+        tagColors={tabTagColors}
         activeId={activeId}
         onSelect={selectTab}
         onClose={closeTab}

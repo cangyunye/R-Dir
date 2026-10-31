@@ -6,6 +6,7 @@ describe("backendKind", () => {
     expect(backendKind("F:\\data")).toBe("local");
     expect(backendKind("/home/u")).toBe("local");
     expect(backendKind("sftp://u@h:22/remote")).toBe("sftp");
+    expect(backendKind("nfs://h1/export/a")).toBe("nfs");
     expect(backendKind("http://x/")).toBe("http");
     expect(backendKind("https://x/")).toBe("http");
     expect(backendKind("tags://work")).toBe("tags");
@@ -16,6 +17,7 @@ describe("backendCaps", () => {
   it("能力表与后端约定一致", () => {
     expect(backendCaps("local")).toEqual({ maxDiffLevel: 3, canMkdir: true });
     expect(backendCaps("sftp")).toEqual({ maxDiffLevel: 2, canMkdir: true });
+    expect(backendCaps("nfs")).toEqual({ maxDiffLevel: 2, canMkdir: true });
     expect(backendCaps("http")).toEqual({ maxDiffLevel: 1, canMkdir: false });
     expect(backendCaps("tags").canMkdir).toBe(false);
   });
@@ -24,6 +26,7 @@ describe("backendCaps", () => {
     expect(maxDiffLevelFor("C:\\a", "D:\\b")).toBe(3);
     expect(maxDiffLevelFor("C:\\a", "sftp://u@h:22/r")).toBe(2);
     expect(maxDiffLevelFor("sftp://u@h:22/r", "sftp://u@h:22/r")).toBe(2);
+    expect(maxDiffLevelFor("nfs://h1/export", "C:\\a")).toBe(2);
   });
 });
 

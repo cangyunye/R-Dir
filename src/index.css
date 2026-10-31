@@ -145,6 +145,28 @@
   --tab-x-hover: rgb(255 255 255 / 0.25);
 }
 
+/* 标签视图 Hero 横幅的入场流光（一次性，自左向右扫过；--tag 由 TagView 根注入），
+   尊重系统「减弱动态效果」偏好——减弱时直接停在不可见态 */
+.tag-hero-sweep {
+  background: linear-gradient(
+    105deg,
+    transparent 32%,
+    color-mix(in srgb, var(--tag) 15%, transparent) 47%,
+    transparent 62%
+  );
+  transform: translateX(-110%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tag-hero-sweep {
+    animation: tag-hero-sweep 1.15s 0.15s ease-out forwards;
+  }
+  @keyframes tag-hero-sweep {
+    to {
+      transform: translateX(110%);
+    }
+  }
+}
+
 /* 根元素 CSS `zoom`（界面字体缩放）会让 Radix/Floating UI 的 portal 定位整体按
    zoom 倍率偏移（视口未缩放、内容被缩放）——锚定弹层被推到触发点右下方
    坐标×(zoom−1) 处：⋮ 应用菜单在右上角离原点最远，最大化时整体出视口，

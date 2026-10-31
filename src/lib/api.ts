@@ -251,6 +251,32 @@ export const sftpDelete = (paths: string[]) =>
 export const sftpRename = (path: string, newName: string) =>
   invoke<string>("sftp_rename", { path, newName });
 
+// ---- v0.39 NFS 插件命令（事件/取消与 SFTP 同构；连接在导航时自动建立，无服务器管理） ----
+
+/** 下载 NFS 文件到打开临时目录，返回本地路径（供 opener 打开） */
+export const nfsDownload = (path: string) =>
+  invoke<string>("nfs_download", { path, localDir: loadRemoteTempDir() || null });
+
+/** 下载 NFS 路径到指定本地目录（粘贴/拖拽 远程→本地，递归），返回本地路径 */
+export const nfsDownloadTo = (localDir: string, path: string, overwrite = false) =>
+  invoke<string>("nfs_download_to", { localDir, path, overwrite });
+
+/** 上传本地文件到 NFS 远程目录（拖拽/复制） */
+export const nfsUpload = (local: string, dest: string, name: string) =>
+  invoke<string>("nfs_upload", { local, dest, name });
+
+export const nfsMkdir = (dir: string, name: string) =>
+  invoke<string>("nfs_mkdir", { dir, name });
+
+export const nfsCreateFile = (dir: string, name: string) =>
+  invoke<string>("nfs_create_file", { dir, name });
+
+export const nfsDelete = (paths: string[]) =>
+  invoke<void>("nfs_delete", { paths });
+
+export const nfsRename = (path: string, newName: string) =>
+  invoke<string>("nfs_rename", { path, newName });
+
 // ---- v0.31 远程打开临时目录管理 + 服务器清单导出/导入（v0.37 起后端无关、目录可配置） ----
 
 /** 远程文件「打开」临时目录占用信息（路径/文件数/字节，可整体清理） */
