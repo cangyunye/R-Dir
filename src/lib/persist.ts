@@ -8,7 +8,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { t } from "./i18n";
+import { t, loadLanguage } from "./i18n";
 
 /** 磁盘偏好快照：与 prefs.json 字段对齐（v0.14） */
 export interface PrefsDisk {
@@ -443,6 +443,20 @@ export const UI_FONT_FAMILIES: { id: string; label: string; stack: string }[] = 
   { id: "pingfang", label: "苹方", stack: '"PingFang SC", "Hiragino Sans GB", system-ui, sans-serif' },
   { id: "simsun", label: "宋体", stack: '"SimSun", "宋体", "Songti SC", "STSong", serif' },
   { id: "simhei", label: "黑体", stack: '"SimHei", "黑体", "Heiti SC", "STHeiti", sans-serif' },
+  // 日文预设：日文字体在前保证汉字走日文字形（否则默认栈会渲染成中文字形变体），
+  // 末尾挂雅黑兜底罕见中文字符；mac 回退 Yu Gothic/Hiragino（macOS 自带游ゴシック体）
+  {
+    id: "yugothic",
+    label: "Yu Gothic",
+    stack:
+      '"Yu Gothic UI", "Yu Gothic", "游ゴシック体", "游ゴシック", "Meiryo", "メイリオ", "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Microsoft YaHei", system-ui, sans-serif',
+  },
+  {
+    id: "meiryo",
+    label: "Meiryo",
+    stack:
+      '"Meiryo", "メイリオ", "Yu Gothic UI", "游ゴシック体", "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Microsoft YaHei", system-ui, sans-serif',
+  },
   { id: "menlo", label: "等宽", stack: '"JetBrains Mono", Menlo, Consolas, monospace' },
   { id: "custom", label: "自定义...", stack: "" },
 ];
@@ -453,9 +467,12 @@ export function loadUiFontFamily(): string {
   try {
     const raw = localStorage.getItem(UI_FONT_FAMILY_KEY);
     if (!raw) {
-      // 默认：Windows 用微软雅黑，macOS 用苹方
-      const isMac = /Mac|iPhone/.test(navigator.platform);
-      return isMac ? "pingfang" : "msyahei";
+      // 默认按平台 × 界面语言取预设：中文=雅黑/苹方；日语=日文字体（汉字走日文字形，
+      // 避免默认栈渲染成中文字形变体）；拉丁语言（en/de/pt/es）=system（Segoe UI/system-ui 优先）。
+      const lang = loadLanguage();
+      if (lang === "ja") return "yugothic";
+      if (lang === "en" || lang === "de" || lang === "pt" || lang === "es") return "system";
+      return IS_MAC ? "pingfang" : "msyahei";
     }
     return raw;
   } catch {

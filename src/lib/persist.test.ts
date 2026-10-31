@@ -187,11 +187,31 @@ describe("UI 字体", () => {
 
 // ---- v0.8.1 字体族 ----
 describe("字体族配置", () => {
-  it("loadUiFontFamily 默认 msyahei（Windows）", () => {
+  it("loadUiFontFamily 默认 msyahei（Windows + 中文）", () => {
     localStorage.clear();
     const id = loadUiFontFamily();
-    // jsdom 的 navigator.platform 是 Win32
+    // jsdom 的 navigator.platform 是 Win32；无 rfm.language → loadLanguage 回退 zh
     expect(id).toBe("msyahei");
+  });
+
+  it("未自定义时默认字体随界面语言：ja 走日文预设，拉丁语言走 system", () => {
+    localStorage.clear();
+    localStorage.setItem("rfm.language", "ja");
+    expect(loadUiFontFamily()).toBe("yugothic");
+    localStorage.setItem("rfm.language", "en");
+    expect(loadUiFontFamily()).toBe("system");
+    localStorage.setItem("rfm.language", "de");
+    expect(loadUiFontFamily()).toBe("system");
+    // zh-Hant 归入中文分支
+    localStorage.setItem("rfm.language", "zh-Hant");
+    expect(loadUiFontFamily()).toBe("msyahei");
+  });
+
+  it("已自定义字体的用户不受语言影响", () => {
+    localStorage.clear();
+    localStorage.setItem("rfm.ui-font-family", "menlo");
+    localStorage.setItem("rfm.language", "ja");
+    expect(loadUiFontFamily()).toBe("menlo");
   });
 
   it("saveUiFontFamily 持久化", () => {
@@ -218,10 +238,21 @@ describe("字体族配置", () => {
     expect(uiFontFamilyStack("custom")).toContain("Consolas");
   });
 
-  it("UI_FONT_FAMILIES 包含 6 种预设 + 自定义（v0.35 加入黑体）", () => {
-    expect(UI_FONT_FAMILIES.length).toBe(7);
+  it("UI_FONT_FAMILIES 包含 8 种预设 + 自定义（含日文预设 Yu Gothic/Meiryo）", () => {
+    expect(UI_FONT_FAMILIES.length).toBe(9);
     expect(UI_FONT_FAMILIES.map((f) => f.id)).toContain("msyahei");
+    expect(UI_FONT_FAMILIES.map((f) => f.id)).toContain("yugothic");
+    expect(UI_FONT_FAMILIES.map((f) => f.id)).toContain("meiryo");
     expect(UI_FONT_FAMILIES.map((f) => f.id)).toContain("custom");
+  });
+
+  it("日文预设的字体栈：Windows 日文字体在前，mac 回退 + 雅黑兜底", () => {
+    const yu = uiFontFamilyStack("yugothic");
+    expect(yu).toContain("Yu Gothic UI");
+    expect(yu).toContain("Hiragino");
+    // 日文字体在雅黑之前，保证汉字走日文字形
+    expect(yu.indexOf("Yu Gothic UI")).toBeLessThan(yu.indexOf("Microsoft YaHei"));
+    expect(uiFontFamilyStack("meiryo")).toContain("Meiryo");
   });
 
   it("宋体/黑体的字体栈带 mac 回退（SimSun/SimHei 是 Windows 字体名）", () => {
