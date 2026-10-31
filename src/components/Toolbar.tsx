@@ -280,8 +280,10 @@ export function Toolbar({
   const submitDraft = useCallback(async () => {
     const raw = draft.trim();
     if (!raw) return;
-    // 远程/虚拟路径交给既有导航逻辑（sftp 连接框、tags 视图、http 索引）
-    if (raw.startsWith("sftp://") || /^https?:\/\//.test(raw) || raw.startsWith("tags://")) {
+    // 远程/虚拟路径交给既有导航逻辑（sftp 连接框、smb/nfs 直连、tags 视图、http 索引）。
+    // scheme 用通用判定——v0.39 修复：枚举漏了 smb/nfs，输入被 resolvePath 拼进
+    // 当前目录（截图证据 F:\…\smb:\host），statPath 失败后错报「路径不存在」。
+    if (hasScheme(raw)) {
       onNavigate(raw);
       closeCompletion();
       setEditing(false);

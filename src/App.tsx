@@ -136,6 +136,7 @@ import { ConflictDialog } from "@/components/ConflictDialog";
 import { AppConfirmDialog, type AppConfirmRequest } from "@/components/AppConfirmDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
 import { basename, formatSize, isAbsolutePath } from "@/lib/format";
+import { hasScheme } from "@/lib/cmdline";
 import { normalizeExts } from "@/lib/openers";
 import {
   collectPaneIds,
@@ -1268,11 +1269,11 @@ useEffect(() => {
     async (path: string) => {
       if (!activePane) return;
       // v0.18：地址栏支持 "~"（主目录）与相对路径，统一解析为绝对路径后再导航。
-      // 仅对本地原始输入生效；sftp/http/标签路径原样交给各自分支。
+      // 仅对本地原始输入生效；带 scheme 的虚拟路径（sftp/http/smb/nfs…）与标签
+      // 路径原样交给各自分支——scheme 判定统一走 cmdline.hasScheme（通用正则，
+      // v0.39 修复 smb:// 被当相对路径拼接的问题）。
       if (
-        !path.startsWith("sftp://") &&
-        !path.startsWith("http://") &&
-        !path.startsWith("https://") &&
+        !hasScheme(path) &&
         !VIRTUAL_TAG_RE.test(path) &&
         (path.startsWith("~") || !isAbsolutePath(path))
       ) {
