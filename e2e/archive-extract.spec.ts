@@ -139,12 +139,12 @@ test.describe("32C. 加密包与失败", () => {
       let n = 0;
       (
         window as unknown as { __rdirExtract?: () => string | undefined }
-      ).__rdirExtract = () => (n++ === 0 ? "需要密码" : undefined);
+      ).__rdirExtract = () => (n++ === 0 ? "NEED_PASSWORD" : undefined);
     });
     await gotoArchives(page);
     const menu = await expandExtractGroup(page, `${ARCHIVES}/sample.zip`);
     await menu.getByText("解压到此处").click();
-    // 密码框出现（后端返回「需要密码」）
+    // 密码框出现（后端返回 NEED_PASSWORD 码）
     const dialog = page.locator("[data-password-dialog]");
     await expect(dialog).toBeVisible();
     await dialog.locator("input[type=password]").fill("pw123");
@@ -161,7 +161,7 @@ test.describe("32C. 加密包与失败", () => {
   test("密码错误 → 框内提示可重试，取消则中止", async ({ page }) => {
     await page.evaluate(() => {
       (window as unknown as { __rdirExtract?: () => string | undefined }).__rdirExtract =
-        () => "密码错误";
+        () => "WRONG_PASSWORD";
     });
     await gotoArchives(page);
     const menu = await expandExtractGroup(page, `${ARCHIVES}/sample.zip`);
