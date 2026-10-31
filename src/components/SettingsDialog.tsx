@@ -457,6 +457,8 @@ export function SettingsDialog({
                         <option value="en">English</option>
                         <option value="de">Deutsch</option>
                         <option value="ja">日本語</option>
+                        <option value="pt">Português</option>
+                        <option value="es">Español</option>
                       </select>
                     </div>
                   </div>

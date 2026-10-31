@@ -6,7 +6,9 @@
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import dePack from "@rdir/l10n/packs/de.json";
 import enPack from "@rdir/l10n/packs/en.json";
+import esPack from "@rdir/l10n/packs/es.json";
 import jaPack from "@rdir/l10n/packs/ja.json";
+import ptPack from "@rdir/l10n/packs/pt.json";
 import {
   setPack,
   t as translate,
@@ -20,6 +22,8 @@ const BUILTIN_PACKS: Record<Exclude<Language, "zh">, Pack> = {
   en: enPack,
   de: dePack,
   ja: jaPack,
+  pt: ptPack,
+  es: esPack,
 };
 
 function packFor(language: Language): Pack | null {
