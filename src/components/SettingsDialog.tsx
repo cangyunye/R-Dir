@@ -55,6 +55,8 @@ import {
   saveShareDefaultExpires,
   saveUiFontFamilyCustom,
 } from "@/lib/persist";
+import { useT } from "@/lib/LanguageProvider";
+import type { Language } from "@/lib/i18n";
 
 /** 设置分区标识（左栏导航 + 右栏锚点共用） */
 export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "favorites" | "share" | "remoteTemp" | "plugins" | "about";
@@ -82,6 +84,9 @@ export function SettingsDialog({
   onClose,
   themeMode,
   onThemeModeChange,
+  /** v0.38 界面语言（zh/en，切换即时生效） */
+  language,
+  onLanguageChange,
   onBindingsChanged,
   previewEnabled,
   onPreviewEnabledChange,
@@ -121,6 +126,9 @@ export function SettingsDialog({
   /** 主题颜色模式：显式浅色/深色，或跟随系统 */
   themeMode: ThemeMode;
   onThemeModeChange: (m: ThemeMode) => void;
+  /** v0.38 界面语言（zh 默认 / en；持久化 rfm.language）。可选：单测不传 = 默认中文 */
+  language?: Language;
+  onLanguageChange?: (l: Language) => void;
   onBindingsChanged: () => void;
   /** v0.28 预览栏总开关（默认关）与默认宽度 */
   previewEnabled: boolean;
@@ -167,6 +175,8 @@ export function SettingsDialog({
   /** 打开收藏夹面板（收藏夹分区入口按钮；先关设置再弹面板） */
   onOpenFavorites: () => void;
 }) {
+  /** v0.38 绑定当前语言包的 t（本阶段仅界面语言项自身走翻译，其余文案 m2 批次迁移） */
+  const t = useT();
   /** v0.7 分享设置 */
   const [shareAllowParent, setShareAllowParent] = useState(() => loadShareAllowParent());
   const [shareExpiresHours, setShareExpiresHours] = useState<number | null>(() => loadShareDefaultExpires());
@@ -415,6 +425,27 @@ export function SettingsDialog({
                           </button>
                         ))}
                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* v0.38 界面语言（切换即时生效；语言名用各语言自名，不参与翻译） */}
+                <div className="mb-5">
+                  <div className="overflow-hidden rounded-md border bg-card">
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+                      <span className="flex items-center gap-1.5 text-foreground">
+                        <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+                        {t("界面语言")}
+                      </span>
+                      <select
+                        value={language ?? "zh"}
+                        onChange={(e) => onLanguageChange?.(e.target.value as Language)}
+                        className="rounded border bg-background px-2 py-1 text-xs"
+                        aria-label={t("界面语言")}
+                      >
+                        <option value="zh">中文</option>
+                        <option value="en">English</option>
+                      </select>
                     </div>
                   </div>
                 </div>

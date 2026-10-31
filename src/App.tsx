@@ -143,6 +143,8 @@ import {
   swapPanes,
 } from "@/lib/paneTree";
 import { ACTIONS, bindingOf, findAction, isMac, keyEventString } from "@/lib/keymap";
+import { loadLanguage, type Language } from "@/lib/i18n";
+import { LanguageProvider } from "@/lib/LanguageProvider";
 import { serializeSession, serializeSessionTab, sessionSignature } from "@/lib/session";
 import { getNativeDragOut, probeNativeDragOut, setNativeDragOut, getHtml5Drag, setHtml5Drag, canNativeDragOut } from "@/lib/native-drag";
 import { dropTargetAt, type DropTarget } from "@/lib/drop-target";
@@ -513,6 +515,8 @@ export default function App() {
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
       : themeMode === "dark",
   );
+  /** v0.38 界面语言（zh 默认 / en；持久化 localStorage "rfm.language"，切换即时生效无需重启） */
+  const [language, setLanguage] = useState<Language>(() => loadLanguage());
   /** 快捷键配置版本号：自定义键位变更时 +1，触发菜单/设置重渲染 */
   const [keymapVer, setKeymapVer] = useState(0);
   /** v0.8 界面字体大小（13px=100%，作用于整个界面，根缩放） */
@@ -1084,6 +1088,15 @@ useEffect(() => {
     setThemeMode(m);
     try {
       localStorage.setItem("rfm.theme", m);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  /** 设置界面语言（zh/en），随改随存（v0.38） */
+  const changeLanguage = useCallback((lang: Language) => {
+    setLanguage(lang);
+    try {
+      localStorage.setItem("rfm.language", lang);
     } catch {
       /* ignore */
     }
@@ -4559,6 +4572,7 @@ useEffect(() => {
   })();
 
   return (
+    <LanguageProvider language={language} onLanguageChange={changeLanguage}>
     <>
     {splashVisible && (
       <div
@@ -4949,6 +4963,8 @@ useEffect(() => {
         }}
         themeMode={themeMode}
         onThemeModeChange={changeThemeMode}
+        language={language}
+        onLanguageChange={changeLanguage}
         onBindingsChanged={() => setKeymapVer((v) => v + 1)}
         previewEnabled={previewPrefs.enabled}
         onPreviewEnabledChange={(v) => updatePreviewPrefs({ enabled: v })}
@@ -5240,5 +5256,6 @@ useEffect(() => {
       )}
     </div>
     </>
+    </LanguageProvider>
   );
 }
