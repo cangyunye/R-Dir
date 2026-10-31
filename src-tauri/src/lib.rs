@@ -35,6 +35,15 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use volumes::{QuickAccessItem, VolumeInfo};
 
+/// 取消错误码：各取消路径（解压/复制/移动/SFTP 传输）统一产出，前端按码判定取消
+/// 并本地化展示（i18n 方案 §4.3，替代旧的中文字符串契约「已取消/传输已取消」）。
+pub(crate) const ERR_CANCELLED: &str = "CANCELLED";
+
+/// 判定错误串是否为取消（纯码或 "CANCELLED|详情"）
+pub(crate) fn is_cancelled(err: &str) -> bool {
+    err == ERR_CANCELLED || err.starts_with("CANCELLED|")
+}
+
 /// 应用全局状态
 #[derive(Default)]
 pub struct AppState {
@@ -1063,7 +1072,7 @@ fn emit_sftp_transfer_end(
 ) {
     let label = match r {
         Ok(_) => "完成",
-        Err(e) if e.contains("取消") => "已取消",
+        Err(e) if is_cancelled(e) => "已取消",
         Err(_) => "传输失败",
     };
     let mut p = progress::TransferProgress::start(phase, label, total_files);
@@ -1575,7 +1584,7 @@ fn emit_transfer_end<R: tauri::Runtime>(
     let zh = if phase == "copy" { "复制" } else { "移动" };
     let label = match r {
         Ok(_) => format!("{zh}完成"),
-        Err(e) if e.contains("取消") => "已取消".into(),
+        Err(e) if is_cancelled(e) => "已取消".into(),
         Err(_) => "传输失败".into(),
     };
     progress::emit(

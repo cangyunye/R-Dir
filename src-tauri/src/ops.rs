@@ -19,7 +19,7 @@ pub type ProgressCb<'a> = &'a mut dyn FnMut(CbEvent) -> bool;
 
 /// 回调报取消时统一走这个错误，命令层据此把提示收敛为「已取消」。
 fn cancelled() -> std::io::Error {
-    std::io::Error::other("传输已取消")
+    std::io::Error::other(crate::ERR_CANCELLED)
 }
 
 /// 一条待用户裁决的同名冲突。

@@ -289,7 +289,7 @@ impl SftpSession {
                         let _ = self.request(proto::CLOSE, |b| b.str(&handle)).await;
                         drop(f);
                         let _ = std::fs::remove_file(dest);
-                        return Err("已取消".into());
+                        return Err(crate::ERR_CANCELLED.into());
                     }
                 }
                 proto::STATUS => break, // EOF：文件读取结束
@@ -377,7 +377,7 @@ impl SftpSession {
         self.request(proto::CLOSE, |b| b.str(&handle)).await?;
         if cancel {
             let _ = self.remove(remote).await;
-            return Err("已取消".into());
+            return Err(crate::ERR_CANCELLED.into());
         }
         Ok(acked)
     }

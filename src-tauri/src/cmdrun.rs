@@ -553,9 +553,9 @@ pub fn run_command(
         return Err("命令为空".into());
     };
     if first.contains('/') || first.contains('\\') || first.contains(':') {
-        return Err(format!("未找到命令：{first}"));
+        return Err(format!("CMD_NOT_FOUND|未找到命令：{first}"));
     }
-    find_exec(first).ok_or_else(|| format!("未找到命令：{first}（不在 PATH 中）"))?;
+    find_exec(first).ok_or_else(|| format!("CMD_NOT_FOUND|未找到命令：{first}（不在 PATH 中）"))?;
     crate::opener::launch::exec_in_terminal(input, &cwd)
 }
 
