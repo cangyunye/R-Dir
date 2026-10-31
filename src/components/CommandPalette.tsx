@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { formatBinding } from "@/lib/keymap";
+import { useT } from "@/lib/LanguageProvider";
 import { useModalLayer } from "@/hooks/useModalLayer";
 
 /** 命令面板条目：ACTIONS 注册表动作 + 无默认键位的应用命令（退出 / 比对工具 / 检查更新…） */
@@ -33,17 +34,24 @@ export function CommandPalette({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const t = useT();
 
   // v0.34.1 弹层栈登记：Esc 由 Radix 处理，登记只为让下层弹层（设置等）让位
   useModalLayer("palette", 50, open);
 
+  // label/group 存中文原文（keymap 数据结构不动），展示/搜索按当前语言投影
+  const view = useMemo<CommandItem[]>(
+    () => items.map((it) => ({ ...it, label: t(it.label), group: t(it.group) })),
+    [items, t],
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((it) =>
+    if (!q) return view;
+    return view.filter((it) =>
       `${it.label} ${it.group} ${it.binding ?? ""}`.toLowerCase().includes(q),
     );
-  }, [items, query]);
+  }, [view, query]);
 
   // 分组保持首次出现顺序（Map 有序），组内条目保持注册表顺序
   const groups = useMemo(() => {
@@ -93,7 +101,7 @@ export function CommandPalette({
           inputRef.current?.focus();
         }}
       >
-        <DialogTitle className="sr-only">命令面板</DialogTitle>
+        <DialogTitle className="sr-only">{t("命令面板")}</DialogTitle>
         <div className="flex items-center gap-2 border-b px-3 py-2.5">
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
@@ -117,7 +125,7 @@ export function CommandPalette({
                 if (it) run(it);
               }
             }}
-            placeholder="搜索命令…（↑↓ 选择，回车执行）"
+            placeholder={t("搜索命令…（↑↓ 选择，回车执行）")}
             className="h-6 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
           <kbd className="shrink-0 rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
@@ -156,7 +164,7 @@ export function CommandPalette({
           ))}
           {filtered.length === 0 && (
             <div className="px-3 py-10 text-center text-sm text-muted-foreground">
-              无匹配命令
+              {t("无匹配命令")}
             </div>
           )}
         </div>

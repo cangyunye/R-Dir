@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ListTree } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/LanguageProvider";
 
 export interface PaneListItem {
   tabId: number;
@@ -32,6 +33,7 @@ export function PaneListMenu({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   useEffect(() => {
     if (!open) return;
@@ -55,7 +57,7 @@ export function PaneListMenu({
         variant="ghost"
         size="icon"
         className={cn("h-7 w-7", open && "bg-accent text-accent-foreground")}
-        title="已连接的路径（窗格列表）"
+        title={t("已连接的路径（窗格列表）")}
         onClick={() => setOpen((v) => !v)}
       >
         <ListTree className="h-4 w-4" />
@@ -63,7 +65,7 @@ export function PaneListMenu({
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1 max-h-72 w-80 overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
           {panes.length === 0 ? (
-            <div className="px-2 py-1.5 text-xs text-muted-foreground">暂无窗格</div>
+            <div className="px-2 py-1.5 text-xs text-muted-foreground">{t("暂无窗格")}</div>
           ) : (
             panes.map((p) => (
               <button
@@ -82,7 +84,7 @@ export function PaneListMenu({
                   {markPaneKey === `${p.tabId}:${p.paneId}` && (
                     <span
                       className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle"
-                      title="文本比较基准所在窗格"
+                      title={t("文本比较基准所在窗格")}
                     />
                   )}
                   {p.title}

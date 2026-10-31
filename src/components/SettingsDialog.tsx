@@ -574,7 +574,7 @@ export function SettingsDialog({
                         >
                           <span className="flex min-w-0 items-center gap-1.5 text-foreground">
                             {custom && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title="已自定义" />}
-                            <span className="truncate">{a.label}</span>
+                            <span className="truncate">{t(a.label)}</span>
                           </span>
                           <span className="flex shrink-0 items-center gap-1.5">
                             <kbd
@@ -658,7 +658,7 @@ export function SettingsDialog({
 
                 {groups.map((g) => (
                   <div key={g} className="mb-4">
-                    <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{g}</div>
+                    <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t(g)}</div>
                     <div className="overflow-hidden rounded-md border bg-card">
                       {ACTIONS.filter((a) => a.group === g).map((a, i, arr) => {
                         const custom = hasCustomBinding(a.id);
@@ -678,7 +678,7 @@ export function SettingsDialog({
                                   title="已自定义"
                                 />
                               )}
-                              <span className="truncate">{a.label}</span>
+                              <span className="truncate">{t(a.label)}</span>
                             </span>
                             <span className="flex shrink-0 items-center gap-1.5">
                               <kbd
