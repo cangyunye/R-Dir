@@ -3150,7 +3150,7 @@ useEffect(() => {
             } else {
               message = t("目标目录已有同名条目：{names}{more}", {
                 names: clashPaths.map(basename).slice(0, 5).join("、"),
-                more: clashPaths.length > 5 ? t(" 等 {n} 项", { n: clashPaths.length }) : "",
+                more: clashPaths.length > 5 ? t("等 {n} 项", { n: clashPaths.length }) : "",
               });
             }
             // v0.28.0 应用内确认框（Windows 原生 confirm 是经典样式弹窗）
@@ -3191,7 +3191,7 @@ useEffect(() => {
             } else {
               message = t("目标目录已有同名条目：{names}{more}", {
                 names: clashPaths.map(basename).slice(0, 5).join("、"),
-                more: clashPaths.length > 5 ? t(" 等 {n} 项", { n: clashPaths.length }) : "",
+                more: clashPaths.length > 5 ? t("等 {n} 项", { n: clashPaths.length }) : "",
               });
             }
             // v0.28.0 应用内确认框（Windows 原生 confirm 是经典样式弹窗）
