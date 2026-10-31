@@ -166,6 +166,9 @@ importers:
 
   .:
     dependencies:
+      '@rdir/l10n':
+        specifier: github:cangyunye/R-Dir-L10n#v0.1.5
+        version: https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/574a80d04494d024e92ad0f0dddcd1e05a7a455e
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
@@ -1054,6 +1057,10 @@ packages:
 
   '@radix-ui/rect@1.1.3':
     resolution: {integrity: sha512-JtyZR+mqgBibTo8xea3B6ZRmzZiM/YeVBtUkas6zMuXjAlfIFIW2FgqeM9eLyvEaYX66vr6DJMK+4U6LV0KhNw==}
+
+  '@rdir/l10n@https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/574a80d04494d024e92ad0f0dddcd1e05a7a455e':
+    resolution: {gitHosted: true, integrity: sha512-gntgeWS+Fe5JIGUKe02Z8dqDcAIAxcpx5G+n9czAYdrdJeYiqjm/e1b+mTquSE/uScOQdZDJGeH6VcL47pLWBg==, tarball: https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/574a80d04494d024e92ad0f0dddcd1e05a7a455e}
+    version: 0.1.1
 
   '@rolldown/binding-android-arm-eabi@1.2.9':
     resolution: {integrity: sha512-tNISae1QEf/vkb3xkRcjV5SEdzPE97We5IVaa2Z8jSszQPZ8U60B/YCYpw4QI7VidYsBtKavczXf+DyDs9WGxw==}
@@ -2910,6 +2917,8 @@ snapshots:
       '@types/react-dom': 19.3.0(@types/react@19.3.0)
 
   '@radix-ui/rect@1.1.3': {}
+
+  '@rdir/l10n@https://codeload.github.com/cangyunye/R-Dir-L10n/tar.gz/574a80d04494d024e92ad0f0dddcd1e05a7a455e': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.9':
     optional: true

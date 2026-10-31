@@ -3,6 +3,7 @@ import { FolderTree, Search, X } from "lucide-react";
 import { statPath } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/LanguageProvider";
 
 export interface ComparePickFile {
   name: string;
@@ -38,6 +39,7 @@ export function ComparePickDialog({
   const [manual, setManual] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const t = useT();
 
   const selected = withFiles.find((p) => p.key === selectedKey) ?? null;
   const files = useMemo(() => {
@@ -56,11 +58,11 @@ export function ComparePickDialog({
       if (!p.startsWith("sftp://") && !p.startsWith("http://") && !p.startsWith("https://")) {
         const kind = await statPath(p);
         if (kind === "dir") {
-          setManualError("路径是目录，请选择文件");
+          setManualError(t("路径是目录，请选择文件"));
           return;
         }
         if (kind === "missing") {
-          setManualError("路径不存在");
+          setManualError(t("路径不存在"));
           return;
         }
       }
@@ -91,13 +93,13 @@ export function ComparePickDialog({
           <div className="flex min-w-0 items-center gap-2">
             <FolderTree className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="truncate text-sm font-semibold">
-              与「{baseName}」比较 — 选择另一侧文件
+              {t("与「{name}」比较 — 选择另一侧文件", { name: baseName })}
             </span>
           </div>
           <button
             onClick={onClose}
             className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="关闭"
+            title={t("关闭")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -108,7 +110,7 @@ export function ComparePickDialog({
           <div className="w-56 shrink-0 overflow-y-auto border-r p-1">
             {withFiles.length === 0 ? (
               <div className="px-2 py-3 text-xs text-muted-foreground">
-                没有可用窗格（各窗格当前目录都没有文件）
+                {t("没有可用窗格（各窗格当前目录都没有文件）")}
               </div>
             ) : (
               withFiles.map((p) => (
@@ -135,7 +137,7 @@ export function ComparePickDialog({
               <input
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                placeholder="按文件名过滤…"
+                placeholder={t("按文件名过滤…")}
                 className="h-6 min-w-0 flex-1 bg-transparent text-xs outline-none"
               />
             </div>
@@ -152,7 +154,7 @@ export function ComparePickDialog({
               ))}
               {files.length === 0 && (
                 <div className="px-2 py-3 text-xs text-muted-foreground">
-                  {selected ? "无匹配文件（仅列出该窗格当前目录的文件）" : "左侧选择一个窗格"}
+                  {selected ? t("无匹配文件（仅列出该窗格当前目录的文件）") : t("左侧选择一个窗格")}
                 </div>
               )}
             </div>
@@ -171,12 +173,12 @@ export function ComparePickDialog({
               onKeyDown={(e) => {
                 if (e.key === "Enter") void pickManual();
               }}
-              placeholder="或直接输入文件路径（支持本地 / sftp:// / http(s)://）…"
+              placeholder={t("或直接输入文件路径（支持本地 / sftp:// / http(s)://）…")}
               className="h-7 min-w-0 flex-1 rounded border bg-transparent px-2 text-xs outline-none focus:ring-1 focus:ring-primary"
               spellCheck={false}
             />
             <Button size="sm" className="h-7" disabled={!manual.trim() || busy} onClick={() => void pickManual()}>
-              比较
+              {t("比较")}
             </Button>
           </div>
           {manualError && <div className="mt-1 text-[11px] text-destructive">{manualError}</div>}

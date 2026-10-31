@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ContextMenuItem } from "@/components/ui/context-menu";
+import { useT } from "@/lib/LanguageProvider";
 
 /**
  * 右键菜单二级「折叠组」：点组名在同级菜单内联展开子项。
@@ -25,6 +26,7 @@ export function MenuGroup({
   children: ReactNode;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const t = useT();
   // 展开后把新增子项滚进可视区：菜单内容受可用高度约束（展开不再顶破窗口）时，
   // 组往往在滚动边界之下，不滚就看不见刚展开的内容
   useEffect(() => {
@@ -40,7 +42,7 @@ export function MenuGroup({
         }}
       >
         {icon}
-        <span className="flex-1">{label}</span>
+        <span className="flex-1">{t(label)}</span>
         <ChevronRight
           className={cn(
             "ml-auto h-3.5 w-3.5 text-muted-foreground transition-transform",

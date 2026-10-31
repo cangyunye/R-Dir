@@ -55,6 +55,8 @@ import {
   saveShareDefaultExpires,
   saveUiFontFamilyCustom,
 } from "@/lib/persist";
+import { useT } from "@/lib/LanguageProvider";
+import type { Language } from "@/lib/i18n";
 
 /** 设置分区标识（左栏导航 + 右栏锚点共用） */
 export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "favorites" | "share" | "remoteTemp" | "plugins" | "about";
@@ -82,6 +84,9 @@ export function SettingsDialog({
   onClose,
   themeMode,
   onThemeModeChange,
+  /** v0.38 界面语言（zh/en，切换即时生效） */
+  language,
+  onLanguageChange,
   onBindingsChanged,
   previewEnabled,
   onPreviewEnabledChange,
@@ -121,6 +126,9 @@ export function SettingsDialog({
   /** 主题颜色模式：显式浅色/深色，或跟随系统 */
   themeMode: ThemeMode;
   onThemeModeChange: (m: ThemeMode) => void;
+  /** v0.38 界面语言（zh 默认 / en；持久化 rfm.language）。可选：单测不传 = 默认中文 */
+  language?: Language;
+  onLanguageChange?: (l: Language) => void;
   onBindingsChanged: () => void;
   /** v0.28 预览栏总开关（默认关）与默认宽度 */
   previewEnabled: boolean;
@@ -167,6 +175,8 @@ export function SettingsDialog({
   /** 打开收藏夹面板（收藏夹分区入口按钮；先关设置再弹面板） */
   onOpenFavorites: () => void;
 }) {
+  /** v0.38 绑定当前语言包的 t（本阶段仅界面语言项自身走翻译，其余文案 m2 批次迁移） */
+  const t = useT();
   /** v0.7 分享设置 */
   const [shareAllowParent, setShareAllowParent] = useState(() => loadShareAllowParent());
   const [shareExpiresHours, setShareExpiresHours] = useState<number | null>(() => loadShareDefaultExpires());
@@ -301,14 +311,24 @@ export function SettingsDialog({
       if (!combo) return;
       const taken = findConflicts(combo, recordingId);
       if (taken.length > 0) {
-        setConflict(`${formatBinding(combo)} 已被「${taken[0].label}」使用，请换一个组合键`);
+                    setConflict(
+                      t("{combo} 已被「{label}」使用，请换一个组合键", {
+                        combo: formatBinding(combo),
+                        label: t(taken[0].label),
+                      }),
+                    );
         return;
       }
       setUserBinding(recordingId, combo);
       setRecordingId(null);
       setConflict(null);
       onBindingsChanged();
-      flashTip(`已为「${ACTIONS.find((a) => a.id === recordingId)?.label}」绑定 ${formatBinding(combo)}`);
+                    flashTip(
+                      t("已为「{label}」绑定 {combo}", {
+                        label: t(ACTIONS.find((a) => a.id === recordingId)?.label ?? ""),
+                        combo: formatBinding(combo),
+                      }),
+                    );
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
@@ -370,7 +390,7 @@ export function SettingsDialog({
                 )}
               >
                 {sec.icon}
-                {sec.label}
+                {t(sec.label)}
               </button>
             ))}
           </nav>
@@ -388,18 +408,18 @@ export function SettingsDialog({
             >
                 {/* 外观：主题（浅色 / 深色 / 跟随系统） */}
                 <div className="mb-5">
-                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">主题</div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("主题")}</div>
                   <div className="overflow-hidden rounded-md border bg-card">
                     <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
-                      <span className="text-foreground">颜色模式</span>
+                      <span className="text-foreground">{t("颜色模式")}</span>
                       <div className="flex gap-1">
                         {(
                           [
-                            ["light", <Sun key="s" className="h-3.5 w-3.5" />, "浅色"],
-                            ["dark", <Moon key="m" className="h-3.5 w-3.5" />, "深色"],
-                            ["system", <Monitor key="w" className="h-3.5 w-3.5" />, "跟随系统"],
-                          ] as [ThemeMode, React.ReactNode, string][]
-                        ).map(([mode, icon, label]) => (
+                            { mode: "light", icon: <Sun key="s" className="h-3.5 w-3.5" />, label: "浅色" },
+                            { mode: "dark", icon: <Moon key="m" className="h-3.5 w-3.5" />, label: "深色" },
+                            { mode: "system", icon: <Monitor key="w" className="h-3.5 w-3.5" />, label: "跟随系统" },
+                          ] as { mode: ThemeMode; icon: React.ReactNode; label: string }[]
+                        ).map(({ mode, icon, label }) => (
                           <button
                             key={mode}
                             aria-pressed={themeMode === mode}
@@ -411,7 +431,7 @@ export function SettingsDialog({
                                 : "bg-muted text-muted-foreground hover:bg-accent",
                             )}
                           >
-                            {icon} {label}
+                            {icon} {t(label)}
                           </button>
                         ))}
                       </div>
@@ -419,14 +439,35 @@ export function SettingsDialog({
                   </div>
                 </div>
 
+                {/* v0.38 界面语言（切换即时生效；语言名用各语言自名，不参与翻译） */}
+                <div className="mb-5">
+                  <div className="overflow-hidden rounded-md border bg-card">
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+                      <span className="flex items-center gap-1.5 text-foreground">
+                        <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+                        {t("界面语言")}
+                      </span>
+                      <select
+                        value={language ?? "zh"}
+                        onChange={(e) => onLanguageChange?.(e.target.value as Language)}
+                        className="rounded border bg-background px-2 py-1 text-xs"
+                        aria-label={t("界面语言")}
+                      >
+                        <option value="zh">中文</option>
+                        <option value="en">English</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
                 {/* 外观：界面字体（v0.8，整体缩放等效，13px = 100%） */}
                 <div>
-                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">界面字体</div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("界面字体")}</div>
                   <div className="overflow-hidden rounded-md border bg-card">
                     <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
                       <span className="flex items-center gap-1.5 text-foreground">
                         <Type className="h-3.5 w-3.5 text-muted-foreground" />
-                        字体大小
+                        {t("字体大小")}
                       </span>
                       <div className="flex items-center gap-2">
                         <input
@@ -437,7 +478,7 @@ export function SettingsDialog({
                           value={uiFontSize}
                           onChange={(e) => onUiFontChange(Number(e.target.value))}
                           className="w-32"
-                          title="10–18px（默认 13）"
+                          title={t("10–18px（默认 13）")}
                         />
                         <span className="w-9 rounded bg-muted px-1 py-0.5 text-center font-mono text-[11px] tabular-nums">
                           {uiFontSize}px
@@ -447,7 +488,7 @@ export function SettingsDialog({
                     <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
                       <span className="flex items-center gap-1.5 text-foreground">
                         <Type className="h-3.5 w-3.5 text-muted-foreground" />
-                        字体族
+                        {t("字体族")}
                       </span>
                       <div className="flex items-center gap-2">
                         <select
@@ -462,7 +503,7 @@ export function SettingsDialog({
                         {uiFontFamily === "custom" && (
                           <input
                             type="text"
-                            placeholder="输入字体名，如 Consolas"
+                            placeholder={t("输入字体名，如 Consolas")}
                             className="w-40 rounded border bg-background px-2 py-1 text-xs"
                             onBlur={(e) => {
                               if (e.target.value.trim()) {
@@ -477,7 +518,7 @@ export function SettingsDialog({
                     </div>
                   </div>
                   <p className="mt-1.5 text-[11px] text-muted-foreground">
-                    整体缩放，作用于整个界面；默认 13px，与窗口内 Ctrl+滚轮缩放相互叠加（如 80% 字体 × 130% 窗口 = 104%）。
+                    {t("整体缩放，作用于整个界面；默认 13px，与窗口内 Ctrl+滚轮缩放相互叠加（如 80% 字体 × 130% 窗口 = 104%）。")}
                   </p>
                 </div>
             </div>
@@ -489,7 +530,7 @@ export function SettingsDialog({
               className="scroll-mt-3 mb-6"
             >
                 <div className="mb-5">
-                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">预览栏</div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("预览栏")}</div>
                   <div className="overflow-hidden rounded-md border bg-card">
                     <label
                       role="switch"
@@ -498,11 +539,11 @@ export function SettingsDialog({
                       className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2.5 text-xs"
                       onClick={() => onPreviewEnabledChange(!previewEnabled)}
                     >
-                      <span>启用预览栏</span>
+                      <span>{t("启用预览栏")}</span>
                       <SwitchVisual checked={previewEnabled} />
                     </label>
                     <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
-                      <span>预览栏默认宽度</span>
+                      <span>{t("预览栏默认宽度")}</span>
                       <div className="flex items-center gap-2">
                         <input
                           type="range"
@@ -521,12 +562,12 @@ export function SettingsDialog({
                     </div>
                   </div>
                   <p className="mt-1.5 text-[11px] text-muted-foreground">
-                    开启后右侧滑出预览栏（悬浮拉门，不挤压布局；全应用共用，跟随焦点窗格的选中项），点文件不会直接预览；图片/文本/PDF/Office 可预览，其余类型显示信息卡。
+                    {t("开启后右侧滑出预览栏（悬浮拉门，不挤压布局；全应用共用，跟随焦点窗格的选中项），点文件不会直接预览；图片/文本/PDF/Office 可预览，其余类型显示信息卡。")}
                   </p>
                 </div>
 
                 <div>
-                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">预览键位</div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("预览键位")}</div>
                   <div className="overflow-hidden rounded-md border bg-card">
                     {["togglePreview", "toggleBrowse"].map((id, i, arr) => {
                       const a = ACTIONS.find((x) => x.id === id);
@@ -542,8 +583,8 @@ export function SettingsDialog({
                           }
                         >
                           <span className="flex min-w-0 items-center gap-1.5 text-foreground">
-                            {custom && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title="已自定义" />}
-                            <span className="truncate">{a.label}</span>
+                            {custom && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" title={t("已自定义")} />}
+                            <span className="truncate">{t(a.label)}</span>
                           </span>
                           <span className="flex shrink-0 items-center gap-1.5">
                             <kbd
@@ -555,21 +596,21 @@ export function SettingsDialog({
                               {formatBinding(bindingOf(a))}
                             </kbd>
                             {recording ? (
-                              <span className="px-1 text-[11px] text-primary">按下组合键…</span>
+                              <span className="px-1 text-[11px] text-primary">{t("按下组合键…")}</span>
                             ) : (
                               <>
                                 <button
                                   onClick={() => startRecording(a.id)}
                                   className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                                  title="录制新键位"
+                                  title={t("录制新键位")}
                                 >
-                                  录制
+                                  {t("录制")}
                                 </button>
                                 {custom && (
                                   <button
                                     onClick={() => handleResetOne(a.id)}
                                     className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                                    title="恢复此动作默认键位"
+                                    title={t("恢复此动作默认键位")}
                                   >
                                     ×
                                   </button>
@@ -582,7 +623,7 @@ export function SettingsDialog({
                     })}
                   </div>
                   <p className="mt-1 pl-1 text-[11px] text-muted-foreground">
-                    图文浏览模式：在图片/文档为主的目录进入沉浸浏览（中央大图 + 底部缩略图条）。
+                    {t("图文浏览模式：在图片/文档为主的目录进入沉浸浏览（中央大图 + 底部缩略图条）。")}
                   </p>
                 </div>
             </div>
@@ -593,13 +634,13 @@ export function SettingsDialog({
               className="scroll-mt-3 mb-6"
             >
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="sec-t text-[11px] font-medium text-muted-foreground">快捷键</div>
+                  <div className="sec-t text-[11px] font-medium text-muted-foreground">{t("快捷键")}</div>
                   <button
                     onClick={handleResetAll}
                     className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    title="恢复全部默认键位"
+                    title={t("恢复全部默认键位")}
                   >
-                    <RotateCcw className="h-3 w-3" /> 恢复默认
+                    <RotateCcw className="h-3 w-3" /> {t("恢复默认")}
                   </button>
                 </div>
 
@@ -611,7 +652,9 @@ export function SettingsDialog({
 
                 {recordingId !== null && (
                   <div className="mb-3 rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-xs text-foreground">
-                    🎹 正在为「{ACTIONS.find((a) => a.id === recordingId)?.label}」录制新键位 —— 请按下组合键（Esc 取消）
+                    🎹 {t("正在为「{label}」录制新键位 —— 请按下组合键（Esc 取消）", {
+                      label: t(ACTIONS.find((a) => a.id === recordingId)?.label ?? ""),
+                    })}
                   </div>
                 )}
 
@@ -622,12 +665,14 @@ export function SettingsDialog({
                 )}
 
                 <p className="mb-3 text-xs text-muted-foreground">
-                  点击每行右侧的“录制”可自定义当前平台键位（{isMac ? "macOS" : "Windows"}）；带 ● 的为已自定义项，再点“×”恢复默认。
+                  {t("点击每行右侧的“录制”可自定义当前平台键位（{platform}）；带 ● 的为已自定义项，再点“×”恢复默认。", {
+                    platform: isMac ? "macOS" : "Windows",
+                  })}
                 </p>
 
                 {groups.map((g) => (
                   <div key={g} className="mb-4">
-                    <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{g}</div>
+                    <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t(g)}</div>
                     <div className="overflow-hidden rounded-md border bg-card">
                       {ACTIONS.filter((a) => a.group === g).map((a, i, arr) => {
                         const custom = hasCustomBinding(a.id);
@@ -644,10 +689,10 @@ export function SettingsDialog({
                               {custom && (
                                 <span
                                   className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
-                                  title="已自定义"
+                                  title={t("已自定义")}
                                 />
                               )}
-                              <span className="truncate">{a.label}</span>
+                              <span className="truncate">{t(a.label)}</span>
                             </span>
                             <span className="flex shrink-0 items-center gap-1.5">
                               <kbd
@@ -659,21 +704,21 @@ export function SettingsDialog({
                                 {formatBinding(bindingOf(a))}
                               </kbd>
                               {recording ? (
-                                <span className="px-1 text-[11px] text-primary">按下组合键…</span>
+                                <span className="px-1 text-[11px] text-primary">{t("按下组合键…")}</span>
                               ) : (
                                 <>
                                   <button
                                     onClick={() => startRecording(a.id)}
                                     className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                                    title="录制新键位"
+                                    title={t("录制新键位")}
                                   >
-                                    录制
+                                    {t("录制")}
                                   </button>
                                   {custom && (
                                     <button
                                       onClick={() => handleResetOne(a.id)}
                                       className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                                      title="恢复此动作默认键位"
+                                      title={t("恢复此动作默认键位")}
                                     >
                                       ×
                                     </button>
@@ -695,23 +740,22 @@ export function SettingsDialog({
               className="scroll-mt-3 mb-6"
             >
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="sec-t text-[11px] font-medium text-muted-foreground">打开方式</div>
+                  <div className="sec-t text-[11px] font-medium text-muted-foreground">{t("打开方式")}</div>
                   <button
                     onClick={onAddOpener}
                     className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    title="选择应用程序添加"
+                    title={t("选择应用程序添加")}
                   >
-                    <Plus className="h-3 w-3" /> 添加
+                    <Plus className="h-3 w-3" /> {t("添加")}
                   </button>
                 </div>
                 <p className="mb-3 text-[11px] text-muted-foreground">
-                  每个打开方式只对已关联的扩展名生效（<span className="font-mono">*</span> 表示所有类型）。
-                  右键文件 → 打开方式 → 选择其他应用… 会自动关联该文件的扩展名。
+                  {t("每个打开方式只对已关联的扩展名生效（* 表示所有类型）。右键文件 → 打开方式 → 选择其他应用… 会自动关联该文件的扩展名。")}
                 </p>
 
                 {openers.length === 0 ? (
                   <div className="rounded-md border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
-                    还没有自定义打开方式。右键文件 → 打开方式 → 选择其他应用… 添加。
+                    {t("还没有自定义打开方式。右键文件 → 打开方式 → 选择其他应用… 添加。")}
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -722,14 +766,14 @@ export function SettingsDialog({
                             <span className="truncate text-xs font-medium">{o.name}</span>
                             {!o.detected && (
                               <span className="shrink-0 rounded-sm bg-destructive/10 px-1 py-0.5 text-[10px] text-destructive">
-                                未找到
+                                {t("未找到")}
                               </span>
                             )}
                           </div>
                           <button
                             onClick={() => onRemoveOpener(o.id)}
                             className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                            title="删除此打开方式"
+                            title={t("删除此打开方式")}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -740,7 +784,7 @@ export function SettingsDialog({
                         <div className="mt-1.5 flex flex-wrap items-center gap-1">
                           {o.extensions.length === 0 ? (
                             <span className="text-[10px] text-muted-foreground">
-                              未关联任何类型（不会出现在右键）
+                              {t("未关联任何类型（不会出现在右键）")}
                             </span>
                           ) : (
                             o.extensions.map((ext) => (
@@ -757,7 +801,7 @@ export function SettingsDialog({
                                     )
                                   }
                                   className="text-muted-foreground transition-colors hover:text-destructive"
-                                  title="移除该扩展名"
+                                  title={t("移除该扩展名")}
                                 >
                                   ×
                                 </button>
@@ -785,14 +829,14 @@ export function SettingsDialog({
                             onChange={(e) =>
                               setExtInput((s) => ({ ...s, [o.id]: e.target.value }))
                             }
-                            placeholder="如 json, yaml（逗号/空格分隔，回车添加）"
+                            placeholder={t("如 json, yaml（逗号/空格分隔，回车添加）")}
                             className="w-72 rounded border bg-background px-2 py-1 text-[11px]"
                           />
                           <button
                             type="submit"
                             className="shrink-0 rounded border px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                           >
-                            添加
+                            {t("添加")}
                           </button>
                         </form>
                       </div>
@@ -807,84 +851,83 @@ export function SettingsDialog({
               className="scroll-mt-3 mb-6"
             >
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="sec-t text-[11px] font-medium text-muted-foreground">常用工具</div>
+                  <div className="sec-t text-[11px] font-medium text-muted-foreground">{t("常用工具")}</div>
                   <button
                     onClick={onAddQuickTool}
                     className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    title="选择应用程序添加"
+                    title={t("选择应用程序添加")}
                   >
-                    <Plus className="h-3 w-3" /> 添加
+                    <Plus className="h-3 w-3" /> {t("添加")}
                   </button>
                 </div>
                 <p className="mb-3 text-[11px] text-muted-foreground">
-                  右键菜单第一行按此顺序横排显示（最多 10 个）：点图标直接用该工具打开当前目录（作为工作区）或文件。
-                  与「打开方式」的按扩展名关联互不影响。
+                  {t("右键菜单第一行按此顺序横排显示（最多 10 个）：点图标直接用该工具打开当前目录（作为工作区）或文件。与「打开方式」的按扩展名关联互不影响。")}
                 </p>
                 <p className="mb-3 text-[11px] text-muted-foreground">
-                  每个工具可填<b>启动参数</b>，支持占位符
+                  {t("每个工具可填")}<b>{t("启动参数")}</b>{t("，支持占位符")}
                   <code className="mx-0.5 rounded bg-muted px-1">$pwd</code>/
-                  <code className="mx-0.5 rounded bg-muted px-1">{"{dir}"}</code>（当前目录）、
-                  <code className="mx-0.5 rounded bg-muted px-1">{"{path}"}</code>（当前目录或所选文件完整路径）、
-                  <code className="mx-0.5 rounded bg-muted px-1">{"{name}"}</code>（文件名）。
-                  留空 = 默认：终端类（Git Bash / cmd / PowerShell / bash…）直接在当前目录开窗，其余工具以路径为参数打开；
-                  非终端工具的参数里没写占位符时，路径自动补在末尾。
+                  <code className="mx-0.5 rounded bg-muted px-1">{"{dir}"}</code>{t("（当前目录）、")}
+                  <code className="mx-0.5 rounded bg-muted px-1">{"{path}"}</code>{t("（当前目录或所选文件完整路径）、")}
+                  <code className="mx-0.5 rounded bg-muted px-1">{"{name}"}</code>{t("（文件名）。")}
+                  {t("留空 = 默认：终端类（Git Bash / cmd / PowerShell / bash…）直接在当前目录开窗，其余工具以路径为参数打开；")}
+                  {t("非终端工具的参数里没写占位符时，路径自动补在末尾。")}
                 </p>
 
                 {quickTools.length === 0 ? (
                   <div className="rounded-md border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
-                    还没有常用工具。点右上角「添加」选择应用，或从下方检测列表一键加入。
+                    {t("还没有常用工具。点右上角「添加」选择应用，或从下方检测列表一键加入。")}
                   </div>
                 ) : (
                   <div className="space-y-1.5">
-                    {quickTools.map((t, i) => (
-                      <div key={t.id} className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5">
+                    {quickTools.map((qt, i) => (
+                      <div key={qt.id} className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5">
                         <span
                           className={cn(
                             "flex h-6 w-6 shrink-0 items-center justify-center rounded text-[9px] font-bold text-white",
-                            !t.detected && "opacity-40",
+                            !qt.detected && "opacity-40",
                           )}
-                          style={{ background: quickTileColor(t.name) }}
+                          style={{ background: quickTileColor(qt.name) }}
                         >
-                          {quickInitials(t.name)}
+                          {quickInitials(qt.name)}
                         </span>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
-                            <span className="truncate text-xs font-medium">{t.name}</span>
-                            {!t.detected && (
+                            <span className="truncate text-xs font-medium">{qt.name}</span>
+                            {!qt.detected && (
                               <span className="shrink-0 rounded-sm bg-destructive/10 px-1 py-0.5 text-[10px] text-destructive">
-                                未找到
+                                {t("未找到")}
                               </span>
                             )}
                           </div>
-                          <div className="truncate text-[10px] text-muted-foreground" title={t.exec}>
-                            {t.exec}
+                          <div className="truncate text-[10px] text-muted-foreground" title={qt.exec}>
+                            {qt.exec}
                           </div>
                           <QuickToolArgsInput
-                            toolId={t.id}
-                            value={t.args ?? ""}
-                            onCommit={(v) => onSetQuickToolArgs?.(t.id, v)}
+                            toolId={qt.id}
+                            value={qt.args ?? ""}
+                            onCommit={(v) => onSetQuickToolArgs?.(qt.id, v)}
                           />
                         </div>
                         <button
-                          onClick={() => onMoveQuickTool(t.id, true)}
+                          onClick={() => onMoveQuickTool(qt.id, true)}
                           disabled={i === 0}
                           className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30"
-                          title="上移"
+                          title={t("上移")}
                         >
                           ↑
                         </button>
                         <button
-                          onClick={() => onMoveQuickTool(t.id, false)}
+                          onClick={() => onMoveQuickTool(qt.id, false)}
                           disabled={i === quickTools.length - 1}
                           className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30"
-                          title="下移"
+                          title={t("下移")}
                         >
                           ↓
                         </button>
                         <button
-                          onClick={() => onRemoveQuickTool(t.id)}
+                          onClick={() => onRemoveQuickTool(qt.id)}
                           className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                          title="移除此常用工具"
+                          title={t("移除此常用工具")}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -896,7 +939,7 @@ export function SettingsDialog({
                 {editorSuggestions.filter((c) => !quickTools.some((q) => q.id === c.id)).length > 0 && (
                   <div className="mt-3">
                     <div className="mb-1.5 text-[10px] text-muted-foreground">
-                      检测到本机已安装（点击一键加入）：
+                      {t("检测到本机已安装（点击一键加入）：")}
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {editorSuggestions
@@ -929,20 +972,17 @@ export function SettingsDialog({
               className="scroll-mt-3 mb-6"
             >
                 <div>
-                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">收藏夹</div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("收藏夹")}</div>
                   <p className="mb-2.5 text-[11px] text-muted-foreground">
-                    收藏 = 单个标签页的命名布局快照：全部窗格路径、分屏结构、视图/缩放状态。
-                    打开收藏会在新标签页还原（本地路径直接加载，SFTP 窗格自动重连）。
-                    与「保存并退出」的整体会话互不影响。
+                    {t("收藏 = 单个标签页的命名布局快照：全部窗格路径、分屏结构、视图/缩放状态。打开收藏会在新标签页还原（本地路径直接加载，SFTP 窗格自动重连）。与「保存并退出」的整体会话互不影响。")}
                   </p>
                   <div className="space-y-2">
                     <p className="text-[11px] text-muted-foreground">
-                      入口：右键标签页「收藏此标签页」、空白处右键「收藏夹…」、
-                      快捷键
+                      {t("入口：右键标签页「收藏此标签页」、空白处右键「收藏夹…」、快捷键")}
                       <kbd className="mx-1 rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">
                         {formatBinding(bindingOf(ACTIONS.find((a) => a.id === "openFavorites")!))}
                       </kbd>
-                      （可在「快捷键」分区改键）、或下方按钮。
+                      {t("（可在「快捷键」分区改键）、或下方按钮。")}
                     </p>
                     <button
                       onClick={() => {
@@ -952,7 +992,7 @@ export function SettingsDialog({
                       className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors hover:bg-accent hover:text-foreground"
                     >
                       <Star className="h-3.5 w-3.5" />
-                      打开收藏夹面板…
+                      {t("打开收藏夹面板…")}
                     </button>
                   </div>
                 </div>
@@ -964,18 +1004,18 @@ export function SettingsDialog({
               className="scroll-mt-3 mb-6"
             >
                 <div>
-                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">分享</div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("分享")}</div>
                   <p className="mb-2.5 text-[11px] text-muted-foreground">
-                    分享为链接时的默认行为：是否允许接收方上溯父目录（默认关闭，严格锁定分享根内）、默认有效期。
+                    {t("分享为链接时的默认行为：是否允许接收方上溯父目录（默认关闭，严格锁定分享根内）、默认有效期。")}
                   </p>
                   <div className="overflow-hidden rounded-md border bg-card">
                     <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
-                      <span>允许接收方上溯到父目录（仅浏览）</span>
+                      <span>{t("允许接收方上溯到父目录（仅浏览）")}</span>
                       <button
                         type="button"
                         role="switch"
                         aria-checked={shareAllowParent}
-                        aria-label="允许接收方上溯到父目录"
+                        aria-label={t("允许接收方上溯到父目录")}
                         className="flex cursor-pointer"
                         onClick={() => {
                           setShareAllowParent(!shareAllowParent);
@@ -986,11 +1026,11 @@ export function SettingsDialog({
                       </button>
                     </div>
                     <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
-                      <span>默认有效期（小时）</span>
+                      <span>{t("默认有效期（小时）")}</span>
                       <input
                         type="number"
                         min={1}
-                        placeholder="永久"
+                        placeholder={t("永久")}
                         value={shareExpiresHours ?? ""}
                         onChange={(e) => {
                           const v = e.target.value;
@@ -1008,7 +1048,7 @@ export function SettingsDialog({
                     </div>
                   </div>
                   <p className="mt-1.5 text-[11px] text-muted-foreground">
-                    留空 = 永久（直到关闭客户端或主动停止分享）。
+                    {t("留空 = 永久（直到关闭客户端或主动停止分享）。")}
                   </p>
                 </div>
             </div>
@@ -1020,7 +1060,7 @@ export function SettingsDialog({
               className="scroll-mt-3 mb-6"
             >
                 <div>
-                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">远程临时目录</div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("远程临时目录")}</div>
                   <div className="overflow-hidden rounded-md border bg-card">
                     <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
                       <span
@@ -1033,17 +1073,17 @@ export function SettingsDialog({
                         <button
                           onClick={() => void handlePickRemoteTempDir()}
                           className="rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                          title="选择其他目录作为远程临时目录"
+                          title={t("选择其他目录作为远程临时目录")}
                         >
-                          更改目录…
+                          {t("更改目录…")}
                         </button>
                         {remoteTempDir && (
                           <button
                             onClick={() => onRemoteTempDirChange("")}
                             className="flex items-center gap-1 rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            title="改回默认（系统临时目录下 r-dir-remote）"
+                            title={t("改回默认（系统临时目录下 r-dir-remote）")}
                           >
-                            <RotateCcw className="h-3 w-3" /> 恢复默认
+                            <RotateCcw className="h-3 w-3" /> {t("恢复默认")}
                           </button>
                         )}
                       </div>
@@ -1051,30 +1091,32 @@ export function SettingsDialog({
                     <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
                       <span className="text-muted-foreground">
                         {remoteTempUsage
-                          ? `当前占用：${remoteTempUsage.files} 个文件 · 共 ${formatSize(remoteTempUsage.bytes)}`
-                          : "当前占用：统计中…"}
+                          ? t("当前占用：{n} 个文件 · 共 {size}", {
+                              n: remoteTempUsage.files,
+                              size: formatSize(remoteTempUsage.bytes),
+                            })
+                          : t("当前占用：统计中…")}
                       </span>
                       <div className="flex shrink-0 items-center gap-1.5">
                         <button
                           onClick={refreshRemoteTempUsage}
                           className="rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                          title="重新统计占用"
+                          title={t("重新统计占用")}
                         >
-                          刷新
+                          {t("刷新")}
                         </button>
                         <button
                           onClick={() => void handleCleanRemoteTemp()}
                           className="flex items-center gap-1 rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground hover:text-destructive"
-                          title="删除临时目录中的全部文件"
+                          title={t("删除临时目录中的全部文件")}
                         >
-                          <Trash2 className="h-3 w-3" /> 立即清理
+                          <Trash2 className="h-3 w-3" /> {t("立即清理")}
                         </button>
                       </div>
                     </div>
                   </div>
                   <p className="mt-1.5 text-[11px] text-muted-foreground">
-                    远程文件（SFTP / HTTP 等）通过「打开」或「打开方式」交给外部应用前，会先下载到此目录；
-                    清理只删除本地副本，不影响远程原件。更改目录不迁移旧文件，旧目录可在更改前先清理。
+                    {t("远程文件（SFTP / HTTP 等）通过「打开」或「打开方式」交给外部应用前，会先下载到此目录；清理只删除本地副本，不影响远程原件。更改目录不迁移旧文件，旧目录可在更改前先清理。")}
                   </p>
                 </div>
             </div>
@@ -1085,15 +1127,14 @@ export function SettingsDialog({
               className="scroll-mt-3 mb-6"
             >
                 <div>
-                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">插件</div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("插件")}</div>
                   <p className="mb-2.5 text-[11px] text-muted-foreground">
-                    内置插件按统一契约登记（协议前缀 + 操作集 + 启用开关）。禁用后对应入口隐藏、
-                    路由拒绝；未来外置插件（如 http-autoindex）沿用同一注册表接入。
+                    {t("内置插件按统一契约登记（协议前缀 + 操作集 + 启用开关）。禁用后对应入口隐藏、路由拒绝；未来外置插件（如 http-autoindex）沿用同一注册表接入。")}
                   </p>
                   <div className="space-y-2">
                     {plugins === null ? (
                       <div className="rounded-md border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
-                        正在加载插件清单…
+                        {t("正在加载插件清单…")}
                       </div>
                     ) : (
                       plugins.map((p) => (
@@ -1105,11 +1146,11 @@ export function SettingsDialog({
                                 v{p.version}
                               </span>
                               <span className="shrink-0 rounded-sm bg-primary/10 px-1 py-0.5 text-[10px] text-primary">
-                                {p.source === "builtin" ? "内置" : "外置"}
+                                {p.source === "builtin" ? t("内置") : t("外置")}
                               </span>
                               {p.configurable && (
                                 <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
-                                  可配置
+                                  {t("可配置")}
                                 </span>
                               )}
                             </div>
@@ -1142,7 +1183,7 @@ export function SettingsDialog({
                               </span>
                             ))}
                             {p.protocols.length === 0 && p.operations.length === 0 && (
-                              <span className="text-[10px] text-muted-foreground">无协议 / 无操作声明</span>
+                              <span className="text-[10px] text-muted-foreground">{t("无协议 / 无操作声明")}</span>
                             )}
                           </div>
                         </div>
@@ -1165,7 +1206,7 @@ export function SettingsDialog({
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-foreground">{appName}</div>
                     <div className="text-xs text-muted-foreground">
-                      版本 v{appVersion || "—"} · Tauri 2 + React
+                      {t("版本 v{ver} · Tauri 2 + React", { ver: appVersion || "—" })}
                     </div>
                   </div>
                 </div>
@@ -1174,23 +1215,23 @@ export function SettingsDialog({
                     onClick={onCheckUpdate}
                     className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
                   >
-                    <Download className="h-3.5 w-3.5" /> 检查更新
+                    <Download className="h-3.5 w-3.5" /> {t("检查更新")}
                   </button>
                   <button
                     onClick={onOpenDocs}
                     className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
                   >
-                    <BookOpen className="h-3.5 w-3.5" /> 使用指南
+                    <BookOpen className="h-3.5 w-3.5" /> {t("使用指南")}
                   </button>
                   <button
                     onClick={onOpenRepo}
                     className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
                   >
-                    <Globe className="h-3.5 w-3.5" /> GitHub 仓库
+                    <Globe className="h-3.5 w-3.5" /> {t("GitHub 仓库")}
                   </button>
                 </div>
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  版本号取自应用元数据（tauri.conf.json），随发布 tag 同步。
+                  {t("版本号取自应用元数据（tauri.conf.json），随发布 tag 同步。")}
                 </p>
               </div>
             </div>
@@ -1199,7 +1240,7 @@ export function SettingsDialog({
 
         <div className="flex items-center justify-between border-t px-4 py-2 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1">
-            <Check className="h-3 w-3" /> 更改会自动保存
+            <Check className="h-3 w-3" /> {t("更改会自动保存")}
           </span>
           <span>
             {appName} v{appVersion || "—"} · {isMac ? "macOS" : "Windows"}
@@ -1242,6 +1283,7 @@ function QuickToolArgsInput({
   onCommit: (args: string) => void;
 }) {
   const [draft, setDraft] = useState(value);
+  const t = useT();
   useEffect(() => setDraft(value), [value]);
   const commit = () => {
     const v = draft.trim();
@@ -1249,7 +1291,7 @@ function QuickToolArgsInput({
   };
   return (
     <div className="mt-1 flex items-center gap-1.5">
-      <span className="shrink-0 text-[10px] text-muted-foreground">启动参数</span>
+      <span className="shrink-0 text-[10px] text-muted-foreground">{t("启动参数")}</span>
       <input
         data-testid={`quick-tool-args-${toolId}`}
         value={draft}
@@ -1263,7 +1305,7 @@ function QuickToolArgsInput({
           }
           e.stopPropagation();
         }}
-        placeholder="留空 = 默认；例：--cd=$pwd 或 --new-window {path}"
+        placeholder={t("留空 = 默认；例：--cd=$pwd 或 --new-window {path}")}
         spellCheck={false}
         className="h-6 min-w-0 flex-1 rounded border bg-background px-1.5 font-mono text-[10px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-primary"
       />

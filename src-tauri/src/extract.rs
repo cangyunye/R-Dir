@@ -28,8 +28,8 @@ use crate::progress::{emit, Throttle, TransferProgress};
 use crate::AppState;
 
 /// 密码信号（前端据此弹密码框继续）
-pub const ERR_NEED_PASSWORD: &str = "需要密码";
-pub const ERR_WRONG_PASSWORD: &str = "密码错误";
+pub const ERR_NEED_PASSWORD: &str = "NEED_PASSWORD";
+pub const ERR_WRONG_PASSWORD: &str = "WRONG_PASSWORD";
 
 /// 解压结果（落点 + 统计，前端提示与刷新用）
 #[derive(Clone, Debug, serde::Serialize)]
@@ -186,7 +186,7 @@ enum CbEv<'a> {
 type Cb<'a> = &'a mut dyn FnMut(CbEv) -> bool;
 
 fn cancelled() -> String {
-    "已取消".into()
+    crate::ERR_CANCELLED.into()
 }
 
 // ==================== zip（crate） ====================
@@ -738,7 +738,7 @@ fn run_extract(
     // 收尾帧（同 copy/move 语义：前端 1.5s 后清除指示）
     let label = match &r {
         Ok(_) => "解压完成".to_string(),
-        Err(e) if e.contains("取消") => "已取消".into(),
+        Err(e) if crate::is_cancelled(e) => "已取消".into(),
         // 与 copy/move 收尾帧同文案：StatusBar 据「传输失败」渲染红色 + 拼阶段名
         Err(_) => "传输失败".into(),
     };

@@ -51,6 +51,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { ACTIONS, bindingOf, formatBinding } from "@/lib/keymap";
+import { useT } from "@/lib/LanguageProvider";
 import pkg from "../../package.json";
 
 export interface AppMenuActions {
@@ -211,12 +212,13 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
 export function AppMenu(actions: AppMenuActions) {
   const [open, setOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const t = useT();
   return (
     <div className="flex items-center gap-0.5" data-keymap-version={actions.keymapVersion ?? 0}>
       <DropdownMenu open={toolsOpen} onOpenChange={setToolsOpen} modal={false}>
         <DropdownMenuTrigger asChild>
           <button
-            title="工具"
+            title={t("工具")}
             className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <Wrench className="h-4 w-4" />
@@ -224,36 +226,36 @@ export function AppMenu(actions: AppMenuActions) {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-[240px]">
           {actions.onOpenFavorites && (
-            <Item icon={<Star />} label="收藏夹…" shortcutId="openFavorites" onClick={actions.onOpenFavorites} />
+            <Item icon={<Star />} label={t("收藏夹…")} shortcutId="openFavorites" onClick={actions.onOpenFavorites} />
           )}
-          <Item icon={<GitCompare />} label="差异比对…" onClick={actions.onOpenDiff} />
+          <Item icon={<GitCompare />} label={t("差异比对…")} onClick={actions.onOpenDiff} />
           <Item
             icon={actions.syncDiffActive ? <Link2Off /> : <Link2 />}
-            label={actions.syncDiffActive ? "断开同步比对" : "同步比对"}
+            label={actions.syncDiffActive ? t("断开同步比对") : t("同步比对")}
             onClick={actions.onOpenSyncDiff}
           />
-          <Item icon={<FileDiff />} label="打开 Git Diff…" onClick={actions.onOpenGitDiff} />
+          <Item icon={<FileDiff />} label={t("打开 Git Diff…")} onClick={actions.onOpenGitDiff} />
           <DropdownMenuSeparator />
-          <Item icon={<Plus />} label="添加 SFTP 服务器…" onClick={actions.onAddSftp} />
+          <Item icon={<Plus />} label={t("添加 SFTP 服务器…")} onClick={actions.onAddSftp} />
           {actions.onExportServers && (
-            <Item icon={<Download />} label="导出服务器列表…" onClick={actions.onExportServers} />
+            <Item icon={<Download />} label={t("导出服务器列表…")} onClick={actions.onExportServers} />
           )}
           {actions.onImportServers && (
-            <Item icon={<Upload />} label="导入服务器列表…" onClick={actions.onImportServers} />
+            <Item icon={<Upload />} label={t("导入服务器列表…")} onClick={actions.onImportServers} />
           )}
-          <Item icon={<KeyRound />} label="SFTP 主密钥…" onClick={actions.onMasterKey} />
+          <Item icon={<KeyRound />} label={t("SFTP 主密钥…")} onClick={actions.onMasterKey} />
         </DropdownMenuContent>
       </DropdownMenu>
       <button
         onClick={actions.onOpenSettings}
-        title="设置（快捷键录制）"
+        title={t("设置（快捷键录制）")}
         className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         <Settings className="h-4 w-4" />
       </button>
       <button
         onClick={actions.onToggleTheme}
-        title={actions.dark ? "切换到浅色主题" : "切换到深色主题"}
+        title={actions.dark ? t("切换到浅色主题") : t("切换到深色主题")}
         className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         {actions.dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -261,7 +263,7 @@ export function AppMenu(actions: AppMenuActions) {
       <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
         <DropdownMenuTrigger asChild>
           <button
-            title="应用菜单"
+            title={t("应用菜单")}
             className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <MoreVertical className="h-4 w-4" />
@@ -274,86 +276,86 @@ export function AppMenu(actions: AppMenuActions) {
         >
           <Item
             icon={<Command />}
-            label="命令面板"
+            label={t("命令面板")}
             shortcutId="commandPalette"
             onClick={actions.onOpenPalette}
           />
           <DropdownMenuSeparator />
 
-          <GroupLabel>文件</GroupLabel>
-          <Item icon={<Plus />} label="新建标签页" shortcutId="newTab" onClick={actions.onNewTab} />
-          <Item icon={<X />} label="关闭标签页" shortcutId="closeTab" onClick={actions.onCloseTab} />
-          <Item icon={<FolderPlus />} label="新建文件夹" shortcutId="newFolder" onClick={actions.onNewFolder} />
-          <Item icon={<FilePlus2 />} label="新建文件" shortcutId="newFile" onClick={actions.onNewFile} />
+          <GroupLabel>{t("文件")}</GroupLabel>
+          <Item icon={<Plus />} label={t("新建标签页")} shortcutId="newTab" onClick={actions.onNewTab} />
+          <Item icon={<X />} label={t("关闭标签页")} shortcutId="closeTab" onClick={actions.onCloseTab} />
+          <Item icon={<FolderPlus />} label={t("新建文件夹")} shortcutId="newFolder" onClick={actions.onNewFolder} />
+          <Item icon={<FilePlus2 />} label={t("新建文件")} shortcutId="newFile" onClick={actions.onNewFile} />
           <DropdownMenuSeparator />
-          <Item icon={<Save />} label="保存会话" shortcutId="saveSession" onClick={actions.onSaveSession} />
-          <Item icon={<X />} label="退出" onClick={actions.onQuit} />
+          <Item icon={<Save />} label={t("保存会话")} shortcutId="saveSession" onClick={actions.onSaveSession} />
+          <Item icon={<X />} label={t("退出")} onClick={actions.onQuit} />
 
-          <GroupLabel>编辑</GroupLabel>
-          <Item icon={<Undo2 />} label="撤销" shortcutId="undo" disabled={!actions.canUndo} onClick={actions.onUndo} />
-          <Item icon={<Redo2 />} label="重做" shortcutId="redo" disabled={!actions.canRedo} onClick={actions.onRedo} />
+          <GroupLabel>{t("编辑")}</GroupLabel>
+          <Item icon={<Undo2 />} label={t("撤销")} shortcutId="undo" disabled={!actions.canUndo} onClick={actions.onUndo} />
+          <Item icon={<Redo2 />} label={t("重做")} shortcutId="redo" disabled={!actions.canRedo} onClick={actions.onRedo} />
           <DropdownMenuSeparator />
-          <Item icon={<Copy />} label="复制" shortcutId="copy" onClick={actions.onCopy} />
-          <Item icon={<Scissors />} label="剪切" shortcutId="cut" onClick={actions.onCut} />
-          <Item icon={<Clipboard />} label="粘贴" shortcutId="paste" disabled={!actions.canPaste} onClick={actions.onPaste} />
+          <Item icon={<Copy />} label={t("复制")} shortcutId="copy" onClick={actions.onCopy} />
+          <Item icon={<Scissors />} label={t("剪切")} shortcutId="cut" onClick={actions.onCut} />
+          <Item icon={<Clipboard />} label={t("粘贴")} shortcutId="paste" disabled={!actions.canPaste} onClick={actions.onPaste} />
           <Item
             icon={<CopyPlus />}
-            label="复制到当前目录"
+            label={t("复制到当前目录")}
             shortcutId="duplicate"
             disabled={!actions.canDuplicate}
             onClick={actions.onDuplicate}
           />
           <DropdownMenuSeparator />
-          <Item icon={<Pencil />} label="重命名" shortcutId="rename" disabled={!actions.canRename} onClick={actions.onRename} />
+          <Item icon={<Pencil />} label={t("重命名")} shortcutId="rename" disabled={!actions.canRename} onClick={actions.onRename} />
           <Item
             icon={<Trash2 />}
-            label="删除（回收站）"
+            label={t("删除（回收站）")}
             shortcutId="delete"
             disabled={!actions.canDelete}
             danger
             onClick={actions.onDelete}
           />
-          <Item icon={<Clipboard />} label="复制路径" shortcutId="copyPath" onClick={actions.onCopyPath} />
-          <Item icon={<Info />} label="属性栏" shortcutId="properties" onClick={actions.onToggleProperties} />
+          <Item icon={<Clipboard />} label={t("复制路径")} shortcutId="copyPath" onClick={actions.onCopyPath} />
+          <Item icon={<Info />} label={t("属性栏")} shortcutId="properties" onClick={actions.onToggleProperties} />
 
-          <GroupLabel>查看</GroupLabel>
-          <Item icon={null} label="显示隐藏文件" shortcutId="toggleHidden" checked={actions.showHidden} onClick={actions.onToggleHidden} />
-          <Item icon={null} label="显示文件扩展名" checked={actions.showExtensions} onClick={actions.onToggleExtensions} />
-          <Item icon={null} label="视图：详情列表" shortcutId="viewDetails" checked={actions.viewMode === "details"} onClick={() => actions.onViewModeChange("details")} />
-          <Item icon={null} label="视图：大图标" shortcutId="viewIcons" checked={actions.viewMode === "icons"} onClick={() => actions.onViewModeChange("icons")} />
-          <Item icon={<Search />} label="切换搜索面板" shortcutId="focusSearch" onClick={actions.onToggleSearch} />
+          <GroupLabel>{t("查看")}</GroupLabel>
+          <Item icon={null} label={t("显示隐藏文件")} shortcutId="toggleHidden" checked={actions.showHidden} onClick={actions.onToggleHidden} />
+          <Item icon={null} label={t("显示文件扩展名")} checked={actions.showExtensions} onClick={actions.onToggleExtensions} />
+          <Item icon={null} label={t("视图：详情列表")} shortcutId="viewDetails" checked={actions.viewMode === "details"} onClick={() => actions.onViewModeChange("details")} />
+          <Item icon={null} label={t("视图：大图标")} shortcutId="viewIcons" checked={actions.viewMode === "icons"} onClick={() => actions.onViewModeChange("icons")} />
+          <Item icon={<Search />} label={t("切换搜索面板")} shortcutId="focusSearch" onClick={actions.onToggleSearch} />
           <DropdownMenuSeparator />
-          <Item icon={<RefreshCw />} label="刷新" shortcutId="refresh" onClick={actions.onRefresh} />
+          <Item icon={<RefreshCw />} label={t("刷新")} shortcutId="refresh" onClick={actions.onRefresh} />
 
-          <GroupLabel>转到</GroupLabel>
-          <Item icon={<RotateCcw />} label="后退" shortcutId="goBack" onClick={actions.onBack} />
-          <Item icon={<RotateCw />} label="前进" shortcutId="goForward" onClick={actions.onForward} />
-          <Item icon={<FolderOpen />} label="上级目录" shortcutId="goUp" onClick={actions.onUp} />
-          <Item icon={<FolderOpen />} label="主目录" shortcutId="goHome" onClick={actions.onHome} />
+          <GroupLabel>{t("转到")}</GroupLabel>
+          <Item icon={<RotateCcw />} label={t("后退")} shortcutId="goBack" onClick={actions.onBack} />
+          <Item icon={<RotateCw />} label={t("前进")} shortcutId="goForward" onClick={actions.onForward} />
+          <Item icon={<FolderOpen />} label={t("上级目录")} shortcutId="goUp" onClick={actions.onUp} />
+          <Item icon={<FolderOpen />} label={t("主目录")} shortcutId="goHome" onClick={actions.onHome} />
 
-          <GroupLabel>窗格</GroupLabel>
-          <Item icon={<LayoutPanelLeft />} label="左右分屏" shortcutId="splitRow" onClick={actions.onSplitRow} />
-          <Item icon={<LayoutPanelTop />} label="上下分屏" shortcutId="splitCol" onClick={actions.onSplitCol} />
+          <GroupLabel>{t("窗格")}</GroupLabel>
+          <Item icon={<LayoutPanelLeft />} label={t("左右分屏")} shortcutId="splitRow" onClick={actions.onSplitRow} />
+          <Item icon={<LayoutPanelTop />} label={t("上下分屏")} shortcutId="splitCol" onClick={actions.onSplitCol} />
           <Item
             icon={<PanelRightClose />}
-            label="关闭当前窗格"
+            label={t("关闭当前窗格")}
             shortcutId="closePane"
             disabled={!actions.canClosePane}
             onClick={actions.onClosePane}
           />
-          <Item icon={<ArrowLeftRight />} label="聚焦下一窗格" shortcutId="focusNextPane" onClick={actions.onFocusNextPane} />
+          <Item icon={<ArrowLeftRight />} label={t("聚焦下一窗格")} shortcutId="focusNextPane" onClick={actions.onFocusNextPane} />
 
           {/* 「工具」分组已提出到右上角扳手下拉钮（v0.34），不再在此重复 */}
 
-          <GroupLabel>帮助</GroupLabel>
+          <GroupLabel>{t("帮助")}</GroupLabel>
           <DropdownMenuLabel className="px-2 font-normal text-muted-foreground">
             {actions.appName}
           </DropdownMenuLabel>
-          <Item icon={<Settings />} label="设置" shortcutId="openSettings" onClick={actions.onOpenSettings} />
-          <Item icon={<Download />} label="检查更新…" onClick={actions.onCheckUpdate} />
-          <Item icon={<BookOpen />} label="使用指南" onClick={actions.onOpenDocs} />
-          <Item icon={<Globe />} label="GitHub 仓库" onClick={actions.onOpenRepo} />
-          <Item icon={<Info />} label={<>版本 {actions.appVersion || pkg.version}（Tauri 2 + React）</>} disabled onClick={() => {}} />
+          <Item icon={<Settings />} label={t("设置")} shortcutId="openSettings" onClick={actions.onOpenSettings} />
+          <Item icon={<Download />} label={t("检查更新…")} onClick={actions.onCheckUpdate} />
+          <Item icon={<BookOpen />} label={t("使用指南")} onClick={actions.onOpenDocs} />
+          <Item icon={<Globe />} label={t("GitHub 仓库")} onClick={actions.onOpenRepo} />
+          <Item icon={<Info />} label={t("版本 {ver}（Tauri 2 + React）", { ver: actions.appVersion || pkg.version })} disabled onClick={() => {}} />
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

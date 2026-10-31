@@ -48,6 +48,7 @@ import {
   type TagDef,
   type TagNames,
 } from "@/lib/persist";
+import { useT } from "@/lib/LanguageProvider";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -62,15 +63,21 @@ const QUICK_ICONS: Record<string, React.ComponentType<{ className?: string }>> =
   movies: Film,
 };
 
-const QUICK_LABELS: Record<string, string> = {
-  home: "主目录",
-  desktop: "桌面",
-  documents: "文档",
-  downloads: "下载",
-  pictures: "图片",
-  music: "音乐",
-  movies: "影片",
-};
+// { id, label } 数组声明（label: 字面量可被 LITERAL_PROP_FILES 提取），还原查找表；
+// 内置项显示名经 t() 翻译，自定义项回落路径（数据）
+const QUICK_LABELS = Object.fromEntries(
+  (
+    [
+      { id: "home", label: "主目录" },
+      { id: "desktop", label: "桌面" },
+      { id: "documents", label: "文档" },
+      { id: "downloads", label: "下载" },
+      { id: "pictures", label: "图片" },
+      { id: "music", label: "音乐" },
+      { id: "movies", label: "影片" },
+    ] as { id: string; label: string }[]
+  ).map((s) => [s.id, s.label]),
+);
 
 /** v0.31 侧边栏服务器拖拽换组的 DnD 标记类型（与文件拖拽/窗格交换分流互不干扰） */
 const SERVER_DND_TYPE = "application/x-rdir-server-id";
@@ -177,6 +184,7 @@ export function Sidebar({
   onCopyPath?: (path: string) => void;
 }) {
   const copyPath = onCopyPath ?? ((p: string) => navigator.clipboard?.writeText(p).catch(() => {}));
+  const t = useT();
   // 右键菜单里「在此打开终端」折叠组的展开状态（同一时刻只有一个菜单打开）
   const [expandedMenu, setExpandedMenu] = useState<string | null>(null);
   // 标签重命名（v0.6.4 右键侧边栏标签）
@@ -197,7 +205,7 @@ export function Sidebar({
       return;
     }
     // 默认取一个未被占用的色
-    const used = new Set(tags.map((t) => t.color));
+    const used = new Set(tags.map((tag) => tag.color));
     setAddTagColor(TAG_COLOR_PALETTE.find((c) => !used.has(c)) ?? TAG_COLOR_PALETTE[0]);
     setAddTagName("");
     setAddTagOpen(true);
@@ -209,7 +217,7 @@ export function Sidebar({
     if (ok) setAddTagOpen(false);
   };
   const openRenameTag = (id: string) => {
-    const def = tags.find((t) => t.id === id) ?? tags[0];
+    const def = tags.find((tag) => tag.id === id) ?? tags[0];
     setRenameTagId(id);
     setRenameTagInput(tagLabel(def, tagNames));
     setRenameTagOpen(true);
@@ -262,18 +270,18 @@ export function Sidebar({
   // 对话框每次打开稳拿焦点（radix 焦点竞争后重试一次兜底）
   useEffect(() => {
     if (!renameTagOpen) return;
-    const t = window.setTimeout(() => renameInputRef.current?.focus(), 0);
-    return () => window.clearTimeout(t);
+    const timer = window.setTimeout(() => renameInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
   }, [renameTagOpen]);
   useEffect(() => {
     if (!addTagOpen) return;
-    const t = window.setTimeout(() => addTagInputRef.current?.focus(), 0);
-    return () => window.clearTimeout(t);
+    const timer = window.setTimeout(() => addTagInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
   }, [addTagOpen]);
   useEffect(() => {
     if (!renameGroupOpen) return;
-    const t = window.setTimeout(() => renameGroupInputRef.current?.focus(), 0);
-    return () => window.clearTimeout(t);
+    const timer = window.setTimeout(() => renameGroupInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
   }, [renameGroupOpen]);
   const groupedServers = groupServers(sftpServers);
 
@@ -283,7 +291,7 @@ export function Sidebar({
       <>
         <MenuGroup
           id="terminal"
-          label="在此打开终端"
+          label={t("在此打开终端")}
           icon={<TerminalSquare className="mr-2 h-4 w-4" />}
           expanded={expandedMenu === "terminal"}
           onToggle={(id) => setExpandedMenu(expandedMenu === id ? null : id)}
@@ -296,7 +304,7 @@ export function Sidebar({
             >
               <span className="flex-1">{sh.name}</span>
               {!sh.detected && (
-                <span className="text-[10px] text-muted-foreground">未安装</span>
+                <span className="text-[10px] text-muted-foreground">{t("未安装")}</span>
               )}
             </ContextMenuItem>
           ))}
@@ -309,19 +317,19 @@ export function Sidebar({
   const dirMenuItems = (path: string, remove?: () => void) => (
     <>
       <ContextMenuItem onClick={() => onNavigate(path)}>
-        <FolderOpen className="mr-2 h-4 w-4" /> 打开
+        <FolderOpen className="mr-2 h-4 w-4" /> {t("打开")}
       </ContextMenuItem>
       <ContextMenuItem onClick={() => onMiddleOpen(path)}>
-        <SquarePlus className="mr-2 h-4 w-4" /> 在新标签页打开
+        <SquarePlus className="mr-2 h-4 w-4" /> {t("在新标签页打开")}
       </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem onClick={() => copyPath(path)}>
-        <Copy className="mr-2 h-4 w-4" /> 复制路径
+        <Copy className="mr-2 h-4 w-4" /> {t("复制路径")}
       </ContextMenuItem>
       {!hasScheme(path) && termGroup(path)}
       {onPropertiesDir && !hasScheme(path) && (
         <ContextMenuItem onClick={() => onPropertiesDir(path)}>
-          <Info className="mr-2 h-4 w-4" /> 属性
+          <Info className="mr-2 h-4 w-4" /> {t("属性")}
         </ContextMenuItem>
       )}
       {remove && (
@@ -329,11 +337,11 @@ export function Sidebar({
           <ContextMenuSeparator />
           {onRenameQuick && (
             <ContextMenuItem onClick={() => openRenameQuick(path)}>
-              <Pencil className="mr-2 h-4 w-4" /> 重命名显示名…
+              <Pencil className="mr-2 h-4 w-4" /> {t("重命名显示名…")}
             </ContextMenuItem>
           )}
           <ContextMenuItem variant="destructive" onClick={remove}>
-            <X className="mr-2 h-4 w-4" /> 从快速访问移除
+            <X className="mr-2 h-4 w-4" /> {t("从快速访问移除")}
           </ContextMenuItem>
         </>
       )}
@@ -351,9 +359,9 @@ export function Sidebar({
         }}
       >
         <DialogHeader>
-          <DialogTitle>重命名显示名</DialogTitle>
+          <DialogTitle>{t("重命名显示名")}</DialogTitle>
           <DialogDescription className="break-all">
-            只改侧栏显示的名字，不改文件/目录本体；改回原名即清除别名。
+            {t("只改侧栏显示的名字，不改文件/目录本体；改回原名即清除别名。")}
             <br />
             {renameQuickPath}
           </DialogDescription>
@@ -362,7 +370,7 @@ export function Sidebar({
           ref={renameQuickInputRef}
           value={renameQuickInput}
           onChange={(e) => setRenameQuickInput(e.target.value)}
-          placeholder="显示名"
+          placeholder={t("显示名")}
           data-testid="rename-quick-input"
           onKeyDown={(e) => {
             // IME 组合中的回车是确认候选词，不作为提交（四处改名/新增输入框同）
@@ -373,10 +381,10 @@ export function Sidebar({
         />
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => setRenameQuickOpen(false)}>
-            取消
+            {t("取消")}
           </Button>
           <Button size="sm" onClick={submitRenameQuick} disabled={!renameQuickInput.trim()}>
-            保存
+            {t("保存")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -392,24 +400,24 @@ export function Sidebar({
         }}
       >
         <DialogHeader>
-          <DialogTitle>重命名标签</DialogTitle>
-          <DialogDescription>自定义标签显示名称（不影响已标记的文件）</DialogDescription>
+          <DialogTitle>{t("重命名标签")}</DialogTitle>
+          <DialogDescription>{t("自定义标签显示名称（不影响已标记的文件）")}</DialogDescription>
         </DialogHeader>
         <div className="flex items-center gap-1.5">
-          {tags.map((t) => (
+          {tags.map((tag) => (
             <button
-              key={t.id}
+              key={tag.id}
               type="button"
               onClick={() => {
-                setRenameTagId(t.id);
-                setRenameTagInput(tagLabel(t, tagNames));
+                setRenameTagId(tag.id);
+                setRenameTagInput(tagLabel(tag, tagNames));
               }}
               className={cn(
                 "h-5 w-5 rounded-full transition-transform",
-                renameTagId === t.id && "scale-125 ring-2 ring-ring ring-offset-2",
+                renameTagId === tag.id && "scale-125 ring-2 ring-ring ring-offset-2",
               )}
-              style={{ background: t.color }}
-              title={tagLabel(t, tagNames)}
+              style={{ background: tag.color }}
+              title={tagLabel(tag, tagNames)}
             />
           ))}
         </div>
@@ -417,7 +425,7 @@ export function Sidebar({
           ref={renameInputRef}
           value={renameTagInput}
           onChange={(e) => setRenameTagInput(e.target.value)}
-          placeholder="标签名称"
+          placeholder={t("标签名称")}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") submitRenameTag();
@@ -426,10 +434,10 @@ export function Sidebar({
         />
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => setRenameTagOpen(false)}>
-            取消
+            {t("取消")}
           </Button>
           <Button size="sm" onClick={submitRenameTag} disabled={!renameTagInput.trim()}>
-            保存
+            {t("保存")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -445,17 +453,19 @@ export function Sidebar({
         }}
       >
         <DialogHeader>
-          <DialogTitle>重命名分组</DialogTitle>
+          <DialogTitle>{t("重命名分组")}</DialogTitle>
           <DialogDescription>
-            将「{renameGroupOld || "默认"}」组内的{" "}
-            {sftpServers.filter((s) => (s.group || "默认") === renameGroupOld).length} 台服务器整体移到新分组
+            {t("将「{name}」组内的 {n} 台服务器整体移到新分组", {
+              name: renameGroupOld || "默认",
+              n: sftpServers.filter((s) => (s.group || "默认") === renameGroupOld).length,
+            })}
           </DialogDescription>
         </DialogHeader>
         <Input
           ref={renameGroupInputRef}
           value={renameGroupInput}
           onChange={(e) => setRenameGroupInput(e.target.value)}
-          placeholder="新分组名"
+          placeholder={t("新分组名")}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") submitRenameGroup();
@@ -464,10 +474,10 @@ export function Sidebar({
         />
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => setRenameGroupOpen(false)}>
-            取消
+            {t("取消")}
           </Button>
           <Button size="sm" onClick={submitRenameGroup} disabled={!renameGroupInput.trim()}>
-            保存
+            {t("保存")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -482,9 +492,9 @@ export function Sidebar({
         }}
       >
         <DialogHeader>
-          <DialogTitle>新增标签</DialogTitle>
+          <DialogTitle>{t("新增标签")}</DialogTitle>
           <DialogDescription>
-            最多 {MAX_TAGS} 个标签（含预设），自定义标签可标记任意文件
+            {t("最多 {n} 个标签（含预设），自定义标签可标记任意文件", { n: MAX_TAGS })}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -506,7 +516,7 @@ export function Sidebar({
           ref={addTagInputRef}
           value={addTagName}
           onChange={(e) => setAddTagName(e.target.value)}
-          placeholder="标签名称"
+          placeholder={t("标签名称")}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") submitAddTag();
@@ -515,10 +525,10 @@ export function Sidebar({
         />
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => setAddTagOpen(false)}>
-            取消
+            {t("取消")}
           </Button>
           <Button size="sm" onClick={submitAddTag} disabled={!addTagName.trim()}>
-            新增
+            {t("新增")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -528,11 +538,12 @@ export function Sidebar({
         {/* 快速访问（内置 + 用户自定义） */}
         <div>
           <div className="flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground">
-            <FolderHeart className="h-3.5 w-3.5" /> 快速访问
+            <FolderHeart className="h-3.5 w-3.5" /> {t("快速访问")}
           </div>
           {quickAccess.map((item) => {
             const Icon = QUICK_ICONS[item.key] ?? Folder;
-            const label = QUICK_LABELS[item.key] ?? item.path;
+            const preset = QUICK_LABELS[item.key];
+            const label = preset ? t(preset) : item.path;
             return (
               <ContextMenu key={item.key} onOpenChange={(o) => !o && setExpandedMenu(null)}>
                 <ContextMenuTrigger asChild>
@@ -590,7 +601,7 @@ export function Sidebar({
                     </ContextMenu>
                     <button
                       onClick={() => onRemoveQuick(p)}
-                      title="从快捷访问移除"
+                      title={t("从快捷访问移除")}
                       className="absolute top-1/2 right-1 hidden -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
                     >
                       <X className="h-3 w-3" />
@@ -608,25 +619,28 @@ export function Sidebar({
             data-sidebar-tags-header=""
             className="group flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground"
           >
-            <Tag className="h-3.5 w-3.5" /> 标签
+            <Tag className="h-3.5 w-3.5" /> {t("标签")}
             <button
               onClick={openAddTag}
-              title={tags.length >= MAX_TAGS ? `最多 ${MAX_TAGS} 个标签` : "新增标签"}
+              title={tags.length >= MAX_TAGS ? t("最多 {n} 个标签", { n: MAX_TAGS }) : t("新增标签")}
               className="ml-auto hidden rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
             >
               <Plus className="h-3.5 w-3.5" />
             </button>
           </div>
-          {tags.map((t) => {
-            const count = tagCounts[t.id] ?? 0;
-            const active = activeTagId === t.id;
+          {tags.map((tag) => {
+            const count = tagCounts[tag.id] ?? 0;
+            const active = activeTagId === tag.id;
             return (
-              <ContextMenu key={t.id}>
+              <ContextMenu key={tag.id}>
                 <ContextMenuTrigger asChild>
                   <button
-                    onClick={() => onSelectTag(t.id)}
-                    onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(`tags://${t.id}`))}
-                    title={`查看「${tagLabel(t, tagNames)}」标签的文件${count > 0 ? `（${count} 项）` : ""}`}
+                    onClick={() => onSelectTag(tag.id)}
+                    onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(`tags://${tag.id}`))}
+                    title={
+                      t("查看「{name}」标签的文件", { name: tagLabel(tag, tagNames) }) +
+                      (count > 0 ? t("（{n} 项）", { n: count }) : "")
+                    }
                     className={cn(
                       "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
                       active
@@ -638,9 +652,9 @@ export function Sidebar({
                   >
                     <span
                       className="h-3 w-3 shrink-0 rounded-full"
-                      style={{ background: t.color }}
+                      style={{ background: tag.color }}
                     />
-                    <span className="min-w-0 flex-1 truncate">{tagLabel(t, tagNames)}</span>
+                    <span className="min-w-0 flex-1 truncate">{tagLabel(tag, tagNames)}</span>
                     {count > 0 && (
                       <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">
                         {count}
@@ -649,12 +663,12 @@ export function Sidebar({
                   </button>
                 </ContextMenuTrigger>
                 <ContextMenuContent className="min-w-44" collisionPadding={10}>
-                  <ContextMenuItem onClick={() => onMiddleOpen(`tags://${t.id}`)}>
-                    <SquarePlus className="mr-2 h-4 w-4" /> 在新标签页打开
+                  <ContextMenuItem onClick={() => onMiddleOpen(`tags://${tag.id}`)}>
+                    <SquarePlus className="mr-2 h-4 w-4" /> {t("在新标签页打开")}
                   </ContextMenuItem>
                   <ContextMenuSeparator />
-                  <ContextMenuItem onClick={() => openRenameTag(t.id)}>
-                    <Pencil className="mr-2 h-4 w-4" /> 重命名…
+                  <ContextMenuItem onClick={() => openRenameTag(tag.id)}>
+                    <Pencil className="mr-2 h-4 w-4" /> {t("重命名…")}
                   </ContextMenuItem>
                 </ContextMenuContent>
               </ContextMenu>
@@ -664,7 +678,7 @@ export function Sidebar({
 
         <div>
           <div className="flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground">
-            <HardDrive className="h-3.5 w-3.5" /> 磁盘 / 卷
+            <HardDrive className="h-3.5 w-3.5" /> {t("磁盘 / 卷")}
           </div>
           {volumes.map((vol) => (
             <ContextMenu key={vol.path} onOpenChange={(o) => !o && setExpandedMenu(null)}>
@@ -690,7 +704,7 @@ export function Sidebar({
             </ContextMenu>
           ))}
           {volumes.length === 0 && (
-            <div className="px-2 py-1 text-xs text-muted-foreground">未检测到磁盘</div>
+            <div className="px-2 py-1 text-xs text-muted-foreground">{t("未检测到磁盘")}</div>
           )}
         </div>
 
@@ -703,10 +717,10 @@ export function Sidebar({
                 data-sidebar-servers-header=""
                 className="group flex cursor-default items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground"
               >
-                <MonitorSmartphone className="h-3.5 w-3.5" /> 远程服务器
+                <MonitorSmartphone className="h-3.5 w-3.5" /> {t("远程服务器")}
                 <button
                   onClick={onSftpAdd}
-                  title="添加 SFTP 服务器"
+                  title={t("添加 SFTP 服务器")}
                   className="ml-auto hidden rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
                 >
                   <Plus className="h-3.5 w-3.5" />
@@ -716,23 +730,23 @@ export function Sidebar({
             {(onSftpExport || onSftpImport || onSftpClearTemp) && (
               <ContextMenuContent className="min-w-44" collisionPadding={10}>
                 <ContextMenuItem onClick={onSftpAdd}>
-                  <Plus className="mr-2 h-4 w-4" /> 添加 SFTP 服务器…
+                  <Plus className="mr-2 h-4 w-4" /> {t("添加 SFTP 服务器…")}
                 </ContextMenuItem>
                 {onSftpExport && (
                   <ContextMenuItem onClick={onSftpExport}>
-                    <Download className="mr-2 h-4 w-4" /> 导出服务器列表…
+                    <Download className="mr-2 h-4 w-4" /> {t("导出服务器列表…")}
                   </ContextMenuItem>
                 )}
                 {onSftpImport && (
                   <ContextMenuItem onClick={onSftpImport}>
-                    <Upload className="mr-2 h-4 w-4" /> 导入服务器列表…
+                    <Upload className="mr-2 h-4 w-4" /> {t("导入服务器列表…")}
                   </ContextMenuItem>
                 )}
                 {onSftpClearTemp && (
                   <>
                     <ContextMenuSeparator />
                     <ContextMenuItem onClick={onSftpClearTemp}>
-                      <Trash2 className="mr-2 h-4 w-4" /> 清理远程临时文件
+                      <Trash2 className="mr-2 h-4 w-4" /> {t("清理远程临时文件")}
                     </ContextMenuItem>
                   </>
                 )}
@@ -741,7 +755,7 @@ export function Sidebar({
           </ContextMenu>
           {sftpServers.length === 0 && (
             <div className="px-2 py-1 text-xs text-muted-foreground">
-              地址栏输入 sftp:// 连接，或点上方 +
+              {t("地址栏输入 sftp:// 连接，或点上方 +")}
             </div>
           )}
           {groupedServers.map(([group, servers]) => (
@@ -776,9 +790,9 @@ export function Sidebar({
                       dragOverGroup === group &&
                         "bg-primary/10 text-foreground ring-1 ring-primary/40",
                     )}
-                    title="右键重命名分组；把服务器拖到分组名上可换组"
+                    title={t("右键重命名分组；把服务器拖到分组名上可换组")}
                   >
-                    <span className="min-w-0 truncate">{group || "默认"}</span>
+                    <span className="min-w-0 truncate">{group === "默认" ? t("默认") : group}</span>
                     <span className="tabular-nums text-[9px] text-muted-foreground/60">
                       {servers.length}
                     </span>
@@ -786,7 +800,7 @@ export function Sidebar({
                 </ContextMenuTrigger>
                 <ContextMenuContent className="min-w-44" collisionPadding={10}>
                   <ContextMenuItem onClick={() => openRenameGroup(group)}>
-                    <Pencil className="mr-2 h-4 w-4" /> 重命名分组…
+                    <Pencil className="mr-2 h-4 w-4" /> {t("重命名分组…")}
                   </ContextMenuItem>
                 </ContextMenuContent>
               </ContextMenu>
@@ -807,7 +821,7 @@ export function Sidebar({
                           e.dataTransfer.effectAllowed = "move";
                         }}
                         onDragEnd={() => setDragOverGroup(null)}
-                        title={`${sv.user}@${sv.host}:${sv.port}${sv.connected ? "（已连接）" : ""} · 右键操作${onSftpSetGroup ? " · 拖到分组名可换组" : ""}`}
+                        title={`${sv.user}@${sv.host}:${sv.port}${sv.connected ? t("（已连接）") : ""} · ${t("右键操作")}${onSftpSetGroup ? " · " + t("拖到分组名可换组") : ""}`}
                         className={cn(
                           "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",
                           isActive(currentPath, `sftp://${sv.user}@${sv.host}:${sv.port}/`)
@@ -827,27 +841,27 @@ export function Sidebar({
                     <ContextMenuContent className="min-w-44" collisionPadding={10}>
                       {!sv.connected && (
                         <ContextMenuItem onClick={() => onSftpOpen(sv)}>
-                          <Plug className="mr-2 h-4 w-4" /> 连接
+                          <Plug className="mr-2 h-4 w-4" /> {t("连接")}
                         </ContextMenuItem>
                       )}
                       {sv.connected && (
                         <ContextMenuItem onClick={() => onSftpDisconnect(sv.id)}>
-                          <Unplug className="mr-2 h-4 w-4" /> 断开连接
+                          <Unplug className="mr-2 h-4 w-4" /> {t("断开连接")}
                         </ContextMenuItem>
                       )}
                       <ContextMenuItem onClick={() => onSftpEdit(sv)}>
-                        <Pencil className="mr-2 h-4 w-4" /> 编辑…
+                        <Pencil className="mr-2 h-4 w-4" /> {t("编辑…")}
                       </ContextMenuItem>
                       <ContextMenuSeparator />
                       <ContextMenuItem variant="destructive" onClick={() => onSftpRemove(sv)}>
-                        <Trash2 className="mr-2 h-4 w-4" /> 删除服务器配置
+                        <Trash2 className="mr-2 h-4 w-4" /> {t("删除服务器配置")}
                       </ContextMenuItem>
                     </ContextMenuContent>
                   </ContextMenu>
                   {sv.connected && (
                     <button
                       onClick={() => onSftpDisconnect(sv.id)}
-                      title="断开连接"
+                      title={t("断开连接")}
                       className="absolute top-1/2 right-1 hidden -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
                     >
                       <X className="h-3 w-3" />

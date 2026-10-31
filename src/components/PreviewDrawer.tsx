@@ -11,6 +11,7 @@ import { FileIcon } from "@/components/FileIcon";
 import { PreviewBody } from "@/components/preview/PreviewBody";
 import { PREVIEW_WIDTH_MAX, PREVIEW_WIDTH_MIN } from "@/lib/persist";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/LanguageProvider";
 import type { FileEntry } from "@/lib/types";
 
 export function PreviewDrawer({
@@ -39,6 +40,7 @@ export function PreviewDrawer({
   onOpenExternal: (path: string) => void;
 }) {
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const t = useT();
 
   if (!enabled) return null;
 
@@ -64,7 +66,7 @@ export function PreviewDrawer({
         <button
           data-testid="preview-handle"
           onClick={onExpand}
-          title="展开预览栏（空格）"
+          title={t("展开预览栏（空格）")}
           className="absolute right-0 top-1/2 z-40 flex h-16 w-5 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 bg-background/90 text-muted-foreground shadow-md backdrop-blur-sm transition-colors hover:bg-accent hover:text-foreground"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
@@ -88,7 +90,7 @@ export function PreviewDrawer({
           onPointerMove={onResize}
           onPointerUp={endResize}
           onPointerCancel={endResize}
-          title="拖拽调宽"
+          title={t("拖拽调宽")}
         />
 
         {/* 头部 */}
@@ -101,11 +103,11 @@ export function PreviewDrawer({
               </span>
             </>
           ) : (
-            <span className="min-w-0 flex-1 text-xs font-medium text-muted-foreground">预览</span>
+            <span className="min-w-0 flex-1 text-xs font-medium text-muted-foreground">{t("预览")}</span>
           )}
           <button
             onClick={onCollapse}
-            title="收起（空格）"
+            title={t("收起（空格）")}
             className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <ChevronRight className="h-3.5 w-3.5" />
@@ -125,16 +127,16 @@ export function PreviewDrawer({
             onClick={() => entry && onOpenExternal(entry.path)}
           >
             <ExternalLink className="h-3.5 w-3.5" />
-            {entry?.path.startsWith("sftp://") ? "下载并打开" : "外部打开"}
+            {entry?.path.startsWith("sftp://") ? t("下载并打开") : t("外部打开")}
           </button>
           <button
             data-testid="preview-browse-btn"
             className="flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
             disabled={!canBrowse}
-            title={canBrowse ? "图文浏览模式（mod+shift+e）" : "当前目录没有可预览的图片或文档"}
+            title={canBrowse ? t("图文浏览模式（mod+shift+e）") : t("当前目录没有可预览的图片或文档")}
             onClick={onBrowse}
           >
-            <GalleryVertical className="h-3.5 w-3.5" /> 浏览 »
+            <GalleryVertical className="h-3.5 w-3.5" /> {t("浏览 »")}
           </button>
         </footer>
       </div>

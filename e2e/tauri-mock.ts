@@ -596,8 +596,10 @@ export async function installTauriMock(page: Page): Promise<void> {
         const input = String(a.input ?? "");
         const head = input.trim().split(/\s+/)[0] ?? "";
         if (!CMDS.some((c) => c.name === head)) {
-          // 与真实后端一致：首 token 不在 PATH → 报错（前端合并为「也不是 PATH 中的命令」）
-          throw new Error(`未找到命令：${head}（不在 PATH 中）`);
+          // 与真实后端一致（i18n 码化）：首 token 不在 PATH → CMD_NOT_FOUND|详情
+          // （前端剥码显示「未找到命令：…」，notFoundPrefix 场景合并为「也不是 PATH 中的命令」）
+          // 注意真实 Tauri invoke 拒绝透传原始错误串（非 Error 对象），mock 必须一致
+          throw `CMD_NOT_FOUND|未找到命令：${head}（不在 PATH 中）`;
         }
         runCmds.push({ input, cwd: String(a.cwd ?? "") });
         return null;

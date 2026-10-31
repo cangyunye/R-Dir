@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { previewData } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/LanguageProvider";
 
 /** v0.34.1 内存缓存上限改按总字节数：base64 比原字节膨胀 33%，后端单图上限 30MB，
  *  此前按张数（24 张）缓存连翻大图最坏可驻留 ~1GB；256MB 上限 + 单图超限不缓存。 */
@@ -63,6 +64,7 @@ export function ImageView({
   fallback: React.ReactNode;
   className?: string;
 }) {
+  const t = useT();
   const key = `${path}|${mtime ?? 0}`;
   const [url, setUrl] = useState<string | null>(() => cacheGet(key) ?? null);
   const [failed, setFailed] = useState(false);
@@ -196,7 +198,7 @@ export function ImageView({
         onPointerCancel={onPointerUp}
         onDoubleClick={onDoubleClick}
         style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
-        title="滚轮缩放 · 拖拽平移 · 双击 100%/适配"
+        title={t("滚轮缩放 · 拖拽平移 · 双击 100%/适配")}
       >
         {url ? (
           <img
@@ -222,7 +224,7 @@ export function ImageView({
           <button
             className="pointer-events-auto rounded-full px-1.5 hover:bg-accent"
             onClick={() => applyZoom(zoom / ZOOM_STEP)}
-            title="缩小"
+            title={t("缩小")}
           >
             −
           </button>
@@ -230,7 +232,7 @@ export function ImageView({
           <button
             className="pointer-events-auto rounded-full px-1.5 hover:bg-accent"
             onClick={() => applyZoom(zoom * ZOOM_STEP)}
-            title="放大"
+            title={t("放大")}
           >
             +
           </button>

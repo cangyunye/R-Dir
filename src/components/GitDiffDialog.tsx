@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ClipboardPaste, FileDiff, X } from "lucide-react";
 import { parseUnifiedDiff } from "@/lib/text-diff";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/lib/LanguageProvider";
 
 /**
  * Git Diff 粘贴导入（v0.19）：把 git diff 输出 / patch 文本粘进来直接渲染左右差异。
@@ -16,11 +17,12 @@ export function GitDiffDialog({
 }) {
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
 
   const confirm = () => {
     if (!text.trim()) return;
     if (parseUnifiedDiff(text).length === 0) {
-      setError("未识别出 diff 内容：需要 unified diff 格式（@@ 开头的 hunk），如 `git diff` 的输出");
+      setError(t("未识别出 diff 内容：需要 unified diff 格式（@@ 开头的 hunk），如 `git diff` 的输出"));
       return;
     }
     onConfirm(text);
@@ -43,18 +45,18 @@ export function GitDiffDialog({
         <div className="flex items-center justify-between border-b px-4 py-2.5">
           <div className="flex items-center gap-2">
             <FileDiff className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-semibold">打开 Git Diff…</span>
+            <span className="text-sm font-semibold">{t("打开 Git Diff…")}</span>
           </div>
           <button
             onClick={onClose}
             className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="关闭"
+            title={t("关闭")}
           >
             <X className="h-4 w-4" />
           </button>
         </div>
         <div className="border-b px-4 py-1.5 text-[11px] text-muted-foreground">
-          粘贴 <span className="font-mono">git diff</span> 输出或 patch 内容（支持多文件），解析后左右对照显示。
+          {t("粘贴")} <span className="font-mono">git diff</span> {t("输出或 patch 内容（支持多文件），解析后左右对照显示。")}
         </div>
         <div className="min-h-0 flex-1 p-3">
           <textarea
@@ -77,23 +79,23 @@ export function GitDiffDialog({
             onClick={() => {
               void navigator.clipboard
                 ?.readText()
-                .then((t) => {
-                  if (t) {
-                    setText(t);
+                .then((txt) => {
+                  if (txt) {
+                    setText(txt);
                     setError(null);
                   }
                 })
-                .catch(() => setError("读取剪贴板失败（可在文本框中 Ctrl+V 粘贴）"));
+                .catch(() => setError(t("读取剪贴板失败（可在文本框中 Ctrl+V 粘贴）")));
             }}
           >
-            <ClipboardPaste className="h-3.5 w-3.5" /> 从剪贴板粘贴
+            <ClipboardPaste className="h-3.5 w-3.5" /> {t("从剪贴板粘贴")}
           </Button>
           <div className="ml-auto flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={onClose}>
-              取消
+              {t("取消")}
             </Button>
             <Button size="sm" disabled={!text.trim()} onClick={confirm}>
-              解析并比较
+              {t("解析并比较")}
             </Button>
           </div>
         </div>

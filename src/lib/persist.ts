@@ -8,6 +8,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { t } from "./i18n";
 
 /** 磁盘偏好快照：与 prefs.json 字段对齐（v0.14） */
 export interface PrefsDisk {
@@ -196,10 +197,10 @@ export function saveTagNames(names: TagNames): void {
   flushPrefsToDisk();
 }
 
-/** 标签显示名：优先用户自定义，回落预设 */
+/** 标签显示名：优先用户自定义（数据，不翻译），回落预设名（经 t() 翻译） */
 export function tagLabel(def: TagDef, names: TagNames): string {
   const c = names[def.id]?.trim();
-  return c || def.label;
+  return c || t(def.label);
 }
 
 /** 文件路径 → 标签 id 列表 */

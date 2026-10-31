@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { FileIcon } from "@/components/FileIcon";
 import { RollingNumber } from "@/components/PropertiesDialog";
 import { useModalLayer } from "@/hooks/useModalLayer";
+import { useT } from "@/lib/LanguageProvider";
 import { isTopModalLayer } from "@/lib/modal-stack";
 
 /**
@@ -105,9 +106,10 @@ export function DeleteConfirmDialog({
   }, []);
 
   const single = entries.length === 1 ? entries[0] : null;
-  const title = single ? single.name : `${entries.length} 个项目`;
   const preview = entries.slice(0, 5);
   const rest = entries.length - preview.length;
+  const t = useT();
+  const title = single ? single.name : t("{n} 个项目", { n: entries.length });
 
   return (
     <div
@@ -119,7 +121,7 @@ export function DeleteConfirmDialog({
     >
       <div className="w-[380px] max-w-[92vw] rounded-lg border bg-background p-4 shadow-xl">
         <div className="flex items-center gap-2 text-sm font-semibold">
-          <Trash2 className="h-4 w-4 text-destructive" /> 确认删除
+          <Trash2 className="h-4 w-4 text-destructive" /> {t("确认删除")}
         </div>
 
         <div className="mt-2.5 flex items-center gap-2.5">
@@ -141,15 +143,15 @@ export function DeleteConfirmDialog({
         <div className="mt-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
           <span className="flex items-center gap-1">
             <RollingNumber value={stat.files} />
-            <span className="text-muted-foreground">个文件</span>
+            <span className="text-muted-foreground">{t("个文件")}</span>
             <span className="px-1 text-muted-foreground">·</span>
             <RollingNumber value={stat.dirs} />
-            <span className="text-muted-foreground">个文件夹</span>
+            <span className="text-muted-foreground">{t("个文件夹")}</span>
             <span className="px-1 text-muted-foreground">·</span>
             <span className="inline-flex items-baseline gap-1 font-mono">
               <RollingNumber value={stat.bytes} />
               <span className="text-[10px] text-muted-foreground">
-                字节（{formatSize(stat.bytes)}）
+                {t("字节（{size}）", { size: formatSize(stat.bytes) })}
               </span>
             </span>
             {stat.computing && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />}
@@ -157,21 +159,21 @@ export function DeleteConfirmDialog({
           {!single && (
             <div className="mt-1.5 min-w-0 break-all text-[11px] leading-relaxed text-muted-foreground">
               {preview.map((e) => e.name).join("、")}
-              {rest > 0 && ` 等 ${entries.length} 项`}
+              {rest > 0 && t("等 {n} 项", { n: entries.length })}
             </div>
           )}
         </div>
 
         <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
-          将移入回收站，可随时按 Ctrl+Z 撤销恢复。
+          {t("将移入回收站，可随时按 Ctrl+Z 撤销恢复。")}
         </p>
 
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onCancel}>
-            取消
+            {t("取消")}
           </Button>
           <Button variant="destructive" size="sm" onClick={onConfirm} autoFocus>
-            删除
+            {t("删除")}
           </Button>
         </div>
       </div>

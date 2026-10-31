@@ -27,6 +27,7 @@ import { useModalLayer } from "@/hooks/useModalLayer";
 import { isTopModalLayer } from "@/lib/modal-stack";
 import { findFiles, renameEntry, searchContent } from "@/lib/api";
 import { isSftpPath } from "@/lib/sftp-path";
+import { useT } from "@/lib/LanguageProvider";
 import type { FileEntry, FindEntry, SearchMatch } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -180,6 +181,7 @@ function ResultRow({
     );
   }
   const name = path.split(/[\\/]/).pop() ?? path;
+  const t = useT();
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -199,24 +201,24 @@ function ResultRow({
       </ContextMenuTrigger>
       <ContextMenuContent className="min-w-48">
         <ContextMenuItem onClick={() => onReveal(path, isDir)}>
-          <Crosshair className="mr-2 h-4 w-4" /> 定位到{isDir ? "文件夹" : "文件"}
+          <Crosshair className="mr-2 h-4 w-4" /> {isDir ? t("定位到文件夹") : t("定位到文件")}
         </ContextMenuItem>
         {!isDir && (
           <ContextMenuItem onClick={() => onOpenFile(path)}>
-            <ExternalLink className="mr-2 h-4 w-4" /> 打开（默认应用）
+            <ExternalLink className="mr-2 h-4 w-4" /> {t("打开（默认应用）")}
           </ContextMenuItem>
         )}
         {onRename && !isSftpPath(path) && (
           <ContextMenuItem onClick={() => onRename(path, name)}>
-            <Pencil className="mr-2 h-4 w-4" /> 重命名
+            <Pencil className="mr-2 h-4 w-4" /> {t("重命名")}
           </ContextMenuItem>
         )}
         <ContextMenuSeparator />
         <ContextMenuItem onClick={() => onCopyPath(path)}>
-          <Clipboard className="mr-2 h-4 w-4" /> 复制绝对路径
+          <Clipboard className="mr-2 h-4 w-4" /> {t("复制绝对路径")}
         </ContextMenuItem>
         <ContextMenuItem onClick={() => onCopyPath(relPath)}>
-          <Clipboard className="mr-2 h-4 w-4" /> 复制相对路径
+          <Clipboard className="mr-2 h-4 w-4" /> {t("复制相对路径")}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
@@ -334,6 +336,7 @@ export function SearchPanel({
   const [cError, setCError] = useState<string | null>(null);
   const cTimer = useRef<number | null>(null);
   const cSeq = useRef(0);
+  const t = useT();
 
   // 文件名搜索（当前层，前端过滤）——匹配语义与 fd 灯钮一致：
   // 正则/通配符整名匹配（无效正则回退字面量包含），隐藏灯控制 `.` 开头项
@@ -454,7 +457,7 @@ export function SearchPanel({
       {/* 标题 + 关闭（冻结的搜索目标目录随面板展示） */}
       <div className="flex shrink-0 items-center gap-1.5 border-b px-3 py-2">
         <FileSearch className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className="shrink-0 text-xs font-medium">搜索</span>
+        <span className="shrink-0 text-xs font-medium">{t("搜索")}</span>
         <span
           className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/70"
           title={dir}
@@ -464,7 +467,7 @@ export function SearchPanel({
         <button
           type="button"
           onClick={onClose}
-          title="关闭搜索面板"
+          title={t("关闭搜索面板")}
           className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <X className="h-3.5 w-3.5" />
@@ -473,8 +476,8 @@ export function SearchPanel({
       <Tabs value={mode} onValueChange={setMode} className="flex min-h-0 flex-1 flex-col">
         <div className="p-2 pb-0">
           <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="name" className="text-xs">文件名</TabsTrigger>
-            <TabsTrigger value="content" className="text-xs">内容</TabsTrigger>
+            <TabsTrigger value="name" className="text-xs">{t("文件名")}</TabsTrigger>
+            <TabsTrigger value="content" className="text-xs">{t("内容")}</TabsTrigger>
           </TabsList>
         </div>
 
@@ -488,9 +491,9 @@ export function SearchPanel({
                 placeholder={
                   fdEnabled
                     ? nameMode === "glob"
-                      ? "检索文件（fd 通配符，如 *.rs）…"
-                      : "检索文件（fd 正则）…"
-                    : "搜索当前层文件名…"
+                      ? t("检索文件（fd 通配符，如 *.rs）…")
+                      : t("检索文件（fd 正则）…")
+                    : t("搜索当前层文件名…")
                 }
                 className="h-7 text-xs"
                 autoFocus
@@ -499,22 +502,22 @@ export function SearchPanel({
                 <ToggleChip
                   on={fdEnabled}
                   color="blue"
-                  label="递归"
-                  title="递归搜索子目录（fd 引擎，尊重 .gitignore）"
+                  label={t("递归")}
+                  title={t("递归搜索子目录（fd 引擎，尊重 .gitignore）")}
                   onClick={() => setFdEnabled((v) => !v)}
                 />
                 <ToggleChip
                   on={nameHidden}
                   color="green"
-                  label="隐藏"
-                  title="包含隐藏文件 / 目录（. 开头）"
+                  label={t("隐藏")}
+                  title={t("包含隐藏文件 / 目录（. 开头）")}
                   onClick={() => setNameHidden((v) => !v)}
                 />
                 <ToggleChip
                   on={nameCase}
                   color="amber"
                   label="Aa"
-                  title="区分大小写"
+                  title={t("区分大小写")}
                   onClick={() => setNameCase((v) => !v)}
                 />
                 <button
@@ -522,22 +525,22 @@ export function SearchPanel({
                   onClick={() => setNameMode((m) => (m === "regex" ? "glob" : "regex"))}
                   title={
                     nameMode === "regex"
-                      ? "当前：正则匹配，点击切换为通配符（如 *.rs）"
-                      : "当前：通配符匹配，点击切换为正则"
+                      ? t("当前：正则匹配，点击切换为通配符（如 *.rs）")
+                      : t("当前：通配符匹配，点击切换为正则")
                   }
-                  aria-label={`匹配模式：${nameMode === "regex" ? "正则" : "通配符"}`}
+                  aria-label={t("匹配模式：{mode}", { mode: nameMode === "regex" ? t("正则") : t("通配符") })}
                   className="flex h-6 shrink-0 items-center gap-1 rounded-md border border-purple-500/50 bg-purple-500/10 px-2 text-[11px] font-medium text-purple-600 transition-colors hover:bg-purple-500/20 dark:text-purple-400"
                 >
-                  {nameMode === "regex" ? ".* 正则" : "✱ 通配"}
+                  {nameMode === "regex" ? t(".* 正则") : t("✱ 通配")}
                 </button>
               </div>
               <p className="truncate text-[11px] text-muted-foreground">
                 {[
-                  fdEnabled ? "fd 递归中" : "当前层匹配",
-                  nameMode === "glob" ? "通配符" : "正则",
-                  nameHidden ? "含隐藏" : "跳过隐藏",
-                  nameCase ? "区分大小写" : "不区分大小写",
-                  fdEnabled ? "尊重 .gitignore" : `共 ${entries.length} 项`,
+                  fdEnabled ? t("fd 递归中") : t("当前层匹配"),
+                  nameMode === "glob" ? t("通配符") : t("正则"),
+                  nameHidden ? t("含隐藏") : t("跳过隐藏"),
+                  nameCase ? t("区分大小写") : t("不区分大小写"),
+                  fdEnabled ? t("尊重 .gitignore") : t("共 {n} 项", { n: entries.length }),
                 ].join(" · ")}
               </p>
             </>
@@ -547,7 +550,7 @@ export function SearchPanel({
                 ref={contentInputRef}
                 value={cQuery}
                 onChange={(e) => setCQuery(e.target.value)}
-                placeholder={cRegex ? "搜索文件内容（正则）…" : "搜索文件内容…"}
+                placeholder={cRegex ? t("搜索文件内容（正则）…") : t("搜索文件内容…")}
                 className="h-7 text-xs"
                 autoFocus
               />
@@ -555,29 +558,29 @@ export function SearchPanel({
                 <ToggleChip
                   on={recursive}
                   color="blue"
-                  label="递归"
-                  title="递归搜索子目录内容"
+                  label={t("递归")}
+                  title={t("递归搜索子目录内容")}
                   onClick={() => setRecursive((v) => !v)}
                 />
                 <ToggleChip
                   on={cHidden}
                   color="green"
-                  label="隐藏"
-                  title="包含隐藏文件 / 目录（. 开头）"
+                  label={t("隐藏")}
+                  title={t("包含隐藏文件 / 目录（. 开头）")}
                   onClick={() => setCHidden((v) => !v)}
                 />
                 <ToggleChip
                   on={caseSensitive}
                   color="amber"
                   label="Aa"
-                  title="区分大小写"
+                  title={t("区分大小写")}
                   onClick={() => setCaseSensitive((v) => !v)}
                 />
                 <ToggleChip
                   on={cRegex}
                   color="purple"
-                  label=".* 正则"
-                  title="查询词按正则解析（默认字面量匹配）"
+                  label={t(".* 正则")}
+                  title={t("查询词按正则解析（默认字面量匹配）")}
                   onClick={() => setCRegex((v) => !v)}
                 />
               </div>
@@ -591,7 +594,7 @@ export function SearchPanel({
               fdLoading ? (
                 <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
                   <Loader2 className="h-6 w-6 animate-spin" />
-                  <span className="text-xs">检索中…（fd 引擎）</span>
+                  <span className="text-xs">{t("检索中…（fd 引擎）")}</span>
                 </div>
               ) : fdError ? (
                 <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-xs text-destructive">
@@ -606,7 +609,7 @@ export function SearchPanel({
                     <FolderSearch className="h-6 w-6" />
                   )}
                   <span className="text-xs">
-                    {query.trim() ? "无匹配结果" : "输入关键词递归检索"}
+                    {query.trim() ? t("无匹配结果") : t("输入关键词递归检索")}
                   </span>
                 </div>
               ) : (
@@ -646,7 +649,7 @@ export function SearchPanel({
                   })}
                   {fdResults.length >= 500 && (
                     <div className="flex items-center justify-center gap-1 px-2 py-2 text-[11px] text-muted-foreground">
-                      <Zap className="h-3 w-3" /> 已显示前 500 条
+                      <Zap className="h-3 w-3" /> {t("已显示前 500 条")}
                     </div>
                   )}
                 </div>
@@ -654,7 +657,7 @@ export function SearchPanel({
             ) : results.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
                 {query ? <SearchX className="h-6 w-6" /> : <FolderSearch className="h-6 w-6" />}
-                <span className="text-xs">{query ? "无匹配结果" : "输入关键词开始搜索"}</span>
+                <span className="text-xs">{query ? t("无匹配结果") : t("输入关键词开始搜索")}</span>
               </div>
             ) : (
               <div className="pb-6">
@@ -689,7 +692,7 @@ export function SearchPanel({
               <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
                 <Loader2 className="h-6 w-6 animate-spin" />
                 <span className="text-xs">
-                  搜索中…{recursive ? "（递归）" : "（当前层）"}
+                  {t("搜索中…")}{recursive ? t("（递归）") : t("（当前层）")}
                 </span>
               </div>
             ) : cError ? (
@@ -702,15 +705,15 @@ export function SearchPanel({
                 {cQuery.trim() ? (
                   <>
                     <SearchX className="h-6 w-6" />
-                    <span className="text-xs">无匹配结果</span>
+                    <span className="text-xs">{t("无匹配结果")}</span>
                   </>
                 ) : (
                   <>
                     <FileSearch className="h-6 w-6" />
                     <span className="text-xs">
-                      输入关键词搜索文件内容
+                      {t("输入关键词搜索文件内容")}
                       <br />
-                      默认仅当前层，点亮「递归」深入子目录
+                      {t("默认仅当前层，点亮「递归」深入子目录")}
                     </span>
                   </>
                 )}
@@ -760,7 +763,7 @@ export function SearchPanel({
                 })}
                 {cResults.length >= 300 && (
                   <div className="flex items-center justify-center gap-1 px-2 py-2 text-[11px] text-muted-foreground">
-                    <Zap className="h-3 w-3" /> 已显示前 300 条，请缩小关键词范围
+                    <Zap className="h-3 w-3" /> {t("已显示前 300 条，请缩小关键词范围")}
                   </div>
                 )}
               </div>

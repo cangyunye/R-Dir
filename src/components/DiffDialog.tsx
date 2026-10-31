@@ -29,27 +29,38 @@ import { Button } from "@/components/ui/button";
 import { isMac } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
 import { useModalLayer } from "@/hooks/useModalLayer";
+import { useT } from "@/lib/LanguageProvider";
 import { isTopModalLayer } from "@/lib/modal-stack";
 
+// label/hint 存中文原文、渲染时过 t()（extract-keys 的 LITERAL_PROP_FILES 定向提取本文件）
 const LEVELS: { id: DiffLevel; label: string; hint: string }[] = [
   { id: 1, label: "一层·名称", hint: "仅比对文件夹与文件名" },
   { id: 2, label: "二层·大小", hint: "同名文件再比对内容大小" },
   { id: 3, label: "三层·内容", hint: "同名文件再比对 hash 与修改时间" },
 ];
 
-const STATUS_LABEL: Record<string, string> = {
-  "left-only": "仅左侧",
-  "right-only": "仅右侧",
-  different: "不同",
-  same: "相同",
-};
+// 以 { id, label } 数组声明（label: 字面量可被提取），Object.fromEntries 还原查找表
+const STATUS_LABEL = Object.fromEntries(
+  (
+    [
+      { id: "left-only", label: "仅左侧" },
+      { id: "right-only", label: "仅右侧" },
+      { id: "different", label: "不同" },
+      { id: "same", label: "相同" },
+    ] as { id: string; label: string }[]
+  ).map((s) => [s.id, s.label]),
+);
 
-const REASON_LABEL: Record<string, string> = {
-  size: "大小",
-  content: "内容",
-  mtime: "时间",
-  type: "类型",
-};
+const REASON_LABEL = Object.fromEntries(
+  (
+    [
+      { id: "size", label: "大小" },
+      { id: "content", label: "内容" },
+      { id: "mtime", label: "时间" },
+      { id: "type", label: "类型" },
+    ] as { id: string; label: string }[]
+  ).map((s) => [s.id, s.label]),
+);
 
 /** mtime 容差可选值（秒） */
 const MTIME_CHOICES = [0, 1, 2, 5, 30] as const;
@@ -59,6 +70,7 @@ const DIFF_ROW_H = 29;
 const DIFF_BUFFER = 6;
 
 function StatusBadge({ entry }: { entry: DiffEntry }) {
+  const t = useT();
   const cls =
     entry.status === "different"
       ? "bg-destructive/10 text-destructive"
@@ -67,10 +79,10 @@ function StatusBadge({ entry }: { entry: DiffEntry }) {
         : entry.status === "right-only"
           ? "bg-sky-500/15 text-sky-600 dark:text-sky-400"
           : "bg-muted text-muted-foreground";
-  const reason = entry.reason ? `·${REASON_LABEL[entry.reason] ?? entry.reason}` : "";
+  const reason = entry.reason ? `·${t(REASON_LABEL[entry.reason] ?? entry.reason)}` : "";
   return (
     <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", reason && entry.reason === "type" && "ring-1 ring-destructive/40", cls)}>
-      {STATUS_LABEL[entry.status] ?? entry.status}
+      {t(STATUS_LABEL[entry.status] ?? entry.status)}
       {reason}
     </span>
   );
@@ -131,6 +143,7 @@ export function DiffDialog({
 
   /** 当前比对任务 id（取消与进度过滤用） */
   const idRef = useRef<string>("");
+  const t = useT();
 
   // v0.34.1 弹层栈登记（条件渲染，挂载即打开）：本框打开期间 App 暂停全局分发，
   // ⌘⇧F 只由本监听器处理——此前会同时命中全局「切换内容搜索」，把搜索面板
@@ -199,7 +212,7 @@ export function DiffDialog({
         Math.round(mtimeSec * 1000),
       );
       if (outcome.cancelled) {
-        setNotice("已停止比对（结果不完整）");
+        setNotice(t("已停止比对（结果不完整）"));
         return;
       }
       setEntries(outcome.entries);
@@ -216,7 +229,7 @@ export function DiffDialog({
       setComparing(false);
       setProgress(null);
     }
-  }, [leftDir, rightDir, level, caseSensitive, mtimeSec]);
+  }, [leftDir, rightDir, level, caseSensitive, mtimeSec, t]);
 
   useEffect(() => {
     void runCompare();
@@ -345,21 +358,21 @@ export function DiffDialog({
     onSynced?.();
     await runCompare();
     const failed = results.filter((r) => !r.ok).length;
+    const ok = results.length - failed;
     setNotice(
-      `已${direction === "right" ? "向右" : "向左"}同步 ${results.length - failed} 项${
-        failed ? `，失败 ${failed} 项` : ""
-      }`,
+      (direction === "right" ? t("已向右同步 {n} 项", { n: ok }) : t("已向左同步 {n} 项", { n: ok })) +
+        (failed ? t("，失败 {n} 项", { n: failed }) : ""),
     );
     setBusy(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending, entries, selected, leftDir, rightDir, runCompare, onSynced]);
+  }, [pending, entries, selected, leftDir, rightDir, runCompare, onSynced, t]);
 
   const copyLog = () => {
     if (!syncResults) return;
     const text = syncResults
       .map(
         (r) =>
-          `${r.ok ? "OK" : "FAIL"}\t${r.action === "copy" ? "覆盖复制" : "删除"}\t${r.name}${
+          `${r.ok ? "OK" : "FAIL"}\t${r.action === "copy" ? t("覆盖复制") : t("删除")}\t${r.name}${
             r.error ? `\t${r.error}` : ""
           }`,
       )
@@ -386,19 +399,23 @@ export function DiffDialog({
       >
         {/* 标题栏 */}
         <div className="flex items-center justify-between border-b px-4 py-2.5">
-          <div className="text-sm font-semibold">差异比对</div>
+          <div className="text-sm font-semibold">{t("差异比对")}</div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => setMaximized((m) => !m)}
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title={maximized ? `还原窗口（${(isMac ? "F11 / ⌘⇧F" : "F11 / Ctrl+Shift+F")}）` : `最大化（${(isMac ? "F11 / ⌘⇧F" : "F11 / Ctrl+Shift+F")}）`}
+              title={
+                maximized
+                  ? t("还原窗口（{keys}）", { keys: isMac ? "F11 / ⌘⇧F" : "F11 / Ctrl+Shift+F" })
+                  : t("最大化（{keys}）", { keys: isMac ? "F11 / ⌘⇧F" : "F11 / Ctrl+Shift+F" })
+              }
             >
               {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </button>
             <button
               onClick={onClose}
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title="关闭"
+              title={t("关闭")}
             >
               <X className="h-4 w-4" />
             </button>
@@ -412,7 +429,7 @@ export function DiffDialog({
               <button
                 key={l.id}
                 onClick={() => setLevel(l.id)}
-                title={l.hint}
+                title={t(l.hint)}
                 disabled={comparing || busy}
                 className={cn(
                   "rounded px-2 py-1 transition-colors disabled:opacity-50",
@@ -421,16 +438,16 @@ export function DiffDialog({
                     : "text-muted-foreground hover:bg-accent hover:text-foreground",
                 )}
               >
-                {l.label}
+                {t(l.label)}
               </button>
             ))}
           </div>
-          <span className="text-muted-foreground">{LEVELS.find((l) => l.id === level)?.hint}</span>
+          <span className="text-muted-foreground">{t(LEVELS.find((l) => l.id === level)?.hint ?? "")}</span>
 
           <button
             onClick={() => setCaseSensitive((v) => !v)}
             disabled={comparing || busy}
-            title={caseSensitive ? "名称匹配区分大小写（点击改为不区分）" : "名称匹配不区分大小写（点击改为区分）"}
+            title={caseSensitive ? t("名称匹配区分大小写（点击改为不区分）") : t("名称匹配不区分大小写（点击改为区分）")}
             className={cn(
               "rounded border px-2 py-1 font-mono disabled:opacity-50",
               caseSensitive
@@ -442,8 +459,8 @@ export function DiffDialog({
           </button>
 
           {level === 3 && (
-            <label className="flex items-center gap-1 text-muted-foreground" title="修改时间差在此容差内视为相同（跨文件系统精度差异）">
-              时间容差
+            <label className="flex items-center gap-1 text-muted-foreground" title={t("修改时间差在此容差内视为相同（跨文件系统精度差异）")}>
+              {t("时间容差")}
               <select
                 value={mtimeSec}
                 disabled={comparing || busy}
@@ -462,7 +479,7 @@ export function DiffDialog({
           <button
             onClick={() => setOnlyDiff((v) => !v)}
             disabled={stats.diffs === 0}
-            title="仅显示差异条目"
+            title={t("仅显示差异条目")}
             className={cn(
               "rounded border px-2 py-1 disabled:opacity-50",
               onlyDiff
@@ -470,7 +487,7 @@ export function DiffDialog({
                 : "text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
           >
-            只看差异
+            {t("只看差异")}
           </button>
 
           <Button
@@ -485,42 +502,40 @@ export function DiffDialog({
             disabled={comparing || busy}
           >
             {comparing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            重新比对
+            {t("重新比对")}
           </Button>
         </div>
 
         {/* 路径 + 统计 */}
         <div className="grid grid-cols-2 gap-2 border-b px-4 py-2 text-[11px]">
           <div className="truncate" title={leftDir}>
-            <span className="text-muted-foreground">左：</span>
+            <span className="text-muted-foreground">{t("左：")}</span>
             <span className="font-mono">{leftDir}</span>
           </div>
           <div className="truncate" title={rightDir}>
-            <span className="text-muted-foreground">右：</span>
+            <span className="text-muted-foreground">{t("右：")}</span>
             <span className="font-mono">{rightDir}</span>
           </div>
         </div>
         <div className="flex items-center gap-3 border-b bg-muted/20 px-4 py-1.5 text-[11px] text-muted-foreground">
-          <span>
-            差异 <b className="text-foreground">{stats.diffs}</b> 项
-          </span>
-          <span>仅左 {stats.leftOnly}</span>
-          <span>仅右 {stats.rightOnly}</span>
-          <span>不同 {stats.different}</span>
-          <span>相同 {stats.same}</span>
+          <span>{t("差异 {n} 项", { n: stats.diffs })}</span>
+          <span>{t("仅左 {n}", { n: stats.leftOnly })}</span>
+          <span>{t("仅右 {n}", { n: stats.rightOnly })}</span>
+          <span>{t("不同 {n}", { n: stats.different })}</span>
+          <span>{t("相同 {n}", { n: stats.same })}</span>
           <button
             className="ml-auto rounded px-2 py-0.5 hover:bg-accent hover:text-foreground"
             onClick={selectAllDiff}
             disabled={stats.diffs === 0}
           >
-            全选差异
+            {t("全选差异")}
           </button>
           <button
             className="rounded px-2 py-0.5 hover:bg-accent hover:text-foreground"
             onClick={() => setSelected(new Set())}
             disabled={selected.size === 0}
           >
-            清除选择
+            {t("清除选择")}
           </button>
         </div>
 
@@ -532,17 +547,17 @@ export function DiffDialog({
         >
           {comparing && entries.length === 0 ? (
             <div className="flex h-32 items-center justify-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> 正在比对…
+              <Loader2 className="h-4 w-4 animate-spin" /> {t("正在比对…")}
             </div>
           ) : error ? (
             <div className="p-4 text-xs text-destructive">{error}</div>
           ) : visible.length === 0 ? (
             <div className="p-6 text-center text-xs text-muted-foreground">
               {entries.length === 0
-                ? "两个目录均为空"
+                ? t("两个目录均为空")
                 : onlyDiff
-                  ? "没有差异条目"
-                  : "无条目"}
+                  ? t("没有差异条目")
+                  : t("无条目")}
             </div>
           ) : (
             <div className="text-xs">
@@ -564,7 +579,7 @@ export function DiffDialog({
                       const s = e.left ?? e.right;
                       if (s) onLocate?.(side, s.path, s.is_dir);
                     }}
-                    title={locatable ? "双击在对应窗格定位" : undefined}
+                    title={locatable ? t("双击在对应窗格定位") : undefined}
                   >
                     <span className="flex items-center justify-center">
                       <input
@@ -602,7 +617,7 @@ export function DiffDialog({
         {comparing && (
           <div className="flex items-center gap-2 border-t bg-muted/10 px-4 py-2 text-xs">
             <span className="shrink-0 text-muted-foreground">
-              {progress ? (progress.phase === "hash" ? "哈希比对" : "逐条比对") : "准备中"}
+              {progress ? (progress.phase === "hash" ? t("哈希比对") : t("逐条比对")) : t("准备中")}
             </span>
             <span className="w-20 shrink-0 tabular-nums text-muted-foreground">
               {progress ? `${progress.done}/${progress.total}` : "—"}
@@ -613,7 +628,7 @@ export function DiffDialog({
             <span className="w-10 shrink-0 text-right tabular-nums">{pct}%</span>
             <span className="max-w-40 shrink-0 truncate text-muted-foreground">{progress?.current ?? ""}</span>
             <Button variant="outline" size="sm" className="h-7" onClick={stop} disabled={cancelling}>
-              {cancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "停止"}
+              {cancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t("停止")}
             </Button>
           </div>
         )}
@@ -622,28 +637,24 @@ export function DiffDialog({
         {pending && (
           <div className="border-t bg-amber-500/5 px-4 py-2.5 text-xs">
             <div className="font-medium">
-              确认{pending.direction === "right" ? "向右" : "向左"}同步？
+              {pending.direction === "right" ? t("确认向右同步？") : t("确认向左同步？")}
             </div>
             <div className="mt-1 text-muted-foreground">
-              以{pending.direction === "right" ? "左" : "右"}侧为准：覆盖复制{" "}
-              <b className="text-foreground">{pending.copy}</b> 项
-              {pending.del > 0 && (
-                <>
-                  ，删除 <b className="text-destructive">{pending.del}</b> 项（移入回收站）
-                </>
-              )}
-              。
+              {pending.direction === "right"
+                ? t("以左侧为准：覆盖复制 {copy} 项", { copy: pending.copy })
+                : t("以右侧为准：覆盖复制 {copy} 项", { copy: pending.copy })}
+              {pending.del > 0 && t("，删除 {del} 项（移入回收站）", { del: pending.del })}。
             </div>
             <div className="mt-2 flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setPending(null)}>
-                取消
+                {t("取消")}
               </Button>
               <Button
                 variant={pending.del > 0 ? "destructive" : "default"}
                 size="sm"
                 onClick={() => void confirmSync()}
               >
-                确认同步
+                {t("确认同步")}
               </Button>
             </div>
           </div>
@@ -655,28 +666,31 @@ export function DiffDialog({
             <div className="flex items-center gap-2">
               <span className="flex items-center gap-1">
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                成功 {syncResults.filter((r) => r.ok).length} / {syncResults.length}
+                {t("成功 {ok} / {total}", {
+                  ok: syncResults.filter((r) => r.ok).length,
+                  total: syncResults.length,
+                })}
               </span>
               {syncResults.some((r) => !r.ok) && (
                 <span className="flex items-center gap-1 text-destructive">
-                  <XCircle className="h-3.5 w-3.5" /> 失败 {syncResults.filter((r) => !r.ok).length}
+                  <XCircle className="h-3.5 w-3.5" /> {t("失败 {n}", { n: syncResults.filter((r) => !r.ok).length })}
                 </span>
               )}
               <button className="rounded px-2 py-0.5 hover:bg-accent" onClick={() => setLogOpen((o) => !o)}>
-                {logOpen ? "收起" : "展开"}
+                {logOpen ? t("收起") : t("展开")}
               </button>
               <button className="flex items-center gap-1 rounded px-2 py-0.5 hover:bg-accent" onClick={copyLog}>
-                <Copy className="h-3 w-3" /> 复制日志
+                <Copy className="h-3 w-3" /> {t("复制日志")}
               </button>
               <button className="ml-auto rounded px-2 py-0.5 hover:bg-accent" onClick={() => setSyncResults(null)}>
-                清除
+                {t("清除")}
               </button>
             </div>
             {logOpen && (
               <div className="mt-1 max-h-28 overflow-y-auto rounded border bg-muted/20 p-1.5 font-mono text-[11px]">
                 {syncResults.map((r, i) => (
                   <div key={`${r.name}-${i}`} className={cn(!r.ok && "text-destructive")}>
-                    {r.ok ? "✓" : "✗"} {r.action === "copy" ? "覆盖复制" : "删除"} {r.name}
+                    {r.ok ? "✓" : "✗"} {r.action === "copy" ? t("覆盖复制") : t("删除")} {r.name}
                     {r.error ? ` — ${r.error}` : ""}
                   </div>
                 ))}
@@ -689,7 +703,7 @@ export function DiffDialog({
         <div className="flex items-center gap-2 border-t px-4 py-2">
           {notice && <span className="truncate text-xs text-emerald-600">{notice}</span>}
           {error && <span className="truncate text-xs text-destructive">{error}</span>}
-          <span className="text-[11px] text-muted-foreground">已选 {selected.size} 项</span>
+          <span className="text-[11px] text-muted-foreground">{t("已选 {n} 项", { n: selected.size })}</span>
           <div className="ml-auto flex items-center gap-2">
             <Button
               variant="outline"
@@ -697,9 +711,9 @@ export function DiffDialog({
               className="gap-1"
               disabled={busy || comparing || selected.size === 0}
               onClick={() => requestSync("left")}
-              title="以右侧为准，同步到左侧（覆盖/删除左侧差异）"
+              title={t("以右侧为准，同步到左侧（覆盖/删除左侧差异）")}
             >
-              <ArrowLeft className="h-3.5 w-3.5" /> 向左同步
+              <ArrowLeft className="h-3.5 w-3.5" /> {t("向左同步")}
             </Button>
             <Button
               variant="outline"
@@ -707,12 +721,12 @@ export function DiffDialog({
               className="gap-1"
               disabled={busy || comparing || selected.size === 0}
               onClick={() => requestSync("right")}
-              title="以左侧为准，同步到右侧（覆盖/删除右侧差异）"
+              title={t("以左侧为准，同步到右侧（覆盖/删除右侧差异）")}
             >
-              向右同步 <ArrowRight className="h-3.5 w-3.5" />
+              {t("向右同步")} <ArrowRight className="h-3.5 w-3.5" />
             </Button>
             <Button size="sm" onClick={onClose} disabled={busy}>
-              关闭
+              {t("关闭")}
             </Button>
           </div>
         </div>

@@ -303,7 +303,7 @@ fn plan_remote_boxed<'a>(
         let entries = g.list_dir(remote).await?;
         for (name, attrs) in entries {
             if cancelled.load(Ordering::Relaxed) {
-                return Err("已取消".into());
+                return Err(crate::ERR_CANCELLED.into());
             }
             if attrs.is_dir {
                 let child = join_remote(remote, &name);
@@ -350,12 +350,12 @@ pub async fn upload_path(
         upload_dir_boxed(&mut g, src, &remote, src, cb).await?;
     } else {
         if !cb(XferEvent::Start(name.to_string())) {
-            return Err("已取消".into());
+            return Err(crate::ERR_CANCELLED.into());
         }
         let mut fcb = |done, total| cb(XferEvent::Bytes(done, total));
         g.upload(src, &remote, &mut fcb).await?;
         if !cb(XferEvent::EntryDone) {
-            return Err("已取消".into());
+            return Err(crate::ERR_CANCELLED.into());
         }
     }
     Ok(format!("sftp://{authority}{remote}"))
@@ -388,12 +388,12 @@ fn upload_dir_boxed<'a>(
                     .to_string_lossy()
                     .to_string();
                 if !cb(XferEvent::Start(rel)) {
-                    return Err("已取消".into());
+                    return Err(crate::ERR_CANCELLED.into());
                 }
                 let mut fcb = |done, total| cb(XferEvent::Bytes(done, total));
                 g.upload(&child, &remote_child, &mut fcb).await?;
                 if !cb(XferEvent::EntryDone) {
-                    return Err("已取消".into());
+                    return Err(crate::ERR_CANCELLED.into());
                 }
             }
             // 其余类型（套接字等非常规条目）跳过
@@ -437,12 +437,12 @@ pub async fn download_to(
         download_dir_boxed(&mut g, &remote, &dest, cb).await?;
     } else {
         if !cb(XferEvent::Start(name)) {
-            return Err("已取消".into());
+            return Err(crate::ERR_CANCELLED.into());
         }
         let mut fcb = |done, total| cb(XferEvent::Bytes(done, total));
         g.download(&remote, &dest, &mut fcb).await?;
         if !cb(XferEvent::EntryDone) {
-            return Err("已取消".into());
+            return Err(crate::ERR_CANCELLED.into());
         }
     }
     Ok(dest.to_string_lossy().to_string())
@@ -468,12 +468,12 @@ fn download_dir_boxed<'a>(
                 download_dir_boxed(g, &remote_child, &dest_child, &mut *cb).await?;
             } else {
                 if !cb(XferEvent::Start(name)) {
-                    return Err("已取消".into());
+                    return Err(crate::ERR_CANCELLED.into());
                 }
                 let mut fcb = |done, total| cb(XferEvent::Bytes(done, total));
                 g.download(&remote_child, &dest_child, &mut fcb).await?;
                 if !cb(XferEvent::EntryDone) {
-                    return Err("已取消".into());
+                    return Err(crate::ERR_CANCELLED.into());
                 }
             }
         }
@@ -753,7 +753,7 @@ mod tests {
             let remote2 = format!("/tmp/rdir-sftp-it-{}-cancel.bin", std::process::id());
             let r = g.upload(&local, &remote2, |_done, _total| false).await;
             assert!(r.is_err(), "取消应报错");
-            assert!(format!("{:?}", r.unwrap_err()).contains("取消"));
+            assert!(format!("{:?}", r.unwrap_err()).contains("CANCELLED"));
             assert!(g.stat(&remote2).await.is_err(), "远端半成品应被删除");
 
             // 清理

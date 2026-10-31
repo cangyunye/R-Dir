@@ -13,6 +13,9 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { basename, formatSize } from "@/lib/format";
+// 模块级函数（markTooltip/statusLabel）用模块 t；组件内 useT 的同名 const 合法遮蔽
+import { t } from "@/lib/i18n";
+import { useT } from "@/lib/LanguageProvider";
 import type { DiffEntry } from "@/lib/types";
 import type { DiffMark, LinkAlignment, SyncLink } from "@/lib/sync-link";
 import { useModalLayer } from "@/hooks/useModalLayer";
@@ -35,38 +38,42 @@ export function markColor(mark: DiffMark): string {
   return MARK_COLORS[mark.status];
 }
 
+// 返回值为展示 key（经模块级 translate 翻译；FileList 等外部调用点直接用返回值，无需再包 t）
 export function markTooltip(mark: DiffMark): string {
   switch (mark.status) {
     case "left-only":
-      return "仅左侧有此条目";
+      return t("仅左侧有此条目");
     case "right-only":
-      return "仅右侧有此条目";
+      return t("仅右侧有此条目");
     default:
-      if (mark.reason === "type") return "类型不同（一侧为文件夹）";
+      if (mark.reason === "type") return t("类型不同（一侧为文件夹）");
       if (mark.reason === "eol") {
-        return "仅换行符不同（一侧 CRLF/DOS ↔ 一侧 LF/UNIX，其余内容相同）";
+        return t("仅换行符不同（一侧 CRLF/DOS ↔ 一侧 LF/UNIX，其余内容相同）");
       }
       if (mark.reason === "size") {
-        return `两侧大小不同（左 ${formatSize(mark.leftSize ?? 0)} · 右 ${formatSize(mark.rightSize ?? 0)}）`;
+        return t("两侧大小不同（左 {l} · 右 {r}）", {
+          l: formatSize(mark.leftSize ?? 0),
+          r: formatSize(mark.rightSize ?? 0),
+        });
       }
-      return "两侧内容不同";
+      return t("两侧内容不同");
   }
 }
 
 function statusLabel(e: DiffEntry): { text: string; className: string } {
   switch (e.status) {
     case "left-only":
-      return { text: "仅左侧", className: "text-amber-600 dark:text-amber-400" };
+      return { text: t("仅左侧"), className: "text-amber-600 dark:text-amber-400" };
     case "right-only":
-      return { text: "仅右侧", className: "text-sky-600 dark:text-sky-400" };
+      return { text: t("仅右侧"), className: "text-sky-600 dark:text-sky-400" };
     case "same":
-      return { text: "相同", className: "text-muted-foreground" };
+      return { text: t("相同"), className: "text-muted-foreground" };
     default:
-      if (e.reason === "type") return { text: "类型不同", className: "text-red-600 dark:text-red-400" };
+      if (e.reason === "type") return { text: t("类型不同"), className: "text-red-600 dark:text-red-400" };
       if (e.reason === "eol") {
-        return { text: "仅换行符", className: "text-violet-600 dark:text-violet-400" };
+        return { text: t("仅换行符"), className: "text-violet-600 dark:text-violet-400" };
       }
-      return { text: "不同", className: "text-red-600 dark:text-red-400" };
+      return { text: t("不同"), className: "text-red-600 dark:text-red-400" };
   }
 }
 
@@ -104,23 +111,24 @@ export function SyncDiffStatusBar({
 }) {
   const tone =
     summary.status === "error" ? "error" : summary.diverged ? "warn" : "ok";
+  const t = useT();
   const text =
     summary.status === "running"
-      ? "比对中…"
+      ? t("比对中…")
       : summary.status === "error"
-        ? "比对失败"
+        ? t("比对失败")
         : summary.status === "cancelled"
-          ? "已取消"
+          ? t("已取消")
           : summary.diverged
-            ? `未对齐 · ${summary.total} 项`
+            ? t("未对齐 · {n} 项", { n: summary.total })
             : summary.diffCount > 0
-              ? `${summary.total} 项 · ${summary.diffCount} 差异`
-              : `${summary.total} 项 · 一致`;
+              ? t("{n} 项 · {d} 差异", { n: summary.total, d: summary.diffCount })
+              : t("{n} 项 · 一致", { n: summary.total });
   return (
     <button
       data-sync-diff-status={tone}
       onClick={onOpen}
-      title="查看同步比对结果（Ctrl+Shift+X）"
+      title={t("查看同步比对结果（Ctrl+Shift+X）")}
       className={cn(
         "flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] hover:bg-muted",
         tone === "error" && "border-red-500/40 text-red-600 dark:text-red-400",
@@ -180,6 +188,7 @@ export function SyncDiffModal({
   onClose,
 }: SyncDiffModalProps) {
   const [onlyDiff, setOnlyDiff] = useState(false);
+  const t = useT();
 
   // Esc 关闭(捕获阶段,与 SettingsDialog 同模式)。
   // v0.34.1 弹层栈登记：更高层弹层（文本比对等）打开时让位，避免一次 Esc 关多层
@@ -236,9 +245,12 @@ export function SyncDiffModal({
   const aligned = alignment.state === "aligned";
   const missingText =
     alignment.state === "diverged" && alignment.outsideRoot
-      ? "一侧已离开链接根目录"
+      ? t("一侧已离开链接根目录")
       : alignment.state === "diverged" && alignment.missing
-        ? `两侧不同层：${alignment.missingSide === "left" ? "右侧" : "左侧"}无 "${alignment.missing}"`
+        ? t("两侧不同层：{side}无 \"{name}\"", {
+            side: alignment.missingSide === "left" ? t("右侧") : t("左侧"),
+            name: alignment.missing,
+          })
         : null;
   const canReturn = alignment.state === "diverged" && !!alignment.missingSide;
   const canCreate =
@@ -246,12 +258,12 @@ export function SyncDiffModal({
 
   const statusText =
     status === "running"
-      ? "比对中…"
+      ? t("比对中…")
       : status === "error"
-        ? "比对失败"
+        ? t("比对失败")
         : status === "cancelled"
-          ? "已取消"
-          : `${entries?.length ?? 0} 项`;
+          ? t("已取消")
+          : t("{n} 项", { n: entries?.length ?? 0 });
 
   return (
     <div
@@ -272,7 +284,7 @@ export function SyncDiffModal({
         {/* 头部 */}
         <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
           <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="shrink-0 text-sm font-semibold">同步比对</span>
+          <span className="shrink-0 text-sm font-semibold">{t("同步比对")}</span>
           <span
             className={cn(
               "inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-[10px] font-medium",
@@ -281,7 +293,7 @@ export function SyncDiffModal({
                 : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
             )}
           >
-            {aligned ? "已对齐" : "未对齐"}
+            {aligned ? t("已对齐") : t("未对齐")}
           </span>
           <SideChip side="left" path={leftPath} />
           <span className="text-[10px] text-muted-foreground">⇄</span>
@@ -301,7 +313,7 @@ export function SyncDiffModal({
             size="icon"
             className="h-7 w-7 shrink-0"
             onClick={onClose}
-            title="关闭（Esc）"
+            title={t("关闭（Esc）")}
           >
             <X className="h-4 w-4" />
           </Button>
@@ -311,20 +323,20 @@ export function SyncDiffModal({
         {missingText && (
           <div className="flex shrink-0 items-center gap-2 border-b bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            <span className="min-w-0 truncate">{missingText}，更深层暂不比对。</span>
+            <span className="min-w-0 truncate">{missingText}{t("，更深层暂不比对。")}</span>
             <span className="ml-auto flex shrink-0 items-center gap-1">
               {canCreate && (
                 <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={onCreateMissing}>
-                  <FolderPlus className="mr-1 h-3 w-3" /> 在对侧新建并进入
+                  <FolderPlus className="mr-1 h-3 w-3" /> {t("在对侧新建并进入")}
                 </Button>
               )}
               {canReturn && (
                 <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={onReturnAlign}>
-                  返回对齐
+                  {t("返回对齐")}
                 </Button>
               )}
               <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={onUnlink}>
-                断开链接
+                {t("断开链接")}
               </Button>
             </span>
           </div>
@@ -337,24 +349,24 @@ export function SyncDiffModal({
             size="sm"
             className={cn("h-7 px-2 text-xs", onlyDiff && "bg-accent text-accent-foreground")}
             onClick={() => setOnlyDiff((v) => !v)}
-            title="只显示存在差异的条目"
+            title={t("只显示存在差异的条目")}
           >
-            只看差异
+            {t("只看差异")}
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onSwap} title="交换左右方位后重算">
-            <ArrowLeftRight className="mr-1 h-3 w-3" /> 交换左右
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onSwap} title={t("交换左右方位后重算")}>
+            <ArrowLeftRight className="mr-1 h-3 w-3" /> {t("交换左右")}
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onRealign} title="两侧跳回链接锚点">
-            <Undo2 className="mr-1 h-3 w-3" /> 重新对齐
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onRealign} title={t("两侧跳回链接锚点")}>
+            <Undo2 className="mr-1 h-3 w-3" /> {t("重新对齐")}
           </Button>
           <Button
             variant="ghost"
             size="sm"
             className="ml-auto h-7 px-2 text-xs text-red-600 hover:text-red-700 dark:text-red-400"
             onClick={onUnlink}
-            title="断开链接并关闭面板"
+            title={t("断开链接并关闭面板")}
           >
-            <Link2Off className="mr-1 h-3 w-3" /> 断开链接
+            <Link2Off className="mr-1 h-3 w-3" /> {t("断开链接")}
           </Button>
         </div>
 
@@ -368,14 +380,14 @@ export function SyncDiffModal({
             className="sticky top-0 grid items-center border-b bg-muted/40 text-[11px] font-medium text-muted-foreground"
             style={{ gridTemplateColumns: GRID_COLS }}
           >
-            <span className="px-2 py-1">名称</span>
-            <span className="px-2 py-1 text-right">左大小</span>
-            <span className="px-2 py-1 text-right">右大小</span>
-            <span className="px-2 py-1">状态</span>
+            <span className="px-2 py-1">{t("名称")}</span>
+            <span className="px-2 py-1 text-right">{t("左大小")}</span>
+            <span className="px-2 py-1 text-right">{t("右大小")}</span>
+            <span className="px-2 py-1">{t("状态")}</span>
           </div>
           {rows.length === 0 ? (
             <div className="px-2 py-6 text-center text-xs text-muted-foreground">
-              {status === "running" ? "正在比对…" : entries && entries.length > 0 ? "没有差异条目" : "（空目录）"}
+              {status === "running" ? t("正在比对…") : entries && entries.length > 0 ? t("没有差异条目") : t("（空目录）")}
             </div>
           ) : (
             <>
@@ -397,7 +409,7 @@ export function SyncDiffModal({
                   style={{ gridTemplateColumns: GRID_COLS }}
                   title={
                     comparable
-                      ? "双击直接文本比较两侧同名文件"
+                      ? t("双击直接文本比较两侧同名文件")
                       : e.left?.path && e.right?.path
                         ? `${e.left.path} ⇄ ${e.right.path}`
                         : e.left?.path ?? e.right?.path
@@ -418,7 +430,7 @@ export function SyncDiffModal({
                     {comparable && (
                       <button
                         className="shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-accent group-hover:opacity-70"
-                        title="文本比较这两个文件"
+                        title={t("文本比较这两个文件")}
                         onClick={() => onCompare!(e.left!.path, e.right!.path, e.name)}
                       >
                         <GitCompare className="h-3 w-3" />
