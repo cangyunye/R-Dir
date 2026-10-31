@@ -9,7 +9,7 @@
  * 模块级默认包。
  */
 
-export type Language = "zh" | "en" | "de" | "ja" | "pt" | "es";
+export type Language = "zh" | "zh-Hant" | "en" | "de" | "ja" | "pt" | "es";
 
 /** 语言包（@rdir/l10n/packs/*.json 的形状，见 R-Dir-L10n/schema/pack.schema.json） */
 export type Pack = {
@@ -72,7 +72,7 @@ export function isCancelledError(msg: string): boolean {
 export function loadLanguage(): Language {
   try {
     const v = localStorage.getItem(LANG_STORAGE_KEY);
-    if (v === "zh" || v === "en" || v === "de" || v === "ja" || v === "pt" || v === "es") return v;
+    if (v === "zh" || v === "zh-Hant" || v === "en" || v === "de" || v === "ja" || v === "pt" || v === "es") return v;
   } catch {
     /* localStorage 不可用（隐私模式等），用默认中文 */
   }

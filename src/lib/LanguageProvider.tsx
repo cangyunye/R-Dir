@@ -9,6 +9,7 @@ import enPack from "@rdir/l10n/packs/en.json";
 import esPack from "@rdir/l10n/packs/es.json";
 import jaPack from "@rdir/l10n/packs/ja.json";
 import ptPack from "@rdir/l10n/packs/pt.json";
+import zhHantPack from "@rdir/l10n/packs/zh-Hant.json";
 import {
   setPack,
   t as translate,
@@ -20,6 +21,7 @@ import {
 /** 构建期内置语言包表；zh 不需要包（key 即中文原文），新增内置语言在此挂载 */
 const BUILTIN_PACKS: Record<Exclude<Language, "zh">, Pack> = {
   en: enPack,
+  "zh-Hant": zhHantPack,
   de: dePack,
   ja: jaPack,
   pt: ptPack,

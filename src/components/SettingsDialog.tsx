@@ -453,7 +453,8 @@ export function SettingsDialog({
                         className="rounded border bg-background px-2 py-1 text-xs"
                         aria-label={t("界面语言")}
                       >
-                        <option value="zh">中文</option>
+                        <option value="zh">中文简体</option>
+                        <option value="zh-Hant">中文繁體</option>
                         <option value="en">English</option>
                         <option value="de">Deutsch</option>
                         <option value="ja">日本語</option>
