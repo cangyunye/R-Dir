@@ -533,7 +533,7 @@ export function Sidebar({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    <ScrollArea className="w-44 shrink-0 border-r bg-sidebar">
+    <ScrollArea className="w-44 shrink-0 border-r bg-sidebar select-none">
       <div className="flex flex-col gap-4 p-2">
         {/* 快速访问（内置 + 用户自定义） */}
         <div>

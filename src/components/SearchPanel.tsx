@@ -589,7 +589,7 @@ export function SearchPanel({
         </div>
 
         <TabsContent value="name" className="mt-0 min-h-0 flex-1">
-          <ScrollArea className="h-full">
+          <ScrollArea className="h-full select-none">
             {fdEnabled ? (
               fdLoading ? (
                 <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
@@ -687,7 +687,7 @@ export function SearchPanel({
         </TabsContent>
 
         <TabsContent value="content" className="mt-0 min-h-0 flex-1">
-          <ScrollArea className="h-full">
+          <ScrollArea className="h-full select-none">
             {cLoading ? (
               <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
                 <Loader2 className="h-6 w-6 animate-spin" />

@@ -313,7 +313,7 @@ export function Toolbar({
   }, [draft, cwd, onNavigate, onRevealFile, closeCompletion, tryRunCommand, t]);
 
   return (
-    <div className="flex h-10 items-center gap-1 border-b bg-background px-2">
+    <div className="flex h-10 items-center gap-1 border-b bg-background px-2 select-none">
       <Button
         variant="ghost"
         size="icon"

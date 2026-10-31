@@ -30,7 +30,7 @@ export const PropertiesBar = memo(function PropertiesBar({
   const t = useT();
 
   return (
-    <div className="flex h-8 shrink-0 items-center gap-4 overflow-x-auto border-t bg-sidebar px-3 text-xs">
+    <div className="flex h-8 shrink-0 items-center gap-4 overflow-x-auto border-t bg-sidebar px-3 text-xs select-none">
       {selectedEntries.length === 1 ? (
         (() => {
           const e = selectedEntries[0];
