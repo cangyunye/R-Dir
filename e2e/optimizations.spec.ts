@@ -58,9 +58,9 @@ test.describe("29A. 侧边栏标签新增（上限 10）", () => {
 
     const row = page.getByTitle(/查看「紧急」标签的文件/);
     await expect(row).toBeVisible();
-    // 点击选中新标签 → 标签视图横幅
+    // 点击选中新标签 → 标签视图 Hero 横幅显示标签名（v0.39 横幅改版：标签名直显，不再有「标签：」前缀）
     await row.click();
-    await expect(page.getByText("标签：紧急")).toBeVisible();
+    await expect(page.locator("[data-tagview-hero]").getByText("紧急", { exact: true })).toBeVisible();
   });
 
   test("T2A 大图标网格内重命名：逐键输入生效（v0.28 重命名回归）", async ({ page }) => {
