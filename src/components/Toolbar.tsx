@@ -26,6 +26,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
+import { terr } from "@/lib/i18n";
 import { completeCommands, completePath, listDir, resolvePath, runCommand, statPath } from "@/lib/api";
 import { firstCommandToken, hasScheme, isCommandToken } from "@/lib/cmdline";
 import { splitPathSegments } from "@/lib/path-segments";
@@ -235,7 +236,8 @@ export function Toolbar({
   );
 
   /** 在终端中执行命令：成功退出编辑态（当前路径不变），失败就地红字提示。
-   * notFoundPrefix 非空时把后端「未找到命令」合并为该前缀文案（路径兜底场景两个词都不是）。 */
+   * notFoundPrefix 非空时把后端「未找到命令」（CMD_NOT_FOUND|详情）合并为该前缀文案
+   * （路径兜底场景两个词都不是）；其余错误过 terr 剥码（zh 显示与码化前一致）。 */
   const tryRunCommand = useCallback(
     async (input: string, notFoundPrefix: string | null) => {
       setPathError(null);
@@ -247,9 +249,9 @@ export function Toolbar({
       } catch (e) {
         const msg = String(e);
         setPathError(
-          msg.includes("未找到命令") && notFoundPrefix
+          msg.startsWith("CMD_NOT_FOUND") && notFoundPrefix
             ? `${notFoundPrefix}：${input}`
-            : msg,
+            : terr(msg),
         );
         return false;
       }

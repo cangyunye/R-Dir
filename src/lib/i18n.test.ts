@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { setPack, t, terr, type Pack } from "./i18n";
+import { isCancelledError, setPack, t, terr, type Pack } from "./i18n";
 
 const fakePack: Pack = {
   meta: { id: "xx", name: "Test", version: "0.1.0" },
@@ -46,10 +46,12 @@ describe("terr：错误码解析", () => {
     expect(terr("读取目录失败：权限不足")).toBe("读取目录失败：权限不足");
   });
 
-  it("无包时码串原样透传（过渡期中文兜底）", () => {
+  it("无包时纯码原样透传，带详情剥码留详情（zh 显示与码化前一致）", () => {
     setPack(null);
     expect(terr("CANCELLED")).toBe("CANCELLED");
-    expect(terr("CANCELLED|用户取消")).toBe("CANCELLED|用户取消");
+    expect(terr("CMD_NOT_FOUND|未找到命令：foo（不在 PATH 中）")).toBe(
+      "未找到命令：foo（不在 PATH 中）",
+    );
   });
 
   it("有包时码查表翻译，详情原样保留", () => {
@@ -59,9 +61,10 @@ describe("terr：错误码解析", () => {
     expect(terr("CANCELLED|用户取消")).toBe("Cancelled：用户取消");
   });
 
-  it("未知码原样透传", () => {
+  it("未知码：纯码原样透传，带详情剥码留详情", () => {
     setPack(fakePack);
-    expect(terr("SOME_NEW_CODE|详情")).toBe("SOME_NEW_CODE|详情");
+    expect(terr("SOME_NEW_CODE")).toBe("SOME_NEW_CODE");
+    expect(terr("SOME_NEW_CODE|详情")).toBe("详情");
   });
 
   it("NEED_MASTER_KEY 冒号格式不按码处理，原样透传", () => {
@@ -69,5 +72,19 @@ describe("terr：错误码解析", () => {
     expect(terr("NEED_MASTER_KEY: 需要输入主密钥以解密已保存的密码")).toBe(
       "NEED_MASTER_KEY: 需要输入主密钥以解密已保存的密码",
     );
+  });
+});
+
+describe("isCancelledError：按码判定取消", () => {
+  it("纯码与码|详情均判定为取消", () => {
+    expect(isCancelledError("CANCELLED")).toBe(true);
+    expect(isCancelledError("CANCELLED|已取消")).toBe(true);
+  });
+
+  it("非取消错误不误判（含「取消」字样的中文、其他码）", () => {
+    expect(isCancelledError("已取消")).toBe(false);
+    expect(isCancelledError("无法取消关联：被占用")).toBe(false);
+    expect(isCancelledError("NEED_PASSWORD")).toBe(false);
+    expect(isCancelledError("")).toBe(false);
   });
 });

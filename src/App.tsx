@@ -144,6 +144,7 @@ import {
 } from "@/lib/paneTree";
 import { ACTIONS, bindingOf, findAction, isMac, keyEventString } from "@/lib/keymap";
 import { loadLanguage, type Language } from "@/lib/i18n";
+import { isCancelledError, terr } from "@/lib/i18n";
 import { LanguageProvider } from "@/lib/LanguageProvider";
 import { serializeSession, serializeSessionTab, sessionSignature } from "@/lib/session";
 import { getNativeDragOut, probeNativeDragOut, setNativeDragOut, getHtml5Drag, setHtml5Drag, canNativeDragOut } from "@/lib/native-drag";
@@ -719,7 +720,9 @@ useEffect(() => {
   // 随反复开关大目录单调增长，重启前不释放 → FIFO 保留最近 20 条。
   const closedTabsRef = useRef<{ tab: TabState; index: number }[]>([]);
 
-  const showError = useCallback((msg: string) => {
+  /** 展示统一过 terr：码化错误串（CODE|详情）→ 当前语言文案；zh 剥码留详情，与码化前一致 */
+  const showError = useCallback((raw: string) => {
+    const msg = terr(raw);
     setNotice(msg);
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
     noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
@@ -730,11 +733,13 @@ useEffect(() => {
   const showTransferError = useCallback(
     (e: unknown) => {
       const msg = String(e);
-      if (msg.includes("取消")) {
+      // 按码判定取消（i18n-error-codes：Rust 取消路径统一产出 CANCELLED）
+      if (isCancelledError(msg)) {
         showError("已取消");
         return;
       }
-      flashErrorTip(msg);
+      const translated = terr(msg);
+      flashErrorTip(translated);
       showError(msg);
     },
     [flashErrorTip, showError],
@@ -4140,14 +4145,14 @@ useEffect(() => {
           showError(`已解压到 ${basename(out.dest)}（${out.files} 项）`);
         } catch (e) {
           const msg = String(e);
-          if (msg === "需要密码" || msg === "密码错误") {
+          if (msg === "NEED_PASSWORD" || msg === "WRONG_PASSWORD") {
             // 密码框内就地重试，true = 已解压成功
             const ok = await promptExtractPassword({
               name: a.name,
               archivePath: a.path,
               targetDir,
               paneId,
-              wrong: msg === "密码错误",
+              wrong: msg === "WRONG_PASSWORD",
             });
             if (!ok) return;
             continue;
@@ -5107,11 +5112,11 @@ useEffect(() => {
             extractPw.resolve(true);
           } catch (e) {
             const msg = String(e);
-            if (msg === "需要密码" || msg === "密码错误") {
+            if (msg === "NEED_PASSWORD" || msg === "WRONG_PASSWORD") {
               setExtractPw({ ...extractPw, wrong: true });
               throw new Error("密码不正确，请重试");
             }
-            if (msg.includes("取消")) {
+            if (isCancelledError(msg)) {
               showError("已取消");
             } else {
               showTransferError(e);

@@ -53,8 +53,19 @@ export function terr(msg: string, pack: Pack | null = current): string {
   if (!CODE_RE.test(msg)) return msg;
   const [code, ...rest] = msg.split("|");
   const translated = pack?.errors[code];
-  if (!translated) return msg;
-  return rest.length > 0 ? `${translated}：${rest.join("|")}` : translated;
+  if (translated) {
+    return rest.length > 0 ? `${translated}：${rest.join("|")}` : translated;
+  }
+  // 无包（zh）或未知码：有详情时剥掉码前缀只留详情（zh 显示与码化前逐字一致），纯码原样透传
+  return rest.length > 0 ? rest.join("|") : msg;
+}
+
+/** 取消错误码（Rust 各取消路径统一产出；前端据此把取消与真错误区分开） */
+export const ERR_CANCELLED = "CANCELLED";
+
+/** 判定错误串是否为取消（码或码|详情）——替代旧的 msg.includes("取消") 中文匹配 */
+export function isCancelledError(msg: string): boolean {
+  return msg === ERR_CANCELLED || msg.startsWith(`${ERR_CANCELLED}|`);
 }
 
 /** 读取持久化语言（rfm.language），缺省/非法值回退 zh */
