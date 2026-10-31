@@ -10,6 +10,14 @@ describe("地址栏命令判定（v0.22.0）", () => {
       expect(hasScheme("/local/path")).toBe(false);
       expect(hasScheme("git")).toBe(false);
     });
+    it("v0.39 通用化：smb/nfs 等新协议 scheme 同样命中（此前漏判致地址栏输入被拼进 cwd）", () => {
+      expect(hasScheme("smb://172.20.214.44")).toBe(true);
+      expect(hasScheme("nfs://h1/export")).toBe(true);
+      expect(hasScheme("ftp://h")).toBe(true);
+      expect(hasScheme("my-scheme+1.2://h")).toBe(true);
+      expect(hasScheme("://no-name")).toBe(false);
+      expect(hasScheme("1bad://h")).toBe(false);
+    });
   });
 
   describe("isCommandToken（单裸词 → 请求命令补全）", () => {

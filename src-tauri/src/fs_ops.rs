@@ -184,8 +184,15 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 /// - 展开 "~" 为主目录；
 /// - 相对路径以 cwd 为基准；
 /// - 词法归一化 "." / ".."（不要求目标存在）。
+/// 带 URL scheme 的输入（sftp://、smb://、nfs://…，v0.39）不参与拼接，原样返回
+/// ——此前 smb:// 未被前端 scheme 枚举放行，在这里被 join 进 cwd 且 "//" 被
+/// 归一成 "\"，出现 `F:\…\smb:\host` 这类坏路径。
 pub fn resolve_path(input: &str, cwd: &str) -> String {
-    let expanded = expand_tilde(input.trim());
+    let trimmed = input.trim();
+    if is_scheme_path(trimmed) {
+        return trimmed.to_string();
+    }
+    let expanded = expand_tilde(trimmed);
     let joined = if expanded.is_absolute() || cwd.trim().is_empty() {
         expanded
     } else {
@@ -194,9 +201,28 @@ pub fn resolve_path(input: &str, cwd: &str) -> String {
     normalize_lexical(&joined).to_string_lossy().to_string()
 }
 
+/// 判定 `xxx://` 形式的 URL scheme 路径（scheme 首字符为字母，其余字母数字 + . -）
+pub fn is_scheme_path(p: &str) -> bool {
+    let Some(idx) = p.find("://") else {
+        return false;
+    };
+    if idx == 0 {
+        return false;
+    }
+    let scheme = &p[..idx];
+    let mut chars = scheme.chars();
+    let first = chars.next().unwrap();
+    first.is_ascii_alphabetic()
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '.' || c == '-')
+}
+
 /// 目录路径补全：输入前缀（支持 "~"），返回匹配的目录完整路径，最多 50 个。
 /// 相对路径以 cwd 为基准；输入以分隔符结尾（或恰为 "~"）时列举该目录内容。
 pub fn complete_path(input: &str, cwd: &str) -> Vec<String> {
+    // scheme 输入（sftp:// 等）不做本地补全（远程补全由前端另一链路处理）
+    if is_scheme_path(input) {
+        return Vec::new();
+    }
     let expanded = expand_tilde(input);
     // 先绝对化，保证相对路径（含 "a/b" 这类多级相对路径）以 cwd 为基准
     let target = if expanded.is_absolute() || cwd.trim().is_empty() {
@@ -457,6 +483,35 @@ mod tests {
         let cwd = tmp("resolve-dot");
         let got = resolve_path("a/../b/./c", &cwd.to_string_lossy());
         assert_eq!(Path::new(&got), cwd.join("b").join("c"));
+    }
+
+    #[test]
+    fn resolve_path_scheme_input_never_joined() {
+        // v0.39 修复：smb:// / nfs:// 输入此前被当相对路径 join 进 cwd 且 // 被归一
+        assert_eq!(
+            resolve_path("smb://172.20.214.44", r"F:\Media"),
+            "smb://172.20.214.44"
+        );
+        assert_eq!(
+            resolve_path("nfs://172.20.214.44/srv/rdir-nfs", r"\\172.20.214.44\rdir"),
+            "nfs://172.20.214.44/srv/rdir-nfs"
+        );
+        assert_eq!(
+            resolve_path("  sftp://u@h:22/a  ", "/tmp"),
+            "sftp://u@h:22/a",
+            "前后空白裁掉后原样返回"
+        );
+        assert!(is_scheme_path("smb://h"));
+        assert!(is_scheme_path("https://x"));
+        assert!(!is_scheme_path(r"C:\x"));
+        assert!(!is_scheme_path(r"\\host\share"));
+        assert!(!is_scheme_path("://no-scheme"));
+        assert!(!is_scheme_path("1bad://h"), "scheme 首字符须为字母");
+    }
+
+    #[test]
+    fn complete_path_scheme_input_empty() {
+        assert!(complete_path("smb://172.20.214.44", "C:\\").is_empty());
     }
 
     #[test]

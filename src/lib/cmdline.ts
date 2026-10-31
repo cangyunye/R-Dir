@@ -4,7 +4,12 @@
  * 是裸词（无分隔符）时才按命令处理。此模块只做纯判定，不发起后端调用。
  */
 
-const SCHEME_RE = /^(sftp|https?|tags):\/\//i;
+/**
+ * 通用 scheme 判定（v0.39 从 (sftp|https?|tags) 枚举通用化）：
+ * smb://、nfs:// 等新协议此前漏判，地址栏输入被当相对路径拼进当前目录。
+ * tags: 虚拟目录形如 tags:xxx（非 xxx://），不在此列（由 VIRTUAL_TAG_RE 处理）。
+ */
+const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
 
 /** 输入串带远程/虚拟 scheme 前缀（这类输入只走导航，不可能是命令） */
 export function hasScheme(s: string): boolean {
