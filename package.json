@@ -14,7 +14,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@rdir/l10n": "github:cangyunye/R-Dir-L10n#v0.1.4",
+    "@rdir/l10n": "github:cangyunye/R-Dir-L10n#v0.1.5",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-opener": "^2",
