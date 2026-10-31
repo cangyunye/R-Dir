@@ -13,12 +13,20 @@
 | **左右分屏 · 彩色标签页** | **SFTP 远程连接** |
 | ![左右分屏](https://cangyunye.github.io/R-Dir-Docs/shots/07-split-row.png) | ![SFTP 远程](https://cangyunye.github.io/R-Dir-Docs/shots/21-sftp-kali-connected.png) |
 
+## 近期功能更新
+
+| 双引擎搜索 · 灯芯开关 | 标签收藏夹 · 标签页布局快照 | 文件预览 · 图文浏览模式 |
+| --- | --- | --- |
+| ![搜索灯芯开关](https://cangyunye.github.io/R-Dir-Docs/shots/09-search-panel.png) | ![标签收藏夹](https://cangyunye.github.io/R-Dir-Docs/shots/27-favorites-panel-saved.png) | ![图文浏览模式](https://cangyunye.github.io/R-Dir-Docs/shots/05-browse-mode.png) |
+
 ## 功能一览
 
 - **多标签 + 分屏**：彩色标签页、拖拽排序、双击重命名；VSCode 式左右 / 上下 / 四宫格分屏，跨窗格拖拽即复制（按 Option/Alt 移动）。
+- **标签收藏夹**：把整个标签页（含分屏树 / 各窗格路径 / 视图模式）存为命名收藏，`Ctrl+B` 打开面板模糊搜索、一键恢复。
 - **浏览与导航**：面包屑地址栏与路径补全、QuickJump 键入即达的模糊定位、侧边栏快速访问 / 磁盘 / Finder 式彩色标签 / 远程服务器、大目录虚拟滚动。
 - **文件操作**：复制 / 剪切 / 粘贴（与系统剪贴板互通）、撤销 / 重做、同名冲突裁决、传输进度与取消、压缩为 zip / tar / tgz、回收站删除、目录属性递归统计。
-- **双引擎搜索**：文件名递归检索（fd 引擎，尊重 `.gitignore`）+ VSCode 风格内容搜索（行号高亮），大小写 / 正则 / 隐藏文件随心切换。
+- **文件预览**：右侧预览栏拉门（全应用共用，内容跟随焦点窗格），图片原图 / GIF 与 txt / md / 代码、数据格式皆可预览；图文浏览模式（`Ctrl+Shift+E`）带底部缩略图条翻阅整个目录。
+- **双引擎搜索**：文件名递归检索（fd 引擎，尊重 `.gitignore`）+ VSCode 风格内容搜索（行号高亮）；灯芯开关一排点亮递归 / 隐藏 / 大小写 / 正则，组合状态实时可见。
 - **比较与同步**：目录差异比对与多选双向同步、按标签同步浏览联动导航、任意两文件行级文本 diff（UTF-8 / GBK / Big5 / Shift_JIS 等多编码）。
 - **远程与网络**：SFTP / SSH 双认证（密码 AES-GCM 加密存储）、HTTP autoindex 目录浏览与断点续传下载、目录 HTTP 分享（token 凭证 + 二维码 + 访问日志）。
 - **打开方式与终端**：按扩展名自定义打开方式、右键在系统终端打开当前目录、地址栏直达 PATH 命令。
