@@ -222,31 +222,34 @@
 }
 
 /* —— 浅色 · 云舒云卷磨砂玻璃 —— */
+/* 主题包（v0.40）：皮肤取值全部经 --glass-* 变量，默认值即本皮肤原色；
+   主题包激活时由 themePacks.ts 从包 token 派生一组 --glass-* 内联变量，
+   面板自动换色，包本身不需要额外字段。 */
 .settings-glass {
-  --background: oklch(0.988 0.007 240);
-  --card: oklch(1 0.004 240);
-  --popover: oklch(1 0.004 240);
-  --muted: oklch(0.955 0.012 240);
-  --muted-foreground: oklch(0.44 0.035 255);
-  --accent: oklch(0.925 0.03 235);
-  --accent-foreground: oklch(0.3 0.09 240);
-  --border: oklch(0.56 0.05 248 / 20%);
-  --input: oklch(0.5 0.03 255 / 22%);
-  --ring: oklch(0.6 0.12 235 / 65%);
+  --background: var(--glass-bg, oklch(0.988 0.007 240));
+  --card: var(--glass-card, oklch(1 0.004 240));
+  --popover: var(--glass-popover, oklch(1 0.004 240));
+  --muted: var(--glass-muted, oklch(0.955 0.012 240));
+  --muted-foreground: var(--glass-muted-fg, oklch(0.44 0.035 255));
+  --accent: var(--glass-accent, oklch(0.925 0.03 235));
+  --accent-foreground: var(--glass-accent-fg, oklch(0.3 0.09 240));
+  --border: var(--glass-border, oklch(0.56 0.05 248 / 20%));
+  --input: var(--glass-input, oklch(0.5 0.03 255 / 22%));
+  --ring: var(--glass-ring, oklch(0.6 0.12 235 / 65%));
   /* 主色微渐变：蓝 → 靛青（135°，色相 +24°、亮度微降），替代大面积纯色蓝 */
-  --primary-grad: linear-gradient(135deg, oklch(0.6 0.135 242), oklch(0.52 0.135 266));
-  --accent-grad: linear-gradient(135deg, oklch(0.93 0.045 235 / 0.82), oklch(0.9 0.06 266 / 0.82));
-  --primary-grad-wash: linear-gradient(135deg, oklch(0.6 0.135 242 / 0.11), oklch(0.52 0.135 266 / 0.11));
+  --primary-grad: var(--glass-primary-grad, linear-gradient(135deg, oklch(0.6 0.135 242), oklch(0.52 0.135 266)));
+  --accent-grad: var(--glass-accent-grad, linear-gradient(135deg, oklch(0.93 0.045 235 / 0.82), oklch(0.9 0.06 266 / 0.82)));
+  --primary-grad-wash: var(--glass-primary-grad-wash, linear-gradient(135deg, oklch(0.6 0.135 242 / 0.11), oklch(0.52 0.135 266 / 0.11)));
   border-radius: 1rem;
-  box-shadow:
+  box-shadow: var(--glass-shadow,
     0 0 0 1px oklch(1 0 0 / 55%),
-    0 24px 64px -16px oklch(0.5 0.08 240 / 38%);
+    0 24px 64px -16px oklch(0.5 0.08 240 / 38%));
   /* 背景层装饰（自上而下）：左上斜向天光 + 三团云影光斑 */
-  background-image:
+  background-image: var(--glass-deco,
     linear-gradient(163deg, oklch(1 0 0 / 50%) 0%, oklch(1 0 0 / 0%) 36%),
     radial-gradient(44rem 22rem at 84% -10%, oklch(0.85 0.075 230 / 55%), transparent 62%),
     radial-gradient(38rem 20rem at -14% 34%, oklch(0.92 0.055 205 / 46%), transparent 62%),
-    radial-gradient(32rem 26rem at 52% 118%, oklch(0.87 0.065 250 / 42%), transparent 60%);
+    radial-gradient(32rem 26rem at 52% 118%, oklch(0.87 0.065 250 / 42%), transparent 60%));
 }
 
 /* 原生 range 不走 token（Chrome 默认蓝），绑到 --primary：浅色品牌蓝、深色金 */
@@ -270,50 +273,50 @@
 
 /* 左栏：比内容更透一层，像独立玻璃片 */
 .settings-glass nav {
-  background: linear-gradient(180deg, oklch(1 0.01 240 / 46%), oklch(1 0.01 240 / 12%));
+  background: var(--glass-nav, linear-gradient(180deg, oklch(1 0.01 240 / 46%), oklch(1 0.01 240 / 12%)));
 }
 
 /* 分区标题：浅色压成青灰、深色镀金（配 .sec-t 类，见 SettingsDialog） */
 .settings-glass .sec-t {
-  color: oklch(0.46 0.055 250);
+  color: var(--glass-ink, oklch(0.46 0.055 250));
   letter-spacing: 0.03em;
 }
 .dark .settings-glass .sec-t {
-  color: oklch(0.85 0.09 92);
+  color: var(--glass-ink, oklch(0.85 0.09 92));
 }
 
 /* —— 深色 · 黑金纹琉璃 —— */
 .dark .settings-glass {
-  --background: oklch(0.155 0.012 260);
-  --card: oklch(0.205 0.016 260);
-  --popover: oklch(0.21 0.014 260);
-  --muted: oklch(0.27 0.014 260);
-  --muted-foreground: oklch(0.77 0.025 260);
-  --accent: oklch(0.33 0.06 88 / 55%);
-  --accent-foreground: oklch(0.91 0.09 92);
-  --border: oklch(0.81 0.11 88 / 26%);
-  --input: oklch(1 0 0 / 12%);
-  --primary: oklch(0.82 0.13 88);
-  --primary-foreground: oklch(0.17 0.025 90);
-  --ring: oklch(0.82 0.13 88 / 60%);
+  --background: var(--glass-bg, oklch(0.155 0.012 260));
+  --card: var(--glass-card, oklch(0.205 0.016 260));
+  --popover: var(--glass-popover, oklch(0.21 0.014 260));
+  --muted: var(--glass-muted, oklch(0.27 0.014 260));
+  --muted-foreground: var(--glass-muted-fg, oklch(0.77 0.025 260));
+  --accent: var(--glass-accent, oklch(0.33 0.06 88 / 55%));
+  --accent-foreground: var(--glass-accent-fg, oklch(0.91 0.09 92));
+  --border: var(--glass-border, oklch(0.81 0.11 88 / 26%));
+  --input: var(--glass-input, oklch(1 0 0 / 12%));
+  --primary: var(--glass-primary, oklch(0.82 0.13 88));
+  --primary-foreground: var(--glass-primary-fg, oklch(0.17 0.025 90));
+  --ring: var(--glass-ring, oklch(0.82 0.13 88 / 60%));
   /* 深色对应微渐变：金 → 琥珀（与浅色蓝→靛青同构） */
-  --primary-grad: linear-gradient(135deg, oklch(0.85 0.115 95), oklch(0.77 0.125 80));
-  --accent-grad: linear-gradient(135deg, oklch(0.36 0.07 98 / 0.6), oklch(0.3 0.06 82 / 0.6));
-  --primary-grad-wash: linear-gradient(135deg, oklch(0.84 0.12 92 / 0.13), oklch(0.74 0.12 78 / 0.13));
-  box-shadow:
+  --primary-grad: var(--glass-primary-grad, linear-gradient(135deg, oklch(0.85 0.115 95), oklch(0.77 0.125 80)));
+  --accent-grad: var(--glass-accent-grad, linear-gradient(135deg, oklch(0.36 0.07 98 / 0.6), oklch(0.3 0.06 82 / 0.6)));
+  --primary-grad-wash: var(--glass-primary-grad-wash, linear-gradient(135deg, oklch(0.84 0.12 92 / 0.13), oklch(0.74 0.12 78 / 0.13)));
+  box-shadow: var(--glass-shadow,
     0 0 0 1px oklch(0.82 0.13 88 / 16%),
     0 0 48px -8px oklch(0.72 0.12 88 / 20%),
-    0 28px 72px -20px rgb(0 0 0 / 82%);
+    0 28px 72px -20px rgb(0 0 0 / 82%));
   /* 背景层装饰（自上而下）：顶部金晕 + 左下暖光 + 金纹 SVG（铺满） */
-  background-image:
+  background-image: var(--glass-deco,
     radial-gradient(34rem 15rem at 76% -12%, oklch(0.74 0.13 88 / 15%), transparent 62%),
     radial-gradient(26rem 12rem at -8% 112%, oklch(0.6 0.1 88 / 9%), transparent 58%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 720 600' fill='none'%3E%3Cg stroke='%23d8b45a' stroke-linecap='round'%3E%3Cpath d='M-20 88 C 140 56, 238 152, 380 118 S 640 58, 760 106' stroke-width='1.5' opacity='.17'/%3E%3Cpath d='M-30 196 C 120 168, 262 258, 420 208 S 660 148, 770 208' stroke-width='1' opacity='.11'/%3E%3Cpath d='M-20 428 C 158 398, 282 502, 460 438 S 680 378, 770 438' stroke-width='1.7' opacity='.15'/%3E%3Cpath d='M-30 522 C 140 500, 298 572, 480 520 S 688 468, 770 518' stroke-width='1' opacity='.1'/%3E%3Cpath d='M330 620 C 360 480, 300 400, 380 300 S 470 180, 430 60' stroke-width='1' opacity='.08'/%3E%3C/g%3E%3C/svg%3E");
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 720 600' fill='none'%3E%3Cg stroke='%23d8b45a' stroke-linecap='round'%3E%3Cpath d='M-20 88 C 140 56, 238 152, 380 118 S 640 58, 760 106' stroke-width='1.5' opacity='.17'/%3E%3Cpath d='M-30 196 C 120 168, 262 258, 420 208 S 660 148, 770 208' stroke-width='1' opacity='.11'/%3E%3Cpath d='M-20 428 C 158 398, 282 502, 460 438 S 680 378, 770 438' stroke-width='1.7' opacity='.15'/%3E%3Cpath d='M-30 522 C 140 500, 298 572, 480 520 S 688 468, 770 518' stroke-width='1' opacity='.1'/%3E%3Cpath d='M330 620 C 360 480, 300 400, 380 300 S 470 180, 430 60' stroke-width='1' opacity='.08'/%3E%3C/g%3E%3C/svg%3E"));
   background-size: auto, auto, 100% 100%;
   background-repeat: no-repeat;
 }
 
 /* 深色左栏：暖色微光 */
 .dark .settings-glass nav {
-  background: linear-gradient(180deg, oklch(1 0 0 / 6%), oklch(1 0 0 / 2%));
+  background: var(--glass-nav, linear-gradient(180deg, oklch(1 0 0 / 6%), oklch(1 0 0 / 2%)));
 }

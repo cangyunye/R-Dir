@@ -16,6 +16,7 @@ mod remote_temp;
 mod search;
 mod sizestat;
 mod text_diff;
+mod themes;
 mod thumbs;
 mod volumes;
 
@@ -2410,6 +2411,10 @@ pub fn run() {
         // 偏好持久化（v0.14）
         prefs_load,
         prefs_save,
+        // 主题包（v0.40）
+        themes::themes_list,
+        themes::theme_install,
+        themes::theme_delete,
         // 目录大小统计（v0.16）
         compute_size,
         cancel_size,

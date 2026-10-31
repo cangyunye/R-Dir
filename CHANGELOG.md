@@ -5,6 +5,14 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.40.0 (2026-10-31)
+
+- **主题包（可安装配色）**：设置 → 外观 → 主题包支持从本地安装 `.rdtheme.json` 纯数据配色包（白名单 23 个颜色 token，不含代码、不支持任意 CSS），安装后立即可选、可删除；主题包与浅色 / 深色 / 跟随系统同层互斥，包内 `base` 只决定组件用哪套明暗变体。token 经 `documentElement.style.setProperty` 内联应用，白名单外 key 与非法颜色自动跳过，不拼接 `<style>` 文本。
+- **设置面板皮肤跟随主题包**：面板底色 / 表面 / 主色渐变 / 装饰光斑由包调色板自动派生（`--glass-*` 变量，`index.css` 原值为兜底），包作者无需额外配置；无主题包时「云舒云卷 / 黑金纹琉璃」皮肤与改动前一致。
+- **Rust 存储层**：新增 `themes.rs`（`themes_list` / `theme_install` / `theme_delete`），包存 `app_config_dir()/themes/<id>.json` 并原子写入；id 正则 + 名称长度 + 64 KiB 上限 + token 形态校验，删除仅接受合法 id（防路径穿越）；坏包进列表 `errors`，不阻塞其他包。
+- **示例包**：`examples/themes/` 提供金秋（light）/ 红枫（dark）/ 桃花粉（light），需手动导入，不内嵌进应用。
+- 测试：cargo +6（id 规则 / 安装-列表-删除往返 / 坏包隔离 / base 与空名称 / 超大文件 / 删除穿越）；vitest +14（应用与清除 / base 回落 / 白名单外 key / 非法颜色跳过 / 面板变量派生 / active id / 缩略色 / 设置面板卡片与禁用态）；e2e +3（浅色包 / 深色包 / 设置面板选包与回默认）；全量 vitest 652、e2e 187 通过。
+
 ## v0.39.0 (2026-10-31)
 
 - **SMB / Windows 网络共享（内置插件）**：地址栏 `smb://host/share` 或直接输入 `\\host\share` 浏览 Windows 共享，`smb://host`（或 `\\host`）列出服务器全部磁盘类共享（NetShareEnum，排除 IPC$/ADMIN$ 等管理共享）。实现走 **UNC 委托**：`smb://` 仅翻译为 UNC 路径，一切文件操作复用本地引擎（浏览/搜索/预览/缩略图/复制移动/差异比对全量能力，条目以 UNC 本地路径返回，前端零特判）；认证走系统凭据（访问被拒时提示先在资源管理器打开一次或 `net use` 预认证）。仅 Windows 提供共享枚举，其他平台可挂载后按本地路径浏览。

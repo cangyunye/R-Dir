@@ -38,6 +38,7 @@ import {
 } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
 import type { ThemeMode } from "@/lib/types";
+import { themeSwatch, type ThemeLoadError, type ThemePack } from "@/lib/themePacks";
 import { quickInitials, quickTileColor } from "@/components/EntryContextMenu";
 import type { QuickToolItem, EditorCandidate } from "@/lib/openerApi";
 import type { OpenerItem, PluginInfo } from "@/lib/openerApi";
@@ -84,6 +85,13 @@ export function SettingsDialog({
   onClose,
   themeMode,
   onThemeModeChange,
+  /** v0.40 主题包（本地安装的纯数据配色；null = 尚未加载） */
+  themePacks = null,
+  themeErrors = [],
+  activeThemeId = null,
+  onSelectThemePack,
+  onInstallThemePack,
+  onDeleteThemePack,
   /** v0.38 界面语言（zh/en，切换即时生效） */
   language,
   onLanguageChange,
@@ -126,6 +134,13 @@ export function SettingsDialog({
   /** 主题颜色模式：显式浅色/深色，或跟随系统 */
   themeMode: ThemeMode;
   onThemeModeChange: (m: ThemeMode) => void;
+  /** v0.40 已安装主题包；themeErrors = 解析失败的坏包（不阻塞列表） */
+  themePacks?: ThemePack[] | null;
+  themeErrors?: ThemeLoadError[];
+  activeThemeId?: string | null;
+  onSelectThemePack?: (id: string | null) => void;
+  onInstallThemePack?: () => void;
+  onDeleteThemePack?: (id: string) => void;
   /** v0.38 界面语言（zh 默认 / en；持久化 rfm.language）。可选：单测不传 = 默认中文 */
   language?: Language;
   onLanguageChange?: (l: Language) => void;
@@ -422,13 +437,16 @@ export function SettingsDialog({
                         ).map(({ mode, icon, label }) => (
                           <button
                             key={mode}
-                            aria-pressed={themeMode === mode}
+                            aria-pressed={themeMode === mode && !activeThemeId}
+                            disabled={!!activeThemeId}
+                            title={activeThemeId ? t("主题包已自带配色") : undefined}
                             onClick={() => onThemeModeChange(mode)}
                             className={cn(
                               "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors",
-                              themeMode === mode
+                              themeMode === mode && !activeThemeId
                                 ? "bg-primary text-primary-foreground"
                                 : "bg-muted text-muted-foreground hover:bg-accent",
+                              activeThemeId && "cursor-not-allowed opacity-50",
                             )}
                           >
                             {icon} {t(label)}
@@ -438,6 +456,112 @@ export function SettingsDialog({
                     </div>
                   </div>
                 </div>
+
+                {/* v0.40 主题包：安装本地 .rdtheme.json；选中包 = 覆盖颜色模式 */}
+                {onSelectThemePack && (
+                  <div className="mb-5">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="sec-t text-[11px] font-medium text-muted-foreground">{t("主题包")}</span>
+                      {onInstallThemePack && (
+                        <button
+                          onClick={onInstallThemePack}
+                          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                        >
+                          <Plus className="h-3.5 w-3.5" /> {t("安装…")}
+                        </button>
+                      )}
+                    </div>
+                    <div className="rounded-md border bg-card p-2">
+                      <div className="flex flex-wrap gap-2">
+                        <div
+                          className={cn(
+                            "flex w-[136px] items-center gap-2 rounded-md border px-2 py-1.5 text-xs",
+                            !activeThemeId ? "border-primary bg-primary/10" : "border-transparent",
+                          )}
+                        >
+                          <button
+                            aria-pressed={!activeThemeId}
+                            onClick={() => onSelectThemePack(null)}
+                            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                          >
+                            <span
+                              aria-hidden
+                              className="h-8 w-8 shrink-0 rounded-full border border-black/10"
+                              style={{
+                                background:
+                                  "linear-gradient(135deg, oklch(0.98 0 0) 50%, oklch(0.22 0.015 260) 50%)",
+                              }}
+                            />
+                            <span className="min-w-0">
+                              <span className="block truncate text-foreground">{t("默认")}</span>
+                              <span className="block text-[10px] text-muted-foreground">
+                                {t("跟随颜色模式")}
+                              </span>
+                            </span>
+                          </button>
+                        </div>
+                        {(themePacks ?? []).map((pack) => {
+                          const swatch = themeSwatch(pack);
+                          const active = activeThemeId === pack.id;
+                          return (
+                            <div
+                              key={pack.id}
+                              className={cn(
+                                "flex w-[136px] items-center gap-1 rounded-md border px-2 py-1.5 text-xs",
+                                active ? "border-primary bg-primary/10" : "border-transparent hover:bg-accent",
+                              )}
+                            >
+                              <button
+                                aria-pressed={active}
+                                onClick={() => onSelectThemePack(pack.id)}
+                                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                                title={`${pack.name}${pack.author ? ` · ${pack.author}` : ""}`}
+                              >
+                                <span
+                                  aria-hidden
+                                  className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full border border-black/10"
+                                  style={{
+                                    background: `linear-gradient(135deg, ${swatch.bg} 0 48%, ${swatch.primary} 48% 100%)`,
+                                  }}
+                                >
+                                  <span
+                                    className="absolute bottom-0.5 left-0.5 h-2.5 w-2.5 rounded-full border border-black/10"
+                                    style={{ background: swatch.sidebar }}
+                                  />
+                                </span>
+                                <span className="min-w-0">
+                                  <span className="block truncate text-foreground">{pack.name}</span>
+                                  <span className="block text-[10px] text-muted-foreground">
+                                    {pack.base === "dark" ? t("深色底") : t("浅色底")}
+                                  </span>
+                                </span>
+                              </button>
+                              {onDeleteThemePack && (
+                                <button
+                                  onClick={() => onDeleteThemePack(pack.id)}
+                                  title={t("删除主题包")}
+                                  className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {(themeErrors?.length ?? 0) > 0 && (
+                        <div
+                          className="mt-2 text-[11px] text-destructive"
+                          title={themeErrors
+                            .map((e) => `${e.file}：${e.message}`)
+                            .join("\n")}
+                        >
+                          {t("{n} 个主题包无法读取", { n: themeErrors?.length ?? 0 })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* v0.38 界面语言（切换即时生效；语言名用各语言自名，不参与翻译） */}
                 <div className="mb-5">

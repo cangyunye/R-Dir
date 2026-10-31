@@ -151,6 +151,16 @@ import {
 import { ACTIONS, bindingOf, findAction, isMac, keyEventString } from "@/lib/keymap";
 import { loadLanguage, type Language } from "@/lib/i18n";
 import { isCancelledError, t, terr } from "@/lib/i18n";
+import {
+  applyThemePack,
+  deleteThemePack as apiDeleteThemePack,
+  installThemePack as apiInstallThemePack,
+  loadActiveThemePackId,
+  loadThemePacks,
+  saveActiveThemePackId,
+  type ThemeLoadError,
+  type ThemePack,
+} from "@/lib/themePacks";
 import { LanguageProvider } from "@/lib/LanguageProvider";
 import { serializeSession, serializeSessionTab, sessionSignature } from "@/lib/session";
 import { getNativeDragOut, probeNativeDragOut, setNativeDragOut, getHtml5Drag, setHtml5Drag, canNativeDragOut } from "@/lib/native-drag";
@@ -522,6 +532,18 @@ export default function App() {
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
       : themeMode === "dark",
   );
+  /** v0.40 主题包：已安装列表 + 当前选中 id（与颜色模式互斥，包优先） */
+  const [themePacks, setThemePacks] = useState<ThemePack[] | null>(null);
+  const [themeErrors, setThemeErrors] = useState<ThemeLoadError[]>([]);
+  const [activeThemeId, setActiveThemeId] = useState<string | null>(() =>
+    loadActiveThemePackId(),
+  );
+  const activeThemePack = useMemo(
+    () => themePacks?.find((p) => p.id === activeThemeId) ?? null,
+    [themePacks, activeThemeId],
+  );
+  /** 生效明暗：主题包激活时以包 base 为准（界面图标 / 切换按钮跟随） */
+  const effectiveDark = activeThemePack ? activeThemePack.base === "dark" : dark;
   /** v0.38 界面语言（zh 默认 / en；持久化 localStorage "rfm.language"，切换即时生效无需重启） */
   const [language, setLanguage] = useState<Language>(() => loadLanguage());
   /** 快捷键配置版本号：自定义键位变更时 +1，触发菜单/设置重渲染 */
@@ -895,6 +917,61 @@ useEffect(() => {
     },
     [showError],
   );
+  // v0.40 主题包：列表 / 选中 / 安装 / 删除（选中 id 存 localStorage，包本身在配置目录）
+  const refreshThemePacks = useCallback(() => {
+    void loadThemePacks().then(({ packs, errors }) => {
+      setThemePacks(packs);
+      setThemeErrors(errors);
+      // 包被删或目录被清理 → 静默回落到内置颜色模式
+      setActiveThemeId((id) => {
+        if (id && !packs.some((p) => p.id === id)) {
+          saveActiveThemePackId(null);
+          return null;
+        }
+        return id;
+      });
+    });
+  }, []);
+  const handleSelectThemePack = useCallback((id: string | null) => {
+    setActiveThemeId(id);
+    saveActiveThemePackId(id);
+  }, []);
+  const handleInstallThemePack = useCallback(async () => {
+    const picked = await openDialog({
+      multiple: false,
+      filters: [{ name: "R-Dir 主题包", extensions: ["json"] }],
+    });
+    const path = typeof picked === "string" ? picked : picked?.[0];
+    if (!path) return;
+    try {
+      const pack = await apiInstallThemePack(path);
+      setThemePacks((prev) => [...(prev ?? []).filter((p) => p.id !== pack.id), pack]);
+      handleSelectThemePack(pack.id);
+      refreshThemePacks();
+    } catch (e) {
+      showError(t("安装主题包失败：{msg}", { msg: String(e) }));
+    }
+  }, [handleSelectThemePack, refreshThemePacks, showError]);
+  const handleDeleteThemePack = useCallback(
+    async (id: string) => {
+      const pack = themePacks?.find((p) => p.id === id);
+      const ok = await appConfirm({
+        title: t("删除主题包"),
+        message: t("确定删除「{name}」？", { name: pack?.name ?? id }),
+        confirmLabel: t("删除"),
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await apiDeleteThemePack(id);
+        if (activeThemeId === id) handleSelectThemePack(null);
+        refreshThemePacks();
+      } catch (e) {
+        showError(t("删除主题包失败：{msg}", { msg: String(e) }));
+      }
+    },
+    [activeThemeId, appConfirm, handleSelectThemePack, refreshThemePacks, showError, themePacks],
+  );
   // 工具/插件检测延迟到首帧空闲后执行，避免拖慢首次渲染
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -903,9 +980,10 @@ useEffect(() => {
       refreshGitTools();
       refreshQuickTools();
       refreshPlugins();
+      refreshThemePacks();
     }, 300);
     return () => window.clearTimeout(t);
-  }, [refreshOpeners, refreshShells, refreshGitTools, refreshQuickTools, refreshPlugins]);
+  }, [refreshOpeners, refreshShells, refreshGitTools, refreshQuickTools, refreshPlugins, refreshThemePacks]);
   // v0.37 远程文件交给本地应用前先确保本地副本：下载到打开临时目录再返回本地路径。
   // 未来远程后端（网盘等）在此加分发分支；本地路径原样返回。
   const ensureLocalCopy = useCallback(
@@ -1092,11 +1170,17 @@ useEffect(() => {
     return () => mql.removeEventListener("change", apply);
   }, [themeMode]);
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-  }, [dark]);
-  /** 设置颜色模式（显式 light/dark 或跟随系统），随改随存 */
+    document.documentElement.classList.toggle("dark", effectiveDark);
+  }, [effectiveDark]);
+  /** 应用主题包内联 token（null = 清除回内置；base 决定 .dark 见上） */
+  useEffect(() => {
+    applyThemePack(activeThemePack);
+  }, [activeThemePack]);
+  /** 设置颜色模式（显式 light/dark 或跟随系统），随改随存；选颜色模式 = 退出主题包 */
   const changeThemeMode = useCallback((m: ThemeMode) => {
     setThemeMode(m);
+    setActiveThemeId(null);
+    saveActiveThemePackId(null);
     try {
       localStorage.setItem("rfm.theme", m);
     } catch {
@@ -1114,8 +1198,8 @@ useEffect(() => {
   }, []);
   /** 快捷键/菜单切换：写显式模式（跟随系统时按当前生效值翻转并退出跟随） */
   const toggleTheme = useCallback(() => {
-    changeThemeMode(dark ? "light" : "dark");
-  }, [dark, changeThemeMode]);
+    changeThemeMode(effectiveDark ? "light" : "dark");
+  }, [effectiveDark, changeThemeMode]);
 
 
 
@@ -4757,7 +4841,7 @@ useEffect(() => {
             onOpenDocs={openDocs}
             appName={appName}
             appVersion={appVersion}
-            dark={dark}
+            dark={effectiveDark}
             onToggleTheme={toggleTheme}
           />
         }
@@ -5022,6 +5106,12 @@ useEffect(() => {
         }}
         themeMode={themeMode}
         onThemeModeChange={changeThemeMode}
+        themePacks={themePacks}
+        themeErrors={themeErrors}
+        activeThemeId={activeThemeId}
+        onSelectThemePack={handleSelectThemePack}
+        onInstallThemePack={() => void handleInstallThemePack()}
+        onDeleteThemePack={(id) => void handleDeleteThemePack(id)}
         language={language}
         onLanguageChange={changeLanguage}
         onBindingsChanged={() => setKeymapVer((v) => v + 1)}

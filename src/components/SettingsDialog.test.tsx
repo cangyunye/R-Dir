@@ -198,3 +198,53 @@ describe("SettingsDialog 常用工具：启动参数（v0.31.1）", () => {
     expect(screen.getByText("{path}")).toBeInTheDocument();
   });
 });
+
+describe("SettingsDialog 外观：主题包（v0.40）", () => {
+  const autumn = {
+    id: "autumn-gold",
+    name: "金秋",
+    base: "light" as const,
+    tokens: { "--primary": "oklch(0.55 0.14 68)" },
+  };
+
+  it("列出已安装包，点击回传 id / 默认项回传 null", () => {
+    const onSelectThemePack = vi.fn();
+    setup({ themePacks: [autumn], activeThemeId: null, onSelectThemePack });
+    fireEvent.click(screen.getByRole("button", { name: /金秋/ }));
+    expect(onSelectThemePack).toHaveBeenCalledWith("autumn-gold");
+    fireEvent.click(screen.getByText("跟随颜色模式").closest("button")!);
+    expect(onSelectThemePack).toHaveBeenCalledWith(null);
+  });
+
+  it("选中包时颜色模式三个钮禁用", () => {
+    setup({
+      themePacks: [autumn],
+      activeThemeId: "autumn-gold",
+      onSelectThemePack: () => {},
+    });
+    expect(screen.getByRole("button", { name: "浅色" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "深色" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "跟随系统" })).toBeDisabled();
+  });
+
+  it("删除按钮回传包 id", () => {
+    const onDeleteThemePack = vi.fn();
+    setup({
+      themePacks: [autumn],
+      activeThemeId: null,
+      onSelectThemePack: () => {},
+      onDeleteThemePack,
+    });
+    fireEvent.click(screen.getByTitle("删除主题包"));
+    expect(onDeleteThemePack).toHaveBeenCalledWith("autumn-gold");
+  });
+
+  it("坏包给出数量提示", () => {
+    setup({
+      themePacks: [],
+      themeErrors: [{ file: "bad.json", message: "解析失败" }],
+      onSelectThemePack: () => {},
+    });
+    expect(screen.getByText("1 个主题包无法读取")).toBeInTheDocument();
+  });
+});
