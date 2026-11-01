@@ -5,8 +5,12 @@
 | 文件 | 名称 | base |
 |---|---|---|
 | `autumn-gold.rdtheme.json` | 金秋 | light |
-| `maple-red.rdtheme.json` | 红枫 | dark |
+| `maple-red.rdtheme.json` | 红枫 | light |
 | `peach-blossom.rdtheme.json` | 桃花粉 | light |
+| `verdant.rdtheme.json` | 青涩 | light |
+| `wine-red.rdtheme.json` | 酒红 | dark |
+| `blueberry.rdtheme.json` | 蓝莓 | dark |
+| `violet.rdtheme.json` | 紫罗兰 | dark |
 
 ## 格式
 

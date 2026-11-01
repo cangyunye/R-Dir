@@ -1,0 +1,33 @@
+{
+  "$schema": "rdir-theme/1",
+  "id": "wine-red",
+  "name": "酒红",
+  "author": "cangyunye",
+  "version": "1.0.0",
+  "base": "dark",
+  "tokens": {
+    "--background": "oklch(0.19 0.022 15)",
+    "--foreground": "oklch(0.94 0.01 20)",
+    "--card": "oklch(0.235 0.026 15)",
+    "--card-foreground": "oklch(0.94 0.01 20)",
+    "--popover": "oklch(0.245 0.026 15)",
+    "--popover-foreground": "oklch(0.94 0.01 20)",
+    "--primary": "oklch(0.66 0.17 10)",
+    "--primary-foreground": "oklch(0.17 0.02 12)",
+    "--secondary": "oklch(0.29 0.03 15)",
+    "--secondary-foreground": "oklch(0.93 0.01 20)",
+    "--muted": "oklch(0.27 0.025 15)",
+    "--muted-foreground": "oklch(0.73 0.02 18)",
+    "--accent": "oklch(0.32 0.06 12)",
+    "--accent-foreground": "oklch(0.95 0.01 20)",
+    "--destructive": "oklch(0.65 0.2 25)",
+    "--border": "oklch(1 0 0 / 12%)",
+    "--input": "oklch(1 0 0 / 16%)",
+    "--ring": "oklch(0.66 0.17 12)",
+    "--sidebar": "oklch(0.21 0.024 15)",
+    "--selected": "oklch(0.34 0.08 12)",
+    "--folder": "oklch(0.8 0.14 60)",
+    "--ok": "oklch(0.72 0.13 150)",
+    "--shadow": "0 16px 40px rgb(0 0 0 / 0.6)"
+  }
+}

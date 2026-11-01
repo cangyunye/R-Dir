@@ -1,0 +1,33 @@
+{
+  "$schema": "rdir-theme/1",
+  "id": "blueberry",
+  "name": "蓝莓",
+  "author": "cangyunye",
+  "version": "1.0.0",
+  "base": "dark",
+  "tokens": {
+    "--background": "oklch(0.185 0.035 275)",
+    "--foreground": "oklch(0.94 0.012 275)",
+    "--card": "oklch(0.23 0.04 275)",
+    "--card-foreground": "oklch(0.94 0.012 275)",
+    "--popover": "oklch(0.24 0.04 275)",
+    "--popover-foreground": "oklch(0.94 0.012 275)",
+    "--primary": "oklch(0.68 0.15 275)",
+    "--primary-foreground": "oklch(0.17 0.03 275)",
+    "--secondary": "oklch(0.29 0.04 275)",
+    "--secondary-foreground": "oklch(0.93 0.01 275)",
+    "--muted": "oklch(0.27 0.035 275)",
+    "--muted-foreground": "oklch(0.73 0.025 275)",
+    "--accent": "oklch(0.33 0.07 278)",
+    "--accent-foreground": "oklch(0.95 0.01 275)",
+    "--destructive": "oklch(0.65 0.2 25)",
+    "--border": "oklch(1 0 0 / 12%)",
+    "--input": "oklch(1 0 0 / 16%)",
+    "--ring": "oklch(0.68 0.15 278)",
+    "--sidebar": "oklch(0.205 0.038 275)",
+    "--selected": "oklch(0.35 0.09 278)",
+    "--folder": "oklch(0.8 0.14 75)",
+    "--ok": "oklch(0.72 0.13 155)",
+    "--shadow": "0 16px 40px rgb(0 0 0 / 0.6)"
+  }
+}

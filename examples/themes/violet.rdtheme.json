@@ -1,0 +1,33 @@
+{
+  "$schema": "rdir-theme/1",
+  "id": "violet",
+  "name": "紫罗兰",
+  "author": "cangyunye",
+  "version": "1.0.0",
+  "base": "dark",
+  "tokens": {
+    "--background": "oklch(0.19 0.03 305)",
+    "--foreground": "oklch(0.94 0.012 305)",
+    "--card": "oklch(0.235 0.035 305)",
+    "--card-foreground": "oklch(0.94 0.012 305)",
+    "--popover": "oklch(0.245 0.035 305)",
+    "--popover-foreground": "oklch(0.94 0.012 305)",
+    "--primary": "oklch(0.68 0.16 305)",
+    "--primary-foreground": "oklch(0.17 0.03 305)",
+    "--secondary": "oklch(0.29 0.04 305)",
+    "--secondary-foreground": "oklch(0.93 0.01 305)",
+    "--muted": "oklch(0.27 0.03 305)",
+    "--muted-foreground": "oklch(0.73 0.02 305)",
+    "--accent": "oklch(0.33 0.07 308)",
+    "--accent-foreground": "oklch(0.95 0.01 305)",
+    "--destructive": "oklch(0.65 0.2 25)",
+    "--border": "oklch(1 0 0 / 12%)",
+    "--input": "oklch(1 0 0 / 16%)",
+    "--ring": "oklch(0.68 0.16 308)",
+    "--sidebar": "oklch(0.21 0.032 305)",
+    "--selected": "oklch(0.35 0.09 308)",
+    "--folder": "oklch(0.8 0.14 75)",
+    "--ok": "oklch(0.72 0.13 155)",
+    "--shadow": "0 16px 40px rgb(0 0 0 / 0.6)"
+  }
+}
