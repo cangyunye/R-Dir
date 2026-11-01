@@ -482,7 +482,7 @@ export function SettingsDialog({
                           <button
                             aria-pressed={!activeThemeId}
                             onClick={() => onSelectThemePack(null)}
-                            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                            className="theme-card flex min-w-0 flex-1 items-center gap-2 text-left"
                           >
                             <span
                               aria-hidden
@@ -514,7 +514,7 @@ export function SettingsDialog({
                               <button
                                 aria-pressed={active}
                                 onClick={() => onSelectThemePack(pack.id)}
-                                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                                className="theme-card flex min-w-0 flex-1 items-center gap-2 text-left"
                                 title={`${pack.name}${pack.author ? ` · ${pack.author}` : ""}`}
                               >
                                 <span

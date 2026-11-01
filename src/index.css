@@ -270,6 +270,11 @@
   background-color: transparent;
   background-image: var(--primary-grad-wash);
 }
+/* 主题包卡片：选中态只由容器淡底表示，内层按钮别再吃分段钮的主色渐变
+   （否则整张卡片被涂成饱和蓝/金，文字压在渐变上看不清） */
+.settings-glass button.theme-card[aria-pressed="true"] {
+  background-image: none;
+}
 
 /* 左栏：比内容更透一层，像独立玻璃片 */
 .settings-glass nav {
