@@ -1,0 +1,33 @@
+{
+  "$schema": "rdir-theme/1",
+  "id": "shallow-sea",
+  "name": "浅海蓝",
+  "author": "cangyunye",
+  "version": "1.0.0",
+  "base": "light",
+  "tokens": {
+    "--background": "oklch(0.985 0.012 215)",
+    "--foreground": "oklch(0.27 0.03 230)",
+    "--card": "oklch(1 0.005 215)",
+    "--card-foreground": "oklch(0.27 0.03 230)",
+    "--popover": "oklch(1 0.005 215)",
+    "--popover-foreground": "oklch(0.27 0.03 230)",
+    "--primary": "oklch(0.53 0.13 220)",
+    "--primary-foreground": "oklch(0.99 0.005 215)",
+    "--secondary": "oklch(0.955 0.02 215)",
+    "--secondary-foreground": "oklch(0.36 0.06 225)",
+    "--muted": "oklch(0.965 0.014 215)",
+    "--muted-foreground": "oklch(0.5 0.03 225)",
+    "--accent": "oklch(0.94 0.045 210)",
+    "--accent-foreground": "oklch(0.34 0.09 225)",
+    "--destructive": "oklch(0.577 0.2 27)",
+    "--border": "oklch(0.9 0.025 215)",
+    "--input": "oklch(0.9 0.025 215)",
+    "--ring": "oklch(0.58 0.12 220)",
+    "--sidebar": "oklch(0.968 0.018 215)",
+    "--selected": "oklch(0.92 0.06 215)",
+    "--folder": "oklch(0.79 0.15 75)",
+    "--ok": "oklch(0.65 0.13 148)",
+    "--shadow": "0 12px 32px rgb(20 60 80 / 0.16)"
+  }
+}
