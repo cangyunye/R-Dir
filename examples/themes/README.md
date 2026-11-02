@@ -9,6 +9,7 @@
 | `peach-blossom.rdtheme.json` | 桃花粉 | light |
 | `verdant.rdtheme.json` | 青涩 | light |
 | `shallow-sea.rdtheme.json` | 浅海蓝 | light |
+| `lavender.rdtheme.json` | 薰衣草 | light |
 | `wine-red.rdtheme.json` | 酒红 | dark |
 | `blueberry.rdtheme.json` | 蓝莓 | dark |
 | `violet.rdtheme.json` | 紫罗兰 | dark |

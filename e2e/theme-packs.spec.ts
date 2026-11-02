@@ -91,7 +91,7 @@ test.describe("示例包（examples/themes）", () => {
     .map((f) => JSON.parse(readFileSync(`${dir}/${f}`, "utf8")));
 
   test("全部示例包都能应用：token 生效且 .dark 跟随 base", async ({ page }) => {
-    expect(packs.length).toBeGreaterThanOrEqual(8);
+    expect(packs.length).toBeGreaterThanOrEqual(9);
     await installTauriMock(page);
     await page.addInitScript((all) => {
       const internals = (window as any).__TAURI_INTERNALS__;
