@@ -199,7 +199,7 @@ describe("SettingsDialog 常用工具：启动参数（v0.31.1）", () => {
   });
 });
 
-describe("SettingsDialog 外观：主题包（v0.40）", () => {
+describe("SettingsDialog 外观：主题包（v0.39）", () => {
   const autumn = {
     id: "autumn-gold",
     name: "金秋",

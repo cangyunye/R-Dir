@@ -30,7 +30,7 @@ async function mockPacks(page: import("@playwright/test").Page) {
   }, [AUTUMN, WINE]);
 }
 
-test.describe("主题包（v0.40）", () => {
+test.describe("主题包（v0.39）", () => {
   test("选中浅色包：写入内联 token + data-theme，不加 .dark", async ({ page }) => {
     await mockPacks(page);
     await page.addInitScript(() => localStorage.setItem("rfm.themePack", "autumn-gold"));
@@ -73,7 +73,7 @@ test.describe("主题包（v0.40）", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "autumn-gold");
     expect(await page.evaluate(() => localStorage.getItem("rfm.themePack"))).toBe("autumn-gold");
     await expect(page.getByRole("button", { name: "浅色", exact: true })).toBeDisabled();
-    // 回归：卡片选中态不能再被分段钮的主色渐变整块涂满（v0.40.0 首次发布就是这个样子）
+    // 回归：卡片选中态不能再被分段钮的主色渐变整块涂满（v0.39.0 首次发布就是这个样子）
     await expect(page.locator(".theme-card").nth(1)).toHaveCSS("background-image", "none");
     await page.screenshot({ path: "e2e-shots/theme-settings-autumn.png" });
 

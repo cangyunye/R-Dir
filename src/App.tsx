@@ -533,7 +533,7 @@ export default function App() {
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
       : themeMode === "dark",
   );
-  /** v0.40 主题包：已安装列表 + 当前选中 id（与颜色模式互斥，包优先） */
+  /** v0.39 主题包：已安装列表 + 当前选中 id（与颜色模式互斥，包优先） */
   const [themePacks, setThemePacks] = useState<ThemePack[] | null>(null);
   const [themeErrors, setThemeErrors] = useState<ThemeLoadError[]>([]);
   const [activeThemeId, setActiveThemeId] = useState<string | null>(() =>
@@ -918,7 +918,7 @@ useEffect(() => {
     },
     [showError],
   );
-  // v0.40 主题包：列表 / 选中 / 安装 / 删除（选中 id 存 localStorage，包本身在配置目录）
+  // v0.39 主题包：列表 / 选中 / 安装 / 删除（选中 id 存 localStorage，包本身在配置目录）
   const refreshThemePacks = useCallback(() => {
     void loadThemePacks().then(({ packs, errors }) => {
       setThemePacks(packs);

@@ -85,7 +85,7 @@ export function SettingsDialog({
   onClose,
   themeMode,
   onThemeModeChange,
-  /** v0.40 主题包（本地安装的纯数据配色；null = 尚未加载） */
+  /** v0.39 主题包（本地安装的纯数据配色；null = 尚未加载） */
   themePacks = null,
   themeErrors = [],
   activeThemeId = null,
@@ -134,7 +134,7 @@ export function SettingsDialog({
   /** 主题颜色模式：显式浅色/深色，或跟随系统 */
   themeMode: ThemeMode;
   onThemeModeChange: (m: ThemeMode) => void;
-  /** v0.40 已安装主题包；themeErrors = 解析失败的坏包（不阻塞列表） */
+  /** v0.39 已安装主题包；themeErrors = 解析失败的坏包（不阻塞列表） */
   themePacks?: ThemePack[] | null;
   themeErrors?: ThemeLoadError[];
   activeThemeId?: string | null;
@@ -457,7 +457,7 @@ export function SettingsDialog({
                   </div>
                 </div>
 
-                {/* v0.40 主题包：安装本地 .rdtheme.json；选中包 = 覆盖颜色模式 */}
+                {/* v0.39 主题包：安装本地 .rdtheme.json；选中包 = 覆盖颜色模式 */}
                 {onSelectThemePack && (
                   <div className="mb-5">
                     <div className="mb-1.5 flex items-center justify-between">

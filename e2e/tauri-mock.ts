@@ -187,7 +187,7 @@ export async function installTauriMock(page: Page): Promise<void> {
       // v0.27 图标自由摆放位置表 + 画廊缩略图（e2e 环境无应用数据目录/图像解码）
       icon_positions_load: () => ({}),
       icon_positions_save: () => null,
-      // v0.40 主题包：e2e 环境不读配置目录，按未安装处理
+      // v0.39 主题包：e2e 环境不读配置目录，按未安装处理
       themes_list: () => ({ packs: [], errors: [] }),
       thumb_get: () => null,
       // v0.28 预览原图：回 1x1 PNG（e2e 只断言预览区出现 <img>，不校验像素）

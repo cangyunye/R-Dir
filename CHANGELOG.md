@@ -5,22 +5,19 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
-## v0.40.0 (2026-10-31)
-
-- **主题包（可安装配色）**：设置 → 外观 → 主题包支持从本地安装 `.rdtheme.json` 纯数据配色包（白名单 23 个颜色 token，不含代码、不支持任意 CSS），安装后立即可选、可删除；主题包与浅色 / 深色 / 跟随系统同层互斥，包内 `base` 只决定组件用哪套明暗变体。token 经 `documentElement.style.setProperty` 内联应用，白名单外 key 与非法颜色自动跳过，不拼接 `<style>` 文本。
-- **设置面板皮肤跟随主题包**：面板底色 / 表面 / 主色渐变 / 装饰光斑由包调色板自动派生（`--glass-*` 变量，`index.css` 原值为兜底），包作者无需额外配置；无主题包时「云舒云卷 / 黑金纹琉璃」皮肤与改动前一致。
-- **Rust 存储层**：新增 `themes.rs`（`themes_list` / `theme_install` / `theme_delete`），包存 `app_config_dir()/themes/<id>.json` 并原子写入；id 正则 + 名称长度 + 64 KiB 上限 + token 形态校验，删除仅接受合法 id（防路径穿越）；坏包进列表 `errors`，不阻塞其他包。
-- **示例包**：`examples/themes/` 提供 8 个纯数据配色包，需手动导入，不内嵌进应用：金秋 / 红枫 / 桃花粉 / 青涩 / 浅海蓝（light），酒红 / 蓝莓 / 紫罗兰（dark）。
-- **主题包卡片选中态修复**：卡片内层按钮此前沿用分段钮的 `aria-pressed` 皮肤规则，选中时被 `--primary-grad` 整块涂满（浅色成饱和蓝、深色成金板，文字压上去看不清），现加 `theme-card` 类豁免，选中态只由容器淡底表达。
-- 测试：cargo +6（id 规则 / 安装-列表-删除往返 / 坏包隔离 / base 与空名称 / 超大文件 / 删除穿越）；vitest +14（应用与清除 / base 回落 / 白名单外 key / 非法颜色跳过 / 面板变量派生 / active id / 缩略色 / 设置面板卡片与禁用态）；e2e +4（浅色包 / 深色包 / 设置面板选包与回默认 / 全部示例包都能应用且 `.dark` 跟随 base）；全量 vitest 653 通过、e2e 190 通过。
-
-## v0.39.0 (2026-10-31)
+## v0.39.0 (2026-11-02)
 
 - **SMB / Windows 网络共享（内置插件）**：地址栏 `smb://host/share` 或直接输入 `\\host\share` 浏览 Windows 共享，`smb://host`（或 `\\host`）列出服务器全部磁盘类共享（NetShareEnum，排除 IPC$/ADMIN$ 等管理共享）。实现走 **UNC 委托**：`smb://` 仅翻译为 UNC 路径，一切文件操作复用本地引擎（浏览/搜索/预览/缩略图/复制移动/差异比对全量能力，条目以 UNC 本地路径返回，前端零特判）；认证走系统凭据（访问被拒时提示先在资源管理器打开一次或 `net use` 预认证）。仅 Windows 提供共享枚举，其他平台可挂载后按本地路径浏览。
 - **NFS 网络文件系统（内置插件，feature = "nfs" 可编译期拔出）**：地址栏 `nfs://host/export/path` 直连 NFSv3 导出（纯 Rust 客户端 nfs-rs，RPC 直连不经系统挂载，Windows/mac/Linux 全平台可用），`nfs://host` 列出服务器全部导出（等价 `showmount -e`）。导出根自动探测：从最短前缀到完整路径逐个尝试挂载，首个成功者即导出根，余下为会话内相对路径；会话池 LRU 上限 8，导航即连接（无服务器管理界面）。能力对齐 SFTP：浏览 / stat / 文件与文件夹上传下载（递归 + 两阶段进度 + 可取消）/ 新建 / 删除（递归）/ 重命名 / 文本比较与编辑保存（临时副本回传）/ 远程打开（下载到远程临时目录）/ 同步比对（maxDiffLevel 2）。挂载 URL 路径段按 RFC 3986 编码，中文目录名全程可用；进度/取消事件与 SFTP 同构（取消 id 沿用 sftp: 前缀，前端取消路由零改动）。
 - **插件面板**：设置 → 插件新增 SMB / NFS 两项（builtin，均可开关，无配置面板）。
 - **地址栏 scheme 输入修复（实测发现，并入本版）**：`smb://`、`nfs://` 输入此前被 Toolbar 提交与 App 导航两处 scheme 枚举白名单（只有 sftp/http/tags）漏判，被当相对路径拼进当前目录且 `//` 归一成 `\`（形态 `F:\…\smb:\host`）就地报「路径不存在」——scheme 判定通用化为正则并三处收敛到 `cmdline.hasScheme`，后端 `resolve_path` / `complete_path` 加 scheme 早退防御（此类输入永不参与本地拼接/补全）；新增通用化的直接收益是以后再加协议零补漏。
-- 测试：cargo +15（nfs 挂载 URL 段编码 / 属性解析 / 相对路径归一、smb 路径翻译 / UNC 服务器根判定 / 本地化透传、resolve_path scheme 不拼接 / complete_path scheme 空结果；真机集成用例：NFS 列导出→列目录→8MB 下载→上传覆盖回读→mkdir/touch/rename/递归删除→取消上传半成品清理全链路（服务器不可达自动跳过），SMB NetShareEnum 共享枚举（无预认证会话自动跳过））；vitest +3（isNfsPath 判定、nfs 后端能力位、hasScheme 通用化）；e2e +2（scheme-addressbar：mock 报错保留原始路径、反向断言无 `smb:\` 形态），全量 186 通过。
+- 测试（SMB / NFS）：cargo +15（nfs 挂载 URL 段编码 / 属性解析 / 相对路径归一、smb 路径翻译 / UNC 服务器根判定 / 本地化透传、resolve_path scheme 不拼接 / complete_path scheme 空结果；真机集成用例：NFS 列导出→列目录→8MB 下载→上传覆盖回读→mkdir/touch/rename/递归删除→取消上传半成品清理全链路（服务器不可达自动跳过），SMB NetShareEnum 共享枚举（无预认证会话自动跳过））；vitest +3（isNfsPath 判定、nfs 后端能力位、hasScheme 通用化）；e2e +2（scheme-addressbar：mock 报错保留原始路径、反向断言无 `smb:\` 形态），全量 186 通过。
+- **主题包（可安装配色）**：设置 → 外观 → 主题包支持从本地安装 `.rdtheme.json` 纯数据配色包（白名单 23 个颜色 token，不含代码、不支持任意 CSS），安装后立即可选、可删除；主题包与浅色 / 深色 / 跟随系统同层互斥，包内 `base` 只决定组件用哪套明暗变体。token 经 `documentElement.style.setProperty` 内联应用，白名单外 key 与非法颜色自动跳过，不拼接 `<style>` 文本。
+- **设置面板皮肤跟随主题包**：面板底色 / 表面 / 主色渐变 / 装饰光斑由包调色板自动派生（`--glass-*` 变量，`index.css` 原值为兜底），包作者无需额外配置；无主题包时「云舒云卷 / 黑金纹琉璃」皮肤与改动前一致。
+- **Rust 存储层**：新增 `themes.rs`（`themes_list` / `theme_install` / `theme_delete`），包存 `app_config_dir()/themes/<id>.json` 并原子写入；id 正则 + 名称长度 + 64 KiB 上限 + token 形态校验，删除仅接受合法 id（防路径穿越）；坏包进列表 `errors`，不阻塞其他包。
+- **示例包**：`examples/themes/` 提供 8 个纯数据配色包，需手动导入，不内嵌进应用：金秋 / 红枫 / 桃花粉 / 青涩 / 浅海蓝（light），酒红 / 蓝莓 / 紫罗兰（dark）。
+- **主题包卡片选中态修复**：卡片内层按钮此前沿用分段钮的 `aria-pressed` 皮肤规则，选中时被 `--primary-grad` 整块涂满（浅色成饱和蓝、深色成金板，文字压上去看不清），现加 `theme-card` 类豁免，选中态只由容器淡底表达。
+- 测试（主题包）：cargo +6（id 规则 / 安装-列表-删除往返 / 坏包隔离 / base 与空名称 / 超大文件 / 删除穿越）；vitest +14（应用与清除 / base 回落 / 白名单外 key / 非法颜色跳过 / 面板变量派生 / active id / 缩略色 / 设置面板卡片与禁用态）；e2e +4（浅色包 / 深色包 / 设置面板选包与回默认 / 全部示例包都能应用且 `.dark` 跟随 base）；全量 vitest 653 通过、e2e 190 通过。
 
 ## v0.38.0 (2026-10-31)
 
