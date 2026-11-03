@@ -79,6 +79,8 @@ export const ACTIONS: KeyAction[] = [
   // v0.28 预览栏（设置 → 预览 总开关默认关，开启后空格开/收起）
   A({ id: "togglePreview", label: "预览栏（展开 / 收起）", group: "视图 / 全局", win: "space", mac: "space" }),
   A({ id: "toggleBrowse", label: "图文浏览模式", group: "视图 / 全局", win: "mod+shift+e", mac: "mod+shift+e" }),
+  // v0.39 主题调色盘：未打开时打开，已打开时在"展开 / 收回墙内"间切换（草稿保留，方便全宽审视界面）
+  A({ id: "toggleThemeStudio", label: "主题调色盘（展开 / 收回）", group: "视图 / 全局", win: "mod+alt+p", mac: "mod+alt+p" }),
   // v0.34 主动保存会话布局（mod+s）：立即把当前全部标签/分屏写盘供崩溃恢复；
   // 退出确认对话框内的 Ctrl+S=保存并退出 在 capture 阶段拦截，不经过这里
   A({ id: "saveSession", label: "保存会话布局", group: "视图 / 全局", win: "mod+s", mac: "mod+s" }),

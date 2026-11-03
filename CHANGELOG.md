@@ -5,13 +5,43 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
-## v0.39.0 (2026-10-31)
+## v0.40.1 (2026-11-03)
+
+- **修复「在线获取」卡死整个界面**：`nfs_plugin_install_online` / `nfs_plugin_import` 此前是同步 Tauri 命令——同步命令跑在主线程，内嵌的 ureq 阻塞 HTTP 会把整个 UI 事件循环挂死（网络慢时表现为整窗无响应）。改为 `async` + `spawn_blocking`（UI 全程可响应，按钮禁用 + 「获取中…」反馈）。
+- **HTTP 超时**：ureq 默认无超时，直连 GitHub 不可达/限速时会无限等待。现在连接 15s 超时；JSON 请求整体 30s、插件包下载整体 300s（兼顾国内直连 objects.githubusercontent.com 的限速场景）；传输类错误附兜底提示（检查网络/代理或手动下载 .rdplugin 导入）。
+- 发布工程遗留清理：无（与 v0.40.0 同源，仅此两处修复）。
+
+## v0.40.0 (2026-11-03)
+
+- **NFS 改为可安装的伴生进程插件（发行版瘦身 ~600KB）**：主程序发行构建不再内嵌 NFS 客户端（`--no-default-features --features sftp,share,nfs-sidecar`），Windows 安装器 4.5MB → 0.39 的 5.2MB 回落到 4.5MB 量级；NFS 能力经 `.rdplugin` 插件包动态获得，SFTP 维持内建不变。
+- **插件 crate（`src-tauri/crates/rdir-nfs`）**：workspace 化，NFSv3 客户端（会话池/会话/递归传输）整体迁入；`client` feature 门控客户端本体，协议类型（`protocol.rs`：Op / Frame / XferEvent / NfsEntry / TransferPlan，`PROTOCOL_VERSION = 1`）恒编译——主程序（InProcess 后端，开发/全量构建）与伴生进程二进制（`rdir-nfs`，stdio JSON 行协议服务）共用同一客户端代码。**修复 v0.39 会话池克隆丢失**：自由函数原 `pool.clone()` 后插入新会话随克隆丢弃，导致每次操作重连——签名改 `&mut SessionPool`，会话真正跨操作复用（导航/传输明显提速，尤其高 RTT 链路）。
+- **NfsBackend 抽象（`nfs_backend.rs`）**：lib.rs 全部 nfs:// 路由（list_dir / stat_path / 文本比较 / 编辑保存 / 远程打开 / 七个 nfs_* 命令）收敛到统一 trait，cfg 双分支清零；三种实现——InProcess（feature = "nfs"）、Sidecar（伴生进程，feature = "nfs-sidecar"）、Unavailable（极简构建）；并存时内嵌优先。Sidecar 宿主：懒启动（首次 nfs:// 调用，每次启动前重读 install.json，装完即用无需重启）、按 id 多路复用（列目录与传输并发）、进程崩溃自动重启、5 分钟空闲回收、取消旗标轮询转发（download_plan 无事件操作的取消）；事件/取消契约与 SFTP 完全同构，前端零改动。
+- **.rdplugin 安装链路（`nfs_plugin.rs`）**：zip 容器（manifest.json + 二进制）。校验链缺一不可：包内 manifest 的 id / 协议版本 / 最低宿主版本 / 目标三元组 / 二进制 sha256；在线获取另经 HTTPS Release 上独立发布的 `rdir-nfs-manifest-<target>.json` 校验整包 sha256（校验和来源独立于包本体）。落盘原子写 + unix chmod 0755 + macOS quarantine 属性清理；旧版本目录自动清理。在线走官方 GitHub Release 通道（ureq/rustls）；本地导入同一校验链。只信官方通道，不开放任意 URL。
+- **插件面板三态**：设置 → 插件的 NFS 条目在发行构建下为「外置」——未安装显示「在线获取 / 导入 .rdplugin」按钮，已安装显示启用开关 + 卸载；卸载有确认。内嵌构建（feature = "nfs"）仍显示「内置」。`PluginInfo` 增 `installed` 字段。
+- **发布流水线**：发行口径改落在 Cargo 默认 features（`default = ["sftp","share","nfs-sidecar"]`，内嵌 NFS 变为 opt-in `--features nfs`）——tauri CLI 只有 `--features`（可加不可减、无 `--no-default-features`），v0.40.0 首发 tag 因把 `--no-default-features` 经 tauri-action 传给 `tauri build` 而三平台构建即报 `unexpected argument`，本版修正；插件打包步骤补显式 `--target`（macOS x64 job 在 arm64 runner 上原会打出 arm64 二进制却被标成 x86_64）；新增每平台 `rdir-nfs` 编译 + Node 脚本打包 `.rdplugin`（`tools/pack-nfs-plugin.mjs`，纯 stdlib zip deflate，跨平台字节级一致；macOS arm64 实测 2.7MB 二进制 → 1.2MB 插件包）+ 独立 manifest 上传 Release（rdir-nfs crate 与宿主同版号，由 version sync 一并写入）；test job 升级 `cargo test --workspace` 把插件 crate 的协议/回环测试纳入发布门禁。
+- **本地编译口径变化**：`cargo build` / `pnpm tauri dev` 默认即发行形状（NFS 走插件）；要内嵌 NFS 的开发构建用 `cargo build --features nfs` / `pnpm tauri dev --features nfs`。
+- **主题包滚动发布（`theme-packs.yml`）**：示例包发布独立于 app 版本节奏——`examples/themes/**` 变更或手动触发时，zip 整包 + 9 个单文件覆盖上传到固定 tag `theme-packs` 的滚动 Release（`--latest=false` 硬约束：`releases/latest` 被应用内检查更新与 NFS 在线安装消费，主题包 Release 不得成为 latest）。下载后经设置 → 外观 → 主题包导入。NFS 插件维持随主 Release 发布（插件/宿主版本锁死配对 + Draft→转正原子性，独立 tag 只添账本不解决问题）。
+- **主题调色盘实际随本版落地**：v0.39.0 段落所述调色盘（ThemeStudioDrawer / themeEditor / oklch 编辑 / 全局色相联动 / 保存导出）当时未随 v0.39.0 构建入库（文件滞留工作区），本版一并提交生效——功能描述与测试数字以 v0.39.0 段落为准。
+- **测试**：cargo 233 通过（主 crate 221 + rdir-nfs 12：协议线形状 / 帧往返 / cancel 帧 / 双工回环端到端 ping-坏行-cancel-EOF 退出、客户端既有用例随迁、NFS 真机集成用例保留（服务器不可达自动跳过）；主 crate 新增插件包 manifest 契约拒绝（平台/id/协议）/ 合法包往返 / sha256 / 版本比较）；vitest 693 通过（+4：插件面板三态渲染与回调）；e2e 197 通过（mock 补 `installed` 字段与四个 nfs_plugin_* 命令桩）。
+
+## v0.39.0 (2026-11-02)
 
 - **SMB / Windows 网络共享（内置插件）**：地址栏 `smb://host/share` 或直接输入 `\\host\share` 浏览 Windows 共享，`smb://host`（或 `\\host`）列出服务器全部磁盘类共享（NetShareEnum，排除 IPC$/ADMIN$ 等管理共享）。实现走 **UNC 委托**：`smb://` 仅翻译为 UNC 路径，一切文件操作复用本地引擎（浏览/搜索/预览/缩略图/复制移动/差异比对全量能力，条目以 UNC 本地路径返回，前端零特判）；认证走系统凭据（访问被拒时提示先在资源管理器打开一次或 `net use` 预认证）。仅 Windows 提供共享枚举，其他平台可挂载后按本地路径浏览。
 - **NFS 网络文件系统（内置插件，feature = "nfs" 可编译期拔出）**：地址栏 `nfs://host/export/path` 直连 NFSv3 导出（纯 Rust 客户端 nfs-rs，RPC 直连不经系统挂载，Windows/mac/Linux 全平台可用），`nfs://host` 列出服务器全部导出（等价 `showmount -e`）。导出根自动探测：从最短前缀到完整路径逐个尝试挂载，首个成功者即导出根，余下为会话内相对路径；会话池 LRU 上限 8，导航即连接（无服务器管理界面）。能力对齐 SFTP：浏览 / stat / 文件与文件夹上传下载（递归 + 两阶段进度 + 可取消）/ 新建 / 删除（递归）/ 重命名 / 文本比较与编辑保存（临时副本回传）/ 远程打开（下载到远程临时目录）/ 同步比对（maxDiffLevel 2）。挂载 URL 路径段按 RFC 3986 编码，中文目录名全程可用；进度/取消事件与 SFTP 同构（取消 id 沿用 sftp: 前缀，前端取消路由零改动）。
 - **插件面板**：设置 → 插件新增 SMB / NFS 两项（builtin，均可开关，无配置面板）。
 - **地址栏 scheme 输入修复（实测发现，并入本版）**：`smb://`、`nfs://` 输入此前被 Toolbar 提交与 App 导航两处 scheme 枚举白名单（只有 sftp/http/tags）漏判，被当相对路径拼进当前目录且 `//` 归一成 `\`（形态 `F:\…\smb:\host`）就地报「路径不存在」——scheme 判定通用化为正则并三处收敛到 `cmdline.hasScheme`，后端 `resolve_path` / `complete_path` 加 scheme 早退防御（此类输入永不参与本地拼接/补全）；新增通用化的直接收益是以后再加协议零补漏。
-- 测试：cargo +15（nfs 挂载 URL 段编码 / 属性解析 / 相对路径归一、smb 路径翻译 / UNC 服务器根判定 / 本地化透传、resolve_path scheme 不拼接 / complete_path scheme 空结果；真机集成用例：NFS 列导出→列目录→8MB 下载→上传覆盖回读→mkdir/touch/rename/递归删除→取消上传半成品清理全链路（服务器不可达自动跳过），SMB NetShareEnum 共享枚举（无预认证会话自动跳过））；vitest +3（isNfsPath 判定、nfs 后端能力位、hasScheme 通用化）；e2e +2（scheme-addressbar：mock 报错保留原始路径、反向断言无 `smb:\` 形态），全量 186 通过。
+- 测试（SMB / NFS）：cargo +15（nfs 挂载 URL 段编码 / 属性解析 / 相对路径归一、smb 路径翻译 / UNC 服务器根判定 / 本地化透传、resolve_path scheme 不拼接 / complete_path scheme 空结果；真机集成用例：NFS 列导出→列目录→8MB 下载→上传覆盖回读→mkdir/touch/rename/递归删除→取消上传半成品清理全链路（服务器不可达自动跳过），SMB NetShareEnum 共享枚举（无预认证会话自动跳过））；vitest +3（isNfsPath 判定、nfs 后端能力位、hasScheme 通用化）；e2e +2（scheme-addressbar：mock 报错保留原始路径、反向断言无 `smb:\` 形态），全量 186 通过。
+- **主题包（可安装配色）**：设置 → 外观 → 主题包支持从本地安装 `.rdtheme.json` 纯数据配色包（白名单 23 个颜色 token，不含代码、不支持任意 CSS），安装后立即可选、可删除；主题包与浅色 / 深色 / 跟随系统同层互斥，包内 `base` 只决定组件用哪套明暗变体。token 经 `documentElement.style.setProperty` 内联应用，白名单外 key 与非法颜色自动跳过，不拼接 `<style>` 文本。
+- **设置面板皮肤跟随主题包**：面板底色 / 表面 / 主色渐变 / 装饰光斑由包调色板自动派生（`--glass-*` 变量，`index.css` 原值为兜底），包作者无需额外配置；无主题包时「云舒云卷 / 黑金纹琉璃」皮肤与改动前一致。
+- **Rust 存储层**：新增 `themes.rs`（`themes_list` / `theme_install` / `theme_delete`），包存 `app_config_dir()/themes/<id>.json` 并原子写入；id 正则 + 名称长度 + 64 KiB 上限 + token 形态校验，删除仅接受合法 id（防路径穿越）；坏包进列表 `errors`，不阻塞其他包。
+- **示例包**：`examples/themes/` 提供 8 个纯数据配色包，需手动导入，不内嵌进应用：金秋 / 红枫 / 桃花粉 / 青涩 / 浅海蓝（light），酒红 / 蓝莓 / 紫罗兰（dark）。
+- **主题包卡片选中态修复**：卡片内层按钮此前沿用分段钮的 `aria-pressed` 皮肤规则，选中时被 `--primary-grad` 整块涂满（浅色成饱和蓝、深色成金板，文字压上去看不清），现加 `theme-card` 类豁免，选中态只由容器淡底表达。
+- 测试（主题包）：cargo +6（id 规则 / 安装-列表-删除往返 / 坏包隔离 / base 与空名称 / 超大文件 / 删除穿越）；vitest +14（应用与清除 / base 回落 / 白名单外 key / 非法颜色跳过 / 面板变量派生 / active id / 缩略色 / 设置面板卡片与禁用态）；e2e +4（浅色包 / 深色包 / 设置面板选包与回默认 / 全部示例包都能应用且 `.dark` 跟随 base）；全量 vitest 653 通过、e2e 190 通过。
+- **主题调色盘（自定义配色工具）**：设置 → 外观 → 主题包 → 「调色盘」，或快捷键 `mod+alt+p`（可改键，命令面板同样可达）打开右侧非模态拉门——背后就是真实界面，拖滑杆整个应用实时变色（草稿只活在内存，经 `applyThemePack` 压过当前主题，不落盘）。起点取当前主题包、否则取当前明暗的内置色，也可从「基于」下拉切换到任一已安装包 / 内置浅色 / 内置深色（有改动先确认）。23 个 token 按语义分 6 组（表面 / 文字 / 主色 / 次级 / 状态 / 边框）数据驱动渲染，每行 色块 + 名称 + 值，点色块弹出 L（明度）/ C（彩度）/ H（色相）滑杆，轨道即该维度色谱；`--border` / `--input` 多一根不透明度滑杆，`--shadow` 用 无 / 轻 / 中 / 重 预设；任意行可直接改原值、单项恢复原值、整体重置。hex / rgb 等写法自动归一化为 oklch 再编辑。
+- **全局色相联动**：识别调色板主导色相（彩度 ≥ 0.02 的主题色里 ±25° 成员最多的簇），拖一根滑杆整体旋转主题色系（保留各自明度 / 彩度 / 透明度），文件夹 / 成功 / 危险三个功能色不跟随；全灰阶调色板时禁用。
+- **快捷键「收回墙内」**：与预览栏同款机制——再按 `mod+alt+p` 或点头部「收回」只把面板滑出视口（200ms），草稿与滑杆状态全保留、配色继续生效，方便全宽审视整体效果；贴边把手 / 再按快捷键拉回。「×」才是关闭：有未保存改动先确认，关闭即回到原主题。调色盘 z-50 压过预览栏 z-40，两者互不干扰。
+- **保存 / 导出**：「存为主题包」经新命令 `theme_save` 原子写入 `themes/<id>.json`（允许覆盖同 id，重名先确认），写入后自动选用该包、已存内容成为新起点；「导出」走系统保存对话框经 `theme_export` 写到任意路径。两者都写全量 23 个 token（所见即所得），id / 名称按安装同一套规则校验，非法时按钮禁用并提示。
+- 测试（调色盘）：cargo +2（保存覆盖同 id 并补 `$schema` / 导出到指定路径与目录缺失）；vitest +35（oklch 解析与序列化、hex/rgb 换算、分组恰好覆盖白名单、id 清洗、草稿生成与脏检查、主导色相与旋转跳过功能色、序列化与校验；抽屉渲染 / 收回展开 / 元信息编辑 / 禁用态 / 弹层滑杆数 / 原值输入 / 恢复原值 / 阴影预设 / 分组折叠 / 色相禁用）；e2e +7（快捷键打开草稿即生效、弹层拖动实时变色与收回墙内保留、全局色相联动、设置入口、保存落盘并选用、导出经对话框、关闭放弃草稿）；全量 vitest 689 通过、e2e 197 通过、cargo themes 8 通过。
 
 ## v0.38.0 (2026-10-31)
 

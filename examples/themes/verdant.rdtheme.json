@@ -1,0 +1,33 @@
+{
+  "$schema": "rdir-theme/1",
+  "id": "verdant",
+  "name": "青涩",
+  "author": "cangyunye",
+  "version": "1.0.0",
+  "base": "light",
+  "tokens": {
+    "--background": "oklch(0.985 0.012 150)",
+    "--foreground": "oklch(0.27 0.03 155)",
+    "--card": "oklch(1 0.005 150)",
+    "--card-foreground": "oklch(0.27 0.03 155)",
+    "--popover": "oklch(1 0.005 150)",
+    "--popover-foreground": "oklch(0.27 0.03 155)",
+    "--primary": "oklch(0.525 0.14 155)",
+    "--primary-foreground": "oklch(0.99 0.005 150)",
+    "--secondary": "oklch(0.955 0.018 152)",
+    "--secondary-foreground": "oklch(0.38 0.06 155)",
+    "--muted": "oklch(0.965 0.012 152)",
+    "--muted-foreground": "oklch(0.5 0.03 155)",
+    "--accent": "oklch(0.94 0.04 150)",
+    "--accent-foreground": "oklch(0.36 0.09 155)",
+    "--destructive": "oklch(0.577 0.2 27)",
+    "--border": "oklch(0.9 0.022 152)",
+    "--input": "oklch(0.9 0.022 152)",
+    "--ring": "oklch(0.58 0.13 155)",
+    "--sidebar": "oklch(0.968 0.016 150)",
+    "--selected": "oklch(0.92 0.055 152)",
+    "--folder": "oklch(0.79 0.15 75)",
+    "--ok": "oklch(0.64 0.14 150)",
+    "--shadow": "0 12px 32px rgb(20 70 40 / 0.16)"
+  }
+}

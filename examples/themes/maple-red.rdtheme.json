@@ -1,0 +1,33 @@
+{
+  "$schema": "rdir-theme/1",
+  "id": "maple-red",
+  "name": "红枫",
+  "author": "cangyunye",
+  "version": "1.0.0",
+  "base": "light",
+  "tokens": {
+    "--background": "oklch(0.985 0.009 40)",
+    "--foreground": "oklch(0.28 0.035 32)",
+    "--card": "oklch(1 0.004 40)",
+    "--card-foreground": "oklch(0.28 0.035 32)",
+    "--popover": "oklch(1 0.004 40)",
+    "--popover-foreground": "oklch(0.28 0.035 32)",
+    "--primary": "oklch(0.55 0.19 30)",
+    "--primary-foreground": "oklch(0.99 0.005 40)",
+    "--secondary": "oklch(0.955 0.016 35)",
+    "--secondary-foreground": "oklch(0.4 0.06 30)",
+    "--muted": "oklch(0.965 0.011 38)",
+    "--muted-foreground": "oklch(0.5 0.03 33)",
+    "--accent": "oklch(0.94 0.035 35)",
+    "--accent-foreground": "oklch(0.4 0.1 30)",
+    "--destructive": "oklch(0.577 0.2 27)",
+    "--border": "oklch(0.9 0.02 35)",
+    "--input": "oklch(0.9 0.02 35)",
+    "--ring": "oklch(0.6 0.17 30)",
+    "--sidebar": "oklch(0.968 0.014 40)",
+    "--selected": "oklch(0.92 0.05 32)",
+    "--folder": "oklch(0.79 0.15 70)",
+    "--ok": "oklch(0.65 0.13 148)",
+    "--shadow": "0 12px 32px rgb(90 30 20 / 0.16)"
+  }
+}

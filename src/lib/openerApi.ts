@@ -118,6 +118,8 @@ export interface PluginInfo {
   operations: string[];
   enabled: boolean;
   configurable: boolean;
+  /** v0.40 外置插件安装态（builtin 恒为 true；false 时面板给安装入口） */
+  installed: boolean;
 }
 
 /** 插件清单（内置插件注册表 + 启用状态） */
@@ -126,6 +128,28 @@ export const listPlugins = () => invoke<PluginInfo[]>("list_plugins");
 /** 启用 / 禁用插件并持久化；返回最新清单 */
 export const setPluginEnabled = (id: string, enabled: boolean) =>
   invoke<PluginInfo[]>("set_plugin_enabled", { id, enabled });
+
+/** v0.40 NFS 伴生进程插件状态（安装态 / 版本 / 协议匹配） */
+export interface NfsPluginStatus {
+  source: "builtin" | "external";
+  installed: boolean;
+  version: string | null;
+  protocolMatch: boolean;
+  enabled: boolean;
+  error: string | null;
+}
+
+/** 本地导入 .rdplugin（zip 容器，含 manifest + 二进制，sha256 / 协议版本 / 平台三重校验） */
+export const nfsPluginImport = (file: string) =>
+  invoke<NfsPluginStatus>("nfs_plugin_import", { file });
+
+/** 在线获取（官方 GitHub Release 通道，整包 + 包内双校验） */
+export const nfsPluginInstallOnline = () =>
+  invoke<NfsPluginStatus>("nfs_plugin_install_online");
+
+/** 卸载（删除插件目录与安装信息） */
+export const nfsPluginUninstall = () =>
+  invoke<NfsPluginStatus>("nfs_plugin_uninstall");
 
 /** HTTP autoindex：下载文件到本地目录（流式 + 进度条），返回实际路径 */
 export const cancelHttpDownload = (url: string) =>

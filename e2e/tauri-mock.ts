@@ -187,6 +187,8 @@ export async function installTauriMock(page: Page): Promise<void> {
       // v0.27 图标自由摆放位置表 + 画廊缩略图（e2e 环境无应用数据目录/图像解码）
       icon_positions_load: () => ({}),
       icon_positions_save: () => null,
+      // v0.39 主题包：e2e 环境不读配置目录，按未安装处理
+      themes_list: () => ({ packs: [], errors: [] }),
       thumb_get: () => null,
       // v0.28 预览原图：回 1x1 PNG（e2e 只断言预览区出现 <img>，不校验像素）
       preview_data: (a) => {
@@ -531,7 +533,41 @@ export async function installTauriMock(page: Page): Promise<void> {
           source: "builtin",
           enabled: true,
           configurable: false,
+          installed: true,
         })),
+      // v0.40 NFS 伴生进程插件安装链路（默认未安装态；面板三态回归用）
+      nfs_plugin_status: () => ({
+        source: "external",
+        installed: false,
+        version: null,
+        protocolMatch: false,
+        enabled: true,
+        error: null,
+      }),
+      nfs_plugin_import: () => ({
+        source: "external",
+        installed: true,
+        version: "0.40.0",
+        protocolMatch: true,
+        enabled: true,
+        error: null,
+      }),
+      nfs_plugin_install_online: () => ({
+        source: "external",
+        installed: true,
+        version: "0.40.0",
+        protocolMatch: true,
+        enabled: true,
+        error: null,
+      }),
+      nfs_plugin_uninstall: () => ({
+        source: "external",
+        installed: false,
+        version: null,
+        protocolMatch: false,
+        enabled: true,
+        error: null,
+      }),
       list_openers: () => [],
       list_shells: () => [],
       // ---- 文本比较（v0.29.1 双栏同屏回归用）：超长行 + 正常行混合 ----

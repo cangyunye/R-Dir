@@ -16,13 +16,15 @@ mod remote_temp;
 mod search;
 mod sizestat;
 mod text_diff;
+mod themes;
 mod thumbs;
 mod volumes;
 
 #[cfg(feature = "sftp")]
 mod sftp;
-#[cfg(feature = "nfs")]
-mod nfs;
+mod nfs_backend;
+#[cfg(feature = "nfs-sidecar")]
+mod nfs_plugin;
 mod smb;
 
 mod opener;
@@ -53,9 +55,9 @@ pub struct AppState {
     /// SFTP 会话池（内置插件，feature = "sftp" 编译期门控，可随时拔出）
     #[cfg(feature = "sftp")]
     pub sftp_pool: tokio::sync::Mutex<sftp::pool::SessionPool>,
-    /// NFS 会话池（内置插件，feature = "nfs" 编译期门控，可随时拔出）
-    #[cfg(feature = "nfs")]
-    pub nfs_pool: tokio::sync::Mutex<nfs::pool::SessionPool>,
+    /// NFS 后端句柄（v0.40）：InProcess（feature = "nfs"）或伴生进程插件（nfs-sidecar），
+    /// 无 cfg 双分支——所有 nfs:// 路由统一经此；init 在 setup 阶段定型
+    pub nfs: nfs_backend::NfsHandle,
     /// master-key（AES-256-GCM 加密保存密码用）：仅内存、不落盘；会话期间复用
     #[cfg(feature = "sftp")]
     pub master_key: tokio::sync::Mutex<Option<Vec<u8>>>,
@@ -166,13 +168,8 @@ async fn list_side(
         if !plugins::plugin_enabled(&state.plugins, "nfs") {
             return Err("NFS 插件已禁用（设置 → 插件中可重新启用）".into());
         }
-        #[cfg(feature = "nfs")]
-        {
-            let pool = state.nfs_pool.lock().await;
-            return nfs::list_dir(&pool, path).await;
-        }
-        #[cfg(not(feature = "nfs"))]
-        return Err("NFS 插件未编译（该构建已拔出远程功能）".into());
+        // v0.40：InProcess / 伴生进程插件 / 未安装统一由 NfsHandle 分发
+        return state.nfs.list_dir(path.to_string()).await;
     }
     if path.starts_with("http://") || path.starts_with("https://") {
         if !plugins::plugin_enabled(&state.plugins, "http") {
@@ -226,13 +223,7 @@ async fn stat_path(
         if !plugins::plugin_enabled(&state.plugins, "nfs") {
             return Err("NFS 插件已禁用（设置 → 插件中可重新启用）".into());
         }
-        #[cfg(feature = "nfs")]
-        {
-            let pool = state.nfs_pool.lock().await;
-            return nfs::stat_path(&pool, &path).await;
-        }
-        #[cfg(not(feature = "nfs"))]
-        return Err("NFS 插件未编译".into());
+        return state.nfs.stat_path(path).await;
     }
     tauri::async_runtime::spawn_blocking(move || {
         let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
@@ -269,8 +260,7 @@ async fn stat_paths(paths: Vec<String>) -> Vec<String> {
 
 // ==================== 插件注册表命令（v0.5） ====================
 
-/// 校验插件启用状态（返回 Err 时插件已禁用）。仅 SFTP 命令使用。
-#[cfg(feature = "sftp")]
+/// 校验插件启用状态（返回 Err 时插件已禁用）。SFTP / NFS 命令共用。
 fn ensure_plugin(state: &AppState, id: &str) -> Result<(), String> {
     if plugins::plugin_enabled(&state.plugins, id) {
         Ok(())
@@ -279,11 +269,34 @@ fn ensure_plugin(state: &AppState, id: &str) -> Result<(), String> {
     }
 }
 
-/// 插件清单（内置插件注册表 + 启用状态）
+/// NFS 插件安装态（插件面板清单用）：内嵌构建恒为已安装；伴生插件构建查 install.json；
+/// 两者皆无的极简构建无关紧要（面板无 NFS 行）。cfg! 不能短路模块路径，必须 cfg 块分派。
+fn nfs_plugin_installed(app: &tauri::AppHandle) -> bool {
+    #[cfg(feature = "nfs")]
+    {
+        let _ = app;
+        true
+    }
+    #[cfg(all(not(feature = "nfs"), feature = "nfs-sidecar"))]
+    {
+        nfs_plugin::installed_info(app).is_some()
+    }
+    #[cfg(not(any(feature = "nfs", feature = "nfs-sidecar")))]
+    {
+        let _ = app;
+        true
+    }
+}
+
+/// 插件清单（内置插件注册表 + 启用状态 + 外置插件安装态）
 #[tauri::command]
-fn list_plugins(state: tauri::State<'_, AppState>) -> Vec<plugins::PluginInfo> {
+fn list_plugins(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Vec<plugins::PluginInfo> {
     let map = state.plugins.enabled.lock().unwrap().clone();
-    plugins::builtin_plugins(&map)
+    let nfs_installed = nfs_plugin_installed(&app);
+    plugins::builtin_plugins(&map, nfs_installed)
 }
 
 /// 启用 / 禁用插件并持久化；返回最新清单
@@ -298,7 +311,8 @@ fn set_plugin_enabled(
     let file = plugins::to_file(&state.plugins);
     plugins::save_file(&app, &file)?;
     let map = state.plugins.enabled.lock().unwrap().clone();
-    Ok(plugins::builtin_plugins(&map))
+    let nfs_installed = nfs_plugin_installed(&app);
+    Ok(plugins::builtin_plugins(&map, nfs_installed))
 }
 
 // ==================== SFTP 插件命令（feature = "sftp"） ====================
@@ -895,22 +909,15 @@ async fn resolve_text_side(
             Err("SFTP 插件未编译，无法读取远程文件".into())
         }
     } else if path.starts_with("nfs://") {
-        #[cfg(feature = "nfs")]
-        {
-            ensure_plugin(state, "nfs")?;
-            let pool = state.nfs_pool.lock().await;
-            let dir = std::env::temp_dir().join("r-dir-diff");
-            std::fs::create_dir_all(&dir).map_err(|e| format!("创建临时目录失败：{e}"))?;
-            let mut nocb = |_ev: nfs::XferEvent| true;
-            let local = nfs::download_to(&pool, &dir.to_string_lossy(), path, false, &mut nocb)
-                .await?;
-            return Ok((local, true));
-        }
-        #[cfg(not(feature = "nfs"))]
-        {
-            let _ = state;
-            Err("NFS 插件未编译，无法读取远程文件".into())
-        }
+        ensure_plugin(state, "nfs")?;
+        let dir = std::env::temp_dir().join("r-dir-diff");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("创建临时目录失败：{e}"))?;
+        let mut nocb = |_ev: nfs_backend::XferEvent| true;
+        let local = state
+            .nfs
+            .download_to(dir.to_string_lossy().to_string(), path.to_string(), false, &mut nocb)
+            .await?;
+        Ok((local, true))
     } else if path.starts_with("http://") || path.starts_with("https://") {
         if !plugins::plugin_enabled(&state.plugins, "http") {
             return Err("HTTP autoindex 插件已禁用（设置 → 插件中可重新启用）".into());
@@ -1028,7 +1035,6 @@ fn split_sftp_dir_name(path: &str) -> Result<(String, String), String> {
 }
 
 /// 拆 NFS URL 为 (所在目录 URL, 文件名)：nfs://host:2049/a/b/c.txt → (nfs://host:2049/a/b/, c.txt)
-#[cfg(feature = "nfs")]
 fn split_nfs_dir_name(path: &str) -> Result<(String, String), String> {
     let rest = path.strip_prefix("nfs://").ok_or("非 NFS 路径")?;
     let slash = rest.find('/').ok_or("NFS 路径缺少目录部分")?;
@@ -1042,7 +1048,6 @@ fn split_nfs_dir_name(path: &str) -> Result<(String, String), String> {
 }
 
 /// 远程文件名 → 本地临时文件安全名（Windows 保留字符替换为 _；仅用于落盘临时副本）
-#[cfg(feature = "nfs")]
 fn sanitize_remote_name(name: &str) -> String {
     let mut s = String::with_capacity(name.len());
     for c in name.chars() {
@@ -1085,40 +1090,38 @@ async fn write_text_file(
         .map_err(|e| format!("写入任务失败：{e}"))?;
     }
     if path.starts_with("nfs://") {
-        #[cfg(feature = "nfs")]
-        {
-            ensure_plugin(&state, "nfs")?;
-            let (dir, name) = split_nfs_dir_name(&path)?;
-            let tmpdir = std::env::temp_dir().join(format!(
-                "r-dir-save-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0)
-            ));
-            std::fs::create_dir_all(&tmpdir).map_err(|e| format!("创建临时目录失败：{e}"))?;
-            let tmpfile = tmpdir.join(sanitize_remote_name(&name));
-            let write_result =
-                std::fs::write(&tmpfile, &bytes).map_err(|e| format!("写临时文件失败：{e}"));
-            let result = match write_result {
-                Ok(()) => {
-                    let pool = state.nfs_pool.lock().await;
-                    let mut nocb = |_ev: nfs::XferEvent| true;
-                    nfs::upload_path(&pool, &tmpfile.to_string_lossy(), &dir, &name, &mut nocb)
-                        .await
-                        .map(|_: String| ())
-                }
-                Err(e) => Err(e),
-            };
-            let _ = std::fs::remove_dir_all(&tmpdir);
-            return result;
-        }
-        #[cfg(not(feature = "nfs"))]
-        {
-            let _ = state;
-            return Err("NFS 插件未编译，无法保存远程文件".into());
-        }
+        ensure_plugin(&state, "nfs")?;
+        let (dir, name) = split_nfs_dir_name(&path)?;
+        let tmpdir = std::env::temp_dir().join(format!(
+            "r-dir-save-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmpdir).map_err(|e| format!("创建临时目录失败：{e}"))?;
+        let tmpfile = tmpdir.join(sanitize_remote_name(&name));
+        let write_result =
+            std::fs::write(&tmpfile, &bytes).map_err(|e| format!("写临时文件失败：{e}"));
+        let result = match write_result {
+            Ok(()) => {
+                let mut nocb = |_ev: nfs_backend::XferEvent| true;
+                state
+                    .nfs
+                    .upload_path(
+                        tmpfile.to_string_lossy().to_string(),
+                        dir,
+                        name,
+                        &mut nocb,
+                    )
+                    .await
+                    .map(|_: String| ())
+            }
+            Err(e) => Err(e),
+        };
+        let _ = std::fs::remove_dir_all(&tmpdir);
+        return result;
     }
     if path.starts_with("sftp://") {
         #[cfg(feature = "sftp")]
@@ -1180,7 +1183,6 @@ async fn file_fingerprints(paths: Vec<String>) -> Vec<fs_ops::FileFingerprint> {
 }
 
 /// 传输指示的文件名 label：取路径末段（兼容 sftp:// URL 与本地路径）；取不到时回退默认文案。
-#[cfg(any(feature = "sftp", feature = "nfs"))]
 fn transfer_label(path: &str, fallback: &str) -> String {
     std::path::Path::new(path)
         .file_name()
@@ -1191,7 +1193,6 @@ fn transfer_label(path: &str, fallback: &str) -> String {
 
 /// 传输收尾事件：前端仅在收到 done=true 后 1.5s 清除状态栏传输指示，
 /// 缺失会导致指示器永久卡在「下载中… 100%」（v0.18.1 修复）。
-#[cfg(any(feature = "sftp", feature = "nfs"))]
 fn emit_transfer_done(app: &tauri::AppHandle, phase: &str, label: &str) {
     let mut p = progress::TransferProgress::start(phase, label, 1);
     p.done = true;
@@ -1200,7 +1201,6 @@ fn emit_transfer_done(app: &tauri::AppHandle, phase: &str, label: &str) {
 
 /// 注册可取消传输：transfer_cancels 插入新旗标，返回 (id, 旗标)。
 /// prefix 用于前端取消路由判别（sftp: 走 cancel_transfer，无前缀的 download 是 http）。
-#[cfg(any(feature = "sftp", feature = "nfs"))]
 fn register_transfer_cancel(
     state: &tauri::State<'_, AppState>,
     prefix: &str,
@@ -1217,7 +1217,6 @@ fn register_transfer_cancel(
 
 /// SFTP 递归传输收尾：完成/失败/取消统一发 done 帧（取消文案收敛为「已取消」，
 /// 与本地复制 emit_transfer_end 同语义；其余 label 由前端按 phase 渲染「xx完成」）。
-#[cfg(any(feature = "sftp", feature = "nfs"))]
 fn emit_sftp_transfer_end(
     app: &tauri::AppHandle,
     phase: &str,
@@ -1433,10 +1432,9 @@ async fn sftp_rename(
     sftp::rename_entry(&pool, &path, &new_name).await
 }
 
-// ==================== NFS 插件命令（feature = "nfs"，事件/取消与 SFTP 同构） ====================
+// ==================== NFS 插件命令（v0.40 无条件编译；InProcess/伴生插件由 NfsHandle 分发，事件/取消与 SFTP 同构） ====================
 
 /// 下载 NFS 文件到临时目录，返回本地路径（供打开）
-#[cfg(feature = "nfs")]
 #[tauri::command]
 async fn nfs_download(
     app: tauri::AppHandle,
@@ -1447,24 +1445,24 @@ async fn nfs_download(
     ensure_plugin(&state, "nfs")?;
     let temp_dir = remote_temp::resolve_temp_dir(local_dir.as_deref());
     let name = transfer_label(&path, "下载中…");
-    let pool = state.nfs_pool.lock().await;
     let mut throttle = progress::Throttle::new();
-    let result = nfs::download(&pool, &path, &temp_dir, |done, total| {
-        if done < total && !throttle.ready() {
-            return;
-        }
-        let mut p = progress::TransferProgress::start("download", &name, 1);
-        p.file_done = done;
-        p.file_total = total;
-        progress::emit(&app, &p);
-    })
-    .await;
+    let result = state
+        .nfs
+        .download(path, &temp_dir, &mut |done, total| {
+            if done < total && !throttle.ready() {
+                return;
+            }
+            let mut p = progress::TransferProgress::start("download", &name, 1);
+            p.file_done = done;
+            p.file_total = total;
+            progress::emit(&app, &p);
+        })
+        .await;
     emit_transfer_done(&app, "download", &name);
     result
 }
 
 /// 下载 NFS 路径（文件或目录）到指定本地目录（粘贴/拖拽 远程→本地，递归）
-#[cfg(feature = "nfs")]
 #[tauri::command]
 async fn nfs_download_to(
     app: tauri::AppHandle,
@@ -1476,9 +1474,8 @@ async fn nfs_download_to(
     ensure_plugin(&state, "nfs")?;
     let label = transfer_label(&path, "下载中…");
     let (id, flag) = register_transfer_cancel(&state, "sftp:");
-    let pool = state.nfs_pool.lock().await;
     // 计划阶段：遍历远程树统计文件数（多个 RTT，期间响应取消）
-    let plan = match nfs::download_plan(&pool, &path, &flag).await {
+    let plan = match state.nfs.download_plan(path.clone(), flag.clone()).await {
         Ok(p) => p,
         Err(e) => {
             state.transfer_cancels.lock().unwrap().remove(&id);
@@ -1490,41 +1487,42 @@ async fn nfs_download_to(
     let mut cur_label = label.clone();
     let id_task = id.clone();
     let app_task = app.clone();
-    let result = nfs::download_to(&pool, &local_dir, &path, overwrite.unwrap_or(false), &mut move |ev| {
-        if flag.load(std::sync::atomic::Ordering::Relaxed) {
-            return false;
-        }
-        let mut p = progress::TransferProgress::start("download", &cur_label, plan.files);
-        p.id = Some(id_task.clone());
-        match ev {
-            nfs::XferEvent::Start(l) => {
-                cur_label = l;
-                throttle.reset();
+    let result = state
+        .nfs
+        .download_to(local_dir, path, overwrite.unwrap_or(false), &mut move |ev| {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return false;
             }
-            nfs::XferEvent::Bytes(done, total) => {
-                if throttle.ready() {
-                    p.file_done = done;
-                    p.file_total = total;
-                    p.done_files = done_files;
-                    progress::emit(&app_task, &p);
+            let mut p = progress::TransferProgress::start("download", &cur_label, plan.files);
+            p.id = Some(id_task.clone());
+            match ev {
+                nfs_backend::XferEvent::Start { label: l } => {
+                    cur_label = l;
+                    throttle.reset();
                 }
-                return true;
+                nfs_backend::XferEvent::Bytes { done, total } => {
+                    if throttle.ready() {
+                        p.file_done = done;
+                        p.file_total = total;
+                        p.done_files = done_files;
+                        progress::emit(&app_task, &p);
+                    }
+                    return true;
+                }
+                nfs_backend::XferEvent::EntryDone => done_files += 1,
             }
-            nfs::XferEvent::EntryDone => done_files += 1,
-        }
-        p.label = cur_label.clone();
-        p.done_files = done_files;
-        progress::emit(&app_task, &p);
-        true
-    })
-    .await;
+            p.label = cur_label.clone();
+            p.done_files = done_files;
+            progress::emit(&app_task, &p);
+            true
+        })
+        .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
     emit_sftp_transfer_end(&app, "download", plan.files, &result);
     result
 }
 
 /// 上传本地路径（文件或目录）到 NFS 远程目录（拖拽/粘贴，递归）
-#[cfg(feature = "nfs")]
 #[tauri::command]
 async fn nfs_upload(
     app: tauri::AppHandle,
@@ -1536,49 +1534,49 @@ async fn nfs_upload(
     ensure_plugin(&state, "nfs")?;
     let label = transfer_label(&name, "上传中…");
     // 计划阶段：统计本地树（纯本地遍历，快）；失败回退单文件分母，不阻塞传输
-    let plan = nfs::upload_plan(&local).unwrap_or(nfs::TransferPlan { files: 1, bytes: 0 });
+    let plan = nfs_backend::upload_plan(&local).unwrap_or(nfs_backend::TransferPlan { files: 1, bytes: 0 });
     let (id, flag) = register_transfer_cancel(&state, "sftp:");
-    let pool = state.nfs_pool.lock().await;
     let mut throttle = progress::Throttle::new();
     let mut done_files = 0usize;
     let mut cur_label = label.clone();
     let id_task = id.clone();
     let app_task = app.clone();
-    let result = nfs::upload_path(&pool, &local, &dest, &name, &mut move |ev| {
-        if flag.load(std::sync::atomic::Ordering::Relaxed) {
-            return false;
-        }
-        let mut p = progress::TransferProgress::start("upload", &cur_label, plan.files);
-        p.id = Some(id_task.clone());
-        match ev {
-            nfs::XferEvent::Start(l) => {
-                cur_label = l;
-                throttle.reset();
+    let result = state
+        .nfs
+        .upload_path(local, dest, name, &mut move |ev| {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return false;
             }
-            nfs::XferEvent::Bytes(done, total) => {
-                if throttle.ready() {
-                    p.file_done = done;
-                    p.file_total = total;
-                    p.done_files = done_files;
-                    progress::emit(&app_task, &p);
+            let mut p = progress::TransferProgress::start("upload", &cur_label, plan.files);
+            p.id = Some(id_task.clone());
+            match ev {
+                nfs_backend::XferEvent::Start { label: l } => {
+                    cur_label = l;
+                    throttle.reset();
                 }
-                return true;
+                nfs_backend::XferEvent::Bytes { done, total } => {
+                    if throttle.ready() {
+                        p.file_done = done;
+                        p.file_total = total;
+                        p.done_files = done_files;
+                        progress::emit(&app_task, &p);
+                    }
+                    return true;
+                }
+                nfs_backend::XferEvent::EntryDone => done_files += 1,
             }
-            nfs::XferEvent::EntryDone => done_files += 1,
-        }
-        p.label = cur_label.clone();
-        p.done_files = done_files;
-        progress::emit(&app_task, &p);
-        true
-    })
-    .await;
+            p.label = cur_label.clone();
+            p.done_files = done_files;
+            progress::emit(&app_task, &p);
+            true
+        })
+        .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
     emit_sftp_transfer_end(&app, "upload", plan.files, &result);
     result
 }
 
 /// NFS 远程新建目录
-#[cfg(feature = "nfs")]
 #[tauri::command]
 async fn nfs_mkdir(
     state: tauri::State<'_, AppState>,
@@ -1586,12 +1584,10 @@ async fn nfs_mkdir(
     name: String,
 ) -> Result<String, String> {
     ensure_plugin(&state, "nfs")?;
-    let pool = state.nfs_pool.lock().await;
-    nfs::mkdir(&pool, &dir, &name).await
+    state.nfs.mkdir(dir, name).await
 }
 
 /// NFS 远程新建空文件
-#[cfg(feature = "nfs")]
 #[tauri::command]
 async fn nfs_create_file(
     state: tauri::State<'_, AppState>,
@@ -1599,24 +1595,20 @@ async fn nfs_create_file(
     name: String,
 ) -> Result<String, String> {
     ensure_plugin(&state, "nfs")?;
-    let pool = state.nfs_pool.lock().await;
-    nfs::create_file(&pool, &dir, &name).await
+    state.nfs.create_file(dir, name).await
 }
 
 /// NFS 远程删除（目录递归删；文件直接删）
-#[cfg(feature = "nfs")]
 #[tauri::command]
 async fn nfs_delete(
     state: tauri::State<'_, AppState>,
     paths: Vec<String>,
 ) -> Result<(), String> {
     ensure_plugin(&state, "nfs")?;
-    let pool = state.nfs_pool.lock().await;
-    nfs::delete_entries(&pool, &paths).await
+    state.nfs.delete_entries(paths).await
 }
 
 /// NFS 远程重命名
-#[cfg(feature = "nfs")]
 #[tauri::command]
 async fn nfs_rename(
     state: tauri::State<'_, AppState>,
@@ -1624,8 +1616,7 @@ async fn nfs_rename(
     new_name: String,
 ) -> Result<String, String> {
     ensure_plugin(&state, "nfs")?;
-    let pool = state.nfs_pool.lock().await;
-    nfs::rename_entry(&pool, &path, &new_name).await
+    state.nfs.rename_entry(path, new_name).await
 }
 
 // ==================== 远程打开临时目录（后端无关，服务 SFTP / HTTP 等） ====================
@@ -2268,6 +2259,10 @@ pub fn run() {
             }
             let state = app.state::<AppState>();
             plugins::init(app.handle(), &state.plugins);
+            // v0.40 NFS 后端定型：InProcess（feature = "nfs"）或伴生进程插件（安装根定位）
+            state
+                .nfs
+                .init(app.path().app_config_dir().ok().map(|d| d.join("plugins")));
             // 命令补全索引预热（后台线程）：优先加载磁盘缓存，PATH 签名变化才重扫，
             // 避免首次在地址栏输入裸词时全量扫描 PATH 卡住主线程
             cmdrun::warm_cache_async(
@@ -2355,21 +2350,23 @@ pub fn run() {
         sftp_export_servers,
         #[cfg(feature = "sftp")]
         sftp_import_servers,
-        // v0.39 NFS 插件命令（事件/取消与 SFTP 同构）
-        #[cfg(feature = "nfs")]
+        // v0.40 NFS 插件命令（无条件注册；InProcess/伴生插件/未安装由 NfsHandle 分发）
         nfs_download,
-        #[cfg(feature = "nfs")]
         nfs_download_to,
-        #[cfg(feature = "nfs")]
         nfs_upload,
-        #[cfg(feature = "nfs")]
         nfs_mkdir,
-        #[cfg(feature = "nfs")]
         nfs_create_file,
-        #[cfg(feature = "nfs")]
         nfs_delete,
-        #[cfg(feature = "nfs")]
         nfs_rename,
+        // v0.40 NFS 伴生进程插件安装链路（feature = "nfs-sidecar"）
+        #[cfg(feature = "nfs-sidecar")]
+        nfs_plugin::nfs_plugin_status,
+        #[cfg(feature = "nfs-sidecar")]
+        nfs_plugin::nfs_plugin_import,
+        #[cfg(feature = "nfs-sidecar")]
+        nfs_plugin::nfs_plugin_install_online,
+        #[cfg(feature = "nfs-sidecar")]
+        nfs_plugin::nfs_plugin_uninstall,
         // v0.37 远程打开临时目录：可配置 / 统计 / 清理（后端无关，无 feature 门控）
         remote_temp_info,
         remote_temp_clear,
@@ -2410,6 +2407,13 @@ pub fn run() {
         // 偏好持久化（v0.14）
         prefs_load,
         prefs_save,
+        // 主题包（v0.40）
+        themes::themes_list,
+        themes::theme_install,
+        themes::theme_delete,
+        // 主题调色盘：保存到主题目录 / 导出到指定路径
+        themes::theme_save,
+        themes::theme_export,
         // 目录大小统计（v0.16）
         compute_size,
         cancel_size,
