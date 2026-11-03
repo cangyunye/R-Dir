@@ -168,6 +168,39 @@ pub fn delete_in(dir: &Path, id: &str) -> Result<(), String> {
     }
 }
 
+/// 调色盘草稿整理：裁掉名称空白、补 $schema，再走安装同一套校验
+fn normalize_draft(mut pack: ThemePack) -> Result<ThemePack, String> {
+    pack.name = pack.name.trim().to_string();
+    if pack.schema.is_empty() {
+        pack.schema = THEME_SCHEMA.into();
+    }
+    validate(&pack)?;
+    Ok(pack)
+}
+
+/// 保存（v0.39 调色盘）：校验 → 原子写入 themes/<id>.json。
+/// 与 install 不同，允许覆盖同 id——用户在调色盘里反复保存同一主题是常态，重名确认由前端负责。
+pub fn save_into(dir: &Path, pack: ThemePack) -> Result<ThemePack, String> {
+    let pack = normalize_draft(pack)?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("创建主题目录失败：{e}"))?;
+    let body = serde_json::to_string_pretty(&pack).map_err(|e| e.to_string())?;
+    let dest = dir.join(format!("{}.json", pack.id));
+    crate::json_store::write_atomic(&dest, &body, "写入主题包失败", "保存主题包失败")?;
+    Ok(pack)
+}
+
+/// 导出到用户在保存对话框选定的路径（.rdtheme.json）；目标目录不存在则报错而非静默创建
+pub fn export_to(path: &Path, pack: ThemePack) -> Result<(), String> {
+    let pack = normalize_draft(pack)?;
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.is_dir() {
+            return Err("导出目录不存在".into());
+        }
+    }
+    let body = serde_json::to_string_pretty(&pack).map_err(|e| e.to_string())?;
+    crate::json_store::write_atomic(path, &body, "写入主题包失败", "导出主题包失败")
+}
+
 fn themes_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -204,6 +237,23 @@ pub async fn theme_delete(app: tauri::AppHandle, id: String) -> Result<(), Strin
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn theme_save(app: tauri::AppHandle, pack: ThemePack) -> Result<ThemePack, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = themes_dir(&app)?;
+        save_into(&dir, pack)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn theme_export(pack: ThemePack, path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || export_to(Path::new(&path), pack))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -316,6 +366,59 @@ mod tests {
         let dir = tmp_dir("traversal");
         assert!(delete_in(&dir, "../etc/passwd").is_err());
         assert!(delete_in(&dir, "a/b").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn draft(id: &str, name: &str) -> ThemePack {
+        let mut tokens = BTreeMap::new();
+        tokens.insert("--primary".to_string(), "oklch(0.68 0.15 275)".to_string());
+        ThemePack {
+            schema: String::new(),
+            id: id.into(),
+            name: name.into(),
+            author: String::new(),
+            version: "1.0.0".into(),
+            base: "dark".into(),
+            tokens,
+        }
+    }
+
+    #[test]
+    fn save_overwrites_same_id_and_fills_schema() {
+        let dir = tmp_dir("save");
+        let saved = save_into(&dir, draft("my-blue", "  我的蓝  ")).unwrap();
+        assert_eq!(saved.name, "我的蓝");
+        assert_eq!(saved.schema, THEME_SCHEMA);
+        assert!(dir.join("my-blue.json").exists());
+
+        // 同 id 再存：覆盖而非报错（与 install 的"不覆盖"语义相反）
+        let mut again = draft("my-blue", "改名了");
+        again.tokens.insert("--primary".into(), "oklch(0.5 0.1 30)".into());
+        save_into(&dir, again).unwrap();
+        let list = list_in(&dir);
+        assert_eq!(list.packs.len(), 1);
+        assert_eq!(list.packs[0].name, "改名了");
+        assert_eq!(list.packs[0].tokens["--primary"], "oklch(0.5 0.1 30)");
+
+        // 校验照常生效
+        assert!(save_into(&dir, draft("Bad Id", "x")).unwrap_err().contains("id"));
+        assert!(save_into(&dir, draft("ok", "   ")).unwrap_err().contains("名称"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_writes_to_chosen_path_and_rejects_missing_dir() {
+        let dir = tmp_dir("export");
+        let path = dir.join("my-blue.rdtheme.json");
+        export_to(&path, draft("my-blue", "我的蓝")).unwrap();
+        let pack = read_pack(&path).unwrap();
+        assert_eq!(pack.id, "my-blue");
+        assert_eq!(pack.schema, THEME_SCHEMA);
+        // 临时文件已 rename 掉
+        assert!(!dir.join("my-blue.rdtheme.json.tmp").exists());
+
+        let missing = dir.join("nope").join("x.json");
+        assert!(export_to(&missing, draft("x", "X")).unwrap_err().contains("目录不存在"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

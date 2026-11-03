@@ -4143,6 +4143,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 
 [[package]]
+name = "rdir-nfs"
+version = "0.40.0"
+dependencies = [
+ "bytes 1.12.1",
+ "futures-util",
+ "nfs-rs",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4430,14 +4443,13 @@ dependencies = [
 
 [[package]]
 name = "rust-file-manager"
-version = "0.39.0"
+version = "0.40.0"
 dependencies = [
  "aes-gcm",
  "async-trait",
  "axum",
  "base64 0.22.1",
  "block2",
- "bytes 1.12.1",
  "bzip2",
  "clipboard-win",
  "dirs 5.0.1",
@@ -4450,7 +4462,6 @@ dependencies = [
  "libc",
  "local-ip-address",
  "md-5",
- "nfs-rs",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -4458,8 +4469,8 @@ dependencies = [
  "objc2-foundation",
  "objc2-quick-look-thumbnailing",
  "objc2-uniform-type-identifiers",
- "percent-encoding",
  "rand 0.8.8",
+ "rdir-nfs",
  "regex",
  "russh",
  "russh-keys",

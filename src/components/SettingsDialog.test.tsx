@@ -248,3 +248,52 @@ describe("SettingsDialog 外观：主题包（v0.39）", () => {
     expect(screen.getByText("1 个主题包无法读取")).toBeInTheDocument();
   });
 });
+
+describe("SettingsDialog 插件分区 NFS 三态（v0.40）", () => {
+  const nfsExternal = (installed: boolean) => ({
+    id: "nfs",
+    name: "NFS 网络文件系统（插件）",
+    description: "",
+    version: "0.40.0",
+    source: "external",
+    protocols: ["nfs://"],
+    operations: ["list", "read"],
+    enabled: true,
+    configurable: false,
+    installed,
+  });
+
+  /** NFS 卡片容器（对话框内多处 role="switch"，必须在卡片内查询） */
+  function nfsCard() {
+    return screen.getByText("NFS 网络文件系统（插件）").closest("div.rounded-md")!;
+  }
+
+  it("external 未安装 → 展示在线获取 / 导入按钮，无启用开关", () => {
+    setup({ plugins: [nfsExternal(false)] });
+    expect(screen.getByText("在线获取")).toBeInTheDocument();
+    expect(screen.getByText("导入 .rdplugin")).toBeInTheDocument();
+    expect(screen.getByText("未安装")).toBeInTheDocument();
+    expect(nfsCard().querySelector('[role="switch"]')).toBeNull();
+  });
+
+  it("external 已安装 → 展示启用开关与卸载入口", () => {
+    setup({ plugins: [nfsExternal(true)] });
+    expect(nfsCard().querySelector('[role="switch"]')).not.toBeNull();
+    expect(screen.getByText("卸载")).toBeInTheDocument();
+    expect(screen.queryByText("在线获取")).not.toBeInTheDocument();
+  });
+
+  it("点击在线获取 → onFetchNfsPlugin", () => {
+    const onFetchNfsPlugin = vi.fn();
+    setup({ plugins: [nfsExternal(false)], onFetchNfsPlugin });
+    fireEvent.click(screen.getByText("在线获取"));
+    expect(onFetchNfsPlugin).toHaveBeenCalledTimes(1);
+  });
+
+  it("点击卸载 → onUninstallNfsPlugin", () => {
+    const onUninstallNfsPlugin = vi.fn();
+    setup({ plugins: [nfsExternal(true)], onUninstallNfsPlugin });
+    fireEvent.click(screen.getByText("卸载"));
+    expect(onUninstallNfsPlugin).toHaveBeenCalledTimes(1);
+  });
+});

@@ -1,7 +1,9 @@
-//! NFS 内置插件（feature = "nfs"）：路径解析、会话池、只读浏览与文件操作。
+//! NFS 客户端本体：路径解析、会话池、只读浏览与文件操作。
 //! 虚拟路径格式：nfs://host[:port]/export/sub/path
 //! 无端口默认走 rpcbind 发现；`nfs://host`（无路径）= 列出服务器全部导出。
 //! 导出根自动探测：从最短前缀到完整路径逐个尝试挂载，第一个成功者即导出。
+//!
+//! 两种宿主形态共用本模块：主程序内嵌（NfsClient）与伴生进程插件（server 层调用自由函数）。
 
 pub mod pool;
 pub mod session;
@@ -11,9 +13,18 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use crate::fs_ops::FileEntry;
+pub use crate::protocol::{NfsEntry, TransferPlan, XferEvent};
 use pool::SessionPool;
 use session::NfsSession;
+
+/// 取消错误码：与主程序 ERR_CANCELLED 契约一致（纯码或 "CANCELLED|详情"），
+/// 经线协议透传后主程序 is_cancelled 按码判定。
+pub const ERR_CANCELLED: &str = "CANCELLED";
+
+/// 判定错误串是否为取消
+pub fn is_cancelled(err: &str) -> bool {
+    err == ERR_CANCELLED || err.starts_with("CANCELLED|")
+}
 
 /// 解析 nfs:// 虚拟路径 → (authority, 导出+子路径)。
 /// authority = host 或 host:port；导出+子路径 = 以 / 开头的完整路径。
@@ -65,7 +76,7 @@ struct Located {
 
 /// 在池中按最长导出前缀匹配会话（已连接才会命中）
 fn locate_session(
-    pool: &SessionPool,
+    pool: &mut SessionPool,
     host: &str,
     port: Option<u16>,
     full: &str,
@@ -102,15 +113,15 @@ async fn locate_or_connect(
     Ok(Located { sess: arc, sub })
 }
 
-/// 远程条目 → 前端 FileEntry（path 为可继续导航的完整 nfs:// URL）
-fn to_entry(authority: &str, dir_full: &str, name: &str, a: &session::NfsAttrs) -> FileEntry {
+/// 远程条目 → 前端 NfsEntry（path 为可继续导航的完整 nfs:// URL）
+fn to_entry(authority: &str, dir_full: &str, name: &str, a: &session::NfsAttrs) -> NfsEntry {
     let full = session::join_sub(dir_full, name);
     let path = format!("nfs://{authority}{full}");
     let extension = Path::new(name)
         .extension()
         .map(|s| s.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    FileEntry {
+    NfsEntry {
         name: name.to_string(),
         path,
         is_dir: a.is_dir,
@@ -124,7 +135,7 @@ fn to_entry(authority: &str, dir_full: &str, name: &str, a: &session::NfsAttrs) 
 }
 
 /// 列目录（路由入口）。`nfs://host`（无路径）= 列导出（等价 showmount -e）。
-pub async fn list_dir(pool: &SessionPool, path: &str) -> Result<Vec<FileEntry>, String> {
+pub async fn list_dir(pool: &mut SessionPool, path: &str) -> Result<Vec<NfsEntry>, String> {
     let (authority, full) = parse_nfs_path(path)?;
     let (host, port) = parse_authority(&authority)?;
     let entries: Vec<(String, session::NfsAttrs)> = if full.is_empty() {
@@ -142,12 +153,11 @@ pub async fn list_dir(pool: &SessionPool, path: &str) -> Result<Vec<FileEntry>, 
             })
             .collect()
     } else {
-        let mut pool = pool.clone();
-        let loc = locate_or_connect(&mut pool, &host, port, &full).await?;
+        let loc = locate_or_connect(pool, &host, port, &full).await?;
         let mut g = loc.sess.lock().await;
         g.list_dir(&loc.sub).await?
     };
-    let mut out: Vec<FileEntry> = entries
+    let mut out: Vec<NfsEntry> = entries
         .into_iter()
         .map(|(name, a)| to_entry(&authority, &full, &name, &a))
         .collect();
@@ -161,14 +171,13 @@ pub async fn list_dir(pool: &SessionPool, path: &str) -> Result<Vec<FileEntry>, 
 }
 
 /// stat（路由入口）→ "dir" / "file" / "symlink"
-pub async fn stat_path(pool: &SessionPool, path: &str) -> Result<String, String> {
+pub async fn stat_path(pool: &mut SessionPool, path: &str) -> Result<String, String> {
     let (authority, full) = parse_nfs_path(path)?;
     let (host, port) = parse_authority(&authority)?;
     if full.is_empty() {
         return Ok("dir".into()); // 导出列表视图恒为目录
     }
-    let mut pool = pool.clone();
-    let loc = locate_or_connect(&mut pool, &host, port, &full).await?;
+    let loc = locate_or_connect(pool, &host, port, &full).await?;
     let mut g = loc.sess.lock().await;
     let a = g.stat(&loc.sub).await?;
     if a.is_dir {
@@ -182,7 +191,7 @@ pub async fn stat_path(pool: &SessionPool, path: &str) -> Result<String, String>
 
 /// 下载远程文件到临时目录，返回本地路径（供 opener 打开）
 pub async fn download(
-    pool: &SessionPool,
+    pool: &mut SessionPool,
     path: &str,
     temp_dir: &Path,
     mut cb: impl FnMut(u64, u64),
@@ -199,8 +208,7 @@ pub async fn download(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建临时目录失败：{e}"))?;
     }
-    let mut p = pool.clone();
-    let loc = locate_or_connect(&mut p, &host, port, &full).await?;
+    let loc = locate_or_connect(pool, &host, port, &full).await?;
     let mut g = loc.sess.lock().await;
     // 单文件打开场景无取消：字节回调恒放行
     let _bytes = g
@@ -213,25 +221,7 @@ pub async fn download(
 }
 
 // ==================== v0.39 递归传输（文件夹上传/下载，对齐 SFTP 结构） ====================
-
-/// 递归传输计划（两阶段进度的分母：先统计再传）
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TransferPlan {
-    /// 待传文件数（目录不计）
-    pub files: usize,
-    /// 待传总字节
-    pub bytes: u64,
-}
-
-/// 递归传输回调事件（对齐本地复制的 ops::CbEvent）
-pub enum XferEvent {
-    /// 开始传输一个文件（label：自顶层条目起的相对路径，展示用）
-    Start(String),
-    /// 当前文件字节进度
-    Bytes(u64, u64),
-    /// 单个文件完成
-    EntryDone,
-}
+// TransferPlan / XferEvent / NfsEntry 定义在 protocol（线协议契约，host 与插件共用）
 
 /// 递归传输回调：返回 false = 取消整个传输
 pub type XferCb<'a> = &'a mut (dyn FnMut(XferEvent) -> bool + Send + 'a);
@@ -268,14 +258,13 @@ fn plan_local_walk(dir: &Path, plan: &mut TransferPlan) {
 /// 遍历远程树统计文件数与总字节（下载进度分母）。
 /// cancelled 置位时中止统计（远程大目录遍历可能耗时多个 RTT）。
 pub async fn download_plan(
-    pool: &SessionPool,
+    pool: &mut SessionPool,
     path: &str,
     cancelled: &std::sync::atomic::AtomicBool,
 ) -> Result<TransferPlan, String> {
     let (authority, full) = parse_nfs_path(path)?;
     let (host, port) = parse_authority(&authority)?;
-    let mut p = pool.clone();
-    let loc = locate_or_connect(&mut p, &host, port, &full).await?;
+    let loc = locate_or_connect(pool, &host, port, &full).await?;
     let mut g = loc.sess.lock().await;
     let a = g.stat(&loc.sub).await?;
     let mut plan = TransferPlan::default();
@@ -299,7 +288,7 @@ fn plan_remote_boxed<'a>(
         let entries = g.list_dir(sub).await?;
         for (name, attrs) in entries {
             if cancelled.load(Ordering::Relaxed) {
-                return Err(crate::ERR_CANCELLED.into());
+                return Err(ERR_CANCELLED.into());
             }
             if attrs.is_dir {
                 let child = session::join_sub(sub, &name);
@@ -327,7 +316,7 @@ async fn ensure_remote_dir(g: &mut NfsSession, sub: &str) -> Result<(), String> 
 /// 上传本地路径（文件或目录）到远程目录下，返回远程完整 URL。
 /// 目录递归：远程逐级 mkdir（已存在并入）、本地逐级遍历；空目录也会在远端创建。
 pub async fn upload_path(
-    pool: &SessionPool,
+    pool: &mut SessionPool,
     local: &str,
     remote_dir: &str,
     name: &str,
@@ -337,8 +326,7 @@ pub async fn upload_path(
     let (host, port) = parse_authority(&authority)?;
     let src = Path::new(local);
     let meta = std::fs::metadata(src).map_err(|e| format!("读取本地失败：{e}"))?;
-    let mut p = pool.clone();
-    let loc = locate_or_connect(&mut p, &host, port, &rdir).await?;
+    let loc = locate_or_connect(pool, &host, port, &rdir).await?;
     // 会话内操作用挂载根相对路径；对外 URL 必须带上导出前缀（完整虚拟路径）
     let remote_in_mount = session::join_sub(&loc.sub, name);
     let remote_full = session::join_sub(&rdir, name);
@@ -347,13 +335,13 @@ pub async fn upload_path(
         ensure_remote_dir(&mut g, &remote_in_mount).await?;
         upload_dir_boxed(&mut g, src, &remote_in_mount, src, cb).await?;
     } else {
-        if !cb(XferEvent::Start(name.to_string())) {
-            return Err(crate::ERR_CANCELLED.into());
+        if !cb(XferEvent::Start { label: name.to_string() }) {
+            return Err(ERR_CANCELLED.into());
         }
-        let mut fcb = |done, total| cb(XferEvent::Bytes(done, total));
+        let mut fcb = |done, total| cb(XferEvent::Bytes { done, total });
         g.upload(src, &remote_in_mount, &mut fcb).await?;
         if !cb(XferEvent::EntryDone) {
-            return Err(crate::ERR_CANCELLED.into());
+            return Err(ERR_CANCELLED.into());
         }
     }
     Ok(format!("nfs://{authority}{remote_full}"))
@@ -385,13 +373,13 @@ fn upload_dir_boxed<'a>(
                     .unwrap_or(&child)
                     .to_string_lossy()
                     .to_string();
-                if !cb(XferEvent::Start(rel)) {
-                    return Err(crate::ERR_CANCELLED.into());
+                if !cb(XferEvent::Start { label: rel }) {
+                    return Err(ERR_CANCELLED.into());
                 }
-                let mut fcb = |done, total| cb(XferEvent::Bytes(done, total));
+                let mut fcb = |done, total| cb(XferEvent::Bytes { done, total });
                 g.upload(&child, &remote_child, &mut fcb).await?;
                 if !cb(XferEvent::EntryDone) {
-                    return Err(crate::ERR_CANCELLED.into());
+                    return Err(ERR_CANCELLED.into());
                 }
             }
             // 其余类型（套接字等非常规条目）跳过
@@ -406,7 +394,7 @@ fn upload_dir_boxed<'a>(
 /// 目录递归：本地逐级 create_dir_all、远程逐级 list_dir；空目录也会在本地创建。
 /// 返回本地落点路径。
 pub async fn download_to(
-    pool: &SessionPool,
+    pool: &mut SessionPool,
     local_dir: &str,
     path: &str,
     overwrite: bool,
@@ -426,21 +414,20 @@ pub async fn download_to(
         dest = PathBuf::from(local_dir).join(format!("{} ({})", safe, n));
         n += 1;
     }
-    let mut p = pool.clone();
-    let loc = locate_or_connect(&mut p, &host, port, &full).await?;
+    let loc = locate_or_connect(pool, &host, port, &full).await?;
     let mut g = loc.sess.lock().await;
     let a = g.stat(&loc.sub).await?;
     if a.is_dir {
         std::fs::create_dir_all(&dest).map_err(|e| format!("创建本地目录失败：{e}"))?;
         download_dir_boxed(&mut g, &loc.sub, &dest, cb).await?;
     } else {
-        if !cb(XferEvent::Start(name)) {
-            return Err(crate::ERR_CANCELLED.into());
+        if !cb(XferEvent::Start { label: name }) {
+            return Err(ERR_CANCELLED.into());
         }
-        let mut fcb = |done, total| cb(XferEvent::Bytes(done, total));
+        let mut fcb = |done, total| cb(XferEvent::Bytes { done, total });
         g.download(&loc.sub, &dest, &mut fcb).await?;
         if !cb(XferEvent::EntryDone) {
-            return Err(crate::ERR_CANCELLED.into());
+            return Err(ERR_CANCELLED.into());
         }
     }
     Ok(dest.to_string_lossy().to_string())
@@ -465,13 +452,13 @@ fn download_dir_boxed<'a>(
                     .map_err(|e| format!("创建本地目录失败：{e}"))?;
                 download_dir_boxed(g, &remote_child, &dest_child, &mut *cb).await?;
             } else {
-                if !cb(XferEvent::Start(name)) {
-                    return Err(crate::ERR_CANCELLED.into());
+                if !cb(XferEvent::Start { label: name }) {
+                    return Err(ERR_CANCELLED.into());
                 }
-                let mut fcb = |done, total| cb(XferEvent::Bytes(done, total));
+                let mut fcb = |done, total| cb(XferEvent::Bytes { done, total });
                 g.download(&remote_child, &dest_child, &mut fcb).await?;
                 if !cb(XferEvent::EntryDone) {
-                    return Err(crate::ERR_CANCELLED.into());
+                    return Err(ERR_CANCELLED.into());
                 }
             }
         }
@@ -480,11 +467,10 @@ fn download_dir_boxed<'a>(
 }
 
 /// 远程新建目录
-pub async fn mkdir(pool: &SessionPool, remote_dir: &str, name: &str) -> Result<String, String> {
+pub async fn mkdir(pool: &mut SessionPool, remote_dir: &str, name: &str) -> Result<String, String> {
     let (authority, rdir) = parse_nfs_path(remote_dir)?;
     let (host, port) = parse_authority(&authority)?;
-    let mut p = pool.clone();
-    let loc = locate_or_connect(&mut p, &host, port, &rdir).await?;
+    let loc = locate_or_connect(pool, &host, port, &rdir).await?;
     let remote_in_mount = session::join_sub(&loc.sub, name);
     let remote_full = session::join_sub(&rdir, name);
     let mut g = loc.sess.lock().await;
@@ -493,11 +479,10 @@ pub async fn mkdir(pool: &SessionPool, remote_dir: &str, name: &str) -> Result<S
 }
 
 /// 远程新建空文件
-pub async fn create_file(pool: &SessionPool, remote_dir: &str, name: &str) -> Result<String, String> {
+pub async fn create_file(pool: &mut SessionPool, remote_dir: &str, name: &str) -> Result<String, String> {
     let (authority, rdir) = parse_nfs_path(remote_dir)?;
     let (host, port) = parse_authority(&authority)?;
-    let mut p = pool.clone();
-    let loc = locate_or_connect(&mut p, &host, port, &rdir).await?;
+    let loc = locate_or_connect(pool, &host, port, &rdir).await?;
     let remote_in_mount = session::join_sub(&loc.sub, name);
     let remote_full = session::join_sub(&rdir, name);
     let mut g = loc.sess.lock().await;
@@ -506,14 +491,13 @@ pub async fn create_file(pool: &SessionPool, remote_dir: &str, name: &str) -> Re
 }
 
 /// 远程删除：目录递归删（先删内容再删目录），文件直接删
-pub async fn delete_entries(pool: &SessionPool, paths: &[String]) -> Result<(), String> {
+pub async fn delete_entries(pool: &mut SessionPool, paths: &[String]) -> Result<(), String> {
     let (authority, _) = parse_nfs_path(&paths[0])?;
     let (host, port) = parse_authority(&authority)?;
-    let mut p = pool.clone();
     // 同一服务器的多条目：按路径逐条定位（通常同会话，锁开销可忽略）
     for path in paths {
         let (_, full) = parse_nfs_path(path)?;
-        let loc = locate_or_connect(&mut p, &host, port, &full).await?;
+        let loc = locate_or_connect(pool, &host, port, &full).await?;
         let mut g = loc.sess.lock().await;
         let a = g.stat(&loc.sub).await?;
         if a.is_dir {
@@ -526,7 +510,7 @@ pub async fn delete_entries(pool: &SessionPool, paths: &[String]) -> Result<(), 
 }
 
 /// 远程重命名/移动
-pub async fn rename_entry(pool: &SessionPool, old_path: &str, new_name: &str) -> Result<String, String> {
+pub async fn rename_entry(pool: &mut SessionPool, old_path: &str, new_name: &str) -> Result<String, String> {
     let (authority, old_full) = parse_nfs_path(old_path)?;
     let (host, port) = parse_authority(&authority)?;
     let parent = Path::new(&old_full)
@@ -534,8 +518,7 @@ pub async fn rename_entry(pool: &SessionPool, old_path: &str, new_name: &str) ->
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| "/".to_string());
     let new_full = session::join_sub(&parent, new_name);
-    let mut p = pool.clone();
-    let loc = locate_or_connect(&mut p, &host, port, &old_full).await?;
+    let loc = locate_or_connect(pool, &host, port, &old_full).await?;
     // 新路径换算为挂载根相对（g.rename 在挂载根内解析）
     let new_in_mount = {
         let g = loc.sess.lock().await;
@@ -559,6 +542,97 @@ fn sanitize_name(name: &str) -> String {
         s = "download".into();
     }
     s
+}
+
+// ==================== 内嵌入口（主程序 InProcess 后端） ====================
+
+/// 自带会话池的客户端句柄：方法签名与线协议 op 一一对应，
+/// 主程序 feature = "nfs" 时经 [`crate::client::NfsClient`] 直接内嵌调用。
+pub struct NfsClient {
+    pool: Mutex<SessionPool>,
+}
+
+impl Default for NfsClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NfsClient {
+    pub fn new() -> Self {
+        Self { pool: Mutex::new(SessionPool::default()) }
+    }
+
+    pub async fn list_dir(&self, path: &str) -> Result<Vec<NfsEntry>, String> {
+        let mut pool = self.pool.lock().await;
+        list_dir(&mut pool, path).await
+    }
+
+    pub async fn stat_path(&self, path: &str) -> Result<String, String> {
+        let mut pool = self.pool.lock().await;
+        stat_path(&mut pool, path).await
+    }
+
+    pub async fn download(
+        &self,
+        path: &str,
+        temp_dir: &Path,
+        cb: impl FnMut(u64, u64),
+    ) -> Result<String, String> {
+        let mut pool = self.pool.lock().await;
+        download(&mut pool, path, temp_dir, cb).await
+    }
+
+    pub async fn download_plan(
+        &self,
+        path: &str,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<TransferPlan, String> {
+        let mut pool = self.pool.lock().await;
+        download_plan(&mut pool, path, cancelled).await
+    }
+
+    pub async fn download_to(
+        &self,
+        local_dir: &str,
+        path: &str,
+        overwrite: bool,
+        cb: XferCb<'_>,
+    ) -> Result<String, String> {
+        let mut pool = self.pool.lock().await;
+        download_to(&mut pool, local_dir, path, overwrite, cb).await
+    }
+
+    pub async fn upload_path(
+        &self,
+        local: &str,
+        remote_dir: &str,
+        name: &str,
+        cb: XferCb<'_>,
+    ) -> Result<String, String> {
+        let mut pool = self.pool.lock().await;
+        upload_path(&mut pool, local, remote_dir, name, cb).await
+    }
+
+    pub async fn mkdir(&self, remote_dir: &str, name: &str) -> Result<String, String> {
+        let mut pool = self.pool.lock().await;
+        mkdir(&mut pool, remote_dir, name).await
+    }
+
+    pub async fn create_file(&self, remote_dir: &str, name: &str) -> Result<String, String> {
+        let mut pool = self.pool.lock().await;
+        create_file(&mut pool, remote_dir, name).await
+    }
+
+    pub async fn delete_entries(&self, paths: &[String]) -> Result<(), String> {
+        let mut pool = self.pool.lock().await;
+        delete_entries(&mut pool, paths).await
+    }
+
+    pub async fn rename_entry(&self, old_path: &str, new_name: &str) -> Result<String, String> {
+        let mut pool = self.pool.lock().await;
+        rename_entry(&mut pool, old_path, new_name).await
+    }
 }
 
 #[cfg(test)]
@@ -634,16 +708,16 @@ mod tests {
         let host = test_host();
         let rt = tokio::runtime::Runtime::new().expect("async runtime");
         rt.block_on(async {
-            let pool = pool::SessionPool::default();
+            let mut pool = pool::SessionPool::default();
             let base = format!("nfs://{host}/srv/rdir-nfs");
 
             // 0) 清理上轮可能的残留（失败中断会留下 it-dir/upload.bin 等）
             for leftover in ["it-dir", "upload.bin", "cancelled.bin"] {
-                let _ = delete_entries(&pool, &[format!("{base}/{leftover}")]).await;
+                let _ = delete_entries(&mut pool, &[format!("{base}/{leftover}")]).await;
             }
 
             // 1) 根视图：nfs://host 列出导出（showmount -e 语义）
-            let exports = list_dir(&pool, &format!("nfs://{host}")).await.expect("列导出");
+            let exports = list_dir(&mut pool, &format!("nfs://{host}")).await.expect("列导出");
             assert!(
                 exports.iter().any(|e| e.path == "/srv/rdir-nfs" || e.name.contains("rdir-nfs")),
                 "导出列表应含 /srv/rdir-nfs：{:?}",
@@ -651,7 +725,7 @@ mod tests {
             );
 
             // 2) 列目录：目录优先排序 + 测试树齐全（含中文目录名——挂载 URL 段编码）
-            let entries = list_dir(&pool, &base).await.expect("列目录");
+            let entries = list_dir(&mut pool, &base).await.expect("列目录");
             let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
             for expect in ["big-8mb.bin", "empty-dir", "nested", "文档"] {
                 assert!(names.contains(&expect), "缺少条目 {expect}：{names:?}");
@@ -673,9 +747,9 @@ mod tests {
 
             // 3) 中文子目录 + 深层文件（路径逐级解析）
             let deep = format!("{base}/nested/deep/file.txt");
-            assert_eq!(stat_path(&pool, &deep).await.expect("stat"), "file");
+            assert_eq!(stat_path(&mut pool, &deep).await.expect("stat"), "file");
             assert_eq!(
-                stat_path(&pool, &format!("{base}/文档")).await.expect("stat cjk"),
+                stat_path(&mut pool, &format!("{base}/文档")).await.expect("stat cjk"),
                 "dir"
             );
 
@@ -683,7 +757,7 @@ mod tests {
             let dir = std::env::temp_dir().join(format!("rdir-nfs-it-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
             let mut last: u64 = 0;
-            let local = download(&pool, &deep, &dir, |done, _total| {
+            let local = download(&mut pool, &deep, &dir, |done, _total| {
                 assert!(done >= last, "进度必须单调递增");
                 last = done;
             })
@@ -694,12 +768,12 @@ mod tests {
             // 5) 上传（内容回读对账）+ 覆盖上传
             let up_src = dir.join("upload.bin");
             std::fs::write(&up_src, vec![7u8; 300_000]).unwrap();
-            let up_url = upload_path(&pool, up_src.to_str().unwrap(), &base, "upload.bin", &mut |_| true)
+            let up_url = upload_path(&mut pool, up_src.to_str().unwrap(), &base, "upload.bin", &mut |_| true)
                 .await
                 .expect("上传");
             assert_eq!(up_url, format!("{base}/upload.bin"));
             let back = download_to(
-                &pool,
+                &mut pool,
                 dir.to_str().unwrap(),
                 &format!("{base}/upload.bin"),
                 true,
@@ -710,29 +784,29 @@ mod tests {
             assert_eq!(std::fs::read(&back).unwrap().len(), 300_000);
 
             // 6) mkdir / touch / rename / 递归删除
-            let nd = mkdir(&pool, &base, "it-dir").await.expect("mkdir");
+            let nd = mkdir(&mut pool, &base, "it-dir").await.expect("mkdir");
             assert_eq!(nd, format!("{base}/it-dir"));
-            let nf = create_file(&pool, &nd, "a.txt").await.expect("touch");
+            let nf = create_file(&mut pool, &nd, "a.txt").await.expect("touch");
             assert_eq!(nf, format!("{base}/it-dir/a.txt"));
-            let rn = rename_entry(&pool, &nf, "b.txt").await.expect("rename");
+            let rn = rename_entry(&mut pool, &nf, "b.txt").await.expect("rename");
             assert_eq!(rn, format!("{base}/it-dir/b.txt"));
-            delete_entries(&pool, &[nd.clone()]).await.expect("递归删除");
+            delete_entries(&mut pool, &[nd.clone()]).await.expect("递归删除");
             assert!(
-                stat_path(&pool, &nd).await.is_err(),
+                stat_path(&mut pool, &nd).await.is_err(),
                 "删除后 stat 应失败"
             );
 
             // 7) 取消上传：报「已取消」且远端无半成品
-            let r = upload_path(&pool, up_src.to_str().unwrap(), &base, "cancelled.bin", &mut |_| false).await;
+            let r = upload_path(&mut pool, up_src.to_str().unwrap(), &base, "cancelled.bin", &mut |_| false).await;
             assert!(r.is_err(), "取消应报错");
             assert!(
-                crate::is_cancelled(&r.unwrap_err()),
+                is_cancelled(&r.unwrap_err()),
                 "取消错误码应为 CANCELLED"
             );
-            assert!(stat_path(&pool, &format!("{base}/cancelled.bin")).await.is_err());
+            assert!(stat_path(&mut pool, &format!("{base}/cancelled.bin")).await.is_err());
 
             // 清理
-            let _ = delete_entries(&pool, &[format!("{base}/upload.bin")]).await;
+            let _ = delete_entries(&mut pool, &[format!("{base}/upload.bin")]).await;
             let _ = std::fs::remove_dir_all(&dir);
         });
     }

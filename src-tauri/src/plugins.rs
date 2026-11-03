@@ -21,7 +21,7 @@ pub struct PluginInfo {
     pub name: String,
     pub description: String,
     pub version: String,
-    /// builtin（编译期内置）| external（未来运行时加载）
+    /// builtin（编译期内置）| external（运行时加载的伴生进程插件，如 .rdplugin 安装的 NFS）
     pub source: String,
     /// 声明的协议前缀，如 ["sftp://"]
     pub protocols: Vec<String>,
@@ -30,6 +30,8 @@ pub struct PluginInfo {
     pub enabled: bool,
     /// 是否有配置面板入口（如 sftp 服务器管理、opener 自定义工具管理）
     pub configurable: bool,
+    /// v0.40 外置插件的安装态（builtin 恒为 true；external 为 false 时面板给安装入口）
+    pub installed: bool,
 }
 
 /// 插件启用状态（内存，AppState 持有）
@@ -60,8 +62,10 @@ fn default_true() -> bool {
 // ==================== 内置插件声明 ====================
 
 /// 列出内置插件。`#[cfg(feature = "sftp")]` 编译期拔出的插件不出现（面板干净）。
-pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
+pub fn builtin_plugins(enabled_map: &HashMap<String, bool>, nfs_installed: bool) -> Vec<PluginInfo> {
     let enabled = |id: &str| enabled_map.get(id).copied().unwrap_or(true);
+    // 内嵌 nfs 构建不消费该参数（external 条目仅在 nfs-sidecar 构建下出现）
+    let _ = nfs_installed;
     let mut v = Vec::new();
     #[cfg(feature = "sftp")]
     v.push(PluginInfo {
@@ -80,6 +84,7 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         ],
         enabled: enabled("sftp"),
         configurable: true,
+        installed: true,
     });
     v.push(PluginInfo {
         id: "http".into(),
@@ -91,6 +96,7 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         operations: vec!["list".into(), "read".into()],
         enabled: enabled("http"),
         configurable: false,
+        installed: true,
     });
     #[cfg(feature = "share")]
     v.push(PluginInfo {
@@ -103,6 +109,7 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         operations: vec!["read".into(), "transfer".into()],
         enabled: enabled("share"),
         configurable: false,
+        installed: true,
     });
     v.push(PluginInfo {
         id: "smb".into(),
@@ -120,13 +127,16 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         ],
         enabled: enabled("smb"),
         configurable: false,
+        installed: true,
     });
+    // v0.40 NFS 双形态：feature = "nfs" 内嵌编译（builtin）；否则 nfs-sidecar 构建下为
+    // 外置伴生进程插件（.rdplugin 安装，未安装时面板给安装入口，路由仍可用提供明确报错）
     #[cfg(feature = "nfs")]
     v.push(PluginInfo {
         id: "nfs".into(),
         name: "NFS 网络文件系统".into(),
         description: "地址栏 nfs://host/export 直连 NFSv3 导出（纯 Rust 客户端，不经系统挂载）：浏览读写、递归上传下载；nfs://host 列出导出".into(),
-        version: "0.1".into(),
+        version: "0.2".into(),
         source: "builtin".into(),
         protocols: vec!["nfs://".into()],
         operations: vec![
@@ -138,6 +148,26 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         ],
         enabled: enabled("nfs"),
         configurable: false,
+        installed: true,
+    });
+    #[cfg(all(not(feature = "nfs"), feature = "nfs-sidecar"))]
+    v.push(PluginInfo {
+        id: "nfs".into(),
+        name: "NFS 网络文件系统（插件）".into(),
+        description: "经 .rdplugin 安装的 NFSv3 伴生进程插件（设置 → 插件安装后生效）：地址栏 nfs://host/export 直连导出，浏览读写、递归上传下载".into(),
+        version: "0.2".into(),
+        source: "external".into(),
+        protocols: vec!["nfs://".into()],
+        operations: vec![
+            "list".into(),
+            "read".into(),
+            "write".into(),
+            "delete".into(),
+            "transfer".into(),
+        ],
+        enabled: enabled("nfs"),
+        configurable: false,
+        installed: nfs_installed,
     });
     v.push(PluginInfo {
         id: "opener".into(),
@@ -149,6 +179,7 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         operations: vec!["open".into()],
         enabled: enabled("opener"),
         configurable: true,
+        installed: true,
     });
     v.push(PluginInfo {
         id: "terminal".into(),
@@ -160,6 +191,7 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         operations: vec!["shell".into()],
         enabled: enabled("terminal"),
         configurable: false,
+        installed: true,
     });
     v.push(PluginInfo {
         id: "cmdrun".into(),
@@ -171,6 +203,7 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>) -> Vec<PluginInfo> {
         operations: vec!["run".into()],
         enabled: enabled("cmdrun"),
         configurable: false,
+        installed: true,
     });
     v
 }

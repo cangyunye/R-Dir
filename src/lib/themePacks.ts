@@ -61,7 +61,7 @@ export const THEME_TOKEN_KEYS = [
 /** 当前选中主题包（null/缺失 = 用内置颜色模式） */
 export const THEME_PACK_KEY = "rfm.themePack";
 
-type Palette = Record<(typeof THEME_TOKEN_KEYS)[number], string>;
+export type Palette = Record<(typeof THEME_TOKEN_KEYS)[number], string>;
 
 /** 内置浅色（与 index.css :root 逐字一致） */
 const LIGHT_BASE: Palette = {
@@ -151,7 +151,7 @@ function validValue(key: string, value: string): boolean {
 }
 
 /** 包调色板 = base 内置色 + 白名单内合法覆盖项（非法颜色跳过，其余照常） */
-function resolvePalette(pack: ThemePack): Palette {
+export function resolvePalette(pack: ThemePack): Palette {
   const palette: Palette = {
     ...(pack.base === "dark" ? DARK_BASE : LIGHT_BASE),
   };
@@ -234,6 +234,16 @@ export function installThemePack(path: string): Promise<ThemePack> {
 
 export function deleteThemePack(id: string): Promise<void> {
   return invoke<void>("theme_delete", { id });
+}
+
+/** v0.39 调色盘：保存草稿到配置目录（允许覆盖同 id，重名确认由调用方负责）；pack 用 toPackJson 形态 */
+export function saveThemePack(pack: Record<string, unknown>): Promise<ThemePack> {
+  return invoke<ThemePack>("theme_save", { pack });
+}
+
+/** v0.39 调色盘：导出草稿到保存对话框选定的路径 */
+export function exportThemePack(pack: Record<string, unknown>, path: string): Promise<void> {
+  return invoke<void>("theme_export", { pack, path });
 }
 
 export function loadActiveThemePackId(): string | null {

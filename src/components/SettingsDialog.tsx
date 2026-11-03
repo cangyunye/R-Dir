@@ -11,6 +11,7 @@ import {
   Keyboard,
   Monitor,
   Moon,
+  Palette,
   Plus,
   Star,
   Wrench,
@@ -92,6 +93,8 @@ export function SettingsDialog({
   onSelectThemePack,
   onInstallThemePack,
   onDeleteThemePack,
+  /** v0.39 主题调色盘入口（打开抽屉并关闭设置，好让背后界面成为实时预览） */
+  onOpenThemeStudio,
   /** v0.38 界面语言（zh/en，切换即时生效） */
   language,
   onLanguageChange,
@@ -102,6 +105,10 @@ export function SettingsDialog({
   onPreviewWidthChange,
   plugins,
   onTogglePlugin,
+  onImportNfsPlugin,
+  onFetchNfsPlugin,
+  onUninstallNfsPlugin,
+  nfsPluginBusy,
   uiFontSize,
   onUiFontChange,
   uiFontFamily,
@@ -141,6 +148,7 @@ export function SettingsDialog({
   onSelectThemePack?: (id: string | null) => void;
   onInstallThemePack?: () => void;
   onDeleteThemePack?: (id: string) => void;
+  onOpenThemeStudio?: () => void;
   /** v0.38 界面语言（zh 默认 / en；持久化 rfm.language）。可选：单测不传 = 默认中文 */
   language?: Language;
   onLanguageChange?: (l: Language) => void;
@@ -153,6 +161,11 @@ export function SettingsDialog({
   /** v0.5 插件清单（设置 → 插件分区） */
   plugins: PluginInfo[] | null;
   onTogglePlugin: (id: string, enabled: boolean) => void;
+  /** v0.40 NFS 伴生进程插件：本地导入 / 在线获取 / 卸载（仅 external 未安装时展示入口；测试/mock 可缺省） */
+  onImportNfsPlugin?: () => void;
+  onFetchNfsPlugin?: () => void;
+  onUninstallNfsPlugin?: () => void;
+  nfsPluginBusy?: boolean;
   /** v0.8 界面字体大小（10–18，默认 13，作用于整个界面） */
   uiFontSize: number;
   onUiFontChange: (n: number) => void;
@@ -462,14 +475,25 @@ export function SettingsDialog({
                   <div className="mb-5">
                     <div className="mb-1.5 flex items-center justify-between">
                       <span className="sec-t text-[11px] font-medium text-muted-foreground">{t("主题包")}</span>
-                      {onInstallThemePack && (
-                        <button
-                          onClick={onInstallThemePack}
-                          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
-                        >
-                          <Plus className="h-3.5 w-3.5" /> {t("安装…")}
-                        </button>
-                      )}
+                      <span className="flex items-center gap-1">
+                        {onOpenThemeStudio && (
+                          <button
+                            data-testid="open-theme-studio"
+                            onClick={onOpenThemeStudio}
+                            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                          >
+                            <Palette className="h-3.5 w-3.5" /> {t("调色盘")}
+                          </button>
+                        )}
+                        {onInstallThemePack && (
+                          <button
+                            onClick={onInstallThemePack}
+                            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                          >
+                            <Plus className="h-3.5 w-3.5" /> {t("安装…")}
+                          </button>
+                        )}
+                      </span>
                     </div>
                     <div className="rounded-md border bg-card p-2">
                       <div className="flex flex-wrap gap-2">
@@ -1277,23 +1301,68 @@ export function SettingsDialog({
                               <span className="shrink-0 rounded-sm bg-primary/10 px-1 py-0.5 text-[10px] text-primary">
                                 {p.source === "builtin" ? t("内置") : t("外置")}
                               </span>
+                              {p.source === "external" && !p.installed && (
+                                <span className="shrink-0 rounded-sm bg-amber-500/15 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                                  {t("未安装")}
+                                </span>
+                              )}
                               {p.configurable && (
                                 <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
                                   {t("可配置")}
                                 </span>
                               )}
                             </div>
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={p.enabled}
-                              onClick={() => onTogglePlugin(p.id, !p.enabled)}
-                              className="flex shrink-0 cursor-pointer"
-                            >
-                              <SwitchVisual checked={p.enabled} />
-                            </button>
+                            {p.source === "external" && !p.installed ? (
+                              <div className="flex shrink-0 items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={nfsPluginBusy}
+                                  onClick={() => onFetchNfsPlugin?.()}
+                                  className="flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <Download className="h-3 w-3" /> {t("在线获取")}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={nfsPluginBusy}
+                                  onClick={() => onImportNfsPlugin?.()}
+                                  className="flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <Plus className="h-3 w-3" /> {t("导入 .rdplugin")}
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex shrink-0 items-center gap-2">
+                                {p.source === "external" && (
+                                  <button
+                                    type="button"
+                                    disabled={nfsPluginBusy}
+                                    onClick={() => onUninstallNfsPlugin?.()}
+                                    className="cursor-pointer text-[11px] text-muted-foreground transition-colors hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {t("卸载")}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={p.enabled}
+                                  onClick={() => onTogglePlugin(p.id, !p.enabled)}
+                                  className="flex shrink-0 cursor-pointer"
+                                >
+                                  <SwitchVisual checked={p.enabled} />
+                                </button>
+                              </div>
+                            )}
                           </div>
                           <div className="mt-1 text-[11px] text-muted-foreground">{p.description}</div>
+                          {p.id === "nfs" && p.source === "external" && (
+                            <div className="mt-1 text-[11px] text-muted-foreground/80">
+                              {p.installed
+                                ? t("插件以独立进程运行，安装或更新后无需重启应用。")
+                                : t("安装包来自官方 GitHub Release，经 sha256 与协议版本校验后落盘。")}
+                            </div>
+                          )}
                           <div className="mt-1.5 flex flex-wrap gap-1">
                             {p.protocols.map((proto) => (
                               <span

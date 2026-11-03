@@ -8,7 +8,7 @@ use bytes::Bytes;
 use nfs_rs::{Attr as NfsAttrRaw, Mount, OPEN_READ};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
-use crate::ERR_CANCELLED;
+use crate::client::ERR_CANCELLED;
 
 /// URL path 段编码集：除 unreserved 外全编码（中文/空格/#/?/% 等），
 /// '/' 恒为分隔符不编码——nfs-rs 按段解码且拒绝段内含 '/'。

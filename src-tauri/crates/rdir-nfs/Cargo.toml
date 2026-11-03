@@ -1,0 +1,28 @@
+[package]
+name = "rdir-nfs"
+version = "0.40.0"
+description = "R-Dir NFS 插件：NFSv3 客户端（可内嵌编译，也可作为独立伴生进程插件）"
+edition = "2021"
+
+[lib]
+name = "rdir_nfs"
+
+# 伴生进程插件二进制：发行版主程序不带 NFS 客户端，用户经 .rdplugin 安装此可执行文件
+[[bin]]
+name = "rdir-nfs"
+path = "src/main.rs"
+required-features = ["client"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# client feature：NFSv3 客户端本体（主程序 feature = "nfs" 与插件二进制启用；纯协议消费方不编译）
+nfs-rs = { version = "0.9", optional = true }
+bytes = { version = "1", optional = true }
+percent-encoding = { version = "2", optional = true }
+futures-util = { version = "0.3", optional = true }
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros", "io-std"] }
+
+[features]
+default = []
+client = ["dep:nfs-rs", "dep:tokio", "dep:bytes", "dep:percent-encoding", "dep:futures-util"]

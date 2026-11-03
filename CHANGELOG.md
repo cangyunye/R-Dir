@@ -5,6 +5,17 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.40.0 (2026-11-03)
+
+- **NFS 改为可安装的伴生进程插件（发行版瘦身 ~600KB）**：主程序发行构建不再内嵌 NFS 客户端（`--no-default-features --features sftp,share,nfs-sidecar`），Windows 安装器 4.5MB → 0.39 的 5.2MB 回落到 4.5MB 量级；NFS 能力经 `.rdplugin` 插件包动态获得，SFTP 维持内建不变。
+- **插件 crate（`src-tauri/crates/rdir-nfs`）**：workspace 化，NFSv3 客户端（会话池/会话/递归传输）整体迁入；`client` feature 门控客户端本体，协议类型（`protocol.rs`：Op / Frame / XferEvent / NfsEntry / TransferPlan，`PROTOCOL_VERSION = 1`）恒编译——主程序（InProcess 后端，开发/全量构建）与伴生进程二进制（`rdir-nfs`，stdio JSON 行协议服务）共用同一客户端代码。**修复 v0.39 会话池克隆丢失**：自由函数原 `pool.clone()` 后插入新会话随克隆丢弃，导致每次操作重连——签名改 `&mut SessionPool`，会话真正跨操作复用（导航/传输明显提速，尤其高 RTT 链路）。
+- **NfsBackend 抽象（`nfs_backend.rs`）**：lib.rs 全部 nfs:// 路由（list_dir / stat_path / 文本比较 / 编辑保存 / 远程打开 / 七个 nfs_* 命令）收敛到统一 trait，cfg 双分支清零；三种实现——InProcess（feature = "nfs"）、Sidecar（伴生进程，feature = "nfs-sidecar"）、Unavailable（极简构建）；并存时内嵌优先。Sidecar 宿主：懒启动（首次 nfs:// 调用，每次启动前重读 install.json，装完即用无需重启）、按 id 多路复用（列目录与传输并发）、进程崩溃自动重启、5 分钟空闲回收、取消旗标轮询转发（download_plan 无事件操作的取消）；事件/取消契约与 SFTP 完全同构，前端零改动。
+- **.rdplugin 安装链路（`nfs_plugin.rs`）**：zip 容器（manifest.json + 二进制）。校验链缺一不可：包内 manifest 的 id / 协议版本 / 最低宿主版本 / 目标三元组 / 二进制 sha256；在线获取另经 HTTPS Release 上独立发布的 `rdir-nfs-manifest-<target>.json` 校验整包 sha256（校验和来源独立于包本体）。落盘原子写 + unix chmod 0755 + macOS quarantine 属性清理；旧版本目录自动清理。在线走官方 GitHub Release 通道（ureq/rustls）；本地导入同一校验链。只信官方通道，不开放任意 URL。
+- **插件面板三态**：设置 → 插件的 NFS 条目在发行构建下为「外置」——未安装显示「在线获取 / 导入 .rdplugin」按钮，已安装显示启用开关 + 卸载；卸载有确认。内嵌构建（feature = "nfs"）仍显示「内置」。`PluginInfo` 增 `installed` 字段。
+- **发布流水线**：`release.yml` 发行构建切 `--no-default-features --features sftp,share,nfs-sidecar`；新增每平台 `rdir-nfs` 编译 + Node 脚本打包 `.rdplugin`（`tools/pack-nfs-plugin.mjs`，纯 stdlib zip deflate，跨平台字节级一致；macOS arm64 实测 2.7MB 二进制 → 1.2MB 插件包）+ 独立 manifest 上传 Release（rdir-nfs crate 与宿主同版号，由 version sync 一并写入）；test job 升级 `cargo test --workspace` 把插件 crate 的协议/回环测试纳入发布门禁。
+- **主题调色盘实际随本版落地**：v0.39.0 段落所述调色盘（ThemeStudioDrawer / themeEditor / oklch 编辑 / 全局色相联动 / 保存导出）当时未随 v0.39.0 构建入库（文件滞留工作区），本版一并提交生效——功能描述与测试数字以 v0.39.0 段落为准。
+- **测试**：cargo 233 通过（主 crate 221 + rdir-nfs 12：协议线形状 / 帧往返 / cancel 帧 / 双工回环端到端 ping-坏行-cancel-EOF 退出、客户端既有用例随迁、NFS 真机集成用例保留（服务器不可达自动跳过）；主 crate 新增插件包 manifest 契约拒绝（平台/id/协议）/ 合法包往返 / sha256 / 版本比较）；vitest 693 通过（+4：插件面板三态渲染与回调）；e2e 197 通过（mock 补 `installed` 字段与四个 nfs_plugin_* 命令桩）。
+
 ## v0.39.0 (2026-11-02)
 
 - **SMB / Windows 网络共享（内置插件）**：地址栏 `smb://host/share` 或直接输入 `\\host\share` 浏览 Windows 共享，`smb://host`（或 `\\host`）列出服务器全部磁盘类共享（NetShareEnum，排除 IPC$/ADMIN$ 等管理共享）。实现走 **UNC 委托**：`smb://` 仅翻译为 UNC 路径，一切文件操作复用本地引擎（浏览/搜索/预览/缩略图/复制移动/差异比对全量能力，条目以 UNC 本地路径返回，前端零特判）；认证走系统凭据（访问被拒时提示先在资源管理器打开一次或 `net use` 预认证）。仅 Windows 提供共享枚举，其他平台可挂载后按本地路径浏览。
@@ -18,6 +29,11 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 - **示例包**：`examples/themes/` 提供 8 个纯数据配色包，需手动导入，不内嵌进应用：金秋 / 红枫 / 桃花粉 / 青涩 / 浅海蓝（light），酒红 / 蓝莓 / 紫罗兰（dark）。
 - **主题包卡片选中态修复**：卡片内层按钮此前沿用分段钮的 `aria-pressed` 皮肤规则，选中时被 `--primary-grad` 整块涂满（浅色成饱和蓝、深色成金板，文字压上去看不清），现加 `theme-card` 类豁免，选中态只由容器淡底表达。
 - 测试（主题包）：cargo +6（id 规则 / 安装-列表-删除往返 / 坏包隔离 / base 与空名称 / 超大文件 / 删除穿越）；vitest +14（应用与清除 / base 回落 / 白名单外 key / 非法颜色跳过 / 面板变量派生 / active id / 缩略色 / 设置面板卡片与禁用态）；e2e +4（浅色包 / 深色包 / 设置面板选包与回默认 / 全部示例包都能应用且 `.dark` 跟随 base）；全量 vitest 653 通过、e2e 190 通过。
+- **主题调色盘（自定义配色工具）**：设置 → 外观 → 主题包 → 「调色盘」，或快捷键 `mod+alt+p`（可改键，命令面板同样可达）打开右侧非模态拉门——背后就是真实界面，拖滑杆整个应用实时变色（草稿只活在内存，经 `applyThemePack` 压过当前主题，不落盘）。起点取当前主题包、否则取当前明暗的内置色，也可从「基于」下拉切换到任一已安装包 / 内置浅色 / 内置深色（有改动先确认）。23 个 token 按语义分 6 组（表面 / 文字 / 主色 / 次级 / 状态 / 边框）数据驱动渲染，每行 色块 + 名称 + 值，点色块弹出 L（明度）/ C（彩度）/ H（色相）滑杆，轨道即该维度色谱；`--border` / `--input` 多一根不透明度滑杆，`--shadow` 用 无 / 轻 / 中 / 重 预设；任意行可直接改原值、单项恢复原值、整体重置。hex / rgb 等写法自动归一化为 oklch 再编辑。
+- **全局色相联动**：识别调色板主导色相（彩度 ≥ 0.02 的主题色里 ±25° 成员最多的簇），拖一根滑杆整体旋转主题色系（保留各自明度 / 彩度 / 透明度），文件夹 / 成功 / 危险三个功能色不跟随；全灰阶调色板时禁用。
+- **快捷键「收回墙内」**：与预览栏同款机制——再按 `mod+alt+p` 或点头部「收回」只把面板滑出视口（200ms），草稿与滑杆状态全保留、配色继续生效，方便全宽审视整体效果；贴边把手 / 再按快捷键拉回。「×」才是关闭：有未保存改动先确认，关闭即回到原主题。调色盘 z-50 压过预览栏 z-40，两者互不干扰。
+- **保存 / 导出**：「存为主题包」经新命令 `theme_save` 原子写入 `themes/<id>.json`（允许覆盖同 id，重名先确认），写入后自动选用该包、已存内容成为新起点；「导出」走系统保存对话框经 `theme_export` 写到任意路径。两者都写全量 23 个 token（所见即所得），id / 名称按安装同一套规则校验，非法时按钮禁用并提示。
+- 测试（调色盘）：cargo +2（保存覆盖同 id 并补 `$schema` / 导出到指定路径与目录缺失）；vitest +35（oklch 解析与序列化、hex/rgb 换算、分组恰好覆盖白名单、id 清洗、草稿生成与脏检查、主导色相与旋转跳过功能色、序列化与校验；抽屉渲染 / 收回展开 / 元信息编辑 / 禁用态 / 弹层滑杆数 / 原值输入 / 恢复原值 / 阴影预设 / 分组折叠 / 色相禁用）；e2e +7（快捷键打开草稿即生效、弹层拖动实时变色与收回墙内保留、全局色相联动、设置入口、保存落盘并选用、导出经对话框、关闭放弃草稿）；全量 vitest 689 通过、e2e 197 通过、cargo themes 8 通过。
 
 ## v0.38.0 (2026-10-31)
 

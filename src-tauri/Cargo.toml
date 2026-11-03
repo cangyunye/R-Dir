@@ -1,9 +1,13 @@
 [package]
 name = "rust-file-manager"
-version = "0.39.0"
+version = "0.40.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+
+# NFS 插件 crate：客户端本体 + 伴生进程二进制（rdir-nfs，发行时不随主程序打包）
+[workspace]
+members = ["crates/rdir-nfs"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -55,12 +59,9 @@ ureq = { version = "2", default-features = false, features = ["rustls", "gzip"] 
 # SFTP 远程文件系统插件（内置、可编译期拔出）：去掉 sftp feature 即不编译任何远程代码
 russh = { version = "0.45", optional = true }
 russh-keys = { version = "0.45", optional = true }
-# NFS 网络文件系统插件（内置、可编译期拔出）：纯 Rust NFSv3 客户端（nfs-rs）
-# bytes：nfs-rs read/write 的缓冲类型；percent-encoding：挂载 URL 的段编码；
-# futures-util：readdirplus 流收集（与 share 共用可选依赖）
-nfs-rs = { version = "0.9", optional = true }
-bytes = { version = "1", optional = true }
-percent-encoding = { version = "2", optional = true }
+# NFS 插件 crate：线协议类型恒需（host ↔ 伴生进程契约）；NFS 客户端本体由 nfs feature 经
+# rdir-nfs/client 门控——发行版不带 nfs，NFS 能力经 .rdplugin 安装的伴生进程动态获得
+rdir-nfs = { path = "crates/rdir-nfs", default-features = false }
 async-trait = "0.1"
 # v0.7 分享服务（内置插件，feature = "share" 可编译期拔出）：内嵌 HTTP 文件服务
 axum = { version = "0.8", optional = true, features = ["ws", "http1"] }
@@ -68,7 +69,7 @@ axum = { version = "0.8", optional = true, features = ["ws", "http1"] }
 local-ip-address = { version = "0.6", optional = true }
 # 流式文件下载（ReaderStream）
 futures-util = { version = "0.3", optional = true }
-tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros", "process"] }
 # 密码加密存储（master-key，AES-256-GCM；密钥仅存内存）
 aes-gcm = { version = "0.10", optional = true }
 sha2 = { version = "0.10", optional = true }
@@ -117,10 +118,14 @@ windows-webview = { package = "windows", version = "0.61", features = [] }
 libc = "0.2"
 
 [features]
-default = ["sftp", "share", "nfs"]
+default = ["sftp", "share", "nfs", "nfs-sidecar"]
 sftp = ["dep:russh", "dep:russh-keys", "dep:tokio", "dep:aes-gcm", "dep:sha2", "dep:rand"]
-# v0.39 NFS 插件：去掉 nfs 即不编译 NFS 客户端代码
-nfs = ["dep:nfs-rs", "dep:tokio", "dep:bytes", "dep:futures-util", "dep:percent-encoding"]
+# v0.40 NFS 插件：内嵌客户端（开发/全量构建）。去掉 nfs 后 NFS 能力经 nfs-sidecar
+# 安装的伴生进程插件（.rdplugin）动态获得；两者同时存在时内嵌优先
+nfs = ["rdir-nfs/client", "dep:tokio", "dep:futures-util"]
+# v0.40 伴生进程插件宿主：懒启动/多路复用/取消转发/安装链路（sha256 校验）
+# 发行版口径：--no-default-features --features sftp,share,nfs-sidecar
+nfs-sidecar = ["dep:tokio", "dep:sha2"]
 # v0.7 窗口分享（内置插件）：去掉 share 即不编译分享服务
 share = ["dep:axum", "dep:tokio", "dep:local-ip-address", "dep:futures-util"]
 

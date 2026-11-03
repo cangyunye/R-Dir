@@ -57,7 +57,8 @@ jobs:
           workspaces: src-tauri
 
       - name: Rust tests
-        run: cargo test
+        # --workspace 带上 rdir-nfs（client feature 启用客户端与协议/服务循环测试）
+        run: cargo test --workspace --features rdir-nfs/client
         working-directory: src-tauri
 
   build:
@@ -142,6 +143,11 @@ jobs:
             .readFileSync('src-tauri/Cargo.toml', 'utf8')
             .replace(/^version = ".*"/m, `version = "${v}"`);
           fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+          // v0.40 NFS 插件 crate 与宿主同版（插件 manifest version / 面板展示）
+          const pluginCargo = fs
+            .readFileSync('src-tauri/crates/rdir-nfs/Cargo.toml', 'utf8')
+            .replace(/^version = ".*"/m, `version = "${v}"`);
+          fs.writeFileSync('src-tauri/crates/rdir-nfs/Cargo.toml', pluginCargo);
           console.log(`synced app version -> ${v}`);
           NODE
 
@@ -159,8 +165,37 @@ jobs:
           releaseBody: "_本版本变更见 CHANGELOG.md 对应段落（发布时自动注入）。_"
           releaseDraft: true
           prerelease: false
-          # 显式指定 features：default 解析在 CI 环境不稳定（v0.7.0/v0.7.1 曾缺失 sftp/http 模块）
-          args: --features sftp,share ${{ matrix.args }}
+          # v0.40 发行版口径：关闭内嵌 nfs（省 ~600KB 安装包），NFS 能力经 .rdplugin
+          # 伴生进程插件动态获得；nfs-sidecar 提供插件宿主与安装链路
+          args: --no-default-features --features sftp,share,nfs-sidecar ${{ matrix.args }}
+
+      # v0.40 NFS 伴生进程插件：每平台编译 rdir-nfs + 打 .rdplugin（zip 容器）
+      # + 独立校验清单（sha256 来源独立于包本体），作为 Release 资产随版发布
+      - name: Build NFS plugin (.rdplugin)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          cd src-tauri
+          cargo build --release -p rdir-nfs --features rdir-nfs/client --bin rdir-nfs
+          case "${{ matrix.platform }}" in
+            macos-latest)
+              if [ "${{ matrix.args }}" = "--target aarch64-apple-darwin" ]; then TARGET=aarch64-apple-darwin; else TARGET=x86_64-apple-darwin; fi
+              BIN="target/${TARGET}/release/rdir-nfs" ;;
+            windows-latest)
+              TARGET=x86_64-pc-windows-msvc
+              BIN="target/release/rdir-nfs.exe" ;;
+            *) echo "unsupported platform"; exit 1 ;;
+          esac
+          PKG="rdir-nfs-plugin-v${VER}-${TARGET}.rdplugin"
+          MANIFEST="rdir-nfs-manifest-${TARGET}.json"
+          # 纯 Node stdlib 打包（zip deflate + 包内 manifest + 独立整包校验清单），跨平台字节级一致
+          node ../tools/pack-nfs-plugin.mjs "$BIN" "$VER" "$TARGET" "$PKG" "$MANIFEST"
+          gh release upload "$GITHUB_REF_NAME" "$PKG" "$MANIFEST" --clobber --repo "$GITHUB_REPOSITORY"
+          echo "uploaded $PKG (+$MANIFEST)
 
   # 三个平台都成功后才把 Draft 转正；任何平台失败则 release 永远停留在 Draft，用户看不到残缺版本
   publish:

@@ -6,6 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName, getVersion } from "@tauri-apps/api/app";
 import {
   open as openDialog,
+  save as saveDialog,
 } from "@tauri-apps/plugin-dialog";
 import {
   listOpeners as apiListOpeners,
@@ -36,6 +37,9 @@ import {
   type GitToolItem,
   type QuickToolItem,
   type EditorCandidate,
+  nfsPluginImport,
+  nfsPluginInstallOnline,
+  nfsPluginUninstall,
 } from "@/lib/openerApi";
 import type {
   ClipboardState,
@@ -149,19 +153,22 @@ import {
   setSplitRatio,
   swapPanes,
 } from "@/lib/paneTree";
-import { ACTIONS, bindingOf, findAction, isMac, keyEventString } from "@/lib/keymap";
+import { ACTIONS, bindingOf, findAction, formatBinding, isMac, keyEventString } from "@/lib/keymap";
 import { loadLanguage, type Language } from "@/lib/i18n";
 import { isCancelledError, t, terr } from "@/lib/i18n";
 import {
   applyThemePack,
   deleteThemePack as apiDeleteThemePack,
+  exportThemePack as apiExportThemePack,
   installThemePack as apiInstallThemePack,
   loadActiveThemePackId,
   loadThemePacks,
   saveActiveThemePackId,
+  saveThemePack as apiSaveThemePack,
   type ThemeLoadError,
   type ThemePack,
 } from "@/lib/themePacks";
+import { createDraft, isSameDraft, toPackJson, validateDraft, type DraftSource } from "@/lib/themeEditor";
 import { LanguageProvider } from "@/lib/LanguageProvider";
 import { serializeSession, serializeSessionTab, sessionSignature } from "@/lib/session";
 import { getNativeDragOut, probeNativeDragOut, setNativeDragOut, getHtml5Drag, setHtml5Drag, canNativeDragOut } from "@/lib/native-drag";
@@ -227,6 +234,7 @@ import { AppMenu } from "@/components/AppMenu";
 import { CommandPalette, type CommandItem } from "@/components/CommandPalette";
 import { FavoritesPalette } from "@/components/FavoritesPalette";
 import { PreviewDrawer } from "@/components/PreviewDrawer";
+import { ThemeStudioDrawer, type ThemeStudioSession } from "@/components/ThemeStudioDrawer";
 import { BrowseMode } from "@/components/BrowseMode";
 import { sortEntries } from "@/lib/entry-sort";
 import { isPreviewable } from "@/lib/preview";
@@ -543,8 +551,18 @@ export default function App() {
     () => themePacks?.find((p) => p.id === activeThemeId) ?? null,
     [themePacks, activeThemeId],
   );
-  /** 生效明暗：主题包激活时以包 base 为准（界面图标 / 切换按钮跟随） */
-  const effectiveDark = activeThemePack ? activeThemePack.base === "dark" : dark;
+  /**
+   * v0.39 主题调色盘会话：非空 = 调色盘已打开，draft 实时压过当前主题；
+   * studioExpanded=false 为"收回墙内"（草稿仍生效，只是面板滑出视口）
+   */
+  const [studio, setStudio] = useState<ThemeStudioSession | null>(null);
+  const [studioExpanded, setStudioExpanded] = useState(true);
+  /** 生效明暗：调色盘草稿 > 主题包 base > 颜色模式（界面图标 / 切换按钮跟随） */
+  const effectiveDark = studio
+    ? studio.draft.base === "dark"
+    : activeThemePack
+      ? activeThemePack.base === "dark"
+      : dark;
   /** v0.38 界面语言（zh 默认 / en；持久化 localStorage "rfm.language"，切换即时生效无需重启） */
   const [language, setLanguage] = useState<Language>(() => loadLanguage());
   /** 快捷键配置版本号：自定义键位变更时 +1，触发菜单/设置重渲染 */
@@ -918,6 +936,51 @@ useEffect(() => {
     },
     [showError],
   );
+  // v0.40 NFS 伴生进程插件：本地导入 .rdplugin / 在线获取 / 卸载（外部安装态刷新走 refreshPlugins）
+  const [nfsPluginBusy, setNfsPluginBusy] = useState(false);
+  const handleImportNfsPlugin = useCallback(async () => {
+    const picked = await openDialog({
+      multiple: false,
+      filters: [{ name: "R-Dir 插件包", extensions: ["rdplugin"] }],
+    });
+    const path = typeof picked === "string" ? picked : picked?.[0];
+    if (!path) return;
+    setNfsPluginBusy(true);
+    try {
+      await nfsPluginImport(path);
+      refreshPlugins();
+    } catch (e) {
+      showError(t("安装 NFS 插件失败：{msg}", { msg: String(e) }));
+    } finally {
+      setNfsPluginBusy(false);
+    }
+  }, [refreshPlugins, showError]);
+  const handleFetchNfsPlugin = useCallback(async () => {
+    setNfsPluginBusy(true);
+    try {
+      await nfsPluginInstallOnline();
+      refreshPlugins();
+    } catch (e) {
+      showError(t("获取 NFS 插件失败：{msg}", { msg: String(e) }));
+    } finally {
+      setNfsPluginBusy(false);
+    }
+  }, [refreshPlugins, showError]);
+  const handleUninstallNfsPlugin = useCallback(async () => {
+    const ok = await appConfirm({
+      title: t("卸载 NFS 插件"),
+      message: t("卸载后 nfs:// 地址将无法访问，插件文件将从本机删除。"),
+      confirmLabel: t("卸载"),
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await nfsPluginUninstall();
+      refreshPlugins();
+    } catch (e) {
+      showError(t("卸载 NFS 插件失败：{msg}", { msg: String(e) }));
+    }
+  }, [appConfirm, refreshPlugins, showError]);
   // v0.39 主题包：列表 / 选中 / 安装 / 删除（选中 id 存 localStorage，包本身在配置目录）
   const refreshThemePacks = useCallback(() => {
     void loadThemePacks().then(({ packs, errors }) => {
@@ -973,6 +1036,99 @@ useEffect(() => {
     },
     [activeThemeId, appConfirm, handleSelectThemePack, refreshThemePacks, showError, themePacks],
   );
+  // v0.39 主题调色盘：草稿只活在内存，经 applyThemePack 实时压过当前主题；保存 / 导出才落盘
+  const studioDirty = studio ? !isSameDraft(studio.draft, studio.origin) : false;
+  const makeStudioSession = useCallback((source: DraftSource): ThemeStudioSession => {
+    const builtin = typeof source === "string";
+    const origin = createDraft(
+      source,
+      builtin ? { name: source === "dark" ? t("自定义深色") : t("自定义浅色") } : {},
+    );
+    const sourceLabel = builtin ? (source === "dark" ? t("内置深色") : t("内置浅色")) : source.name;
+    return { origin, draft: origin, sourceLabel };
+  }, []);
+  /** 起点 = 当前主题包，否则当前明暗对应的内置色；已打开则只负责展开 */
+  const openThemeStudio = useCallback(() => {
+    setStudio((cur) => cur ?? makeStudioSession(activeThemePack ?? (effectiveDark ? "dark" : "light")));
+    setStudioExpanded(true);
+  }, [activeThemePack, effectiveDark, makeStudioSession]);
+  /** 快捷键语义：未打开 → 打开；已打开 → 展开 / 收回墙内切换（草稿保留，全宽审视界面） */
+  const toggleThemeStudio = useCallback(() => {
+    if (!studio) openThemeStudio();
+    else setStudioExpanded((v) => !v);
+  }, [studio, openThemeStudio]);
+  const closeThemeStudio = useCallback(async () => {
+    if (studioDirty) {
+      const ok = await appConfirm({
+        title: t("关闭调色盘"),
+        message: t("未保存的配色修改将丢弃，确定关闭？"),
+        confirmLabel: t("关闭"),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    setStudio(null);
+  }, [appConfirm, studioDirty]);
+  const loadStudioSource = useCallback(
+    async (source: DraftSource) => {
+      if (studioDirty) {
+        const ok = await appConfirm({
+          title: t("切换起点"),
+          message: t("当前配色修改将被新起点覆盖，确定切换？"),
+          confirmLabel: t("切换"),
+        });
+        if (!ok) return;
+      }
+      setStudio(makeStudioSession(source));
+    },
+    [appConfirm, makeStudioSession, studioDirty],
+  );
+  const resetStudio = useCallback(() => setStudio((s) => (s ? { ...s, draft: s.origin } : s)), []);
+  const saveStudio = useCallback(async () => {
+    if (!studio) return;
+    const invalid = validateDraft(studio.draft);
+    if (invalid) {
+      showError(t(invalid));
+      return;
+    }
+    if (themePacks?.some((p) => p.id === studio.draft.id)) {
+      const ok = await appConfirm({
+        title: t("覆盖主题包"),
+        message: t("已安装同名主题「{id}」，确定覆盖？", { id: studio.draft.id }),
+        confirmLabel: t("覆盖"),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    try {
+      const saved = await apiSaveThemePack(toPackJson(studio.draft));
+      setThemePacks((prev) => [...(prev ?? []).filter((p) => p.id !== saved.id), saved]);
+      handleSelectThemePack(saved.id);
+      // 已存内容成为新起点：重置 / 恢复原值以此为准，关闭不再追问
+      setStudio((s) => (s ? { ...s, origin: s.draft, sourceLabel: saved.name } : s));
+      refreshThemePacks();
+    } catch (e) {
+      showError(t("保存主题包失败：{msg}", { msg: String(e) }));
+    }
+  }, [appConfirm, handleSelectThemePack, refreshThemePacks, showError, studio, themePacks]);
+  const exportStudio = useCallback(async () => {
+    if (!studio) return;
+    const invalid = validateDraft(studio.draft);
+    if (invalid) {
+      showError(t(invalid));
+      return;
+    }
+    const path = await saveDialog({
+      defaultPath: `${studio.draft.id}.rdtheme.json`,
+      filters: [{ name: "R-Dir 主题包", extensions: ["json"] }],
+    });
+    if (!path) return;
+    try {
+      await apiExportThemePack(toPackJson(studio.draft), path);
+    } catch (e) {
+      showError(t("导出主题包失败：{msg}", { msg: String(e) }));
+    }
+  }, [showError, studio]);
   // 工具/插件检测延迟到首帧空闲后执行，避免拖慢首次渲染
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -1173,10 +1329,11 @@ useEffect(() => {
   useEffect(() => {
     document.documentElement.classList.toggle("dark", effectiveDark);
   }, [effectiveDark]);
-  /** 应用主题包内联 token（null = 清除回内置；base 决定 .dark 见上） */
+  /** 应用主题包内联 token（null = 清除回内置；base 决定 .dark 见上）；调色盘草稿优先，关闭即回落 */
+  const studioDraft = studio?.draft ?? null;
   useEffect(() => {
-    applyThemePack(activeThemePack);
-  }, [activeThemePack]);
+    applyThemePack(studioDraft ?? activeThemePack);
+  }, [studioDraft, activeThemePack]);
   /** 设置颜色模式（显式 light/dark 或跟随系统），随改随存；选颜色模式 = 退出主题包 */
   const changeThemeMode = useCallback((m: ThemeMode) => {
     setThemeMode(m);
@@ -4404,6 +4561,8 @@ useEffect(() => {
       }
       setBrowseOpen(true);
     },
+    // v0.39 主题调色盘：mod+alt+p 打开 / 展开 / 收回墙内（与预览栏同款滑门）
+    toggleThemeStudio: () => toggleThemeStudio(),
     // v0.20 命令面板 + 无默认键位的应用命令（面板 / ⋮ 菜单共用此分发表）
     commandPalette: () => setPaletteOpen((v) => !v),
     // 标签收藏夹面板（mod+b，与命令面板同款开关语义）
@@ -4994,6 +5153,22 @@ useEffect(() => {
           onOpenExternal={openFileExternal}
         />
 
+        {/* v0.39 主题调色盘：同款右侧滑门，z-50 压过预览栏；背后真实界面即实时预览 */}
+        <ThemeStudioDrawer
+          session={studio}
+          expanded={studioExpanded}
+          packs={themePacks ?? []}
+          shortcutLabel={formatBinding(bindingOf(ACTIONS.find((a) => a.id === "toggleThemeStudio")!))}
+          onChange={(draft) => setStudio((s) => (s ? { ...s, draft } : s))}
+          onLoadSource={(source) => void loadStudioSource(source)}
+          onReset={resetStudio}
+          onExpand={() => setStudioExpanded(true)}
+          onCollapse={() => setStudioExpanded(false)}
+          onClose={() => void closeThemeStudio()}
+          onSave={() => void saveStudio()}
+          onExport={() => void exportStudio()}
+        />
+
         {/* v0.28 图文浏览模式：沉浸覆盖内容区，导航即选中（与列表/预览栏三方同步） */}
         {browseOpen && (
           <BrowseMode
@@ -5113,6 +5288,15 @@ useEffect(() => {
         onSelectThemePack={handleSelectThemePack}
         onInstallThemePack={() => void handleInstallThemePack()}
         onDeleteThemePack={(id) => void handleDeleteThemePack(id)}
+        onImportNfsPlugin={() => void handleImportNfsPlugin()}
+        onFetchNfsPlugin={() => void handleFetchNfsPlugin()}
+        onUninstallNfsPlugin={() => void handleUninstallNfsPlugin()}
+        nfsPluginBusy={nfsPluginBusy}
+        onOpenThemeStudio={() => {
+          openThemeStudio();
+          setSettingsOpen(false);
+          setSettingsJump(null);
+        }}
         language={language}
         onLanguageChange={changeLanguage}
         onBindingsChanged={() => setKeymapVer((v) => v + 1)}
