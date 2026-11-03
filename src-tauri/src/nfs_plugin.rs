@@ -341,16 +341,40 @@ struct ReleaseManifest {
 const RELEASE_API: &str = "https://api.github.com/repos/cangyunye/R-Dir/releases/latest";
 const USER_AGENT: &str = concat!("R-Dir/", env!("CARGO_PKG_VERSION"));
 
+/// HTTP 客户端：连接 15s 超时（GitHub 直连不可达时快速失败，不无限挂起）。
+/// 整体超时按请求覆盖：小 JSON 30s / 插件包 300s（国内直连 objects.githubusercontent.com
+/// 可能被限速到 KB/s 级）。命令本身在 spawn_blocking 执行，不阻塞 UI 主线程。
+fn http_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(15))
+        .build()
+}
+
+const HTTP_TIMEOUT_JSON: std::time::Duration = std::time::Duration::from_secs(30);
+const HTTP_TIMEOUT_PACKAGE: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn net_err_hint(e: ureq::Error) -> String {
+    format!(
+        "{e}（GitHub 直连可能不可达：请检查网络/代理后重试，或从 Release 页下载 .rdplugin 手动导入）"
+    )
+}
+
 /// GET + JSON 解析（ureq 未启用 json feature，统一走字节读取 + serde）
-fn http_get_json<T: serde::de::DeserializeOwned>(url: &str, what: &str) -> Result<T, String> {
+fn http_get_json<T: serde::de::DeserializeOwned>(
+    agent: &ureq::Agent,
+    url: &str,
+    what: &str,
+) -> Result<T, String> {
     let mut buf = Vec::new();
-    ureq::get(url)
+    agent
+        .get(url)
         .set("User-Agent", USER_AGENT)
+        .timeout(HTTP_TIMEOUT_JSON)
         .call()
-        .map_err(|e| format!("请求{what}失败：{e}"))?
+        .map_err(net_err_hint)?
         .into_reader()
         .read_to_end(&mut buf)
-        .map_err(|e| format!("下载{what}中断：{e}"))?;
+        .map_err(|e| format!("下载{what}中断：{e}（网络超时/限速，请重试或手动导入）"))?;
     serde_json::from_slice(&buf).map_err(|e| format!("解析{what}失败：{e}"))
 }
 
@@ -358,7 +382,8 @@ fn http_get_json<T: serde::de::DeserializeOwned>(url: &str, what: &str) -> Resul
 /// 下载（整包 sha256 先行校验）→ 复用本地导入的完整校验链落盘。
 pub fn install_online(app: &tauri::AppHandle) -> Result<InstalledInfo, String> {
     // 1) 最新 Release 元数据
-    let release_json: serde_json::Value = http_get_json(RELEASE_API, "最新版本信息")?;
+    let agent = http_agent();
+    let release_json: serde_json::Value = http_get_json(&agent, RELEASE_API, "最新版本信息")?;
     let assets = release_json
         .get("assets")
         .and_then(|v| v.as_array())
@@ -372,7 +397,7 @@ pub fn install_online(app: &tauri::AppHandle) -> Result<InstalledInfo, String> {
         .find(|a| a.get("name").and_then(|n| n.as_str()) == Some(manifest_asset.as_str()))
         .and_then(|a| a.get("browser_download_url").and_then(|u| u.as_str()))
         .ok_or_else(|| format!("最新版本未提供 {target} 平台的 NFS 插件"))?;
-    let release_manifest: ReleaseManifest = http_get_json(&manifest_url, "校验清单")?;
+    let release_manifest: ReleaseManifest = http_get_json(&agent, &manifest_url, "校验清单")?;
 
     // 3) 平台资产
     let asset = &release_manifest;
@@ -384,13 +409,17 @@ pub fn install_online(app: &tauri::AppHandle) -> Result<InstalledInfo, String> {
 
     // 4) 下载 + 整包 sha256 校验
     let mut buf: Vec<u8> = Vec::new();
-    ureq::get(asset_url)
+    agent
+        .get(asset_url)
         .set("User-Agent", USER_AGENT)
+        .timeout(HTTP_TIMEOUT_PACKAGE)
         .call()
-        .map_err(|e| format!("下载插件包失败：{e}"))?
+        .map_err(net_err_hint)?
         .into_reader()
         .read_to_end(&mut buf)
-        .map_err(|e| format!("下载中断：{e}"))?;
+        .map_err(|e| {
+            format!("下载插件包中断：{e}（网络超时/限速；可从 Release 页手动下载 .rdplugin 导入）")
+        })?;
     let actual = sha256_hex(&buf);
     if actual != asset.sha256.to_lowercase() {
         return Err("下载的插件包校验失败（sha256 不匹配），请重试".into());
@@ -425,19 +454,31 @@ pub fn nfs_plugin_status(
     status(&app, &state.plugins)
 }
 
-/// 本地导入 .rdplugin（文件对话框给路径；与主题包导入同一交互形态）
+/// 本地导入 .rdplugin（文件对话框给路径；与主题包导入同一交互形态）。
+/// async + spawn_blocking：文件读取/zip 解压/sha256 都是阻塞段，同步命令会占主线程冻结 UI
 #[tauri::command]
-pub fn nfs_plugin_import(app: tauri::AppHandle, file: String) -> Result<NfsPluginStatus, String> {
-    let bytes = std::fs::read(&file).map_err(|e| format!("读取插件包失败：{e}"))?;
-    install_from_bytes(&app, &bytes)?;
-    Ok(status(&app, &app.state::<crate::AppState>().plugins))
+pub async fn nfs_plugin_import(app: tauri::AppHandle, file: String) -> Result<NfsPluginStatus, String> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let bytes = std::fs::read(&file).map_err(|e| format!("读取插件包失败：{e}"))?;
+        install_from_bytes(&app, &bytes)?;
+        Ok::<_, String>(status(&app, &app.state::<crate::AppState>().plugins))
+    })
+    .await
+    .map_err(|e| format!("导入任务失败：{e}"))??;
+    Ok(result)
 }
 
-/// 在线获取最新版插件（官方 Release 通道，整包 + 包内双校验）
+/// 在线获取最新版插件（官方 Release 通道，整包 + 包内双校验）。
+/// async + spawn_blocking：阻塞 HTTP 最长可达 300s，同步命令会把主线程挂死
 #[tauri::command]
-pub fn nfs_plugin_install_online(app: tauri::AppHandle) -> Result<NfsPluginStatus, String> {
-    install_online(&app)?;
-    Ok(status(&app, &app.state::<crate::AppState>().plugins))
+pub async fn nfs_plugin_install_online(app: tauri::AppHandle) -> Result<NfsPluginStatus, String> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        install_online(&app)?;
+        Ok::<_, String>(status(&app, &app.state::<crate::AppState>().plugins))
+    })
+    .await
+    .map_err(|e| format!("在线获取任务失败：{e}"))??;
+    Ok(result)
 }
 
 /// 卸载插件（删安装目录；启用开关记录保留无害）

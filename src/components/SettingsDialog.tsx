@@ -1320,7 +1320,8 @@ export function SettingsDialog({
                                   onClick={() => onFetchNfsPlugin?.()}
                                   className="flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                                 >
-                                  <Download className="h-3 w-3" /> {t("在线获取")}
+                                  <Download className="h-3 w-3" />
+                                  {nfsPluginBusy ? t("获取中…") : t("在线获取")}
                                 </button>
                                 <button
                                   type="button"

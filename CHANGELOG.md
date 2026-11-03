@@ -5,6 +5,12 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.40.1 (2026-11-03)
+
+- **修复「在线获取」卡死整个界面**：`nfs_plugin_install_online` / `nfs_plugin_import` 此前是同步 Tauri 命令——同步命令跑在主线程，内嵌的 ureq 阻塞 HTTP 会把整个 UI 事件循环挂死（网络慢时表现为整窗无响应）。改为 `async` + `spawn_blocking`（UI 全程可响应，按钮禁用 + 「获取中…」反馈）。
+- **HTTP 超时**：ureq 默认无超时，直连 GitHub 不可达/限速时会无限等待。现在连接 15s 超时；JSON 请求整体 30s、插件包下载整体 300s（兼顾国内直连 objects.githubusercontent.com 的限速场景）；传输类错误附兜底提示（检查网络/代理或手动下载 .rdplugin 导入）。
+- 发布工程遗留清理：无（与 v0.40.0 同源，仅此两处修复）。
+
 ## v0.40.0 (2026-11-03)
 
 - **NFS 改为可安装的伴生进程插件（发行版瘦身 ~600KB）**：主程序发行构建不再内嵌 NFS 客户端（`--no-default-features --features sftp,share,nfs-sidecar`），Windows 安装器 4.5MB → 0.39 的 5.2MB 回落到 4.5MB 量级；NFS 能力经 `.rdplugin` 插件包动态获得，SFTP 维持内建不变。
