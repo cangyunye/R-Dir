@@ -178,8 +178,10 @@ jobs:
         with:
           name: >-
             bundles-${{ matrix.platform == 'windows-latest' && 'windows-x64' || (contains(matrix.args, 'aarch64') && 'macos-aarch64' || 'macos-x64') }}
-          # mac 交叉编译落在 target/<triple>/，宿主构建落在 target/release，通配两者
-          path: src-tauri/target/*/release/bundle/*
+          # mac 交叉编译落在 target/<triple>/，宿主构建落在 target/release，通配两者；
+          # bundle 下还有 nsis/dmg/macos 子目录，必须 ** 递归（v0.41.0 二发实测 * 只匹配
+          # 一层，Windows/mac job 全部「找不到文件」失败）
+          path: src-tauri/target/*/release/bundle/**
           if-no-files-found: error
           retention-days: 3
 
