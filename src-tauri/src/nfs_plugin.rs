@@ -118,6 +118,9 @@ fn version_lt(a: &str, b: &str) -> bool {
 
 // ==================== 状态查询 ====================
 
+/// 已安装插件的安装信息（install.json 缺失/损坏 → None）。
+/// 内嵌构建（feature = "nfs"）下无人调用（面板恒为 builtin），静默 dead_code
+#[cfg_attr(feature = "nfs", allow(dead_code))]
 pub fn installed_info(app: &tauri::AppHandle) -> Option<InstalledInfo> {
     let dir = plugin_dir(app).ok()?;
     let text = std::fs::read_to_string(dir.join(INSTALL_FILE)).ok()?;

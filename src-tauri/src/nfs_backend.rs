@@ -67,6 +67,8 @@ fn entry_to_file_entry(e: NfsEntry) -> FileEntry {
     }
 }
 
+// 仅 sidecar 模块消费；双 feature 全量形状下随模块一起被 dead-code 判死（同上）
+#[cfg_attr(all(feature = "nfs", feature = "nfs-sidecar"), allow(dead_code))]
 fn value_to_string(v: serde_json::Value) -> Result<String, String> {
     match v {
         serde_json::Value::String(s) => Ok(s),
@@ -74,6 +76,7 @@ fn value_to_string(v: serde_json::Value) -> Result<String, String> {
     }
 }
 
+#[cfg_attr(all(feature = "nfs", feature = "nfs-sidecar"), allow(dead_code))]
 fn value_to<T: serde::de::DeserializeOwned>(v: serde_json::Value) -> Result<T, String> {
     serde_json::from_value(v).map_err(|e| format!("NFS 插件返回格式错误：{e}"))
 }
@@ -210,7 +213,10 @@ impl NfsBackend for InProcess {
 
 // ==================== Sidecar（feature = "nfs-sidecar"） ====================
 
+// 内嵌 nfs 与 sidecar 同开（--features nfs 全量形状）时 select_backend 走 InProcess，
+// 本模块从外部不可达 → 整链 dead_code；保留编译以支撑无内嵌构建的插件形态。
 #[cfg(feature = "nfs-sidecar")]
+#[cfg_attr(all(feature = "nfs", feature = "nfs-sidecar"), allow(dead_code))]
 mod sidecar {
     use std::collections::HashMap;
     use std::sync::atomic::AtomicU64;

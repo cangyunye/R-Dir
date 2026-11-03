@@ -118,13 +118,15 @@ windows-webview = { package = "windows", version = "0.61", features = [] }
 libc = "0.2"
 
 [features]
-default = ["sftp", "share", "nfs", "nfs-sidecar"]
+# 默认 = 发行口径（与 CI 的 tauri-action 构建一致）：无内嵌 NFS，NFS 能力经
+# .rdplugin 伴生进程插件获得。tauri CLI 只有 --features（可加不可减、无
+# --no-default-features），发行形态必须落在 default 上。
+default = ["sftp", "share", "nfs-sidecar"]
 sftp = ["dep:russh", "dep:russh-keys", "dep:tokio", "dep:aes-gcm", "dep:sha2", "dep:rand"]
-# v0.40 NFS 插件：内嵌客户端（开发/全量构建）。去掉 nfs 后 NFS 能力经 nfs-sidecar
-# 安装的伴生进程插件（.rdplugin）动态获得；两者同时存在时内嵌优先
+# v0.40 内嵌 NFS 客户端（开发/全量构建 opt-in）：pnpm tauri dev --features nfs /
+# cargo build --features nfs。与 nfs-sidecar 并存时内嵌优先
 nfs = ["rdir-nfs/client", "dep:tokio", "dep:futures-util"]
 # v0.40 伴生进程插件宿主：懒启动/多路复用/取消转发/安装链路（sha256 校验）
-# 发行版口径：--no-default-features --features sftp,share,nfs-sidecar
 nfs-sidecar = ["dep:tokio", "dep:sha2"]
 # v0.7 窗口分享（内置插件）：去掉 share 即不编译分享服务
 share = ["dep:axum", "dep:tokio", "dep:local-ip-address", "dep:futures-util"]
