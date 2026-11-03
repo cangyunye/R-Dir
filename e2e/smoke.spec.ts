@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { installTauriMock } from "./tauri-mock";
+import { disablePreview, installTauriMock } from "./tauri-mock";
 
 /**
  * E2E 回归用例（前端 dev server + Tauri IPC 桩）。
@@ -20,6 +20,8 @@ const GO_UP = process.platform === "darwin" ? "Meta+ArrowUp" : "Alt+ArrowUp";
 const REFRESH = process.platform === "darwin" ? "Meta+r" : "F5";
 
 test.beforeEach(async ({ page }) => {
+  // v0.41 预览拉门默认开启会盖住内容区右缘；本文件分屏/网格/拖放用例需要完整内容区
+  await disablePreview(page);
   await installTauriMock(page);
   await page.goto("/");
   await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();

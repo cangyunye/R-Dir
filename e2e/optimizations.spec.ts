@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { installTauriMock } from "./tauri-mock";
+import { disablePreview, installTauriMock } from "./tauri-mock";
 
 /**
  * v0.28.0 优化项回归：
@@ -14,6 +14,8 @@ const HOME = "/mock/home";
 const MOD = process.platform === "darwin" ? "Meta" : "Control";
 
 test.beforeEach(async ({ page }) => {
+  // v0.41 预览拉门默认开启会盖住内容区右缘；本文件大量跨窗格/右缘交互需要完整内容区
+  await disablePreview(page);
   await installTauriMock(page);
   await page.goto("/");
   await expect(page.locator("[data-path]").first()).toBeVisible();

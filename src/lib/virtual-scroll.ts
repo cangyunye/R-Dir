@@ -35,8 +35,10 @@ export function visibleRange(
 /** 单元格内边距 + 单元格间隙（px） */
 export const GRID_PAD = 12;
 export const GRID_GAP = 8;
-/** 图标下方两行文件名的预留高度（px） */
-export const GRID_LABEL_H = 30;
+/** 图标下方标签区预留高度（px）：两行 11px/leading-tight 文本 27.5 + gap-1 4 + 行高余量 4.5。
+ *  v0.41 修正：原 30 连同 padding/间距合 Budget 42 < 实际内容 47.5，长名在 flex 列里被
+ *  挤压（标签无 shrink-0）后经 overflow:hidden 拦腰切字。 */
+export const GRID_LABEL_H = 36;
 
 /** 网格尺寸：单元宽/高由图标档位推出（调用方保证 iconSize 合法）。 */
 export function gridCell(iconSize: number): { w: number; h: number } {

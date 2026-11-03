@@ -676,7 +676,7 @@ export function SettingsDialog({
                 </div>
             </div>
 
-            {/* v0.28 预览：右侧拉门总开关 + 键位 + 默认宽度（总开关默认关，点文件不直接预览） */}
+            {/* v0.28 预览：右侧拉门总开关 + 键位 + 默认宽度（v0.41 默认开；地址栏另有预览按钮） */}
             <div
               ref={(el) => { sectionRefs.current.preview = el; }}
               data-settings-section="preview"

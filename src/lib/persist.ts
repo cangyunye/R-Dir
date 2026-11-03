@@ -619,7 +619,7 @@ export function saveDiffMtimeTolerance(seconds: number): void {
 const PREVIEW_KEY = "rfm.preview";
 
 export interface PreviewPrefs {
-  /** 设置 → 预览 总开关（默认关：点文件不直接预览，需显式开启） */
+  /** 预览总开关（会话内经标题栏按钮/空格切换；**不随会话持久化**，每次启动一律关闭） */
   enabled: boolean;
   /** 拉门当前是否展开（false = 收起为贴边把手） */
   expanded: boolean;
@@ -632,21 +632,17 @@ export const PREVIEW_WIDTH_MAX = 720;
 export const PREVIEW_WIDTH_DEFAULT = 360;
 
 export function loadPreviewPrefs(): PreviewPrefs {
+  // v0.41：启动一律不自动展开预览（忽略上次退出时的开关状态），开屏点文件就是普通选择；
+  // 要预览经标题栏按钮/空格一键开启。只有宽度跟随上次偏好。
+  let width = PREVIEW_WIDTH_DEFAULT;
   try {
-    const raw = localStorage.getItem(PREVIEW_KEY);
-    if (!raw) return { enabled: false, expanded: true, width: PREVIEW_WIDTH_DEFAULT };
-    const o = JSON.parse(raw) as Partial<PreviewPrefs>;
-    const width = Number(o.width);
-    return {
-      enabled: o.enabled === true,
-      expanded: o.expanded !== false,
-      width: Number.isFinite(width)
-        ? Math.min(PREVIEW_WIDTH_MAX, Math.max(PREVIEW_WIDTH_MIN, width))
-        : PREVIEW_WIDTH_DEFAULT,
-    };
+    const o = JSON.parse(localStorage.getItem(PREVIEW_KEY) ?? "null") as Partial<PreviewPrefs> | null;
+    const w = Number(o?.width);
+    if (Number.isFinite(w)) width = Math.min(PREVIEW_WIDTH_MAX, Math.max(PREVIEW_WIDTH_MIN, w));
   } catch {
-    return { enabled: false, expanded: true, width: PREVIEW_WIDTH_DEFAULT };
+    /* 损坏数据回落默认宽度 */
   }
+  return { enabled: false, expanded: true, width };
 }
 
 export function savePreviewPrefs(p: PreviewPrefs): void {

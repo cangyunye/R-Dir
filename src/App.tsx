@@ -222,7 +222,6 @@ import { type IconSize, type ViewMode } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, Bird } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { PaneListMenu } from "@/components/PaneListMenu";
 import { PropertiesDialog } from "@/components/PropertiesDialog";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { DiffDialog } from "@/components/DiffDialog";
@@ -496,7 +495,8 @@ export default function App() {
   const [addressFocusTick, setAddressFocusTick] = useState(0);
   /** 属性栏显隐（Alt+Enter / ⌘+I） */
   const [showProperties, setShowProperties] = useState(true);
-  /** v0.28 预览栏（右侧拉门）：开关/展开/宽度（rfm.preview 持久化，默认关） */
+  /** v0.41 预览栏（右侧拉门）：启动一律关闭（不自动展开），会话内经标题栏按钮/空格开关；
+   *  宽度持久化（rfm.preview），enabled 只活在本次运行 */
   const [previewPrefs, setPreviewPrefs] = useState<PreviewPrefs>(() => loadPreviewPrefs());
   /** v0.28 图文浏览模式（沉浸覆盖内容区） */
   const [browseOpen, setBrowseOpen] = useState(false);
@@ -735,28 +735,6 @@ useEffect(() => {
       if (p) return p;
     }
     return activePane;
-  })();
-  /** 所有窗格（跨标签），供路径栏右侧「已连接窗格」下拉 */
-  const paneList = (() => {
-    const out: {
-      tabId: number;
-      paneId: number;
-      title: string;
-      path: string;
-      active: boolean;
-    }[] = [];
-    for (const t of tabs) {
-      for (const p of Object.values(t.panes)) {
-        out.push({
-          tabId: t.id,
-          paneId: p.id,
-          title: p.title || p.path,
-          path: p.path,
-          active: t.id === activeId && p.id === t.activePane,
-        });
-      }
-    }
-    return out;
   })();
   const bootRef = useRef(false);
   const noticeTimer = useRef<number | null>(null);
@@ -1946,18 +1924,6 @@ useEffect(() => {
       return next.length > KEEP_ALIVE_MAX ? next.slice(0, KEEP_ALIVE_MAX) : next;
     });
   }, [activeId]);
-
-  /** 激活指定标签页中的某个窗格（路径栏右侧「已连接窗格」下拉） */
-  const activatePane = useCallback((tabId: number, paneId: number) => {
-    setActiveId(tabId);
-    setTabs((ts) =>
-      ts.map((t) =>
-        t.id === tabId
-          ? { ...t, activePane: paneId, title: t.panes[paneId]?.title ?? t.title }
-          : t,
-      ),
-    );
-  }, []);
 
   /** 右键标签重命名：空串恢复自动标题 */
   const renameTab = useCallback((id: number, title: string) => {
@@ -4542,10 +4508,11 @@ useEffect(() => {
       }
       setSyncResultsOpen((v) => !v);
     },
-    // v0.28 预览栏：总开关关闭时按空格不直接预览，提示去设置开启（点文件同理不预览）
+    // v0.41 空格：未启用时一键开启（启用+展开，点文件即预览）；启用中 = 拉出/收起拉门。
+    // 整体关闭只走标题栏按钮/设置——避免焦点在行上时按空格把预览整个关掉（行内消费后无法再开）
     togglePreview: () => {
       if (!previewPrefs.enabled) {
-        showError(t("预览栏未开启：设置 → 预览 → 启用预览栏"));
+        updatePreviewPrefs({ enabled: true, expanded: true });
         return;
       }
       updatePreviewPrefs({ expanded: !previewPrefs.expanded });
@@ -4999,6 +4966,14 @@ useEffect(() => {
             onCheckUpdate={() => void checkUpdate(false)}
             onOpenRepo={openRepo}
             onOpenDocs={openDocs}
+            previewOn={previewPrefs.enabled}
+            onTogglePreview={() =>
+              // v0.41 一键开关：开 = 启用并展开拉门（点任意文件即预览）；关 = 整体隐藏
+              updatePreviewPrefs({
+                enabled: !previewPrefs.enabled,
+                expanded: !previewPrefs.enabled || previewPrefs.expanded,
+              })
+            }
             appName={appName}
             appVersion={appVersion}
             dark={effectiveDark}
@@ -5032,17 +5007,6 @@ useEffect(() => {
         syncDiffActive={!!syncLink}
         onToggleSyncDiff={toggleSyncDiff}
         focusTick={addressFocusTick}
-        trailing={
-          <PaneListMenu
-            panes={paneList}
-            onActivate={activatePane}
-            markPaneKey={
-              compareBase && compareBase.tabId >= 0
-                ? `${compareBase.tabId}:${compareBase.paneId}`
-                : undefined
-            }
-          />
-        }
       />
 
       <div className="relative flex min-h-0 flex-1">

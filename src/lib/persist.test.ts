@@ -340,20 +340,11 @@ describe("autoUiFontSize", () => {
   });
 });
 
-// ---- v0.28 预览栏偏好 ----
+// ---- v0.41 预览栏偏好 ----
 describe("preview prefs（rfm.preview）", () => {
-  it("默认：关闭 + 展开 + 360px", () => {
-    const p = loadPreviewPrefs();
-    expect(p.enabled).toBe(false);
-    expect(p.expanded).toBe(true);
-    expect(p.width).toBe(360);
-  });
-  it("保存后读回一致", () => {
+  it("启动一律关闭：忽略上次保存的 enabled，宽度跟随偏好", () => {
     savePreviewPrefs({ enabled: true, expanded: false, width: 480 });
-    const p = loadPreviewPrefs();
-    expect(p.enabled).toBe(true);
-    expect(p.expanded).toBe(false);
-    expect(p.width).toBe(480);
+    expect(loadPreviewPrefs()).toEqual({ enabled: false, expanded: true, width: 480 });
   });
   it("宽度越界收敛到 280–720", () => {
     savePreviewPrefs({ enabled: true, expanded: true, width: 100 });
@@ -361,11 +352,9 @@ describe("preview prefs（rfm.preview）", () => {
     savePreviewPrefs({ enabled: true, expanded: true, width: 9999 });
     expect(loadPreviewPrefs().width).toBe(720);
   });
-  it("损坏数据回落默认", () => {
+  it("损坏数据回落默认宽度", () => {
     localStorage.setItem("rfm.preview", "{oops");
-    const p = loadPreviewPrefs();
-    expect(p.enabled).toBe(false);
-    expect(p.width).toBe(360);
+    expect(loadPreviewPrefs()).toEqual({ enabled: false, expanded: true, width: 360 });
   });
 });
 

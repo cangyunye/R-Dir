@@ -179,7 +179,7 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
 
   it("自动排列开启时忽略摆放记录（回到流式布局）", () => {
     // jsdom 视口宽 0 → 单列布局。记录 main.rs 到第 3 行 (0,2)：
-    // 无自动排列时按记录落位（top = 12 + 2×行高 114 = 240）
+    // 无自动排列时按记录落位（top = 12 + 2×行高 120 = 252）
     const { container: c1 } = render(
       <IconGrid
         {...makeProps({
@@ -189,9 +189,9 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
     );
     const style1 = c1.querySelector('[data-path="/mock/dir/main.rs"]')!
       .getAttribute("style") ?? "";
-    expect(style1).toContain("top: 240px");
+    expect(style1).toContain("top: 252px");
 
-    // 自动排列：忽略记录，main.rs 回到自然顺位第二格（top = 126）
+    // 自动排列：忽略记录，main.rs 回到自然顺位第二格（top = 132）
     const { container: c2 } = render(
       <IconGrid
         {...makeProps({
@@ -202,7 +202,7 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
     );
     const style2 = c2.querySelector('[data-path="/mock/dir/main.rs"]')!
       .getAttribute("style") ?? "";
-    expect(style2).toContain("top: 126px");
+    expect(style2).toContain("top: 132px");
   });
 
   it("空白右键菜单包含「自动排列」，开启时带勾选标记", () => {
@@ -320,7 +320,7 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
       Object.defineProperty(nativeEvent, "clientY", { value: y });
       fireEvent(body, nativeEvent);
     };
-    // iconSize 64 → 单元 88×106，行距 114：clientY 600 → 槽位 (0,5)，写入摆放记录
+    // iconSize 64 → 单元 88×112，行距 120：clientY 600 → 槽位 (0,5)，写入摆放记录
     dropAt(40, 600, ["application/x-rdir-dnd", "text/plain"]);
     expect(onSetIconPosition).toHaveBeenCalledWith("main.rs", [0, 5]);
     // 无应用内标记（外部拖入）：不动作

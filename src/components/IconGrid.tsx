@@ -854,7 +854,7 @@ export function IconGrid({
                             />
                           )}
                           {isRenaming ? (
-                            <div className="w-full">
+                            <div className="w-full shrink-0">
                               <RenameInput
                                 initial={renaming.name}
                                 fitWidth={{
@@ -874,9 +874,11 @@ export function IconGrid({
                             </div>
                           ) : (
                             <>
+                              {/* shrink-0：标签绝不参与 flex 压缩——空间不足时被挤矮 +
+                                  overflow:hidden 会把第二行文字拦腰切断（v0.41 修复） */}
                               <span
                                 className={cn(
-                                  "w-full line-clamp-2 break-words text-center text-[11px] leading-tight",
+                                  "w-full shrink-0 line-clamp-2 break-words text-center text-[11px] leading-tight",
                                   entry.is_dir && "font-medium",
                                   entry.is_symlink && "italic",
                                   selected && "font-semibold",

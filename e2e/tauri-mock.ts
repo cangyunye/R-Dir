@@ -886,3 +886,18 @@ export async function installTauriMock(page: Page): Promise<void> {
     (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, sftpSetGroup, sftpConnects, copyPlans, movePlans, compressCalls, extractCalls, servers: SFTP_SERVERS };
   });
 }
+
+/**
+ * v0.41 预览栏默认开启：右侧覆盖式拉门（360px，内容区右缘全高）会盖住右窗格头、
+ * 分屏右窗格与网格右缘条目——与预览无关、需要完整内容区交互的用例（分屏/拖拽/
+ * 网格/右键溢出等）在 beforeEach 里调用本函数恢复 v0.41 前的「默认关闭」世界。
+ * 必须在 goto 之前调用（addInitScript 在应用脚本运行前写 localStorage）。
+ */
+export async function disablePreview(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "rfm.preview",
+      JSON.stringify({ enabled: false, expanded: true, width: 360 }),
+    );
+  });
+}

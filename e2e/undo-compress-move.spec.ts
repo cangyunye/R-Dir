@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { installTauriMock } from "./tauri-mock";
+import { disablePreview, installTauriMock } from "./tauri-mock";
 
 /**
  * v0.34.1 补充回归：此前三条主流程零 e2e 覆盖——
@@ -14,6 +14,8 @@ const UNDO = `${MOD}+z`;
 const REDO = process.platform === "darwin" ? "Meta+Shift+z" : "Control+y";
 
 test.beforeEach(async ({ page }) => {
+  // v0.41 预览拉门默认开启会盖住内容区右缘；本文件拖放/跨窗格用例需要完整内容区
+  await disablePreview(page);
   await installTauriMock(page);
   await page.goto("/");
   await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();

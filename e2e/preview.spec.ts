@@ -2,9 +2,10 @@ import { test, expect } from "@playwright/test";
 import { installTauriMock } from "./tauri-mock";
 
 /**
- * v0.28.0 预览栏 + 图文浏览模式 E2E。
+ * v0.28.0 预览栏 + 图文浏览模式 E2E（v0.41 一键开关）。
  *
- * 覆盖：设置开启（点文件不直接预览）、空格开/收起、按类型预览
+ * 覆盖：启动一律不自动展开预览（忽略上次退出状态）、标题栏预览按钮一键全开/全关、
+ * 空格拉出/收起、拉门头部「收起」/贴边把手、按类型预览
  * （图片原图 / 文本 / 文档首页卡 / 不支持类型信息卡）、浏览模式进出与导航选中同步。
  * 桩：preview_data 返回 1x1 PNG（e2e/tauri-mock.ts）。
  */
@@ -19,59 +20,74 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
 });
 
-/** 打开设置 → 预览分区 → 启用预览栏 → 关闭设置 */
-async function enablePreview(page: import("@playwright/test").Page) {
-  await page.keyboard.press(`${MOD}+,`);
-  await page.getByRole("button", { name: "预览" }).click();
-  await page.getByTestId("preview-toggle").click();
+/** 一键开启预览（标题栏按钮）：点击后拉门直接展开，无需二次操作 */
+async function openPreview(page: import("@playwright/test").Page) {
+  await page.getByTestId("preview-app-toggle").click();
   await expect(page.getByTestId("preview-drawer")).toHaveClass(/translate-x-0/);
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("preview-drawer")).toBeVisible();
 }
 
 test.describe("预览栏（右侧拉门）", () => {
-  test("P1 默认关闭：行内空格=切换选中（不再弹「未开启」错误），点文件不出预览", async ({ page }) => {
+  test("P1 启动一律不自动展开预览；点标题栏按钮一键开启，点文件即预览", async ({ page }) => {
+    // 无论上次退出时的状态如何，开屏不出现拉门/把手，按钮未激活
+    await expect(page.getByTestId("preview-drawer")).toHaveCount(0);
+    await expect(page.getByTestId("preview-handle")).toHaveCount(0);
+    const toggle = page.getByTestId("preview-app-toggle");
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    // 一键开启：拉门直接展开，选中文件立即预览
+    await toggle.click();
+    await expect(page.getByTestId("preview-drawer")).toHaveClass(/translate-x-0/);
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await page.locator(`[data-path="${HOME}/photo.png"]`).click();
+    await expect(page.getByTestId("preview-image").locator("img")).toHaveAttribute(
+      "src",
+      /data:image\/png;base64/,
+    );
+  });
+
+  test("P1b 标题栏预览按钮一键全开/全关：窗体级，关闭后行内空格恢复选中语义，跨标签保持", async ({ page }) => {
+    await openPreview(page);
+    const toggle = page.getByTestId("preview-app-toggle");
+    // 关：拉门与把手整体消失
+    await toggle.click();
+    await expect(page.getByTestId("preview-drawer")).toHaveCount(0);
+    await expect(page.getByTestId("preview-handle")).toHaveCount(0);
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    // 关闭后行内空格恢复「设置选中」语义，不弹任何提示
     await page.locator(`[data-path="${HOME}/photo.png"]`).click();
     await page.keyboard.press("Space");
-    // v0.34.1 行为修正：预览未启用时行内空格只做选中切换并阻断冒泡——
-    // 此前同一按键既切选中又冒泡到全局 togglePreview 弹「预览栏未开启」错误提示
-    await expect(page.getByText("预览栏未开启：设置 → 预览 → 启用预览栏")).toHaveCount(0);
-    await expect(page.getByTestId("preview-drawer")).toHaveCount(0);
     await expect(page.locator(`[data-path="${HOME}/photo.png"]`)).toHaveClass(/bg-selected/);
-    // 空格不作为首字母拉起 QuickJump 搜索浮层（与预览键冲突的回归点）
-    await expect(page.locator("[data-quickjump]")).toHaveCount(0);
+    await expect(page.getByText("预览栏未开启：设置 → 预览 → 启用预览栏")).toHaveCount(0);
+    // 开：一键直接展开拉门（无「再按空格」中间步骤）
+    await toggle.click();
+    await expect(page.getByTestId("preview-drawer")).toHaveClass(/translate-x-0/);
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // 窗体级状态：切到新标签后保持（不会「切换后又要打开」）
+    await page.getByTitle("新建标签页").click();
+    await expect(page.getByTestId("preview-drawer")).toBeVisible();
   });
 
-  test("P1b 焦点在列表空白处（无行聚焦）按空格：仍提示去设置开启预览栏", async ({ page }) => {
-    // 全局 togglePreview 的提示语义保留给「没有行内消费者」的场景（列表体聚焦）
-    const body = page.locator("[data-filelist-body]").first();
-    const box = (await body.boundingBox())!;
-    await body.click({ position: { x: 120, y: box.height - 14 } });
-    await page.keyboard.press("Space");
-    await expect(page.getByText("预览栏未开启：设置 → 预览 → 启用预览栏")).toBeVisible();
-    await expect(page.getByTestId("preview-drawer")).toHaveCount(0);
-    await expect(page.locator("[data-quickjump]")).toHaveCount(0);
-  });
-
-  test("P2 设置开启 → 拉门出现；空格收起为把手、再按拉出", async ({ page }) => {
-    await enablePreview(page);
+  test("P2 空格 = 收起为贴边把手/拉出；头部「收起」与把手等效", async ({ page }) => {
+    await openPreview(page);
     const drawer = page.getByTestId("preview-drawer");
-    await expect(drawer).toHaveClass(/translate-x-0/);
-    // 空格收起 → 贴边把手出现
+    await page.locator(`[data-path="${HOME}/photo.png"]`).click();
+    // 空格（行内放行 → 全局 togglePreview）= 收起为把手，选中保持不变
     await page.keyboard.press("Space");
     await expect(drawer).toHaveClass(/translate-x-full/);
     await expect(page.getByTestId("preview-handle")).toBeVisible();
-    // 点把手拉出；再按空格收起；空格再展开
-    await page.getByTestId("preview-handle").click();
+    await expect(page.locator(`[data-path="${HOME}/photo.png"]`)).toHaveClass(/bg-selected/);
+    // 空格不作为首字母拉起 QuickJump 搜索浮层（与预览键冲突的回归点）
+    await expect(page.locator("[data-quickjump]")).toHaveCount(0);
+    // 再按空格拉出；头部「收起」同样收起，点把手拉出
+    await page.keyboard.press("Space");
     await expect(drawer).toHaveClass(/translate-x-0/);
-    await page.keyboard.press("Space");
+    await drawer.getByTitle("收起（空格）").click();
     await expect(drawer).toHaveClass(/translate-x-full/);
-    await page.keyboard.press("Space");
+    await page.getByTestId("preview-handle").click();
     await expect(drawer).toHaveClass(/translate-x-0/);
   });
 
   test("P3 选中图片 → 原图预览；选中文本 → 文本内容；未选中 → 占位", async ({ page }) => {
-    await enablePreview(page);
+    await openPreview(page);
     await page.locator(`[data-path="${HOME}/photo.png"]`).click();
     await expect(page.getByTestId("preview-image").locator("img")).toHaveAttribute(
       "src",
@@ -86,8 +102,35 @@ test.describe("预览栏（右侧拉门）", () => {
     await expect(page.getByTestId("preview-placeholder")).toBeVisible();
   });
 
+  test("P3b 预览文本可选中复制：右键应用内菜单（复制/全选），复制选区写入剪贴板", async ({ page }) => {
+    // 授权剪贴板读取，断言右键「复制」落盘的是选区文本
+    await openPreview(page);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    const pre = page.getByTestId("preview-text").locator("pre");
+    await expect(pre).toContainText("R-Dir");
+    // 拖拽选中开头一段文本（起点避开首字符边界，x+4 会让 caret 塌缩在边界上不扩选）
+    const box = (await pre.boundingBox())!;
+    await page.mouse.move(box.x + 10, box.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 60, box.y + 10, { steps: 5 });
+    await page.mouse.up();
+    const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+    expect(selected.length).toBeGreaterThan(0);
+    // 右键（落在选区内，Chromium 右键选区外会清空选区）→ 应用内菜单（非系统菜单）→ 复制选区
+    await pre.click({ button: "right", position: { x: 30, y: 10 } });
+    await page.getByRole("menuitem", { name: "复制" }).click();
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clip).toBe(selected);
+    // 「全选」把整段文本挂进选区，再复制得到全文
+    await pre.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "全选" }).click();
+    const all = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+    expect(all.length).toBeGreaterThan(selected.length);
+  });
+
   test("P4 不支持的类型显示信息卡（zip）；远程路径不预览内容", async ({ page }) => {
-    await enablePreview(page);
+    await openPreview(page);
     await page.locator(`[data-path="${HOME}/Pictures"]`).dblclick();
     await expect(page.locator(`[data-path="${PICTURES}/skip.zip"]`)).toBeVisible();
     await page.locator(`[data-path="${PICTURES}/skip.zip"]`).click();
@@ -95,7 +138,7 @@ test.describe("预览栏（右侧拉门）", () => {
   });
 
   test("P5 浏览按钮：无可预览条目时禁用", async ({ page }) => {
-    await enablePreview(page);
+    await openPreview(page);
     await page.locator(`[data-path="${HOME}/Projects"]`).dblclick();
     await expect(page.getByTestId("preview-browse-btn")).toBeDisabled();
   });
@@ -103,7 +146,7 @@ test.describe("预览栏（右侧拉门）", () => {
   test("P8 简单文本格式全覆盖（v0.30）：ini / json / 点文件 / Makefile / .env.* 出文本，bin 出信息卡", async ({
     page,
   }) => {
-    await enablePreview(page);
+    await openPreview(page);
     const CONFIGS = `${HOME}/Documents/configs`;
     await page.locator(`[data-path="${HOME}/Documents"]`).dblclick();
     await page.locator(`[data-path="${CONFIGS}"]`).dblclick();
@@ -139,7 +182,7 @@ test.describe("图文浏览模式", () => {
   test("P6 进入 → 沉浸覆盖 + 缩略图条只含可预览项；←→ 导航选中同步；Esc 退出", async ({
     page,
   }) => {
-    await enablePreview(page);
+    await openPreview(page);
     await page.locator(`[data-path="${HOME}/Pictures"]`).dblclick();
     await expect(page.locator(`[data-path="${PICTURES}/a.png"]`)).toBeVisible();
     await page.locator(`[data-path="${PICTURES}/a.png"]`).click();
@@ -170,7 +213,7 @@ test.describe("图文浏览模式", () => {
   });
 
   test("P7 快捷键 mod+shift+e 进入；再次按下退出", async ({ page }) => {
-    await enablePreview(page);
+    await openPreview(page);
     await page.locator(`[data-path="${HOME}/Pictures"]`).dblclick();
     await page.locator(`[data-path="${PICTURES}/a.png"]`).click();
     await page.keyboard.press(`${MOD}+Shift+e`);

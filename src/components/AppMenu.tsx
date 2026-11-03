@@ -8,6 +8,7 @@ import {
   Copy,
   CopyPlus,
   Download,
+  Eye,
   FileDiff,
   FilePlus2,
   FolderOpen,
@@ -131,6 +132,10 @@ export interface AppMenuActions {
   onOpenPalette: () => void;
   /** 键位版本号：自定义键位变化时递增，仅用于触发快捷键提示重渲染 */
   keymapVersion?: number;
+  /** v0.41 预览一键开关（标题栏扳手右侧）：开 = 启用并展开预览拉门，点任意文件即预览；
+   *  关 = 拉门整体隐藏。提供 onTogglePreview 才渲染按钮（单测/复用方零成本跳过） */
+  previewOn?: boolean;
+  onTogglePreview?: () => void;
 }
 
 /** 菜单项右侧的快捷键提示（按当前平台显示已配置键位） */
@@ -246,6 +251,22 @@ export function AppMenu(actions: AppMenuActions) {
           <Item icon={<KeyRound />} label={t("SFTP 主密钥…")} onClick={actions.onMasterKey} />
         </DropdownMenuContent>
       </DropdownMenu>
+      {/* v0.41 预览一键开关：窗体级按钮（不属于任何标签/地址栏），点一下直接展开预览拉门，
+          再点整体关闭；高亮 + aria-pressed 表达当前状态。文案复用既有词条 */}
+      {actions.onTogglePreview && (
+        <button
+          data-testid="preview-app-toggle"
+          onClick={actions.onTogglePreview}
+          aria-pressed={!!actions.previewOn}
+          title={actions.previewOn ? t("预览栏") : t("启用预览栏")}
+          className={cn(
+            "rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+            actions.previewOn && "bg-accent text-accent-foreground",
+          )}
+        >
+          <Eye className="h-4 w-4" />
+        </button>
+      )}
       <button
         onClick={actions.onOpenSettings}
         title={t("设置（快捷键录制）")}
