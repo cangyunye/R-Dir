@@ -191,8 +191,11 @@ jobs:
           # 显式 --target：macos-latest 是 arm64 runner，x64 job 不带 target 会打出
           # arm64 二进制却被标成 x86_64（交叉编译依赖 setup Rust 步骤已装的 targets）
           cargo build --release -p rdir-nfs --features rdir-nfs/client --bin rdir-nfs --target "$TARGET"
-          BIN="target/${TARGET}/release/rdir-nfs"
-          [ -f "$BIN" ] || BIN="target/${TARGET}/release/rdir-nfs.exe"
+          # 按平台确定性选名（Git Bash 的 [ -f ] 有 MSYS 自动补 .exe 魔法，不可依赖）
+          BIN_NAME="rdir-nfs"
+          case "$TARGET" in *windows*) BIN_NAME="rdir-nfs.exe" ;; esac
+          BIN="target/${TARGET}/release/$BIN_NAME"
+          test -f "$BIN" || { echo "插件二进制不存在：$BIN"; exit 1; }
           PKG="rdir-nfs-plugin-v${VER}-${TARGET}.rdplugin"
           MANIFEST="rdir-nfs-manifest-${TARGET}.json"
           # 纯 Node stdlib 打包（zip deflate + 包内 manifest + 独立整包校验清单），跨平台字节级一致
