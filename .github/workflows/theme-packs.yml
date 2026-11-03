@@ -1,0 +1,63 @@
+name: theme-packs
+
+# 主题包滚动发布：examples/themes/ 下的 .rdtheme.json 是纯数据配色包，与 app 版本
+# 节奏无关——包变更（push 到 main）或手动触发时，覆盖更新固定 tag `theme-packs`
+# 的 Release 资产（zip 整包 + 单文件），用户从该 Release 下载后经
+# 设置 → 外观 → 主题包 → 导入安装。
+#
+# 关键约束：本 Release 必须 --latest=false —— releases/latest 被应用内「检查更新」
+# （src/lib/update.ts）与 NFS 插件在线安装（nfs_plugin.rs）消费，若本发布成为
+# latest，两者会指向这里而非主程序版本 Release。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "examples/themes/**"
+      - ".github/workflows/theme-packs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Package theme packs
+        run: |
+          set -euo pipefail
+          # -j 扁平化：zip 内不带目录层级，解压即得全部 .rdtheme.json
+          zip -j theme-packs.zip examples/themes/*.rdtheme.json
+          unzip -l theme-packs.zip
+
+      - name: Publish rolling release (theme-packs)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          NOTES="R-Dir 可安装主题包（纯数据 .rdtheme.json，不含代码）。
+
+          - \`theme-packs.zip\`：全部示例包合集
+          - 单文件：金秋 / 红枫 / 桃花粉 / 青涩 / 浅海蓝（浅色）、酒红 / 蓝莓 / 紫罗兰（深色）
+
+          安装：设置 → 外观 → 主题包 → 导入。本 Release 随包内容更新覆盖，非版本发布。"
+          if gh release view theme-packs --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # 已存在：仅确保不被标为 latest（防手动误标破坏 releases/latest 消费者）
+            gh release edit theme-packs --latest=false --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create theme-packs \
+              --title "主题包（滚动更新，非版本发布）" \
+              --notes "$NOTES" \
+              --latest=false \
+              --target "$GITHUB_SHA" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
+          gh release upload theme-packs \
+            theme-packs.zip examples/themes/*.rdtheme.json \
+            --clobber --repo "$GITHUB_REPOSITORY"
