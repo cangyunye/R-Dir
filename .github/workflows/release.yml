@@ -170,6 +170,19 @@ jobs:
           # 此处不再传任何 feature 参数
           args: ${{ matrix.args }}
 
+      # v0.41 实测：tauri-action 向 Draft 上传安装包可能静默失败（日志只打「Uploading …」
+      # 不报错，3 个 job 挂 2 个），导致转正后的 Release 缺 Windows exe / x64 dmg。
+      # 这里把每平台的 bundle 另存 workflow artifacts，publish 阶段校验缺失并兜底补传。
+      - name: Archive bundles (publish 兜底补传源)
+        uses: actions/upload-artifact@v4
+        with:
+          name: >-
+            bundles-${{ matrix.platform == 'windows-latest' && 'windows-x64' || (contains(matrix.args, 'aarch64') && 'macos-aarch64' || 'macos-x64') }}
+          # mac 交叉编译落在 target/<triple>/，宿主构建落在 target/release，通配两者
+          path: src-tauri/target/*/release/bundle/*
+          if-no-files-found: error
+          retention-days: 3
+
       # v0.40 NFS 伴生进程插件：每平台编译 rdir-nfs + 打 .rdplugin（zip 容器）
       # + 独立校验清单（sha256 来源独立于包本体），作为 Release 资产随版发布
       - name: Build NFS plugin (.rdplugin)
@@ -236,6 +249,43 @@ jobs:
             cat "$RUNNER_TEMP/changelog.md"
           } > "$RUNNER_TEMP/body.md"
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/body.md"
+
+      # v0.41 安装包资产门禁：tauri-action 可能静默丢件（见 build job 注释）。
+      # 五个安装包缺一不可——缺失先从 build artifacts 兜底补传，补不齐则本 job 失败，
+      # Release 停留在 Draft，绝不把缺资产的版本发成 Latest。
+      - name: Download bundles (repair source)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bundles-*
+          path: bundles-artifacts
+
+      - name: Verify & repair installers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          TAG="$GITHUB_REF_NAME"
+          existing="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort -u)"
+          rc=0
+          for a in \
+            "R-Dir_${VER}_aarch64.dmg" \
+            "R-Dir_aarch64.app.tar.gz" \
+            "R-Dir_${VER}_x64.dmg" \
+            "R-Dir_x64.app.tar.gz" \
+            "R-Dir_${VER}_x64-setup.exe"
+          do
+            if grep -Fxq "$a" <<<"$existing"; then
+              echo "ok: $a"; continue
+            fi
+            file="$(find bundles-artifacts -name "$a" -print -quit)"
+            if [ -z "$file" ]; then
+              echo "::error::资产缺失且 build 产物中不存在：$a"; rc=1; continue
+            fi
+            gh release upload "$TAG" "$file" --clobber --repo "$GITHUB_REPOSITORY"
+            echo "repaired: $a"
+          done
+          exit $rc
 
       - name: Publish release
         env:
