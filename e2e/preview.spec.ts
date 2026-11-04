@@ -193,6 +193,26 @@ test.describe("预览栏（右侧拉门）", () => {
     await expect(page.locator("[data-toast]")).toContainText("已复制");
   });
 
+  test("P11 预览里 Ctrl/Cmd+A 全选预览文本；点文件后恢复全选文件", async ({ page }) => {
+    await openPreview(page);
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    const pre = page.getByTestId("preview-text").locator("pre");
+    await expect(pre).toContainText("R-Dir");
+    // 点进预览文字（caret 落在 <pre> 内）→ mod+A 全选预览文本
+    await pre.click();
+    await page.keyboard.press(`${MOD}+a`);
+    const all = await pre.evaluate((el) => el.textContent ?? "");
+    expect(all.length).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(all);
+    // 没有退化成「全选文件」：没点过的行仍未选中
+    await expect(page.locator(`[data-path="${HOME}/Documents"]`)).not.toHaveClass(/bg-selected/);
+    // 再点文件（选区离开预览）→ mod+A 恢复全选文件
+    await page.locator(`[data-path="${HOME}/Documents"]`).click();
+    await page.keyboard.press(`${MOD}+a`);
+    await expect(page.locator(`[data-path="${HOME}/Documents"]`)).toHaveClass(/bg-selected/);
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toHaveClass(/bg-selected/);
+  });
+
   test("P8 简单文本格式全覆盖（v0.30）：ini / json / 点文件 / Makefile / .env.* 出文本，bin 出信息卡", async ({
     page,
   }) => {
