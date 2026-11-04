@@ -143,6 +143,31 @@ test.describe("预览栏（右侧拉门）", () => {
     await expect(page.getByTestId("preview-browse-btn")).toBeDisabled();
   });
 
+  test("P9 代码文件语法高亮（v0.41 渐进增强）：json 出 .hljs-* span，纯文本不出；span 不破坏选区", async ({
+    page,
+  }) => {
+    await openPreview(page);
+    // 纯文本（无语法映射）：始终无高亮 span（HOME 下直接可见，先测免回退导航）
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    const notesPre = page.getByTestId("preview-text").locator("pre");
+    await expect(notesPre).toContainText("R-Dir");
+    await expect(notesPre.locator("span[class*='hljs-']")).toHaveCount(0);
+    // json：动态加载语法后整段替换为着色 span，原文保留
+    const CONFIGS = `${HOME}/Documents/configs`;
+    await page.locator(`[data-path="${HOME}/Documents"]`).dblclick();
+    await page.locator(`[data-path="${CONFIGS}"]`).dblclick();
+    await page.locator(`[data-path="${CONFIGS}/settings.json"]`).click();
+    const pre = page.getByTestId("preview-text").locator("pre");
+    await expect(pre.locator("span[class*='hljs-']").first()).toBeVisible();
+    await expect(pre).toContainText('"name"');
+    // 高亮 span 不改变字符与折行：三击选行仍可用（P3b 的完整复制链路在纯文本上已覆盖；
+    // 首行仅一个 { 拖不出选区，选第二行长内容）
+    const box = (await pre.boundingBox())!;
+    await page.mouse.click(box.x + 60, box.y + 28, { clickCount: 3 });
+    const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+    expect(selected).toContain('"name": "r-dir"');
+  });
+
   test("P8 简单文本格式全覆盖（v0.30）：ini / json / 点文件 / Makefile / .env.* 出文本，bin 出信息卡", async ({
     page,
   }) => {

@@ -325,3 +325,108 @@
 .dark .settings-glass nav {
   background: var(--glass-nav, linear-gradient(180deg, oklch(1 0 0 / 6%), oklch(1 0 0 / 2%)));
 }
+
+/* ═══ 预览语法高亮（v0.41 TextView 渐进增强，lib/highlight.ts）═══
+   不引第三方 hljs 主题 CSS：hljs 只输出 .hljs-* class，颜色在这里映射成 App 亮暗
+   两套 oklch 取值，色相沿用既有 token 的体系（品牌蓝 225-235 / 注释灰 260 /
+   字符串绿 150-155 / 数字琥珀 65-80 / 强调紫 300+），亮暗切换零成本。
+   作用域收敛在 .codehl 子树（TextView 渲染高亮 span 时挂载），不影响其他 <pre>。 */
+.codehl .hljs-comment,
+.codehl .hljs-quote {
+  color: oklch(0.5 0.025 260);
+  font-style: italic;
+}
+.codehl .hljs-keyword,
+.codehl .hljs-selector-tag,
+.codehl .hljs-section,
+.codehl .hljs-doctag,
+.codehl .hljs-name {
+  color: oklch(0.45 0.13 270);
+}
+.codehl .hljs-string,
+.codehl .hljs-regexp,
+.codehl .hljs-meta .hljs-string,
+.codehl .hljs-addition {
+  color: oklch(0.42 0.1 155);
+}
+.codehl .hljs-number,
+.codehl .hljs-literal,
+.codehl .hljs-bullet,
+.codehl .hljs-link,
+.codehl .hljs-symbol,
+.codehl .hljs-meta {
+  color: oklch(0.55 0.13 65);
+}
+.codehl .hljs-title,
+.codehl .hljs-title.function_ {
+  color: oklch(0.48 0.13 235);
+}
+.codehl .hljs-title.class_,
+.codehl .hljs-type,
+.codehl .hljs-built_in,
+.codehl .hljs-selector-id,
+.codehl .hljs-selector-class {
+  color: oklch(0.45 0.09 215);
+}
+.codehl .hljs-attr,
+.codehl .hljs-attribute,
+.codehl .hljs-property,
+.codehl .hljs-variable,
+.codehl .hljs-template-variable {
+  color: oklch(0.48 0.11 310);
+}
+.codehl .hljs-deletion {
+  color: oklch(0.5 0.15 27);
+}
+.codehl .hljs-emphasis {
+  font-style: italic;
+}
+.codehl .hljs-strong {
+  font-weight: 600;
+}
+.dark .codehl .hljs-comment,
+.dark .codehl .hljs-quote {
+  color: oklch(0.62 0.02 260);
+}
+.dark .codehl .hljs-keyword,
+.dark .codehl .hljs-selector-tag,
+.dark .codehl .hljs-section,
+.dark .codehl .hljs-doctag,
+.dark .codehl .hljs-name {
+  color: oklch(0.75 0.11 275);
+}
+.dark .codehl .hljs-string,
+.dark .codehl .hljs-regexp,
+.dark .codehl .hljs-meta .hljs-string,
+.dark .codehl .hljs-addition {
+  color: oklch(0.75 0.1 150);
+}
+.dark .codehl .hljs-number,
+.dark .codehl .hljs-literal,
+.dark .codehl .hljs-bullet,
+.dark .codehl .hljs-link,
+.dark .codehl .hljs-symbol,
+.dark .codehl .hljs-meta {
+  color: oklch(0.8 0.12 80);
+}
+.dark .codehl .hljs-title,
+.dark .codehl .hljs-title.function_ {
+  color: oklch(0.76 0.11 225);
+}
+.dark .codehl .hljs-title.class_,
+.dark .codehl .hljs-type,
+.dark .codehl .hljs-built_in,
+.dark .codehl .hljs-selector-id,
+.dark .codehl .hljs-selector-class {
+  color: oklch(0.76 0.08 210);
+}
+.dark .codehl .hljs-attr,
+.dark .codehl .hljs-attribute,
+.dark .codehl .hljs-property,
+.dark .codehl .hljs-variable,
+.dark .codehl .hljs-template-variable {
+  color: oklch(0.74 0.1 310);
+}
+.dark .codehl .hljs-deletion {
+  color: oklch(0.67 0.15 25);
+}

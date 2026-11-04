@@ -7,8 +7,11 @@
  * 文本可选中（v0.41）：select-text 显式放行选中（防上游加 select-none 后回退），
  * 右键走应用内菜单（复制选区 / 全选）——桌面 WebView 的默认菜单被 App 全局
  * contextmenu 兜底屏蔽（只放行编辑上下文），<pre> 不在其中，必须自绘。
+ * 语法高亮（v0.41，渐进增强）：扩展名能映射到 hljs 语法时先渲纯文本立即可见，
+ * 高亮（lib/highlight.ts，按语言动态加载）就绪后整段替换为着色 span——
+ * 首屏零延迟、失败/超护栏回退纯文本。span 不改变字符与折行，选区/复制语义不变。
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, TextSelect } from "lucide-react";
 import {
   ContextMenu,
@@ -17,6 +20,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { readTextFile } from "@/lib/api";
+import { highlightCode, languageForPath } from "@/lib/highlight";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/LanguageProvider";
 
@@ -35,8 +39,11 @@ export function TextView({
     truncated: boolean;
     /** v0.30 后端实际采用的解码；UTF-16 时给提示（Windows 工具写出的 ini/reg 常见） */
     encoding: string;
+    /** v0.41 高亮产物 HTML：null = 纯文本（无语法 / 加载失败 / 护栏回退） */
+    html: string | null;
   } | null>(null);
   const [failed, setFailed] = useState(false);
+  const lang = useMemo(() => languageForPath(path), [path]);
   /** v0.41 最近一次选区缓存：右键的 mousedown 在部分平台（Linux/Win Chromium）会把
    *  选区先清掉再弹菜单，onOpenChange 瞬间快照会拿到空串——改经 selectionchange
    *  持续记录本 <pre> 内的选区，「复制」用缓存值（ macOS 保选区语义下缓存即当前值）。
@@ -76,12 +83,23 @@ export function TextView({
       .then((r) => {
         if (!cancelled) {
           const truncated = r.text.length > RENDER_CAP;
+          const displayed = truncated ? r.text.slice(0, RENDER_CAP) : r.text;
           setState({
-            text: truncated ? r.text.slice(0, RENDER_CAP) : r.text,
+            text: displayed,
             lossy: r.lossy,
             truncated,
             encoding: r.encoding ?? "UTF-8",
+            html: null,
           });
+          // 高亮只作用于截断后的显示文本；动态 import 本身异步，纯文本先落地首屏。
+          // stale 双保险：cancelled 拦跨文件，text 比对拦同文件重入
+          if (lang) {
+            highlightCode(displayed, lang).then((html) => {
+              if (!cancelled) {
+                setState((s) => (s && s.text === displayed ? { ...s, html } : s));
+              }
+            });
+          }
         }
       })
       .catch(() => {
@@ -90,7 +108,7 @@ export function TextView({
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, lang]);
 
   if (failed) {
     return (
@@ -127,7 +145,11 @@ export function TextView({
               ref={preRef}
               className="whitespace-pre-wrap break-all font-mono text-xs leading-relaxed text-foreground select-text"
             >
-              {state.text}
+              {state.html ? (
+                <span className="codehl" dangerouslySetInnerHTML={{ __html: state.html }} />
+              ) : (
+                state.text
+              )}
             </pre>
           </div>
         </ContextMenuTrigger>
