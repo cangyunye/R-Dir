@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ArrowLeftRight,
   BookOpen,
@@ -218,6 +218,9 @@ export function AppMenu(actions: AppMenuActions) {
   const [open, setOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const t = useT();
+  // 主菜单「新建文件夹 / 新建文件 / 重命名」点击后置位：本菜单关闭时跳过
+  // 回焦触发按钮，把焦点留给即将挂载的行内 RenameInput（见 onCloseAutoFocus）
+  const suppressRefocusRef = useRef(false);
   return (
     <div className="flex items-center gap-0.5" data-keymap-version={actions.keymapVersion ?? 0}>
       <DropdownMenu open={toolsOpen} onOpenChange={setToolsOpen} modal={false}>
@@ -294,6 +297,15 @@ export function AppMenu(actions: AppMenuActions) {
           align="end"
           className="min-w-[300px]"
           // maxHeight 折算由 index.css 的 dropdown-menu-content 规则统一处理（同右键菜单）
+          onCloseAutoFocus={(e) => {
+            // 新建文件夹/新建文件/重命名点击后行内输入框即将持焦：跳过关菜单的
+            // 「回焦触发按钮」——回焦晚 1-2 帧执行，会把输入框刚拿到的焦点抢走
+            // （120ms 重试才夺回，可见地弹闪一下选区）。消费即复位。
+            if (suppressRefocusRef.current) {
+              suppressRefocusRef.current = false;
+              e.preventDefault();
+            }
+          }}
         >
           <Item
             icon={<Command />}
@@ -306,8 +318,8 @@ export function AppMenu(actions: AppMenuActions) {
           <GroupLabel>{t("文件")}</GroupLabel>
           <Item icon={<Plus />} label={t("新建标签页")} shortcutId="newTab" onClick={actions.onNewTab} />
           <Item icon={<X />} label={t("关闭标签页")} shortcutId="closeTab" onClick={actions.onCloseTab} />
-          <Item icon={<FolderPlus />} label={t("新建文件夹")} shortcutId="newFolder" onClick={actions.onNewFolder} />
-          <Item icon={<FilePlus2 />} label={t("新建文件")} shortcutId="newFile" onClick={actions.onNewFile} />
+          <Item icon={<FolderPlus />} label={t("新建文件夹")} shortcutId="newFolder" onClick={() => { suppressRefocusRef.current = true; actions.onNewFolder(); }} />
+          <Item icon={<FilePlus2 />} label={t("新建文件")} shortcutId="newFile" onClick={() => { suppressRefocusRef.current = true; actions.onNewFile(); }} />
           <DropdownMenuSeparator />
           <Item icon={<Save />} label={t("保存会话")} shortcutId="saveSession" onClick={actions.onSaveSession} />
           <Item icon={<X />} label={t("退出")} onClick={actions.onQuit} />
@@ -327,7 +339,13 @@ export function AppMenu(actions: AppMenuActions) {
             onClick={actions.onDuplicate}
           />
           <DropdownMenuSeparator />
-          <Item icon={<Pencil />} label={t("重命名")} shortcutId="rename" disabled={!actions.canRename} onClick={actions.onRename} />
+          <Item
+            icon={<Pencil />}
+            label={t("重命名")}
+            shortcutId="rename"
+            disabled={!actions.canRename}
+            onClick={() => { suppressRefocusRef.current = true; actions.onRename(); }}
+          />
           <Item
             icon={<Trash2 />}
             label={t("删除（回收站）")}

@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/context-menu";
 import { MenuGroup } from "@/components/MenuGroup";
 import { cn } from "@/lib/utils";
+import { useRef } from "react";
 import { useT } from "@/lib/LanguageProvider";
 import type { RenameState } from "@/components/FileList";
 
@@ -257,14 +258,27 @@ export function EntryContextMenuContent({
   // VSCode 已进常用条 → 固定行去重隐藏（稳定 slug id "vscode"）
   const vscodeInQuick = quickTools.some((t) => t.id === "vscode");
   const t = useT();
+  // 「新建 / 重命名」点击后行内输入框即将挂载并自行持焦，而 radix 关菜单的
+  // 「回焦触发元素」晚 1-2 帧才执行——正好把输入框刚拿到的焦点抢走（安定窗口
+  // 保住会话，但 120ms 重试夺回时全选恢复，可见地弹闪一下）。点击这些项时置位，
+  // 本菜单关闭时据此跳过回焦（消费即复位，不影响其他项的正常回焦）。
+  const suppressRefocusRef = useRef(false);
+  const markSuppressRefocus = () => {
+    suppressRefocusRef.current = true;
+  };
   return (
     <ContextMenuContent
       className="min-w-48"
       collisionPadding={10}
       onCloseAutoFocus={(e) => {
-        // 右键「重命名」时焦点要留给行内 RenameInput；
+        // 右键「重命名 / 新建」时焦点要留给行内 RenameInput；
         // 阻止 radix 关闭菜单后把焦点恢复到触发元素（会抢走输入框焦点）
-        if (renaming?.path === entry.path) e.preventDefault();
+        if (suppressRefocusRef.current) {
+          suppressRefocusRef.current = false;
+          e.preventDefault();
+        } else if (renaming?.path === entry.path) {
+          e.preventDefault();
+        }
       }}
     >
       {quickStripVisible(pluginOpener, entry.path) && (
@@ -377,10 +391,10 @@ export function EntryContextMenuContent({
       )}
       <ContextMenuSeparator />
       {/* v0.42 行菜单同样提供新建（作用于当前目录）：长列表铺满视口后右键不到空白 */}
-      <ContextMenuItem onClick={onNewFolder}>
+      <ContextMenuItem onClick={() => { markSuppressRefocus(); onNewFolder(); }}>
         <FolderPlus className="mr-2 h-4 w-4" /> {t("新建文件夹")}
       </ContextMenuItem>
-      <ContextMenuItem onClick={onNewFile}>
+      <ContextMenuItem onClick={() => { markSuppressRefocus(); onNewFile(); }}>
         <FilePlus2 className="mr-2 h-4 w-4" /> {t("新建文本文件")}
       </ContextMenuItem>
       <ContextMenuSeparator />
@@ -424,7 +438,7 @@ export function EntryContextMenuContent({
       <ContextMenuItem onClick={() => onCut(targets)}>
         <Scissors className="mr-2 h-4 w-4" /> {t("剪切")}
       </ContextMenuItem>
-      <ContextMenuItem onClick={() => onRename(entry)}>
+      <ContextMenuItem onClick={() => { markSuppressRefocus(); onRename(entry); }}>
         <Pencil className="mr-2 h-4 w-4" /> {t("重命名")}
       </ContextMenuItem>
       <ContextMenuItem
