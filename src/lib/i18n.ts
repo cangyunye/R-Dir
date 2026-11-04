@@ -68,6 +68,14 @@ export function isCancelledError(msg: string): boolean {
   return msg === ERR_CANCELLED || msg.startsWith(`${ERR_CANCELLED}|`);
 }
 
+/** 已存在错误码（新建/改名撞名时 Rust 产出；前端据此自动顺延编号重试） */
+export const ERR_EXISTS = "EXISTS";
+
+/** 判定错误串是否为已存在（码或码|详情）——不用中文字符串匹配判定错误类型 */
+export function isExistsError(msg: string): boolean {
+  return msg === ERR_EXISTS || msg.startsWith(`${ERR_EXISTS}|`);
+}
+
 /** 读取持久化语言（rfm.language），缺省/非法值回退 zh */
 export function loadLanguage(): Language {
   try {

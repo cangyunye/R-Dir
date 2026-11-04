@@ -461,11 +461,15 @@ export async function installTauriMock(page: Page): Promise<void> {
       },
       cancel_diff: () => null,
       // ---- v0.18 同步浏览「在对侧新建并进入」：本地 / SFTP 新建目录（写虚拟 FS） ----
+      // 撞名与真实后端同契约：抛 EXISTS|详情（前端自动顺延编号重试的回归依据）
       create_dir: (a) => {
         const parent = String(a.parent);
         const name = String(a.name);
         FS[parent] = FS[parent] ?? [];
-        if (!FS[parent].some((f) => f.name === name)) FS[parent].push({ name, dir: true });
+        if (FS[parent].some((f) => f.name === name)) {
+          throw new Error(`EXISTS|同名条目已存在：${name}`);
+        }
+        FS[parent].push({ name, dir: true });
         const created = `${parent}/${name}`;
         FS[created] = FS[created] ?? [];
         return created;
@@ -474,7 +478,10 @@ export async function installTauriMock(page: Page): Promise<void> {
         const dir = String(a.dir);
         const name = String(a.name);
         FS[dir] = FS[dir] ?? [];
-        if (!FS[dir].some((f) => f.name === name)) FS[dir].push({ name, dir: true });
+        if (FS[dir].some((f) => f.name === name)) {
+          throw new Error(`EXISTS|同名条目已存在：${name}`);
+        }
+        FS[dir].push({ name, dir: true });
         const created = `${dir}/${name}`;
         FS[created] = FS[created] ?? [];
         return created;
@@ -484,7 +491,10 @@ export async function installTauriMock(page: Page): Promise<void> {
         const parent = String(a.parent);
         const name = String(a.name);
         FS[parent] = FS[parent] ?? [];
-        if (!FS[parent].some((f) => f.name === name)) FS[parent].push({ name, size: 0 });
+        if (FS[parent].some((f) => f.name === name)) {
+          throw new Error(`EXISTS|同名文件已存在：${name}`);
+        }
+        FS[parent].push({ name, size: 0 });
         return `${parent}/${name}`;
       },
       stat_entry: (a) => {
@@ -846,7 +856,23 @@ export async function installTauriMock(page: Page): Promise<void> {
         if (cmd === "plugin:event|unlisten" || cmd === "plugin:event|emit") return null;
         const h = handlers[cmd];
         if (!h) throw new Error(`[e2e mock] 未桩化的命令：${cmd}`);
-        return h(args);
+        // 可注入 IPC 延迟（模拟真实 Tauri 往返耗时）：数字 = 全部命令统一延迟，
+        // Record = 按命令名延迟。长列表下 list_dir 要几百毫秒，新建→重命名的
+        // 乐观插入/焦点竞态回归用例靠它复现（默认 0 = 原即时语义）。
+        const delayCfg = (window as unknown as { __RDIR_IPC_DELAY__?: number | Record<string, number> })
+          .__RDIR_IPC_DELAY__;
+        const delay =
+          typeof delayCfg === "number" ? delayCfg : delayCfg ? (delayCfg[cmd] ?? 0) : 0;
+        if (!delay) return h(args);
+        return await new Promise((resolve, reject) => {
+          window.setTimeout(() => {
+            try {
+              resolve(h(args));
+            } catch (e) {
+              reject(e);
+            }
+          }, delay);
+        });
       },
       transformCallback: (cb: (data: unknown) => unknown) => {
         const id = nextId++;

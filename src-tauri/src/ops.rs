@@ -520,19 +520,36 @@ pub fn restore_from_trash(paths: &[String]) -> Result<Vec<String>, String> {
     Ok(restored)
 }
 
-/// 新建文件夹，返回新路径。
+/// 新建文件夹，返回新路径。撞名产出 EXISTS 码（i18n 错误码契约；前端自动顺延编号重试）。
 pub fn create_dir(parent: &str, name: &str) -> Result<String, String> {
     check_name(name)?;
     let target = Path::new(parent).join(name);
-    fs::create_dir(&target).map_err(|e| format!("新建文件夹失败：{}", e))?;
+    fs::create_dir(&target).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            format!("EXISTS|同名条目已存在：{name}")
+        } else {
+            format!("新建文件夹失败：{e}")
+        }
+    })?;
     Ok(target.to_string_lossy().to_string())
 }
 
-/// 新建空文件，返回新路径。
+/// 新建空文件，返回新路径。撞名产出 EXISTS 码（同 create_dir）。
 pub fn create_file(parent: &str, name: &str) -> Result<String, String> {
     check_name(name)?;
     let target = Path::new(parent).join(name);
-    fs::write(&target, b"").map_err(|e| format!("新建文件失败：{}", e))?;
+    // create_new = 已存在即报错（fs::write 会静默覆盖，语义错误）
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                format!("EXISTS|同名文件已存在：{name}")
+            } else {
+                format!("新建文件失败：{e}")
+            }
+        })?;
     Ok(target.to_string_lossy().to_string())
 }
 
@@ -1372,6 +1389,25 @@ mod tests {
         assert!(rename_entry(&a, "").is_err(), "空名应报错");
         assert!(rename_entry(&a, "b.txt").is_err(), "撞已有文件应报错");
         assert!(Path::new(&a).exists(), "失败时不应动原文件");
+    }
+
+    /// 新建撞名产出 EXISTS 码（i18n 错误码契约；前端自动顺延编号重试的依据）
+    #[test]
+    fn create_taken_name_emits_exists_code() {
+        let base = tmp("create-exists");
+        let p = base.to_string_lossy().to_string();
+        fs::create_dir_all(base.join("已占用")).unwrap();
+        fs::write(base.join("已占用.txt"), "x").unwrap();
+
+        let dir_err = create_dir(&p, "已占用").unwrap_err();
+        assert!(dir_err.starts_with("EXISTS|"), "目录撞名应产出 EXISTS 码：{dir_err}");
+
+        let file_err = create_file(&p, "已占用.txt").unwrap_err();
+        assert!(file_err.starts_with("EXISTS|"), "文件撞名应产出 EXISTS 码：{file_err}");
+
+        // 非撞名错误不带 EXISTS 码（如非法名）
+        let bad = create_dir(&p, "a/b").unwrap_err();
+        assert!(!bad.starts_with("EXISTS|"), "非法名不是撞名：{bad}");
     }
 
     /// IPC 边界兜底：绝对路径会被 Path::join 当成替换，`..` 会跳出目标目录

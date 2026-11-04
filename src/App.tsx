@@ -87,6 +87,7 @@ import {
   getHomeDir,
   getQuickAccess,
   getVolumes,
+  isSelfMutatedDir,
   listDir,
   moveEntries,
   moveEntriesPlan,
@@ -155,7 +156,7 @@ import {
 } from "@/lib/paneTree";
 import { ACTIONS, bindingOf, findAction, formatBinding, isMac, keyEventString } from "@/lib/keymap";
 import { loadLanguage, type Language } from "@/lib/i18n";
-import { isCancelledError, t, terr } from "@/lib/i18n";
+import { isCancelledError, isExistsError, t, terr } from "@/lib/i18n";
 import {
   applyThemePack,
   deleteThemePack as apiDeleteThemePack,
@@ -660,7 +661,10 @@ export default function App() {
     let un: (() => void) | undefined;
     void listen<string[]>("fs://changed", (e) => {
       if (disposed || !e.payload?.length) return;
-      const dirs = new Set(e.payload);
+      // 应用自己刚落盘过的目录跳过：watcher 轮询分不清内外改动，应用的新建/改名/
+      // 删除/粘贴已各自刷新过窗格，再刷一轮只会让「正在加载…」横条白闪第二次
+      const dirs = new Set(e.payload.filter((d) => !isSelfMutatedDir(d)));
+      if (dirs.size === 0) return;
       setTabs((ts) =>
         ts.map((t) => {
           let hit = false;
@@ -1410,7 +1414,11 @@ useEffect(() => {
       ts.map((t) => {
         const p = t.panes[activePane.id];
         if (!p) return t;
-        return { ...t, panes: { ...t.panes, [activePane.id]: { ...p, loading: true, error: null } } };
+        // 快速重读不点亮「正在加载…」横条：本地已填充窗格的重读毫秒级，横条随每次
+        // 刷新闪一下（此前新建后 refreshPane + fs watcher 各一轮 = 连闪两次）。
+        // 首次进入（无内容可展示）与慢速远程后端（sftp/nfs）保留横条反馈。
+        const silentReload = p.entries.length > 0 && !isSftpPath(p.path) && !isNfsPath(p.path);
+        return { ...t, panes: { ...t.panes, [activePane.id]: { ...p, loading: !silentReload, error: null } } };
       }),
     );
     listDir(activePane.path)
@@ -4013,27 +4021,75 @@ useEffect(() => {
         showError(t("标签 / HTTP 视图不支持新建，请先进入本地或远程目录"));
         return;
       }
-      const name = kind === "dir" ? "新建文件夹" : "新建文件.txt";
-      try {
-        const p = isSftpPath(pane.path)
+      // 自动编号（对齐资源管理器「新建文件夹 (2)」）：先按当前列表跳到空闲序号，
+      // 落盘撞名（列表过期的竞态）再靠后端 EXISTS 码逐个顺延重试
+      const base = kind === "dir" ? "新建文件夹" : "新建文件.txt";
+      const taken = new Set(pane.entries.map((e) => e.name));
+      let n = 1;
+      const takenName = (i: number) => (i === 1 ? base : `${base} (${i})`);
+      while (n < 100 && taken.has(takenName(n))) n++;
+      const create = (name: string) =>
+        isSftpPath(pane.path)
           ? kind === "dir"
-            ? await sftpMkdir(pane.path, name)
-            : await sftpCreateFile(pane.path, name)
+            ? sftpMkdir(pane.path, name)
+            : sftpCreateFile(pane.path, name)
           : isNfsPath(pane.path)
             ? kind === "dir"
-              ? await nfsMkdir(pane.path, name)
-              : await nfsCreateFile(pane.path, name)
-          : kind === "dir"
-            ? await createDir(pane.path, name)
-            : await createFile(pane.path, name);
-        if (!isSftpPath(pane.path) && !isNfsPath(pane.path)) {
-          pushOp({ kind: "create", path: p, isDir: kind === "dir", paneId });
+              ? nfsMkdir(pane.path, name)
+              : nfsCreateFile(pane.path, name)
+            : kind === "dir"
+              ? createDir(pane.path, name)
+              : createFile(pane.path, name);
+      let created: string | null = null;
+      let name = base;
+      for (; n < 100; n++) {
+        name = takenName(n);
+        try {
+          created = await create(name);
+          break;
+        } catch (e) {
+          const msg = String(e);
+          if (!isExistsError(msg)) {
+            showError(msg);
+            return;
+          }
+          // 撞名（列表过期）：顺延下一个序号重试；序号耗尽按真错误提示
+          if (n === 99) {
+            showError(msg);
+            return;
+          }
         }
-        refreshPane(paneId);
-        setRenaming({ paneId, path: p, name });
-      } catch (e) {
-        showError(String(e));
       }
+      if (!created) return;
+      if (!isSftpPath(pane.path) && !isNfsPath(pane.path)) {
+        pushOp({ kind: "create", path: created, isDir: kind === "dir", paneId });
+      }
+      // 乐观插入：长列表的 list_dir 要几百毫秒甚至更久，等刷新完成重命名行才挂载，
+      // 体感是「新建了但没进入重命名」。先把新条目塞进 entries 立即渲染输入框，
+      // 刷新结果回来时整表替换（同 path 行 key 不变，不重挂载、不闪）。
+      const optimistic: FileEntry = {
+        name,
+        path: created,
+        is_dir: kind === "dir",
+        is_symlink: false,
+        size: 0,
+        modified: Date.now(),
+        created: null,
+        permissions: "",
+        extension: kind === "dir" ? "" : name.split(".").pop() ?? "",
+      };
+      setTabs((ts) =>
+        ts.map((tab) => {
+          const p = tab.panes[paneId];
+          if (!p) return tab;
+          return {
+            ...tab,
+            panes: { ...tab.panes, [paneId]: { ...p, entries: [...p.entries, optimistic] } },
+          };
+        }),
+      );
+      refreshPane(paneId);
+      setRenaming({ paneId, path: created, name });
     },
     [tabs, refreshPane, showError, pushOp, isSftpPath],
   );

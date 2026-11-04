@@ -1093,6 +1093,8 @@ export function FileList({
                 onToggleQuick={onToggleQuick}
                 onRefresh={onRefresh}
                 onProperties={onProperties}
+                onNewFolder={onNewFolder}
+                onNewFile={onNewFile}
               />
             </ContextMenu>
           );

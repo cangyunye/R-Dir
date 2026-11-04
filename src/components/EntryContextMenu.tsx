@@ -195,6 +195,9 @@ export interface EntryMenuProps {
   onToggleQuick: (path: string) => void;
   onRefresh: () => void;
   onProperties: (entries: FileEntry[]) => void;
+  /** v0.42 行菜单同样提供新建（作用于当前目录）：长列表铺满视口后右键空白困难 */
+  onNewFolder: () => void;
+  onNewFile: () => void;
 }
 
 export function EntryContextMenuContent({
@@ -248,6 +251,8 @@ export function EntryContextMenuContent({
   onToggleQuick,
   onRefresh,
   onProperties,
+  onNewFolder,
+  onNewFile,
 }: EntryMenuProps) {
   // VSCode 已进常用条 → 固定行去重隐藏（稳定 slug id "vscode"）
   const vscodeInQuick = quickTools.some((t) => t.id === "vscode");
@@ -370,6 +375,14 @@ export function EntryContextMenuContent({
           </ContextMenuItem>
         </>
       )}
+      <ContextMenuSeparator />
+      {/* v0.42 行菜单同样提供新建（作用于当前目录）：长列表铺满视口后右键不到空白 */}
+      <ContextMenuItem onClick={onNewFolder}>
+        <FolderPlus className="mr-2 h-4 w-4" /> {t("新建文件夹")}
+      </ContextMenuItem>
+      <ContextMenuItem onClick={onNewFile}>
+        <FilePlus2 className="mr-2 h-4 w-4" /> {t("新建文本文件")}
+      </ContextMenuItem>
       <ContextMenuSeparator />
       <MenuGroup
         id="compress"

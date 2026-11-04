@@ -353,7 +353,10 @@ describe("FileList 行内重命名提交（v0.26.1 macOS 回车/失焦不生效�
     )!;
     fireEvent.change(input, { target: { value: "renamed.rs" } });
     input.focus();
+    // 出起手安定窗口后再失焦（窗口内失焦交给重试聚焦，见 RenameInput.test.tsx）
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5000);
     fireEvent.blur(input);
+    nowSpy.mockRestore();
     expect(onRenameCommit).toHaveBeenCalledWith("/mock/dir/main.rs", "renamed.rs");
     expect(onRenameCancel).not.toHaveBeenCalled();
   });
@@ -370,7 +373,9 @@ describe("FileList 行内重命名提交（v0.26.1 macOS 回车/失焦不生效�
       '[data-path="/mock/dir/main.rs"] input',
     )!;
     input.focus();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5000);
     fireEvent.blur(input);
+    nowSpy.mockRestore();
     expect(onRenameCommit).not.toHaveBeenCalled();
     expect(onRenameCancel).toHaveBeenCalled();
   });

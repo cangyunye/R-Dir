@@ -13,6 +13,45 @@ import type {
   VolumeInfo,
 } from "./types";
 
+// ==================== 本地 FS 变更登记（fs watcher 静默窗口） ====================
+
+/**
+ * 应用自身刚落盘过的目录 → 完成时刻。后端 fs watcher 每 2 秒轮询目录签名，
+ * 无法区分应用内外改动——应用自己的新建/改名/删除/粘贴已经各自刷新过窗格，
+ * watcher 再推送一轮只会让「正在加载…」横条白闪一次。fs://changed 处理方
+ * 据此跳过静默窗口内的目录（窗口 > 轮询间隔 2s；窗口内真实的外部改动会被
+ * 吞掉一次，下次外部改动仍会刷新，代价可接受）。
+ */
+const selfMutatedDirs = new Map<string, number>();
+const SELF_MUTED_MS = 4500;
+
+/** api 内部用：落盘成功后登记受影响目录（本地路径；远程后端不在监视范围） */
+export function noteSelfMutatedDirs(dirs: (string | null | undefined)[]) {
+  const now = Date.now();
+  for (const d of dirs) {
+    if (!d) continue;
+    selfMutatedDirs.set(d, now);
+  }
+  if (selfMutatedDirs.size > 512) {
+    for (const [k, t] of selfMutatedDirs) {
+      if (now - t >= SELF_MUTED_MS) selfMutatedDirs.delete(k);
+    }
+  }
+}
+
+/** 该目录是否处于应用自变更静默窗口内（App 的 fs://changed 处理方调用） */
+export function isSelfMutatedDir(dir: string): boolean {
+  const t = selfMutatedDirs.get(dir);
+  return t !== undefined && Date.now() - t < SELF_MUTED_MS;
+}
+
+/** 取父目录（Unix / Windows 反斜杠 / UNC 通吃；根级返回 null——签名不在父级变化） */
+function parentOfPath(path: string): string | null {
+  const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (idx <= 0) return null;
+  return path.slice(0, idx);
+}
+
 export const listDir = (path: string) =>
   invoke<FileEntry[]>("list_dir", { path });
 
@@ -48,12 +87,18 @@ export const statPaths = (paths: string[]) =>
   invoke<string[]>("stat_paths", { paths });
 
 /** 复制条目到目标目录；返回实际创建路径列表（冲突自动改名，供撤销记录） */
-export const copyEntries = (paths: string[], dest: string) =>
-  invoke<string[]>("copy_entries", { paths, dest });
+export const copyEntries = async (paths: string[], dest: string) => {
+  const created = await invoke<string[]>("copy_entries", { paths, dest });
+  noteSelfMutatedDirs([dest]);
+  return created;
+};
 
 /** 移动条目到目标目录；返回 (源, 目标) 路径对（供撤销反向移动） */
-export const moveEntries = (paths: string[], dest: string) =>
-  invoke<[string, string][]>("move_entries", { paths, dest });
+export const moveEntries = async (paths: string[], dest: string) => {
+  const pairs = await invoke<[string, string][]>("move_entries", { paths, dest });
+  noteSelfMutatedDirs([dest, ...paths.map(parentOfPath)]);
+  return pairs;
+};
 
 /** 扫描复制/移动前需用户裁决的同名冲突（同名目录可合并，不返回冲突） */
 export const scanConflicts = (paths: string[], dest: string) =>
@@ -68,18 +113,26 @@ export const scanDirDuplicates = (paths: string[], dest: string) =>
   invoke<DirDuplicate[]>("scan_dir_duplicates", { paths, dest });
 
 /** 按冲突裁决表复制，返回实际创建路径（供撤销记录） */
-export const copyEntriesPlan = (
+export const copyEntriesPlan = async (
   paths: string[],
   dest: string,
   resolutions: import("./types").ResolutionPlan,
-) => invoke<string[]>("copy_entries_plan", { paths, dest, resolutions });
+) => {
+  const created = await invoke<string[]>("copy_entries_plan", { paths, dest, resolutions });
+  noteSelfMutatedDirs([dest]);
+  return created;
+};
 
 /** 按冲突裁决表移动，返回 (源, 目标) 路径对（供撤销反向移动） */
-export const moveEntriesPlan = (
+export const moveEntriesPlan = async (
   paths: string[],
   dest: string,
   resolutions: import("./types").ResolutionPlan,
-) => invoke<[string, string][]>("move_entries_plan", { paths, dest, resolutions });
+) => {
+  const pairs = await invoke<[string, string][]>("move_entries_plan", { paths, dest, resolutions });
+  noteSelfMutatedDirs([dest, ...paths.map(parentOfPath)]);
+  return pairs;
+};
 
 /** 系统剪贴板中的文件列表（跨应用粘贴）；cut=true 表示剪切/移动语义 */
 export interface ClipboardFiles {
@@ -119,19 +172,29 @@ export interface ModifierState {
 
 export const queryModifiers = () => invoke<ModifierState>("query_modifiers");
 
-export const renameEntry = (path: string, newName: string) =>
-  invoke<string>("rename_entry", { path, newName });
+export const renameEntry = async (path: string, newName: string) => {
+  const renamed = await invoke<string>("rename_entry", { path, newName });
+  noteSelfMutatedDirs([parentOfPath(path)]);
+  return renamed;
+};
 
-export const deleteEntries = (paths: string[]) =>
-  invoke<void>("delete_entries", { paths });
+export const deleteEntries = async (paths: string[]) => {
+  await invoke<void>("delete_entries", { paths });
+  noteSelfMutatedDirs(paths.map(parentOfPath));
+};
 
 /** 永久删除（绕过回收站，不可恢复） */
-export const permanentDeleteEntries = (paths: string[]) =>
-  invoke<void>("permanent_delete_entries", { paths });
+export const permanentDeleteEntries = async (paths: string[]) => {
+  await invoke<void>("permanent_delete_entries", { paths });
+  noteSelfMutatedDirs(paths.map(parentOfPath));
+};
 
 /** 从回收站还原（撤销删除），返回还原的路径 */
-export const restoreFromTrash = (paths: string[]) =>
-  invoke<string[]>("restore_from_trash", { paths });
+export const restoreFromTrash = async (paths: string[]) => {
+  const restored = await invoke<string[]>("restore_from_trash", { paths });
+  noteSelfMutatedDirs(restored.map(parentOfPath));
+  return restored;
+};
 
 /** 取消进行中的本地复制/移动（id 来自 transfer-progress 事件载荷） */
 export const cancelTransfer = (id: string) => invoke<void>("cancel_transfer", { id });
@@ -139,15 +202,28 @@ export const cancelTransfer = (id: string) => invoke<void>("cancel_transfer", { 
 /** 全量替换目录内容监视集合（本地窗格当前目录；变化经 fs://changed 事件回推） */
 export const fsWatchSet = (dirs: string[]) => invoke<void>("fs_watch_set", { dirs });
 
-export const createDir = (parent: string, name: string) =>
-  invoke<string>("create_dir", { parent, name });
+export const createDir = async (parent: string, name: string) => {
+  const created = await invoke<string>("create_dir", { parent, name });
+  noteSelfMutatedDirs([parent]);
+  return created;
+};
 
-export const createFile = (parent: string, name: string) =>
-  invoke<string>("create_file", { parent, name });
+export const createFile = async (parent: string, name: string) => {
+  const created = await invoke<string>("create_file", { parent, name });
+  noteSelfMutatedDirs([parent]);
+  return created;
+};
 
 /** 压缩选中条目到 target_dir（zip / tar / tgz，仅打包）；返回生成文件路径 */
-export const compressItems = (paths: string[], targetDir: string, format: "zip" | "tar" | "tgz") =>
-  invoke<string>("compress_items", { paths, targetDir, format });
+export const compressItems = async (
+  paths: string[],
+  targetDir: string,
+  format: "zip" | "tar" | "tgz",
+) => {
+  const out = await invoke<string>("compress_items", { paths, targetDir, format });
+  noteSelfMutatedDirs([targetDir]);
+  return out;
+};
 
 /** 解压结果：落点 + 统计（v0.32） */
 export interface ExtractOutcome {
@@ -163,8 +239,21 @@ export interface ExtractOutcome {
  *       folder = 无条件 targetDir/<归档名>/。
  * 密码信号：「需要密码」（未提供）/「密码错误」（提供但不对），前端弹密码框重试。
  */
-export const extractArchive = (path: string, targetDir: string, mode: "smart" | "folder", password?: string) =>
-  invoke<ExtractOutcome>("extract_archive", { path, targetDir, mode, password: password ?? null });
+export const extractArchive = async (
+  path: string,
+  targetDir: string,
+  mode: "smart" | "folder",
+  password?: string,
+) => {
+  const outcome = await invoke<ExtractOutcome>("extract_archive", {
+    path,
+    targetDir,
+    mode,
+    password: password ?? null,
+  });
+  noteSelfMutatedDirs([targetDir]);
+  return outcome;
+};
 
 /** 内容搜索（默认字面量关键词；includeHidden 含 `.` 开头项，useRegex 按正则解析） */
 export const searchContent = (

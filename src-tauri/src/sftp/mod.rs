@@ -481,7 +481,7 @@ fn download_dir_boxed<'a>(
     })
 }
 
-/// 远程新建目录
+/// 远程新建目录。撞名产出 EXISTS 码（与本地新建同契约；前端自动顺延编号重试）
 pub async fn mkdir(pool: &SessionPool, remote_dir: &str, name: &str) -> Result<String, String> {
     let (authority, rdir) = parse_sftp_path(remote_dir)?;
     let remote = join_remote(&rdir, name);
@@ -489,11 +489,14 @@ pub async fn mkdir(pool: &SessionPool, remote_dir: &str, name: &str) -> Result<S
     let key = pool_key(&user, &host, port);
     let sess = get_session(pool, &key).await?;
     let mut g = sess.lock().await;
+    if g.stat(&remote).await.is_ok() {
+        return Err(format!("EXISTS|同名条目已存在：{name}"));
+    }
     g.mkdir(&remote).await?;
     Ok(format!("sftp://{authority}{remote}"))
 }
 
-/// 远程新建空文件
+/// 远程新建空文件。撞名产出 EXISTS 码（同 mkdir）
 pub async fn create_file(pool: &SessionPool, remote_dir: &str, name: &str) -> Result<String, String> {
     let (authority, rdir) = parse_sftp_path(remote_dir)?;
     let remote = join_remote(&rdir, name);
@@ -501,6 +504,9 @@ pub async fn create_file(pool: &SessionPool, remote_dir: &str, name: &str) -> Re
     let key = pool_key(&user, &host, port);
     let sess = get_session(pool, &key).await?;
     let mut g = sess.lock().await;
+    if g.stat(&remote).await.is_ok() {
+        return Err(format!("EXISTS|同名文件已存在：{name}"));
+    }
     g.touch(&remote).await?;
     Ok(format!("sftp://{authority}{remote}"))
 }

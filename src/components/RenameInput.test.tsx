@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, act } from "@testing-library/react";
 import { RenameInput } from "./RenameInput";
 
 function mount(overrides: { onCommit?: (n: string) => void; onCancel?: () => void; initial?: string } = {}) {
@@ -64,6 +64,60 @@ describe("RenameInput 全局 mousedown 收口（点拖拽区/滚动条等不触�
     fireEvent.keyDown(input, { key: "Enter" });
     document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(onCommit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("起手安定窗口（v0.42 焦点竞态加固：程序性抢焦不再瞬闪杀会话）", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("窗口内的失焦（radix 关菜单回焦迟到抢焦）不收口，会话仍活着", () => {
+    const spy = vi.spyOn(Date, "now");
+    const { input, onCommit, onCancel } = mount(); // settleUntil = 挂载时刻 + 约1.1s
+    spy.mockReturnValue(Date.now() + 400); // 仍在安定窗口内
+    fireEvent.focus(input);
+    fireEvent.blur(input);
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("窗口内失焦后重试聚焦重新拿回焦点，随后回车正常提交", () => {
+    vi.useFakeTimers();
+    const { input, onCommit, onCancel } = mount();
+    fireEvent.focus(input);
+    fireEvent.blur(input); // 安定窗口内 → 不收口
+    expect(onCancel).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(130); // 120ms 档重试聚焦
+    });
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: "renamed.rs" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onCommit).toHaveBeenCalledWith("renamed.rs");
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("窗口外的失焦恢复原语义：未改名 = 取消", () => {
+    const spy = vi.spyOn(Date, "now");
+    const { input, onCommit, onCancel } = mount();
+    spy.mockReturnValue(Date.now() + 5000); // 已出安定窗口
+    fireEvent.focus(input);
+    fireEvent.blur(input);
+    expect(onCancel).toHaveBeenCalled();
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("窗口外的失焦恢复原语义：改过名 = 提交", () => {
+    const spy = vi.spyOn(Date, "now");
+    const { input, onCommit, onCancel } = mount();
+    spy.mockReturnValue(Date.now() + 5000);
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "renamed.rs" } });
+    fireEvent.blur(input);
+    expect(onCommit).toHaveBeenCalledWith("renamed.rs");
+    expect(onCancel).not.toHaveBeenCalled();
   });
 });
 

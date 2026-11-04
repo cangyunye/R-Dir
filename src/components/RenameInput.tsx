@@ -40,6 +40,9 @@ export function RenameInput({
   }, [fitMin, fitMax, value]);
   /** 是否真正持过焦：起手焦点竞争（radix 菜单关闭回焦等）期间 input 可能从未拿到焦点 */
   const everFocusedRef = useRef(false);
+  /** 起手安定窗口截止时刻：窗口内的失焦视作程序性抢焦（radix 关菜单回焦迟到等），
+      不收口、交给重试聚焦；窗口外的失焦才是正常结束信号 */
+  const settleUntilRef = useRef(Date.now() + 1100);
   /** 最新值（window mousedown 监听只注册一次，经此读取当前值） */
   const valueRef = useRef(value);
   valueRef.current = value;
@@ -58,8 +61,9 @@ export function RenameInput({
   useEffect(() => {
     // 右键菜单关闭时 radix 会把焦点恢复到触发行，若晚于本输入框聚焦就会把焦点抢走
     // （onBlur 以未修改的名字提交 → 静默关闭，看起来"重命名失败"）。
-    // 按 0/120/300ms 重试聚焦直到拿稳；已持焦时跳过，避免打断用户光标。
-      const attempts = [0, 120, 300].map((ms) =>
+    // 按多档延迟重试聚焦直到拿稳；已持焦时跳过，避免打断用户光标。
+    // 末档覆盖 radix 回焦迟到的场景（动画帧后才恢复触发元素焦点）。
+      const attempts = [0, 120, 300, 600, 1000].map((ms) =>
         window.setTimeout(() => {
           if (document.activeElement === ref.current) return;
           ref.current?.focus();
@@ -107,8 +111,12 @@ export function RenameInput({
       }}
       onBlur={() => {
         // 从未持过焦的 blur 是起手焦点竞争（重试聚焦会再拿），不提交也不结束会话；
-        // 正常失焦：改过名 → 提交；没改过 → 取消（对齐访达"点空白关闭"）
+        // 挂载后约 1 秒的安定窗口内同理：radix 关菜单回焦等程序性抢焦可能落在
+        // 首次持焦之后、重试聚焦之前，此时收口会把会话误杀（表现为"输入框瞬闪即关"）。
+        // 真实点击收口走 window mousedown（先于 blur），不依赖本回调。
+        // 安定窗口外的正常失焦：改过名 → 提交；没改过 → 取消（对齐访达"点空白关闭"）
         if (!everFocusedRef.current) return;
+        if (Date.now() < settleUntilRef.current) return;
         finishRef.current(valueRef.current !== initial);
       }}
       className="h-6 min-w-0 flex-1 px-1.5 text-[13px]"
