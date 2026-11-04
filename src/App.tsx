@@ -4642,20 +4642,22 @@ useEffect(() => {
       // 点/框选文件会清掉文本选区，文件复制自动恢复，不需要额外状态。
       const sel = window.getSelection();
       if (action.id === "copy" && sel && !sel.isCollapsed) return;
-      // mod+a 同理：光标/选区在预览文本里时全选预览文本（原生全选会把整个界面都选上），
-      // 点文件后选区离开预览，恢复全选文件。
-      if (action.id === "selectAll") {
-        const anchor = sel?.anchorNode;
-        const host = anchor instanceof Element ? anchor : anchor?.parentElement;
-        const pre = host?.closest('[data-testid="preview-text"] pre');
-        if (pre) {
-          const range = document.createRange();
-          range.selectNodeContents(pre);
-          sel?.removeAllRanges();
-          sel?.addRange(range);
-          e.preventDefault();
-          return;
-        }
+      // 光标/选区在预览文本里（点进去或拖选过）：mod+x 忽略（预览只读，没有可剪的），
+      // mod+a 全选预览文本（原生全选会把整个界面都选上）。点文件后选区离开预览，两者恢复原语义。
+      const anchor = sel?.anchorNode;
+      const host = anchor instanceof Element ? anchor : anchor?.parentElement;
+      const pre = host?.closest('[data-testid="preview-text"] pre');
+      if (pre && action.id === "cut") {
+        e.preventDefault();
+        return;
+      }
+      if (pre && action.id === "selectAll") {
+        const range = document.createRange();
+        range.selectNodeContents(pre);
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+        e.preventDefault();
+        return;
       }
       const fn = actionsRef.current[action.id];
       if (!fn) return;

@@ -186,7 +186,9 @@ test.describe("预览栏（右侧拉门）", () => {
     // 有文本选区时 mod+C 走原生复制：剪贴板是选中文字，且不弹「已复制（文件）」提示
     await page.keyboard.press(`${MOD}+c`);
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(selected);
-    await expect(page.locator("[data-toast]")).toHaveCount(0);
+    // 负向断言不能等：toHaveCount(0) 会重试到提示自然消失（900ms）才通过，改一次性取值
+    await page.waitForTimeout(300);
+    expect(await page.locator("[data-toast]").count()).toBe(0);
     // 再选文件（点行会清掉文本选区）→ mod+C 恢复为复制文件
     await page.locator(`[data-path="${HOME}/Documents"]`).click();
     await page.keyboard.press(`${MOD}+c`);
@@ -211,6 +213,28 @@ test.describe("预览栏（右侧拉门）", () => {
     await page.keyboard.press(`${MOD}+a`);
     await expect(page.locator(`[data-path="${HOME}/Documents"]`)).toHaveClass(/bg-selected/);
     await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toHaveClass(/bg-selected/);
+  });
+
+  test("P12 预览只读：光标在预览文字里时 Ctrl/Cmd+X 不剪切文件；点文件后恢复剪切", async ({
+    page,
+  }) => {
+    await openPreview(page);
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    const pre = page.getByTestId("preview-text").locator("pre");
+    await expect(pre).toContainText("R-Dir");
+    const box = (await pre.boundingBox())!;
+    await page.mouse.move(box.x + 10, box.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 60, box.y + 10, { steps: 5 });
+    await page.mouse.up();
+    // 预览只读：剪切被吞掉，不弹「已剪切」（toHaveCount(0) 会等提示自然消失才通过，必须一次性取值）
+    await page.keyboard.press(`${MOD}+x`);
+    await page.waitForTimeout(300);
+    expect(await page.locator("[data-toast]").count()).toBe(0);
+    // 点文件（选区离开预览）→ mod+X 仍是剪切文件
+    await page.locator(`[data-path="${HOME}/Documents"]`).click();
+    await page.keyboard.press(`${MOD}+x`);
+    await expect(page.locator("[data-toast]")).toContainText("已剪切");
   });
 
   test("P8 简单文本格式全覆盖（v0.30）：ini / json / 点文件 / Makefile / .env.* 出文本，bin 出信息卡", async ({
