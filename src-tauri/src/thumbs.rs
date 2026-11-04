@@ -155,6 +155,7 @@ mod ql {
     //! QLThumbnailGenerator 桥接：异步回调经 channel 转同步；
     //! `saveBestRepresentation...` 直接把缩略图落成 PNG 临时文件再读回。
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -186,8 +187,15 @@ mod ql {
             ]
         };
         let generator = unsafe { QLThumbnailGenerator::sharedGenerator() };
-        let out_path: PathBuf = std::env::temp_dir()
-            .join(format!("rdir-thumb-{}-{}.png", std::process::id(), size));
+        // 每次调用独立临时文件：同尺寸的并发请求（以及并行测试）共用同一路径时，
+        // 会互相覆盖/删除，表现成随机 None 或串图（v0.41.0 CI 两用例同挂即此因）。
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let out_path: PathBuf = std::env::temp_dir().join(format!(
+            "rdir-thumb-{}-{}-{}.png",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed),
+            size
+        ));
         let _ = std::fs::remove_file(&out_path);
         let out_url =
             NSURL::fileURLWithPath(&NSString::from_str(out_path.to_str().expect("temp path")));
