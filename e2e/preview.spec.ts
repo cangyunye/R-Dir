@@ -168,6 +168,31 @@ test.describe("预览栏（右侧拉门）", () => {
     expect(selected).toContain('"name": "r-dir"');
   });
 
+  test("P10 预览选中文字时 ctrl/cmd+C 复制文字而不是文件；再选文件后恢复文件复制", async ({
+    page,
+  }) => {
+    await openPreview(page);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    const pre = page.getByTestId("preview-text").locator("pre");
+    await expect(pre).toContainText("R-Dir");
+    const box = (await pre.boundingBox())!;
+    await page.mouse.move(box.x + 10, box.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 60, box.y + 10, { steps: 5 });
+    await page.mouse.up();
+    const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+    expect(selected.length).toBeGreaterThan(0);
+    // 有文本选区时 mod+C 走原生复制：剪贴板是选中文字，且不弹「已复制（文件）」提示
+    await page.keyboard.press(`${MOD}+c`);
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(selected);
+    await expect(page.locator("[data-toast]")).toHaveCount(0);
+    // 再选文件（点行会清掉文本选区）→ mod+C 恢复为复制文件
+    await page.locator(`[data-path="${HOME}/Documents"]`).click();
+    await page.keyboard.press(`${MOD}+c`);
+    await expect(page.locator("[data-toast]")).toContainText("已复制");
+  });
+
   test("P8 简单文本格式全覆盖（v0.30）：ini / json / 点文件 / Makefile / .env.* 出文本，bin 出信息卡", async ({
     page,
   }) => {

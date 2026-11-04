@@ -4638,6 +4638,10 @@ useEffect(() => {
       const combo = keyEventString(e);
       const action = findAction(combo);
       if (!action) return;
+      // 有非空文本选区时 mod+c 交给 WebView 原生复制（预览文字优先），不抢去做「复制文件」。
+      // 点/框选文件会清掉文本选区，文件复制自动恢复，不需要额外状态。
+      const sel = window.getSelection();
+      if (action.id === "copy" && sel && !sel.isCollapsed) return;
       const fn = actionsRef.current[action.id];
       if (!fn) return;
       e.preventDefault();
