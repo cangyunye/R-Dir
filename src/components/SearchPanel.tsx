@@ -268,6 +268,30 @@ export function SearchPanel({
 
   // 搜索结果行内重命名（本地路径）
   const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null);
+
+  // Esc 关闭搜索框：document 捕获阶段监听，无论焦点在哪都生效。
+  // 此前挂在面板 div 的 React onKeyDown 上，依赖「焦点在面板内」的冒泡——
+  // 菜单「关闭即卸载」后（v0.41.1 去掉退出动画），Esc 关掉菜单的瞬间焦点
+  // 尚未恢复（radix 回焦 setTimeout 0），紧接着的 Esc 会落空（e2e S5 在 CI 必现）。
+  // 捕获阶段先于一切冒泡处理运行：radix 右键/下拉菜单还在 DOM 时（此刻 radix
+  // 的冒泡级处理尚未执行，DOM 判定是确定性的）让位，只关菜单一层。
+  // IME 组合中的 Esc 是取消候选词，不关面板。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || renaming) return;
+      if (e.isComposing || e.keyCode === 229) return;
+      if (!isTopModalLayer("searchPanel")) return;
+      if (
+        document.querySelector(
+          '[data-slot="context-menu-content"],[data-slot="dropdown-menu-content"],[data-radix-popper-content-wrapper]',
+        )
+      )
+        return;
+      onClose();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [renaming, onClose]);
   /** rel_path 尾段改名（当前层 results 由窗格 entries 派生，不走这里） */
   const withNewTail = (rel: string, oldName: string, newName: string) =>
     rel.endsWith(oldName) ? rel.slice(0, rel.length - oldName.length) + newName : rel;
@@ -437,22 +461,6 @@ export function SearchPanel({
     >
     <div
       className="flex h-[70vh] max-h-[620px] w-[640px] max-w-[92vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
-      onKeyDown={(e) => {
-        // Esc 关闭搜索框；行内重命名的 Esc 已被 RenameInput stopPropagation 挡住。
-        // radix 右键/下拉菜单开着时不能关：radix 的 document 级监听晚于 React 根容器，
-        // 这里看到 defaultPrevented 恒为 false，只能按「浮层是否在 DOM」判断。
-        // IME 组合中的 Esc 是取消候选词，不关面板。
-        if (e.key !== "Escape" || e.defaultPrevented || renaming) return;
-        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-        if (!isTopModalLayer("searchPanel")) return;
-        if (
-          document.querySelector(
-            '[data-slot="context-menu-content"],[data-slot="dropdown-menu-content"],[data-radix-popper-content-wrapper]',
-          )
-        )
-          return;
-        onClose();
-      }}
     >
       {/* 标题 + 关闭（冻结的搜索目标目录随面板展示） */}
       <div className="flex shrink-0 items-center gap-1.5 border-b px-3 py-2">
