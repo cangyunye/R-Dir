@@ -5,8 +5,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName, getVersion } from "@tauri-apps/api/app";
 import {
   open as openDialog,
-  save as saveDialog,
 } from "@tauri-apps/plugin-dialog";
+import { dialogOpen as webDialogOpen, dialogSave as webDialogSave } from "@/lib/fileDialog";
 import {
   listOpeners as apiListOpeners,
   listPlugins as apiListPlugins,
@@ -985,7 +985,7 @@ useEffect(() => {
     saveActiveThemePackId(id);
   }, []);
   const handleInstallThemePack = useCallback(async () => {
-    const picked = await openDialog({
+    const picked = await webDialogOpen({
       multiple: false,
       filters: [{ name: "R-Dir 主题包", extensions: ["json"] }],
     });
@@ -1102,7 +1102,7 @@ useEffect(() => {
       showError(t(invalid));
       return;
     }
-    const path = await saveDialog({
+    const path = await webDialogSave({
       defaultPath: `${studio.draft.id}.rdtheme.json`,
       filters: [{ name: "R-Dir 主题包", extensions: ["json"] }],
     });
@@ -1376,6 +1376,50 @@ useEffect(() => {
       }),
     );
   }, []);
+
+  // web 模式外部文件拖入：preventDefault 阻止浏览器整页打开被拖文件，
+  // 文件经 /api/upload（multipart）上传到活动窗格目录后刷新窗格。
+  // 桌面版走 Tauri onDragDropEvent 既有链路（本 effect 不启用）。
+  // SFTP 窗格需「落服务端临时目录 → sftp_upload」两段式，v1 暂不支持并提示。
+  useEffect(() => {
+    if (isTauri()) return;
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault();
+    };
+    const onDrop = async (e: DragEvent) => {
+      e.preventDefault();
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length === 0) return;
+      const pane = activePane;
+      const dir = pane?.path;
+      if (!pane || !dir) return;
+      if (dir.startsWith("sftp://") || dir.startsWith("nfs://")) {
+        showError(t("web 模式暂只支持拖拽上传到本地窗格"));
+        return;
+      }
+      try {
+        const fd = new FormData();
+        for (const f of files) fd.append("files", f, f.name);
+        const res = await fetch(`/api/upload?dir=${encodeURIComponent(dir)}`, {
+          method: "POST",
+          body: fd,
+        });
+        const body = (await res.json().catch(() => null)) as
+          | { ok: boolean; error?: string }
+          | null;
+        if (!body?.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        refreshPane(pane.id);
+      } catch (err) {
+        showError(t("上传失败：{msg}", { msg: String(err) }));
+      }
+    };
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [activePane, refreshPane, showError, t]);
 
   /** 会话恢复（v0.3.0）：重建标签集合 + 分屏树 + pane 路径；SFTP 并发重连（需 master-key） */
 
@@ -4443,7 +4487,7 @@ useEffect(() => {
       if (archives.length === 0) return;
       let targetDir = pane.path;
       if (mode === "choose") {
-        const picked = await openDialog({
+        const picked = await webDialogOpen({
           title: t("选择解压目标目录"),
           multiple: false,
           directory: true,

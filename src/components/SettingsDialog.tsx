@@ -24,7 +24,7 @@ import {
   Type,
   X,
 } from "lucide-react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { dialogOpen as openDialog } from "@/lib/fileDialog";
 import {
   ACTIONS,
   bindingOf,

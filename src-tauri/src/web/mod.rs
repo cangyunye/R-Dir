@@ -22,8 +22,9 @@ pub mod assets;
 pub mod bridge;
 
 use axum::body::Body;
+use axum::extract::multipart::Multipart;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -83,6 +84,11 @@ pub async fn serve(mut state: crate::AppState, options: WebOptions) -> Result<()
         .route("/api/invoke", post(invoke_handler))
         .route("/api/events", get(events_handler))
         .route("/api/file", get(file_handler))
+        // 单请求 1GiB 上限（v1 整文件缓冲到内存，LAN 场景足够；超大文件后续流式化）
+        .route(
+            "/api/upload",
+            post(upload_handler).layer(DefaultBodyLimit::max(1024 * 1024 * 1024)),
+        )
         .route("/login", get(login_handler))
         .fallback(static_handler)
         .with_state(ctx);
@@ -394,6 +400,117 @@ async fn file_handler(
     resp
 }
 
+// ==================== 本机文件上传（浏览器拖入 → /api/upload multipart） ====================
+
+/// 文件名安全化：只取末段（浏览器 File.name 本就无路径，防手改请求注入）。
+/// 空 / "." / ".." → None（跳过该字段）。
+fn sanitize_upload_name(raw: &str) -> Option<String> {
+    let base = raw.rsplit(['/', '\\']).next()?.trim();
+    if base.is_empty() || base == "." || base == ".." {
+        return None;
+    }
+    Some(base.to_string())
+}
+
+/// 重名自动改名：`a.txt` 存在 → `a (2).txt`、`a (3).txt`…（与桌面复制的 (n) 语义一致）
+fn unique_upload_target(dir: &std::path::Path, name: &str) -> PathBuf {
+    let target = dir.join(name);
+    if !target.exists() {
+        return target;
+    }
+    let p = std::path::Path::new(name);
+    let stem = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let ext = p
+        .extension()
+        .map(|s| format!(".{}", s.to_string_lossy()))
+        .unwrap_or_default();
+    for n in 2.. {
+        let candidate = dir.join(format!("{stem} ({n}){ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!("循环必在有限步内返回")
+}
+
+async fn upload_handler(
+    State(ctx): State<Arc<bridge::WebCtx>>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    mut mp: Multipart,
+) -> Response {
+    if !authorized(&ctx, &headers, None) {
+        return unauthorized_json();
+    }
+    if ctx.read_only {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "ok": false, "error": "READ_ONLY|只读模式拒绝写操作" })),
+        )
+            .into_response();
+    }
+    let Some(dir_raw) = q.get("dir") else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": "ARG_MISSING|缺少 dir 参数" })),
+        )
+            .into_response();
+    };
+    let dir = PathBuf::from(dir_raw);
+    if !dir.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": format!("NOT_DIR|目标不是目录：{dir_raw}") })),
+        )
+            .into_response();
+    }
+    let mut written: Vec<String> = Vec::new();
+    loop {
+        match mp.next_field().await {
+            Ok(Some(field)) => {
+                // 只收带文件名的字段（前端 FormData 全部带 name="files"）
+                let Some(raw_name) = field.file_name().map(|s| s.to_string()) else {
+                    continue;
+                };
+                let Some(name) = sanitize_upload_name(&raw_name) else {
+                    continue;
+                };
+                let data = match field.bytes().await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({ "ok": false, "error": format!("UPLOAD_FAILED|读取上传内容失败：{e}") })),
+                        )
+                            .into_response()
+                    }
+                };
+                let target = unique_upload_target(&dir, &name);
+                if let Err(e) = tokio::fs::write(&target, &data).await {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "ok": false, "error": format!("写入失败：{e}") })),
+                    )
+                        .into_response();
+                }
+                written.push(target.to_string_lossy().to_string());
+            }
+            Ok(None) => break,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "ok": false, "error": format!("UPLOAD_FAILED|{e}") })),
+                )
+                    .into_response()
+            }
+        }
+    }
+    Json(json!({ "ok": true, "data": written })).into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,5 +586,45 @@ mod tests {
         // 无 Range 头 / 空文件 → None（整文件）
         assert_eq!(parse_file_range(None, 100), None);
         assert_eq!(parse_file_range(Some("bytes=0-"), 0), None);
+    }
+
+    #[test]
+    fn upload_name_sanitized_and_made_unique() {
+        // 末段提取 + 危险名拒绝
+        assert_eq!(
+            sanitize_upload_name("a/b/c.txt"),
+            Some("c.txt".to_string())
+        );
+        assert_eq!(sanitize_upload_name("..\\x"), Some("x".to_string()));
+        assert_eq!(sanitize_upload_name(".."), None);
+        assert_eq!(sanitize_upload_name("  "), None);
+        // 重名 → (2)、(3)
+        let dir = std::env::temp_dir().join(format!("rdir-upl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let t1 = unique_upload_target(&dir, "a.txt");
+        std::fs::write(&t1, b"x").unwrap();
+        let t2 = unique_upload_target(&dir, "a.txt");
+        assert_eq!(t2.file_name().unwrap().to_string_lossy(), "a (2).txt");
+        std::fs::write(&t2, b"x").unwrap();
+        assert_eq!(
+            unique_upload_target(&dir, "a.txt")
+                .file_name()
+                .unwrap()
+                .to_string_lossy(),
+            "a (3).txt"
+        );
+        // 无扩展名重名
+        let b1 = unique_upload_target(&dir, "run");
+        std::fs::write(&b1, b"x").unwrap();
+        assert_eq!(b1.file_name().unwrap().to_string_lossy(), "run");
+        assert_eq!(
+            unique_upload_target(&dir, "run")
+                .file_name()
+                .unwrap()
+                .to_string_lossy(),
+            "run (2)"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

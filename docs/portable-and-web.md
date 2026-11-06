@@ -99,11 +99,22 @@ cargo build --release --features web --bin rdir-web
   浏览器渲染确认 + CSP sandbox 隔离验证（页面上下文脚本无法执行）。
   注：ZCode IAB 自动化环境拦截 window.open（真实浏览器的双击手势内不拦）。
 
+### 文件对话框与上传（web 模式补全）
+
+- `src/lib/fileDialog.ts`：dialogOpen/dialogSave/dialogConfirm——桌面走 plugin-dialog
+  原样透传；浏览器退化为输入框（手填**服务端机器**上的路径）/ window.confirm。
+  覆盖：主题包安装与导出、解压「选择目标目录」、SFTP 密钥文件选择、服务器清单
+  导入导出、设置里的远程临时目录选择。快捷工具/自定义打开方式保持原生对话框
+  （属服务端执行族，web 默认禁用，后续 --allow-exec 统一处理）。
+- `POST /api/upload?dir=`（multipart）：浏览器拖入本机文件 → 上传到指定目录。
+  文件名末段安全化 + 重名自动 `(n)`（与桌面复制语义一致）；read_only 服务端拒绝；
+  单请求 1GiB 上限（v1 整文件缓冲，LAN 场景足够）。前端 web 模式 window 级
+  dragover/drop preventDefault（防浏览器整页打开被拖文件）+ 上传到活动窗格目录 +
+  refreshPane。SFTP 窗格需「落临时目录 → sftp_upload」两段式，v1 暂提示不支持。
+
 ### 待实施阶段
 
-1. **从用户本机上传**（web 专属 UX）：multipart 路由 + 前端 HTML5 拖放/文件选择器
-   （桌面走 Tauri onDragDropEvent 的路径在浏览器不可用，需浏览器分支）；
-   原生文件选择器的浏览器替代（保存类对话框同理）。
+1. **拖拽上传到 SFTP 窗格**（两段式：/api/upload 落服务端临时目录 → sftp_upload → 清理）。
 2. **安全加固**：`READ_ONLY`/`WEB_UNSUPPORTED`/`ARG_*` 错误码入语言包；令牌失效重登
    引导页；`--allow-exec`/`--allow-share` 显式开关落地。
 3. **CI**：web feature 构建矩阵 + `rdir-web` 独立产物（GUI/绿色版/web 三形态）。
