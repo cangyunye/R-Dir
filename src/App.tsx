@@ -1,5 +1,5 @@
 ﻿import { Activity, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -15,6 +15,7 @@ import {
   httpDownloadTo,
   cancelHttpDownload,
   openWith as apiOpenWith,
+  openLocalFile as apiOpenLocalFile,
   addCustomOpener as apiAddCustomOpener,
   removeCustomOpener as apiRemoveCustomOpener,
   setOpenerExtensions as apiSetOpenerExtensions,
@@ -236,8 +237,7 @@ import { FavoritesPalette } from "@/components/FavoritesPalette";
 import { PreviewDrawer } from "@/components/PreviewDrawer";
 import { ThemeStudioDrawer, type ThemeStudioSession } from "@/components/ThemeStudioDrawer";
 import { BrowseMode } from "@/components/BrowseMode";
-import { sortEntries } from "@/lib/entry-sort";
-import { isPreviewable } from "@/lib/preview";
+import { useSniffPreviewList } from "@/hooks/useSniffPreviewList";
 import {
   loadPreviewPrefs,
   savePreviewPrefs,
@@ -723,13 +723,15 @@ useEffect(() => {
     const e = activePane?.entries.find((x) => x.path === sel[0]);
     return e && !e.is_dir ? e : null;
   }, [activePane?.selection, activePane?.entries]);
-  /** 浏览模式清单 = 焦点窗格条目按列表同序排序后过滤可预览类型 */
-  const browseList = useMemo(() => {
-    if (!activePane) return [];
-    return sortEntries(activePane.entries, activePane.sortKey, activePane.sortDir, showHidden).filter(
-      isPreviewable,
-    );
-  }, [activePane?.entries, activePane?.sortKey, activePane?.sortDir, showHidden]);
+  /** 浏览模式清单 = 可预览类型 + 未知类型懒嗅探命中的图片（v0.42，排序与列表同序）。
+   *  嗅探仅在预览栏开启或浏览模式打开时进行（IO 约束），结果会话缓存。 */
+  const browseList = useSniffPreviewList(
+    activePane?.entries ?? [],
+    activePane?.sortKey ?? "name",
+    activePane?.sortDir ?? "asc",
+    showHidden,
+    previewPrefs.enabled || browseOpen,
+  );
 
   /** 搜索面板冻结的窗格（被关闭时回落到活动窗格） */
   const searchPane = (() => {
@@ -2251,7 +2253,9 @@ useEffect(() => {
   );
 
   /** 用系统关联程序打开文件（按扩展名 / 协议）；http 走浏览器，sftp 先经
-   *  ensureLocalCopy 下载到打开临时目录（v0.37 起目录可在设置中更改） */
+   *  ensureLocalCopy 下载到打开临时目录（v0.37 起目录可在设置中更改）。
+   *  本地文件经 open_local_file：exe/bat/cmd 以父目录为 cwd 启动（资源管理器双击
+   *  语义），其余走同一 ShellExecute 实现 */
   const openFileExternal = useCallback(
     (path: string) => {
       if (path.startsWith("http://") || path.startsWith("https://")) {
@@ -2260,7 +2264,7 @@ useEffect(() => {
       }
       const remote = path.startsWith("sftp://");
       ensureLocalCopy(path)
-        .then((local) => openPath(local))
+        .then((local) => apiOpenLocalFile(local))
         .catch((e) => showError(remote ? t("远程打开失败：{msg}", { msg: String(e) }) : t("打开失败：{msg}", { msg: String(e) })));
     },
     [ensureLocalCopy, showError],
@@ -5213,10 +5217,7 @@ useEffect(() => {
         {/* v0.28 图文浏览模式：沉浸覆盖内容区，导航即选中（与列表/预览栏三方同步） */}
         {browseOpen && (
           <BrowseMode
-            entries={activePane?.entries ?? []}
-            sortKey={activePane?.sortKey ?? "name"}
-            sortDir={activePane?.sortDir ?? "asc"}
-            showHidden={showHidden}
+            list={browseList}
             primaryPath={activePane?.selection[0] ?? null}
             onNavigate={(path) => activePane && selectRange(activePane.id, [path])}
             onClose={() => setBrowseOpen(false)}

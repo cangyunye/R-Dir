@@ -27,6 +27,8 @@ export async function installTauriMock(page: Page): Promise<void> {
       [`${HOME}/Documents/configs/.gitignore`]: "node_modules\ndist\n",
       [`${HOME}/Documents/configs/Makefile`]: "all:\n\techo built\n",
       [`${HOME}/Documents/configs/.env.local`]: "RDIR_MODE=test\n",
+      // v0.42 未知类型试探夹具：无扩展名文本（有内容；注意夹具目录是 /mock/probe，不在家目录下）
+      ["/mock/probe/payload"]: "payload probe line\n第二行\n",
     };
 
     type Fake = { name: string; dir?: boolean; size?: number; symlink?: boolean };
@@ -40,6 +42,13 @@ export async function installTauriMock(page: Page): Promise<void> {
         { name: "backup.tar.gz", size: 4096 },
         { name: "legacy.7z", size: 2048 },
         { name: "bare.xz", size: 1024 },
+      ],
+      // v0.42 未知类型试探夹具：无扩展名文本 / 无扩展名二进制 / 嗅探图片 / 超大（独立顶层目录，家目录保持 6 项）
+      "/mock/probe": [
+        { name: "payload", size: 64 },
+        { name: "blob", size: 2048 },
+        { name: "photo", size: 4096 },
+        { name: "big", size: 12 * 1024 * 1024 },
       ],
       [HOME]: [
         { name: "Documents", dir: true },
@@ -193,14 +202,29 @@ export async function installTauriMock(page: Page): Promise<void> {
       // v0.28 预览原图：回 1x1 PNG（e2e 只断言预览区出现 <img>，不校验像素）
       preview_data: (a) => {
         const p = String(a.path ?? "");
+        // v0.42 嗅探兜底：无扩展名图片（与真实后端 sniff_image_format 对齐，仅夹具路径）
+        if (p === "/mock/probe/photo") return PREVIEW_PNG;
         if (!p.startsWith("/mock/") || !/\.(png|jpg|jpeg|gif|webp|bmp|tiff|svg)$/i.test(p)) {
           return null;
         }
         return PREVIEW_PNG;
       },
+      // v0.42 未知类型组合探测（text-probe 路由）：图片 magic / 文本 / 二进制 / 超大四态
+      probe_local_file: (a) => {
+        const p = String(a.path ?? "");
+        if (p === "/mock/probe/photo") return { kind: "image", format: "png" };
+        if (p === "/mock/probe/big") return { kind: "oversized" };
+        if (p === "/mock/probe/blob" || p.endsWith(".bin")) return { kind: "binary" };
+        const text = TEXTS[p] ?? "";
+        return { kind: "text", path: p, localPath: p, isTemp: false, lossy: false, text, encoding: "UTF-8" };
+      },
       // v0.28 文本预览：虚拟 FS 内置内容（只覆盖夹具文件，其余回空串）
       read_text_file: (a) => {
         const p = String(a.path ?? "");
+        // v0.42 试探门控：按真实后端契约产出 NOT_TEXT 码（reject 裸串，对齐 Tauri Err(String)
+        // 的 reject 形态；throw Error 会被 String(e) 加 "Error: " 前缀导致码匹配失效）
+        if (p === "/mock/probe/blob" || p.endsWith(".bin"))
+          return Promise.reject("NOT_TEXT|疑似二进制文件，不支持按文本读取");
         return { path: p, localPath: p, isTemp: false, lossy: false, text: TEXTS[p] ?? "", encoding: "UTF-8" };
       },
       // 未知路径报错（与真实后端一致）：同步浏览的镜像探测依赖"列目录失败 = 对侧无此目录"
@@ -212,6 +236,12 @@ export async function installTauriMock(page: Page): Promise<void> {
         return items.map((f) => entry(p, f));
       },
       parent_dir: (a) => parentOf(String(a.path)),
+      // v0.41.2 双击/回车打开本地文件改走 open_local_file 命令（exe 以父目录为 cwd）：
+      // 与 plugin:opener|open_path 同样记入 opened 供 S3/31D 等用例断言
+      open_local_file: (a) => {
+        opened.push(String(a.path));
+        return null;
+      },
       // 行内重命名：直接改虚拟 FS（右键重命名焦点回归用）
       rename_entry: (a) => {
         const p = String(a.path);

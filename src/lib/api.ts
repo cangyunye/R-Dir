@@ -548,3 +548,8 @@ export const thumbGet = (path: string, size: number) =>
 
 export const previewData = (path: string) =>
   invoke<string | null>("preview_data", { path });
+
+// ---- v0.42 未知类型内容探测（text-probe 路由 + 浏览模式懒收录共用；仅本地路径） ----
+
+export const probeLocalFile = (path: string) =>
+  invoke<import("./types").ProbeResult>("probe_local_file", { path });

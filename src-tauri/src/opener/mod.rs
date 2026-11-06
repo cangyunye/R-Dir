@@ -476,6 +476,31 @@ pub fn open_terminal(
     launch::launch_terminal(&shell_id, &path)
 }
 
+/// Windows 可执行扩展名（双击/回车以父目录为工作目录启动的范围）。
+/// .lnk 不在列：系统关联打开会沿用快捷方式里记录的起始目录，本就正确。
+fn is_windows_executable(path: &str) -> bool {
+    matches!(
+        std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
+        Some("exe" | "bat" | "cmd")
+    )
+}
+
+/// 双击/回车打开本地文件。可执行文件以自身所在目录为工作目录启动
+/// （ShellExecute lpDirectory=NULL 会把 R-Dir 自身进程 cwd 传给子程序，见
+/// launch::launch_exec_at_own_dir）；其余文件保持系统关联打开。
+#[tauri::command]
+pub fn open_local_file(path: String) -> Result<(), String> {
+    // 仅 Windows 有「双击运行可执行文件」语义；其他平台 exe 不可执行，走系统关联
+    if cfg!(windows) && is_windows_executable(&path) {
+        return launch::launch_exec_at_own_dir(&path);
+    }
+    launch::open_with_system(&path)
+}
+
 fn uuid_v4() -> String {
     // 极简 UUID v4（无外部依赖）：基于时间 + 随机数
     let now = std::time::SystemTime::now()
@@ -488,7 +513,10 @@ fn uuid_v4() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_exts, quick_add, quick_move, quick_remove, quick_set_args, OpenersConfig};
+    use super::{
+        is_windows_executable, normalize_exts, quick_add, quick_move, quick_remove,
+        quick_set_args, OpenersConfig,
+    };
 
     fn v(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
@@ -532,6 +560,19 @@ mod tests {
     #[test]
     fn normalize_keeps_star() {
         assert_eq!(normalize_exts(&v(&["*"])), v(&["*"]));
+    }
+
+    #[test]
+    fn windows_executable_ext_classification() {
+        // 大小写不敏感
+        assert!(is_windows_executable(r"C:\Tools\app.EXE"));
+        assert!(is_windows_executable(r"C:\Tools\run.bat"));
+        assert!(is_windows_executable(r"C:\Tools\run.CMD"));
+        // 非可执行 / 快捷方式 / 无扩展名 / 多重后缀
+        assert!(!is_windows_executable(r"C:\Tools\readme.txt"));
+        assert!(!is_windows_executable(r"C:\Tools\link.lnk"));
+        assert!(!is_windows_executable(r"C:\Tools\noext"));
+        assert!(!is_windows_executable(r"C:\Tools\archive.exe.bak"));
     }
 
     #[test]

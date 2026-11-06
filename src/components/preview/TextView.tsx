@@ -10,6 +10,9 @@
  * 语法高亮（v0.41，渐进增强）：扩展名能映射到 hljs 语法时先渲纯文本立即可见，
  * 高亮（lib/highlight.ts，按语言动态加载）就绪后整段替换为着色 span——
  * 首屏零延迟、失败/超护栏回退纯文本。span 不改变字符与折行，选区/复制语义不变。
+ * 试探模式（v0.42）：未知/乱写/无扩展名的路由由 TextProbe 完成（probe_local_file 嗅探优先），
+ * TextView 只负责文本结果的渲染——probe 顶部标注「未知类型，按纯文本预览」。
+ * 未知类型没有 languageForPath 映射，天然纯文本不高亮。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Clipboard, TextSelect } from "lucide-react";
@@ -29,9 +32,12 @@ const RENDER_CAP = 256 * 1024;
 export function TextView({
   path,
   className,
+  probe = false,
 }: {
   path: string;
   className?: string;
+  /** v0.42 试探模式（未知类型由 TextProbe 路由到文本结果）：顶部标注「按纯文本预览」 */
+  probe?: boolean;
 }) {
   const [state, setState] = useState<{
     text: string;
@@ -113,7 +119,7 @@ export function TextView({
   if (failed) {
     return (
       <div className={cn("flex h-full items-center justify-center p-4 text-xs text-muted-foreground", className)}>
-        文本读取失败
+        {t("文本读取失败")}
       </div>
     );
   }
@@ -122,6 +128,11 @@ export function TextView({
   }
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)} data-testid="preview-text">
+      {probe && (
+        <div className="border-b bg-muted/40 px-3 py-1 text-[10px] text-muted-foreground" data-testid="preview-probe-banner">
+          {t("未知类型，按纯文本预览")}
+        </div>
+      )}
       {state.encoding.startsWith("UTF-16") && (
         <div className="border-b bg-muted/40 px-3 py-1 text-[10px] text-muted-foreground">
           已按 {state.encoding} 解码（Windows 记事本 / PowerShell 写出的配置常见编码）

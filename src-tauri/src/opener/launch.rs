@@ -404,6 +404,40 @@ fn launch_ex(cmd: &Command, cwd: Option<&str>, new_console: bool) -> Result<(), 
     }
 }
 
+/// 系统关联打开（与前端 opener 插件 openPath 同一实现），供本模块回退
+pub fn open_with_system(path: &str) -> Result<(), String> {
+    tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// 双击/回车打开本地可执行文件：以文件所在目录为工作目录启动（资源管理器双击
+/// 语义）。此前走 ShellExecuteExW 且 lpDirectory=NULL，子进程继承 R-Dir 自身进程
+/// cwd——依赖工作目录的程序（如 Go 的 filepath.Abs(".")）拿到的是 R-Dir 的启动目录。
+pub fn launch_exec_at_own_dir(path: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    let Some(dir) = p.parent().filter(|d| !d.as_os_str().is_empty()) else {
+        // 无父目录的极端输入（裸文件名）：退回系统关联打开
+        return open_with_system(path);
+    };
+    let mut c = Command::new(p);
+    c.current_dir(dir);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // 与资源管理器双击一致：控制台程序开新控制台（GUI 程序此标志无效）；
+        // 不能复用 launch() 的 CREATE_NO_WINDOW——会吞掉控制台程序的黑窗口
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        c.creation_flags(CREATE_NEW_CONSOLE);
+    }
+    match c.spawn() {
+        Ok(_) => Ok(()),
+        // 740 = ERROR_ELEVATION_REQUIRED：requireAdministrator 清单的 exe 无法由
+        // CreateProcess 直接启动，退回系统关联打开（ShellExecute 弹 UAC；此时 cwd
+        // 退为 R-Dir 进程目录——提权场景多为安装器，可接受）
+        Err(e) if e.raw_os_error() == Some(740) => open_with_system(path),
+        Err(e) => Err(format!("启动失败：{e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ensure_local_path, expand_placeholders, has_placeholder, terminal_kind, TerminalKind};

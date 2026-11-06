@@ -1,6 +1,25 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 
+/** 点击坐标 → 输入框字符偏移：canvas 按输入框实际计算字体量前缀宽 + 二分定位
+ *  （与 fitWidth 同一款字体串量法）。canvas 不可用（jsdom 裸环境）返回 0。 */
+function caretOffsetAt(el: HTMLInputElement, clientX: number): number {
+  const ctx = document.createElement("canvas").getContext("2d");
+  if (!ctx) return 0;
+  const cs = getComputedStyle(el);
+  ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const padL = Number.parseFloat(cs.paddingLeft) || 0;
+  const x = clientX - el.getBoundingClientRect().left - padL + el.scrollLeft;
+  let lo = 0;
+  let hi = el.value.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (ctx.measureText(el.value.slice(0, mid)).width <= x) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
 /** 行内重命名输入框（FileList 行 / 搜索结果行 / 图标网格共用） */
 export function RenameInput({
   initial,
@@ -18,6 +37,8 @@ export function RenameInput({
 }) {
   const [value, setValue] = useState(initial);
   const ref = useRef<HTMLInputElement>(null);
+  /** 接管中的框内拖选（按在选区内的按下）：anchor = 塌缩后的选区起点 */
+  const dragSelRef = useRef<{ anchor: number } | null>(null);
   const fitMin = fitWidth?.min;
   const fitMax = fitWidth?.max;
   /** 自适应宽 = canvas 按输入框实际计算字体测的文本宽 + 内边距 12px + 边框 2px + 2px 余量，
@@ -119,7 +140,46 @@ export function RenameInput({
         if (Date.now() < settleUntilRef.current) return;
         finishRef.current(valueRef.current !== initial);
       }}
-      className="h-6 min-w-0 flex-1 px-1.5 text-[13px]"
+      // select-text：列表/网格滚动容器挂了 select-none（防误选行文本），WKWebView 会把它
+      // 继承进 input——鼠标拖选/双击选词全部失效（初始 JS select() 不受影响，表现为
+      // "已全选但拖不动"）。必须显式放行（同 TextView v0.41 的处理）。
+      className="h-6 min-w-0 flex-1 select-text px-1.5 text-[13px]"
+      onMouseDown={(e) => {
+        // WKWebView：起手 select() 的全选让框内按下永远落在选区内，而 WebKit 对
+        // 「按在选区内的按下」走拖动既有选区的默认手势——显示放大镜、只移动光标，
+        // 永远拖不出新选区（Chromium 无此语义，e2e 测不出）。裸 setSelectionRange
+        // 塌缩又会打断 Blink 自己的原生拖选手势（两引擎皆失）——所以这条路径整个
+        // 接管：preventDefault 拦掉默认手势，mousedown 塌缩到按点 + mousemove 手动
+        // 扩展选区（Finder 语义）。其余按压全部留给原生：光标态按下、按在选区外、
+        // 双击/三击（e.detail>1 的选词/全选）、非左键。
+        if (e.button !== 0 || e.detail > 1) return;
+        const el = ref.current;
+        if (!el) return;
+        const selStart = el.selectionStart ?? 0;
+        const selEnd = el.selectionEnd ?? 0;
+        if (selStart === selEnd) return; // 光标态：原生行为即正确
+        const offset = caretOffsetAt(el, e.clientX);
+        if (offset < selStart || offset > selEnd) return; // 选区外：原生即新选区
+        e.preventDefault();
+        el.setSelectionRange(offset, offset);
+        dragSelRef.current = { anchor: offset };
+        const onMove = (ev: MouseEvent) => {
+          const cur = ref.current;
+          if (!cur || !dragSelRef.current) return;
+          const pos = caretOffsetAt(cur, ev.clientX);
+          cur.setSelectionRange(
+            Math.min(dragSelRef.current.anchor, pos),
+            Math.max(dragSelRef.current.anchor, pos),
+          );
+        };
+        const onUp = () => {
+          dragSelRef.current = null;
+          window.removeEventListener("mousemove", onMove);
+          window.removeEventListener("mouseup", onUp);
+        };
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+      }}
       spellCheck={false}
     />
   );

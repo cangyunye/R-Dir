@@ -51,3 +51,33 @@ describe("TextView 语法高亮（v0.41 渐进增强）", () => {
     });
   });
 });
+
+describe("TextView 试探模式（v0.42 text-probe 的文本结果）", () => {
+  beforeEach(() => {
+    mockRead.mockReset();
+  });
+
+  it("probe 模式：顶部出现「未知类型」试探横幅，纯文本无高亮", async () => {
+    mockRead.mockResolvedValue(content("payload body"));
+    render(<TextView path="/mock/home/payload" probe />);
+    const pre = await screen.findByTestId("preview-text");
+    expect(screen.getByTestId("preview-probe-banner").textContent).toContain("未知类型");
+    expect(pre.querySelector("pre")!.textContent).toContain("payload body");
+    expect(pre.querySelector(".hljs-")).toBeNull();
+  });
+
+  it("非 probe：无试探横幅", async () => {
+    mockRead.mockResolvedValue(content("plain text"));
+    render(<TextView path="/mock/home/notes.txt" />);
+    await screen.findByTestId("preview-text");
+    expect(screen.queryByTestId("preview-probe-banner")).toBeNull();
+  });
+
+  it("读取失败仍显示失败占位（probe 与否一致）", async () => {
+    mockRead.mockRejectedValue(new Error("boom"));
+    render(<TextView path="/mock/home/gone.json" probe />);
+    await waitFor(() => {
+      expect(screen.getByText("文本读取失败")).toBeTruthy();
+    });
+  });
+});

@@ -48,9 +48,11 @@ describe("previewKindOf", () => {
     }
     // .env.production：后端扩展名为 production，仍按 .env 前缀命中
     expect(previewKindOf(entry({ name: ".env.production", extension: "production" }))).toBe("text");
-    // 未知点文件 / 无扩展名文件不猜：仍 info（二进制点文件如 .DS_Store 不该进文本读取）
-    expect(previewKindOf(entry({ name: ".DS_Store", extension: "" }))).toBe("info");
-    expect(previewKindOf(entry({ name: "somebinary", extension: "" }))).toBe("info");
+    // v0.42 未知点文件 / 无扩展名 / 乱扩展名：不再 info，按内容试探文本（text-probe，
+    // 后端 NOT_TEXT 码分流回退；.DS_Store 这类二进制点文件探测失败回信息卡而非误渲乱码）
+    expect(previewKindOf(entry({ name: ".DS_Store", extension: "" }))).toBe("text-probe");
+    expect(previewKindOf(entry({ name: "somebinary", extension: "" }))).toBe("text-probe");
+    expect(previewKindOf(entry({ name: "data.fkj", extension: "fkj" }))).toBe("text-probe");
   });
 
   it("isTextLike 对目录为 false；图片/Office 不被文本判定抢走", () => {
@@ -72,23 +74,28 @@ describe("previewKindOf", () => {
     expect(previewKindOf(entry({ is_dir: true, extension: "" }))).toBe("info");
   });
 
-  it("不支持的类型 → info", () => {
+  it("不支持的类型 → info（已知二进制类型不试探）", () => {
     expect(previewKindOf(entry({ name: "a.zip", extension: "zip" }))).toBe("info");
     expect(previewKindOf(entry({ name: "a.mp4", extension: "mp4" }))).toBe("info");
+    expect(previewKindOf(entry({ name: "a.exe", extension: "exe" }))).toBe("info");
   });
 
   it("远程路径一律 info（本地暂只）", () => {
     expect(previewKindOf(entry({ path: "sftp://u@h:22/a.png" }))).toBe("info");
     expect(previewKindOf(entry({ path: "http://x/a.png" }))).toBe("info");
     expect(previewKindOf(entry({ path: "tags://red/a.png" }))).toBe("info");
+    // v0.42 远程未知类型同样不试探
+    expect(previewKindOf(entry({ path: "sftp://u@h:22/payload", extension: "" }))).toBe("info");
   });
 });
 
 describe("isPreviewable / isRemotePath", () => {
-  it("isPreviewable 排除 info 类", () => {
+  it("isPreviewable 排除 info 与 text-probe（浏览模式收录面 v0.42 不变）", () => {
     expect(isPreviewable(entry())).toBe(true);
     expect(isPreviewable(entry({ name: "a.zip", extension: "zip" }))).toBe(false);
     expect(isPreviewable(entry({ is_dir: true, extension: "" }))).toBe(false);
+    // 未知类型试探不进图文浏览模式（未知文件批量读内容 = IO 放大）
+    expect(isPreviewable(entry({ name: "somebinary", extension: "" }))).toBe(false);
   });
 
   it("isRemotePath 识别 sftp/http/tags", () => {

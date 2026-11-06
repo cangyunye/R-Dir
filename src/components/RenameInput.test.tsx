@@ -174,3 +174,56 @@ describe("fitWidth 自适应宽度（图标网格长名）", () => {
     expect(document.querySelector("input")!.style.width).toBe("");
   });
 });
+
+describe("框内按下塌缩全选（WKWebView 选区拖动规避）", () => {
+  /** jsdom 无 canvas 布局，stub 出确定性测宽：每字符 perChar px */
+  const stubMeasure = (perChar: number) =>
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      measureText: (s: string) => ({ width: s.length * perChar }),
+    } as unknown as CanvasRenderingContext2D);
+
+  it("起手全选 + 框内按下（选区内）→ preventDefault 接管，选区塌缩到按点", () => {
+    stubMeasure(10); // clientX 25 → 偏移 2（2×10 ≤ 25 < 3×10）
+    const { input } = mount();
+    fireEvent.focus(input);
+    act(() => input.setSelectionRange(0, 7)); // 起手 select() 的全选态
+    fireEvent.mouseDown(input, { clientX: 25, button: 0 });
+    expect(input.selectionStart).toBe(2);
+    expect(input.selectionEnd).toBe(2);
+    fireEvent.mouseUp(window); // 结束手势，摘掉临时监听
+  });
+
+  it("框内按住拖动：mousemove 从塌缩点手动扩展选区，mouseup 定格", () => {
+    stubMeasure(10);
+    const { input } = mount();
+    fireEvent.focus(input);
+    act(() => input.setSelectionRange(0, 7)); // 起手全选态
+    fireEvent.mouseDown(input, { clientX: 25, button: 0 }); // 塌缩到 2
+    fireEvent.mouseMove(window, { clientX: 60 }); // 拖到偏移 6
+    expect(input.selectionStart).toBe(2);
+    expect(input.selectionEnd).toBe(6);
+    fireEvent.mouseUp(window);
+    expect(input.selectionStart).toBe(2);
+    expect(input.selectionEnd).toBe(6);
+  });
+
+  it("光标态框内按下不干预（原生定位 + 拖动扩展本就正确）", () => {
+    stubMeasure(10);
+    const { input } = mount();
+    fireEvent.focus(input);
+    act(() => input.setSelectionRange(3, 3));
+    fireEvent.mouseDown(input, { clientX: 25, button: 0 });
+    expect(input.selectionStart).toBe(3);
+    expect(input.selectionEnd).toBe(3);
+  });
+
+  it("按在选区外不塌缩（WebKit 对选区外按下原生就是新选区）", () => {
+    stubMeasure(10);
+    const { input } = mount();
+    fireEvent.focus(input);
+    act(() => input.setSelectionRange(0, 2)); // 双击选中前两个字符的场景
+    fireEvent.mouseDown(input, { clientX: 60 }); // 偏移 6，落在 (0,2) 之外
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(2);
+  });
+});

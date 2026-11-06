@@ -535,6 +535,9 @@ export function IconGrid({
   const startItemPress = (e: React.MouseEvent, entry: FileEntry) => {
     if (e.button !== 0) return;
     e.stopPropagation();
+    // 重命名输入框内按下：交还给文本拖选（拖拽引擎会把 >5px 的移动升级成
+    // 文件拖拽——userSelect=none + 幽灵标签，直接掐断框内选区）
+    if ((e.target as HTMLElement).closest?.("input")) return;
     const additive = e.metaKey || e.ctrlKey;
     if (e.shiftKey || additive) return; // 修饰键选择交给 click
     // 图标视图语义（访达一致）：按下未选中图标 = 立即选中并直接成为拖拽候选；

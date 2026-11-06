@@ -137,6 +137,59 @@ test.describe("预览栏（右侧拉门）", () => {
     await expect(page.getByTestId("preview-info")).toContainText("此类型暂不支持预览");
   });
 
+  test("P4b 未知类型试探（v0.42）：无扩展名文本按纯文本预览带试探横幅，无扩展名二进制回退疑似二进制信息卡", async ({
+    page,
+  }) => {
+    await openPreview(page);
+    // 地址栏导航到独立夹具目录（家目录项数被 smoke 固定断言）
+    await page.locator("[data-pathbar-edit]").first().click();
+    const addr = page.locator("#rdir-addr-input");
+    await addr.fill("/mock/probe");
+    await addr.press("Enter");
+    await expect(page.locator('[data-path="/mock/probe/payload"]')).toBeVisible();
+    // 无扩展名文本：试探成功 → 文本视图 + 试探横幅
+    await page.locator('[data-path="/mock/probe/payload"]').click();
+    await expect(page.getByTestId("preview-text")).toContainText("payload probe line");
+    await expect(page.getByTestId("preview-probe-banner")).toContainText("未知类型");
+    // 无扩展名二进制：后端 NOT_TEXT 码 → 回退「疑似二进制」信息卡（不出失败占位）
+    await page.locator('[data-path="/mock/probe/blob"]').click();
+    await expect(page.getByTestId("preview-info")).toContainText("疑似二进制文件");
+    await expect(page.getByTestId("preview-text")).toHaveCount(0);
+    // 已知二进制类型不试探：zip 仍是原信息卡文案
+    await page.locator("[data-pathbar-edit]").first().click();
+    await addr.fill("/mock/archives");
+    await addr.press("Enter");
+    await expect(page.locator('[data-path="/mock/archives/sample.zip"]')).toBeVisible();
+    await page.locator('[data-path="/mock/archives/sample.zip"]').click();
+    await expect(page.getByTestId("preview-info")).toContainText("此类型暂不支持预览");
+  });
+
+  test("P4c v0.42 嗅探路由：无扩展名图片出原图；浏览模式懒收录嗅探命中的图片", async ({
+    page,
+  }) => {
+    await openPreview(page);
+    await page.locator("[data-pathbar-edit]").first().click();
+    const addr = page.locator("#rdir-addr-input");
+    await addr.fill("/mock/probe");
+    await addr.press("Enter");
+    await expect(page.locator('[data-path="/mock/probe/photo"]')).toBeVisible();
+    // 嗅探判图片 → 原图查看器（preview_data 嗅探兜底回 data URL）
+    await page.locator('[data-path="/mock/probe/photo"]').click();
+    await expect(page.getByTestId("preview-image").locator("img")).toHaveAttribute(
+      "src",
+      /data:image\/png;base64/,
+    );
+    // 浏览按钮被懒收录点亮（photo 嗅探命中图片；文本/二进制/超大不收录）→ 计数 1/1
+    await expect(page.getByTestId("preview-browse-btn")).toBeEnabled();
+    await page.getByTestId("preview-browse-btn").click();
+    await expect(page.getByTestId("browse-counter")).toContainText("1 / 1");
+    await expect(page.locator('[data-testid="browse-mode"] button[title="photo"]')).toBeVisible();
+    await page.keyboard.press("Escape");
+    // 超大未知文件（12MB）：探测判超大 → 默认信息卡
+    await page.locator('[data-path="/mock/probe/big"]').click();
+    await expect(page.getByTestId("preview-info")).toContainText("此类型暂不支持预览");
+  });
+
   test("P5 浏览按钮：无可预览条目时禁用", async ({ page }) => {
     await openPreview(page);
     await page.locator(`[data-path="${HOME}/Projects"]`).dblclick();
@@ -261,9 +314,9 @@ test.describe("预览栏（右侧拉门）", () => {
       await page.locator(`[data-path="${CONFIGS}/${name}"]`).click();
       await expect(page.getByTestId("preview-text"), name).toContainText(snippet);
     }
-    // 二进制扩展名仍是信息卡（不进文本读取）
+    // 二进制内容探测（v0.42）：bin 扩展名走试探 → 后端 NOT_TEXT → 回退疑似二进制信息卡
     await page.locator(`[data-path="${CONFIGS}/build.bin"]`).click();
-    await expect(page.getByTestId("preview-info")).toContainText("此类型暂不支持预览");
+    await expect(page.getByTestId("preview-info")).toContainText("疑似二进制文件");
     // 图文浏览只收录可预览项：5 个文本 + 0 图片（起始选中同步已由 P6 覆盖）
     await page.locator(`[data-path="${CONFIGS}/app.ini"]`).click();
     await page.getByTestId("preview-browse-btn").click();

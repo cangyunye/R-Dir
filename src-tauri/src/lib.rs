@@ -2298,6 +2298,7 @@ pub fn run() {
         iconpos::icon_positions_save,
         thumbs::thumb_get,
         preview::preview_data,
+        preview::probe_local_file,
         scan_conflicts,
         scan_dir_duplicates,
         copy_entries_plan,
@@ -2381,6 +2382,8 @@ pub fn run() {
         opener::remove_custom_opener,
         opener::list_shells,
         opener::open_terminal,
+        // 双击/回车打开本地文件（可执行文件以父目录为 cwd）
+        opener::open_local_file,
         // v0.29.0 右键 VSCode / Git 打开
         opener::vscode_detected,
         opener::open_vscode,

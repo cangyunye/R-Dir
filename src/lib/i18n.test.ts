@@ -54,6 +54,16 @@ describe("terr：错误码解析", () => {
     );
   });
 
+  it("NOT_TEXT / NOT_FILE 码：无包剥码留详情（预览试探与文本读取守卫，v0.42）", () => {
+    setPack(null);
+    expect(terr("NOT_TEXT|疑似二进制文件，不支持按文本读取")).toBe(
+      "疑似二进制文件，不支持按文本读取",
+    );
+    expect(terr("NOT_FILE|路径不是常规文件（目录/管道/设备），无法按文本读取")).toBe(
+      "路径不是常规文件（目录/管道/设备），无法按文本读取",
+    );
+  });
+
   it("有包时码查表翻译，详情原样保留", () => {
     setPack(fakePack);
     expect(terr("CANCELLED")).toBe("Cancelled");

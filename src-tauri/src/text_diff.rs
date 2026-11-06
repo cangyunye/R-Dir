@@ -102,7 +102,10 @@ pub struct LocalText {
     pub encoding: &'static str,
 }
 
-const BINARY_ERR: &str = "疑似二进制文件，不支持按文本读取";
+/// NOT_TEXT 错误码前缀（preview::probe_blocking 据此把二进制结果映射为 Binary 态）
+pub const NOT_TEXT_ERR_PREFIX: &str = "NOT_TEXT|";
+/// 疑似二进制：CODE|中文详情 契约（v0.42 码化）——probe_local_file 映射为 Binary 态回「疑似二进制」信息卡，diff 侧经 terr 剥码
+const BINARY_ERR: &str = "NOT_TEXT|疑似二进制文件，不支持按文本读取";
 const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 
 /// 读取本地文件为文本（二进制 / 大小守卫）。
@@ -113,8 +116,9 @@ const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 /// shift_jis …）经 encoding_rs 解码，不做 BOM 嗅探（尊重用户显式选择），仅移除匹配的 BOM。
 pub fn read_local_text_full(path: &Path, encoding: Option<&str>) -> Result<LocalText, String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("读取失败：{e}"))?;
-    if meta.is_dir() {
-        return Err("路径是目录，无法按文本读取".into());
+    if !meta.is_file() {
+        // 目录/FIFO/socket/设备一律拒绝（v0.42 预览试探对无扩展名放开门控：命名管道读取会永久阻塞）
+        return Err("NOT_FILE|路径不是常规文件（目录/管道/设备），无法按文本读取".into());
     }
     let bytes_len = meta.len();
     if bytes_len > MAX_TEXT_BYTES {
@@ -704,6 +708,50 @@ mod tests {
         // 显式 utf-8 同样去 BOM
         let (text, _, _) = read_local_text(&f, Some("utf-8")).unwrap();
         assert_eq!(text, "ab\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_local_text_rejects_non_regular_files() {
+        let dir = std::env::temp_dir().join("r-dir-text-diff-nonregular-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        // 目录：NOT_FILE 码（v0.42 起目录/FIFO/socket/设备共用同一守卫）
+        let err = match read_local_text_full(&dir, None) {
+            Err(e) => e,
+            Ok(_) => panic!("目录应被拒绝"),
+        };
+        assert!(err.starts_with("NOT_FILE|"), "{err}");
+        // 无扩展名命名管道：试探门控放开后的新风险面——拒绝而非永久阻塞读取
+        #[cfg(unix)]
+        {
+            let fifo = dir.join("namedpipe");
+            let st = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+            assert!(st.success());
+            let err = match read_local_text_full(&fifo, None) {
+                Err(e) => e,
+                Ok(_) => panic!("FIFO 应被拒绝"),
+            };
+            assert!(err.starts_with("NOT_FILE|"), "{err}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn binary_content_yields_not_text_code() {
+        // v0.42 试探门控的目标场景：无扩展名二进制产出 NOT_TEXT 码（CODE|中文详情 契约）
+        let dir = std::env::temp_dir().join("r-dir-text-diff-nottext-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("payload");
+        let png_head: [u8; 16] = [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+            0x52,
+        ];
+        std::fs::write(&f, png_head).unwrap();
+        let err = match read_local_text_full(&f, None) {
+            Err(e) => e,
+            Ok(_) => panic!("二进制内容应产出 NOT_TEXT 码"),
+        };
+        assert!(err.starts_with("NOT_TEXT|"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

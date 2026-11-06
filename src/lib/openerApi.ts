@@ -42,6 +42,13 @@ export const listShells = () => invoke<ShellItem[]>("list_shells");
 export const openTerminal = (shellId: string, path: string) =>
   invoke<void>("open_terminal", { shellId, path });
 
+// ==================== 双击/回车打开本地文件 ====================
+
+/** 用系统默认方式打开本地文件；exe/bat/cmd 以其父目录为工作目录启动（资源管理器
+ *  双击语义——ShellExecute lpDirectory=NULL 会把 R-Dir 自身进程 cwd 传给子程序，
+ *  依赖 cwd 的程序如 Go 的 filepath.Abs(".") 会拿到错目录） */
+export const openLocalFile = (path: string) => invoke<void>("open_local_file", { path });
+
 // ==================== v0.29.0 右键 VSCode / Git 打开 ====================
 
 /** 「Git 打开」工具条目（未安装的 detected=false，前端折叠组内置灰展示） */

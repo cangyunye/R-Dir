@@ -13,11 +13,17 @@
  * （ini 同族的 cfg/properties/reg、csv/tsv、bat/ps1、字幕、构建脚本等）与
  * 点文件/无扩展名的约定文件名（.gitignore、.env 及 .env.*、Makefile、Dockerfile、LICENSE 等）。
  * 后端 Path::extension() 对点文件返回空串，所以点文件必须按完整文件名匹配。
+ *
+ * v0.42 未知类型试探：本地文件 filekind 落「file」桶（未知/乱写/无扩展名）时不再 info，
+ * 按 text-probe 试探文本预览——后端 read_text_file 判二进制产出 NOT_TEXT 码，前端据此
+ * 回退「疑似二进制」信息卡（PreviewBody）。已知二进制类型（video/audio/archive/app）
+ * 与远程路径仍 info 不试探；图文浏览模式收录（isPreviewable）保持不变（未知类型批量
+ * 读内容 = IO 放大 + 失败卡噪声）。
  */
 import type { FileEntry } from "@/lib/types";
 import { fileKindOf } from "@/lib/filekind";
 
-export type PreviewKind = "image" | "text" | "doc" | "info";
+export type PreviewKind = "image" | "text" | "doc" | "info" | "text-probe";
 
 /** 原图字节上限：超过后回退缩略图放大（后端 preview_data 同步把关） */
 export const PREVIEW_IMAGE_MAX_BYTES = 30 * 1024 * 1024;
@@ -94,12 +100,16 @@ export function previewKindOf(entry: FileEntry): PreviewKind {
     case "sheet":
     case "slide":
       return "doc";
+    case "file":
+      // v0.42 未知/乱写/无扩展名：按内容试探文本预览（后端 NOT_TEXT 码分流回退）
+      return "text-probe";
     default:
       return "info";
   }
 }
 
-/** 是否可预览内容（图文浏览模式收录依据；info 类不参与） */
+/** 是否可预览内容（图文浏览模式收录依据；info 与 text-probe 不参与——未知类型批量读内容是 IO 放大） */
 export function isPreviewable(entry: FileEntry): boolean {
-  return previewKindOf(entry) !== "info";
+  const kind = previewKindOf(entry);
+  return kind !== "info" && kind !== "text-probe";
 }

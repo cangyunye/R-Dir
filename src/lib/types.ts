@@ -348,6 +348,14 @@ export interface TextFileContent {
   encoding?: string;
 }
 
+/** v0.42 未知类型内容探测结果（probe_local_file）：嗅探优先——图片 magic 16B 即判，
+ *  否则文本读取（binary = 非文本无 magic；oversized = 非图片且超 8MB 文本上限） */
+export type ProbeResult =
+  | ({ kind: "text" } & TextFileContent)
+  | { kind: "image"; format: string }
+  | { kind: "binary" }
+  | { kind: "oversized" };
+
 // ---- v0.7 窗口分享 ----
 export interface ShareConnLog {
   ip: string;

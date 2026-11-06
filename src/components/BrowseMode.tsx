@@ -3,38 +3,33 @@
  * - 覆盖侧边栏+文件区（挂内容行容器 absolute inset-0，工具栏/状态栏保留），暗色背景
  * - 中央：PreviewBody 复用（图片大图 / 文本卡 / 文档首页缩略图卡）
  * - 底部缩略图条：图片 = ThumbImage 懒加载卡；文档/文本 = 图标+文件名小卡；
- *   只收录可预览类型，排序与列表一致（sortEntries），当前项高亮并滚动居中
+ *   收录清单由调用方给（App 经 useSniffPreviewList：可预览类型 + 未知类型嗅探命中
+ *   的图片，v0.42），当前项高亮并滚动居中
  * - 键盘（capture 捕获，先于 App 全局分发）：←/→/↑/↓ 切换、Home/End、
  *   Enter 外部打开、ESC 退出；导航即选中（onNavigate → 窗格 selection），三方同步
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { ExternalLink, X } from "lucide-react";
 import { FileIcon } from "@/components/FileIcon";
 import { ThumbImage } from "@/components/ThumbImage";
 import { PreviewBody } from "@/components/preview/PreviewBody";
-import { sortEntries } from "@/lib/entry-sort";
-import { isPreviewable, previewKindOf } from "@/lib/preview";
+import { previewKindOf } from "@/lib/preview";
+import { isSniffedImage } from "@/lib/probe";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/LanguageProvider";
-import type { FileEntry, SortDir, SortKey } from "@/lib/types";
+import type { FileEntry } from "@/lib/types";
 import { useModalLayer } from "@/hooks/useModalLayer";
 import { isTopModalLayer } from "@/lib/modal-stack";
 
 export function BrowseMode({
-  entries,
-  sortKey,
-  sortDir,
-  showHidden,
+  list,
   primaryPath,
   onNavigate,
   onClose,
   onOpenExternal,
 }: {
-  /** 焦点窗格原始条目（未排序） */
-  entries: FileEntry[];
-  sortKey: SortKey;
-  sortDir: SortDir;
-  showHidden: boolean;
+  /** 收录清单（App 经 useSniffPreviewList：可预览类型 + 未知类型嗅探命中的图片，v0.42） */
+  list: FileEntry[];
   /** 焦点窗格主选中（selection[0] ?? null） */
   primaryPath: string | null;
   /** 导航即选中：把 path 设为窗格选中 */
@@ -42,10 +37,6 @@ export function BrowseMode({
   onClose: () => void;
   onOpenExternal: (path: string) => void;
 }) {
-  const list = useMemo(
-    () => sortEntries(entries, sortKey, sortDir, showHidden).filter(isPreviewable),
-    [entries, sortKey, sortDir, showHidden],
-  );
   const index = Math.max(
     0,
     list.findIndex((e) => e.path === primaryPath),
@@ -170,6 +161,8 @@ export function BrowseMode({
           {list.map((e, i) => {
             const active = i === index;
             const kind = previewKindOf(e);
+            // v0.42 嗅探命中的未知类型图片与原生图片同款缩略图 tile
+            const img = kind === "image" || isSniffedImage(e);
             return (
               <button
                 key={e.path}
@@ -179,14 +172,14 @@ export function BrowseMode({
                 onClick={() => onNavigate(e.path)}
                 className={cn(
                   "relative shrink-0 overflow-hidden rounded-md border transition-all",
-                  kind === "image" ? "h-16 w-20" : "h-16 w-24 px-1.5",
+                  img ? "h-16 w-20" : "h-16 w-24 px-1.5",
                   active
                     ? "border-primary ring-2 ring-primary ring-offset-1 ring-offset-black/90"
                     : "border-white/15 opacity-70 hover:opacity-100",
                 )}
                 title={e.name}
               >
-                {kind === "image" ? (
+                {img ? (
                   <ThumbImage
                     path={e.path}
                     mtime={e.modified}

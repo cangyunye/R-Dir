@@ -586,6 +586,9 @@ export function FileList({
   const startRowPress = (e: React.MouseEvent, entry: FileEntry) => {
     if (e.button !== 0) return;
     e.stopPropagation();
+    // 重命名输入框内按下：交还给文本拖选（拖拽引擎会把 >5px 的移动升级成
+    // 文件拖拽——userSelect=none + 幽灵标签，直接掐断框内选区）
+    if ((e.target as HTMLElement).closest?.("input")) return;
     const fromSelected = propsRef.current.selectionSet.has(entry.path);
     const additive = e.metaKey || e.ctrlKey;
     if (fromSelected) {

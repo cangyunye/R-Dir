@@ -50,16 +50,22 @@ fn cache_path(dir: &PathBuf, path: &str, mtime: i64, size: u32) -> PathBuf {
     dir.join(format!("{:016x}.png", hasher.finish()))
 }
 
-/// 检查路径是否可出缩略图（本地 + 扩展名支持）。
+/// 检查路径是否可出缩略图（本地 + 扩展名支持；v0.42 扩展名丢失时 magic 嗅探兜底）。
 pub fn thumb_eligible(path: &str) -> bool {
     if !std::path::Path::new(path).is_absolute() {
         return false; // sftp://、http://、tags:// 等虚拟路径一律不走本地解码
     }
-    let ext = std::path::Path::new(path)
+    let p = std::path::Path::new(path);
+    let ext = p
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    image_ext(&ext) || ql_ext(&ext)
+    if image_ext(&ext) || ql_ext(&ext) {
+        return true;
+    }
+    // v0.42 扩展名丢失：magic 命中才兜底（avif 走 image crate 解码，未启用解码特性
+    // 时 image_thumb 失败同样回 None → 图标，不做特判）
+    crate::preview::sniff_image_at(p).is_some()
 }
 
 /// 取缩略图 data URL；失败/不支持返回 Ok(None)（前端回退类型图标）。
@@ -110,7 +116,8 @@ fn thumb_blocking(cache_dir: PathBuf, path: String, size: u32) -> Result<Option<
                 .extension()
                 .map(|e| e.to_string_lossy().to_lowercase())
                 .unwrap_or_default();
-            let out = if image_ext(&ext) {
+            // v0.42 扩展名丢失时与 thumb_eligible 同款嗅探兜底：命中 magic 走 image 解码
+            let out = if image_ext(&ext) || crate::preview::sniff_image_at(p).is_some() {
                 image_thumb(p, size)
             } else {
                 ql_thumb(p, size)

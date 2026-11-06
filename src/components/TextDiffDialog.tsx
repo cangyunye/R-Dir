@@ -27,6 +27,7 @@ import { isMac } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
 import { useModalLayer } from "@/hooks/useModalLayer";
 import { useT } from "@/lib/LanguageProvider";
+import { terr } from "@/lib/i18n";
 import { isTopModalLayer } from "@/lib/modal-stack";
 
 /** 文本比较的来源：任意两侧文件 / 粘贴的 diff 文本 / .patch 文件 */
@@ -308,7 +309,8 @@ export function TextDiffDialog({
           });
         }
       } catch (e) {
-        if (alive()) setError(String(e));
+        // v0.42 后端错误码化（CODE|中文详情）：展示前经 terr 剥码/翻译，避免裸码前缀
+        if (alive()) setError(terr(String(e)));
       } finally {
         if (alive()) setLoading(false);
       }
@@ -671,7 +673,7 @@ export function TextDiffDialog({
       await load(true);
       setSaveNote({ text: t("已保存") });
     } catch (e) {
-      setSaveNote({ text: t("保存失败：{msg}", { msg: String(e) }), err: true });
+      setSaveNote({ text: t("保存失败：{msg}", { msg: terr(String(e)) }), err: true });
     } finally {
       setSaving(false);
     }

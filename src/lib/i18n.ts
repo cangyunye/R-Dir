@@ -76,6 +76,14 @@ export function isExistsError(msg: string): boolean {
   return msg === ERR_EXISTS || msg.startsWith(`${ERR_EXISTS}|`);
 }
 
+/** 疑似二进制错误码（按文本读取读到二进制内容时 Rust 产出；预览试探据此回退「疑似二进制」信息卡） */
+export const ERR_NOT_TEXT = "NOT_TEXT";
+
+/** 判定错误串是否为疑似二进制（码或码|详情）——不用中文字符串匹配判定错误类型 */
+export function isNotTextError(msg: string): boolean {
+  return msg === ERR_NOT_TEXT || msg.startsWith(`${ERR_NOT_TEXT}|`);
+}
+
 /** 读取持久化语言（rfm.language），缺省/非法值回退 zh */
 export function loadLanguage(): Language {
   try {
