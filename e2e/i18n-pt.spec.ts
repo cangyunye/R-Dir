@@ -21,7 +21,7 @@ test.describe("i18n 葡萄牙语冒烟", () => {
     await page.getByTitle("Configurações (gravação de atalhos)").click();
     await expect(page.getByRole("button", { name: "Aparência" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Atalhos", exact: true })).toBeVisible();
-    await expect(page.getByText("Modo de cor")).toBeVisible();
+    await expect(page.getByText("Modo de cor", { exact: true })).toBeVisible();
     await expect(page.getByRole("combobox", { name: "Idioma" })).toHaveValue("pt");
   });
 

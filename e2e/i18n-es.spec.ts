@@ -21,7 +21,7 @@ test.describe("i18n 西班牙语冒烟", () => {
     await page.getByTitle("Configuración (grabación de atajos)").click();
     await expect(page.getByRole("button", { name: "Apariencia" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Atajos", exact: true })).toBeVisible();
-    await expect(page.getByText("Modo de color")).toBeVisible();
+    await expect(page.getByText("Modo de color", { exact: true })).toBeVisible();
     await expect(page.getByRole("combobox", { name: "Idioma" })).toHaveValue("es");
   });
 

@@ -22,7 +22,7 @@ test.describe("i18n 德语冒烟", () => {
     await page.getByTitle("Einstellungen (Tastenbelegung aufnehmen)").click();
     await expect(page.getByRole("button", { name: "Darstellung" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Tastenkürzel" })).toBeVisible();
-    await expect(page.getByText("Farbmodus")).toBeVisible();
+    await expect(page.getByText("Farbmodus", { exact: true })).toBeVisible();
     // 语言下拉当前选中 Deutsch
     await expect(page.getByRole("combobox", { name: "Sprache" })).toHaveValue("de");
   });

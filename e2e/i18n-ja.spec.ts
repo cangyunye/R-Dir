@@ -22,7 +22,7 @@ test.describe("i18n 日语冒烟", () => {
     await page.getByTitle("設定（ショートカット記録）").click();
     await expect(page.getByRole("button", { name: "外観", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "ショートカット", exact: true })).toBeVisible();
-    await expect(page.getByText("カラーモード")).toBeVisible();
+    await expect(page.getByText("カラーモード", { exact: true })).toBeVisible();
     // 语言下拉当前选中 日本語
     await expect(page.getByRole("combobox", { name: "表示言語" })).toHaveValue("ja");
   });

@@ -21,7 +21,7 @@ test.describe("i18n 繁体中文冒烟", () => {
     await page.getByTitle("設定（快速鍵錄製）").click();
     await expect(page.getByRole("button", { name: "外觀" })).toBeVisible();
     await expect(page.getByRole("button", { name: "快速鍵", exact: true })).toBeVisible();
-    await expect(page.getByText("色彩模式")).toBeVisible();
+    await expect(page.getByText("色彩模式", { exact: true })).toBeVisible();
     await expect(page.getByRole("combobox", { name: "介面語言" })).toHaveValue("zh-Hant");
   });
 

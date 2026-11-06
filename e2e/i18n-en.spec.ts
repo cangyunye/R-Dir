@@ -22,7 +22,7 @@ test.describe("i18n 英文冒烟", () => {
     await page.getByTitle("Settings (shortcut recording)").click();
     await expect(page.getByRole("button", { name: "Appearance" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Shortcuts" })).toBeVisible();
-    await expect(page.getByText("Color mode")).toBeVisible();
+    await expect(page.getByText("Color mode", { exact: true })).toBeVisible();
     // 语言下拉当前选中 English
     await expect(page.getByRole("combobox", { name: "Language" })).toHaveValue("en");
   });

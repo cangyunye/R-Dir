@@ -5,6 +5,11 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.42.1 (2026-11-06)
+
+- **分屏重命名窗格隔离**：上下/左右分屏打开同一目录时，在其中一个窗格发起重命名，编辑框会同时出现在两个窗格——`renaming` 状态本就带 `paneId`（提交/刷新链路一直在用），但 SplitView 向 PaneView 下发时未过滤，两窗格的行按 path 双命中，编辑框渲染两份、焦点竞争落到后挂载的窗格，表现为「在上窗格重命名、编辑框出现在下窗格」。修复：下发时按 `renaming.paneId === pane.id` 过滤（与 dragOver/dragDir 同款窗格过滤模式），编辑框只出现在发起重命名的窗格；`RenameState` 类型补 `paneId` 字段。
+- **语言包 v0.4.1**：`@rdir/l10n` 依赖 bump——补齐 v0.39 主题调色盘 / v0.40 NFS 插件 / v0.42.0 预览试探三批共 72 keys × 6 语言 + `EXISTS` / `NOT_TEXT` / `NOT_FILE` 错误码（check-coverage 全绿：strings 886/886、errors 7/7、占位符硬校验通过）；清理死词条「预览栏未开启：…」（v0.41 预览栏拉门化时已从应用移除）。六份 i18n 冒烟的设置面板「颜色模式」断言改 exact 匹配——新词条「跟随颜色模式」（默认主题卡副标题，设置页常驻）与既有断言子串碰撞，strict mode 炸断言且随渲染时机偶发。
+
 ## v0.42.0 (2026-11-06)
 
 - **重命名输入框支持鼠标拖选/双击选词（第一层）**：列表/网格滚动容器的 `select-none` 会被 WKWebView 继承进 `<input>`（Chromium 不受影响）——框内拖选、双击选词全部失效，而初始 JS `select()` 正常，表现为「已全选但拖不出选区」；RenameInput 加 `select-text` 显式放行（同 TextView v0.41 做法）。同时 FileList/IconGrid 的按压处理器（startRowPress / startItemPress）对落在重命名输入框内的按下早退——不再把 >5px 的框内拖动升级成文件拖拽（此前 userSelect=none +「复制 1 项」幽灵标签会掐断框内选区，Windows WebView2 同样中招）。
