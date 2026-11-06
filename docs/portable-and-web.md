@@ -85,13 +85,24 @@ cargo build --release --features web --bin rdir-web
 
 ### 待实施阶段
 
-1. **桥表扩容**：写类命令（复制/移动/改名/删除/压缩/解压/搜索/find/diff）接入
-   `--read-only` 服务端拦截；SFTP/NFS 后端路由（sftp:// 路径走既有模块，零 AppHandle 已就绪）。
-2. **能力降级**：`/api/caps` 能力位（含 `bridge::COMMANDS`）；OLE 拖出/系统剪贴板文件/回收站禁用，
-   原生对话框换浏览器实现，终端/`open_local_file`/`open_with` 默认禁用
-   （`--allow-exec` 显式开启，服务端执行对外网暴露有风险）。
-3. **安全加固**：写类命令服务端白名单拦截（比 UI 隐藏更可靠）；`--read-only` 接入已有开关。
+1. **桥表扩容（远程后端）**：SFTP/NFS 路由（sftp:// 路径走既有模块，零 AppHandle 已就绪）、
+   搜索/find/diff/文本比较等剩余读类命令。
+2. **能力降级**：`/api/caps` 能力位（含 `bridge::COMMANDS` + `WRITE_COMMANDS`）；OLE 拖出/系统剪贴板
+   文件已天然不可用（桥接命令即服务端能力），原生对话框换浏览器实现，
+   终端/`open_local_file`/`open_with` 默认禁用（`--allow-exec` 显式开启）。
+3. **安全加固**：`READ_ONLY` 错误码入语言包；令牌失效重登引导页。
 4. **CI**：web feature 构建矩阵 + `rdir-web` 独立产物（GUI/绿色版/web 三形态）。
+
+### 已桥接命令（web/bridge.rs）
+
+- 读类：浏览（list_dir/resolve/complete/stat/parent/volumes/quick/stat_entry）、
+  持久化（session/favorites/prefs/icon-positions）、themes_list/list_plugins、
+  thumb_get/preview_data/probe_local_file、compute_size/cancel_size、fs_watch_set
+- 写类（`--read-only` 服务端拒绝，READ_ONLY 码）：copy/move_entries（+ 冲突裁决表
+  plan 变体与 scan_conflicts/scan_dir_duplicates）、rename_entry、
+  delete/permanent_delete/restore_from_trash、create_dir/create_file、
+  cancel_transfer、compress_items/extract_archive（NEED_PASSWORD 密码重试契约透传）
+- 进度/收尾帧与取消旗标同构：前端进度条、取消按钮、撤销（还原）经 WS 原样工作
 
 ### 测试约定（与 ipc.ts 配套）
 

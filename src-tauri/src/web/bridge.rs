@@ -45,10 +45,37 @@ fn arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<T, String> {
     serde_json::from_value(v).map_err(|e| format!("ARG_TYPE|参数 {key} 不合法：{e}"))
 }
 
+/// 从 args 提取可空参数：缺失或 null → None（前端对 Option 参数恒传 null 占位）
+fn opt_arg<T: DeserializeOwned>(args: &Value, key: &str) -> Result<Option<T>, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => Ok(Some(
+            T::deserialize(v.clone()).map_err(|e| format!("ARG_TYPE|参数 {key} 不合法：{e}"))?,
+        )),
+    }
+}
+
 /// Result → Value（None → null；与 tauri invoke 的 Option 序列化一致）
 fn val<T: serde::Serialize>(r: Result<T, String>) -> Result<Value, String> {
     r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
 }
+
+/// 写类命令清单：`--read-only` 时服务端统一拒绝（比 UI 隐藏更可靠的防线；
+/// 新增写类命令必须同步登记，漏登记 = 只读模式出现写通道）
+const WRITE_COMMANDS: &[&str] = &[
+    "copy_entries",
+    "move_entries",
+    "copy_entries_plan",
+    "move_entries_plan",
+    "rename_entry",
+    "delete_entries",
+    "permanent_delete_entries",
+    "restore_from_trash",
+    "create_dir",
+    "create_file",
+    "compress_items",
+    "extract_archive",
+];
 
 /// 声明式分发表：单一 match 生成 dispatch + 命令清单。
 /// 新增桥接命令 = 加一行 `名称 => 处理函数`。
@@ -59,6 +86,10 @@ macro_rules! web_commands {
             cmd: &str,
             args: &Value,
         ) -> Result<Value, String> {
+            // 服务端只读门禁：写类命令在进入处理函数前拒绝
+            if ctx.read_only && WRITE_COMMANDS.contains(&cmd) {
+                return Err("READ_ONLY|只读模式拒绝写操作".into());
+            }
             match cmd {
                 $( $name => $handler(ctx, args).await, )*
                 _ => Err(format!("WEB_UNSUPPORTED|命令 {cmd} 未在 web 模式提供")),
@@ -365,7 +396,245 @@ async fn c_cancel_size(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-// ==================== 分发表（首批：浏览/持久化/缩略图/预览/属性统计） ====================
+// ==================== 写类命令（复制/移动/删除/改名/新建/压缩/解压） ====================
+// 均镜像 lib.rs 同名命令语义：transfer_cancels 取消旗标 + sink 进度/收尾帧，
+// 前端进度条与取消按钮经 WS 同帧工作。
+
+/// 注册可取消传输（镜像 lib.rs register_transfer_cancel；prefix 供前端取消路由判别）
+fn register_transfer_cancel(ctx: &WebCtx, prefix: &str) -> (String, Arc<std::sync::atomic::AtomicBool>) {
+    let id = format!("{prefix}{}", crate::next_transfer_id());
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    ctx.state
+        .transfer_cancels
+        .lock()
+        .unwrap()
+        .insert(id.clone(), flag.clone());
+    (id, flag)
+}
+
+/// 镜像 lib.rs copy_entries / move_entries：同构进度回调 + 收尾帧，仅 phase 与
+/// 回调产出不同（copy → Vec<String> 创建路径；move → (源,目标) 对）。
+async fn run_local_transfer(
+    ctx: &WebCtx,
+    phase: &str,
+    paths: Vec<String>,
+    dest: String,
+    plan: Option<std::collections::HashMap<String, crate::ops::Resolution>>,
+) -> Result<Value, String> {
+    let (id, flag) = register_transfer_cancel(ctx, "");
+    let id_task = id.clone();
+    let sink = ctx.sink.clone();
+    let phase_owned = phase.to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        let n = paths.len();
+        let mut done_entries = 0usize;
+        let mut label = String::from("复制中…");
+        let mut file_done = 0u64;
+        let mut file_total = 0u64;
+        let mut throttle = crate::progress::Throttle::new();
+        let cb = &mut |ev: crate::ops::CbEvent| -> bool {
+            if flag.load(Ordering::Relaxed) {
+                return false;
+            }
+            match ev {
+                crate::ops::CbEvent::Start(name) => {
+                    label = name.to_string();
+                    file_done = 0;
+                    file_total = 0;
+                    throttle.reset();
+                }
+                crate::ops::CbEvent::Bytes(done, total) => {
+                    file_done = done;
+                    file_total = total;
+                    // 中间帧限频；每个文件的最后一帧随 EntryDone 立即发出
+                    if !throttle.ready() {
+                        return true;
+                    }
+                }
+                crate::ops::CbEvent::EntryDone => done_entries += 1,
+            }
+            let mut p = crate::progress::TransferProgress::start(&phase_owned, &label, n);
+            p.done_files = done_entries;
+            p.file_done = file_done;
+            p.file_total = file_total;
+            p.id = Some(id_task.clone());
+            crate::progress::emit(&sink, &p);
+            true
+        };
+        // 四种形态返回类型不同（Vec<String> / Vec<(String,String)>），统一序列化后走同一收尾帧
+        let r: Result<Value, String> = match (phase_owned.as_str(), plan) {
+            ("copy", None) => {
+                crate::ops::copy_entries(&paths, &dest, cb)
+                    .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+            }
+            ("move", None) => {
+                crate::ops::move_entries(&paths, &dest, cb)
+                    .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+            }
+            ("copy", Some(resolutions)) => {
+                crate::ops::copy_entries_plan(&paths, &dest, &resolutions, cb)
+                    .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+            }
+            ("move", Some(resolutions)) => {
+                crate::ops::move_entries_plan(&paths, &dest, &resolutions, cb)
+                    .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+            }
+            _ => unreachable!("phase 恒为 copy/move"),
+        };
+        crate::emit_transfer_end(&sink, &phase_owned, n, &r);
+        r
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    ctx.state.transfer_cancels.lock().unwrap().remove(&id);
+    result
+}
+
+async fn c_copy_entries(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    let dest: String = arg(args, "dest")?;
+    run_local_transfer(ctx, "copy", paths, dest, None).await
+}
+
+async fn c_move_entries(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    let dest: String = arg(args, "dest")?;
+    run_local_transfer(ctx, "move", paths, dest, None).await
+}
+
+async fn c_copy_entries_plan(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    let dest: String = arg(args, "dest")?;
+    let resolutions = arg(args, "resolutions")?;
+    run_local_transfer(ctx, "copy", paths, dest, Some(resolutions)).await
+}
+
+async fn c_move_entries_plan(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    let dest: String = arg(args, "dest")?;
+    let resolutions = arg(args, "resolutions")?;
+    run_local_transfer(ctx, "move", paths, dest, Some(resolutions)).await
+}
+
+async fn c_scan_conflicts(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    let dest: String = arg(args, "dest")?;
+    tokio::task::spawn_blocking(move || crate::ops::scan_conflicts(&paths, &dest))
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+async fn c_scan_dir_duplicates(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    let dest: String = arg(args, "dest")?;
+    tokio::task::spawn_blocking(move || crate::ops::scan_dir_duplicates(&paths, &dest))
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+async fn c_rename_entry(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let path: String = arg(args, "path")?;
+    let new_name: String = arg(args, "newName")?;
+    tokio::task::spawn_blocking(move || crate::ops::rename_entry(&path, &new_name))
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+async fn c_delete_entries(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    tokio::task::spawn_blocking(move || crate::ops::delete_entries(&paths))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|_| Value::Null)
+}
+
+async fn c_permanent_delete_entries(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    tokio::task::spawn_blocking(move || crate::ops::permanent_delete_entries(&paths))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|_| Value::Null)
+}
+
+async fn c_restore_from_trash(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    tokio::task::spawn_blocking(move || crate::ops::restore_from_trash(&paths))
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+async fn c_create_dir(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let parent: String = arg(args, "parent")?;
+    let name: String = arg(args, "name")?;
+    tokio::task::spawn_blocking(move || crate::ops::create_dir(&parent, &name))
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+async fn c_create_file(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let parent: String = arg(args, "parent")?;
+    let name: String = arg(args, "name")?;
+    tokio::task::spawn_blocking(move || crate::ops::create_file(&parent, &name))
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+async fn c_cancel_transfer(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let id: String = arg(args, "id")?;
+    if let Some(flag) = ctx.state.transfer_cancels.lock().unwrap().get(&id) {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(Value::Null)
+}
+
+/// 镜像 lib.rs compress_items（无取消链路，进度/收尾帧在 blocking 内发出）
+async fn c_compress_items(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    let target_dir: String = arg(args, "targetDir")?;
+    let format: String = arg(args, "format")?;
+    let sink = ctx.sink.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::compress::compress_items_blocking(&sink, paths, target_dir, format)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+/// 镜像 lib.rs extract_archive（取消旗标 + NEED_PASSWORD 密码重试契约原样透传）
+async fn c_extract_archive(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let path: String = arg(args, "path")?;
+    let target_dir: String = arg(args, "targetDir")?;
+    let mode: Option<String> = opt_arg(args, "mode")?;
+    let password: Option<String> = opt_arg(args, "password")?;
+    let (id, flag) = register_transfer_cancel(ctx, "");
+    let id_task = id.clone();
+    let sink = ctx.sink.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        crate::extract::run_extract(
+            &sink,
+            &id_task,
+            &flag,
+            &path,
+            &target_dir,
+            mode.as_deref().unwrap_or("smart"),
+            password.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    ctx.state.transfer_cancels.lock().unwrap().remove(&id);
+    result.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+// ==================== 分发表 ====================
+// 首批：浏览/持久化/缩略图/预览/属性统计；第二批：写类（复制/移动/删除/改名/新建/压缩/解压）。
 
 web_commands! {
     "get_home_dir" => c_get_home_dir,
@@ -395,6 +664,22 @@ web_commands! {
     "probe_local_file" => c_probe_local_file,
     "compute_size" => c_compute_size,
     "cancel_size" => c_cancel_size,
+    // ---- 写类（--read-only 时服务端拒绝） ----
+    "copy_entries" => c_copy_entries,
+    "move_entries" => c_move_entries,
+    "copy_entries_plan" => c_copy_entries_plan,
+    "move_entries_plan" => c_move_entries_plan,
+    "scan_conflicts" => c_scan_conflicts,
+    "scan_dir_duplicates" => c_scan_dir_duplicates,
+    "rename_entry" => c_rename_entry,
+    "delete_entries" => c_delete_entries,
+    "permanent_delete_entries" => c_permanent_delete_entries,
+    "restore_from_trash" => c_restore_from_trash,
+    "create_dir" => c_create_dir,
+    "create_file" => c_create_file,
+    "cancel_transfer" => c_cancel_transfer,
+    "compress_items" => c_compress_items,
+    "extract_archive" => c_extract_archive,
 }
 
 #[cfg(test)]
@@ -418,11 +703,42 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
+        // sftp 系命令尚未桥接（后续批次）
         let err = rt
-            .block_on(dispatch(&ctx, "copy_entries", &json!({})))
+            .block_on(dispatch(&ctx, "sftp_connect", &json!({})))
             .unwrap_err();
         assert!(err.starts_with("WEB_UNSUPPORTED|"), "{err}");
-        assert!(err.contains("copy_entries"));
+        assert!(err.contains("sftp_connect"));
+    }
+
+    #[test]
+    fn read_only_rejects_write_commands_before_handlers() {
+        let ctx = WebCtx {
+            state: crate::AppState::default(),
+            sink: crate::events::EventSink::new(Arc::new(test_emitter())),
+            emitter: Arc::new(crate::events::WebEmitter::new()),
+            config_dir: std::env::temp_dir(),
+            data_dir: std::env::temp_dir(),
+            token: "t".into(),
+            read_only: true,
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // 写类命令（含缺参数形态）：门禁在参数提取前拒绝 → READ_ONLY 码
+        for cmd in ["delete_entries", "extract_archive", "create_dir"] {
+            let err = rt.block_on(dispatch(&ctx, cmd, &json!({}))).unwrap_err();
+            assert!(err.starts_with("READ_ONLY|"), "{cmd}: {err}");
+        }
+        // 非写命令不受只读影响
+        let ok = rt.block_on(dispatch(&ctx, "get_home_dir", &json!({})));
+        assert!(ok.is_ok());
+        // 写命令清单与分发表登记一致性：WRITE_COMMANDS 的每项都必须已桥接
+        // （漏登记 = 拒绝了一个不存在的命令；反向漏登记 = 只读模式出现写通道）
+        for w in WRITE_COMMANDS {
+            assert!(COMMANDS.contains(w), "WRITE_COMMANDS 含未桥接命令 {w}");
+        }
     }
 
     #[test]
@@ -457,6 +773,14 @@ mod tests {
             "thumb_get",
             "preview_data",
             "fs_watch_set",
+            // 第二批写类锚点
+            "copy_entries",
+            "move_entries",
+            "delete_entries",
+            "rename_entry",
+            "create_dir",
+            "compress_items",
+            "extract_archive",
         ] {
             assert!(COMMANDS.contains(&must), "缺少桥接命令 {must}");
         }

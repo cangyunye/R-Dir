@@ -1917,7 +1917,7 @@ async fn move_entries(
 
 /// 传输结束（完成/失败/取消）统一发 done 事件：失败与取消也要终止进度条，
 /// 取消时前端把文案收敛为「已取消」。
-fn emit_transfer_end(
+pub(crate) fn emit_transfer_end(
     sink: &EventSink,
     phase: &str,
     total: usize,

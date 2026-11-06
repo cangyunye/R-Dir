@@ -654,7 +654,7 @@ pub async fn extract_archive(
     result
 }
 
-fn run_extract(
+pub(crate) fn run_extract(
     sink: &crate::events::EventSink,
     id: &str,
     flag: &AtomicBool,

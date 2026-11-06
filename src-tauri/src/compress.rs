@@ -51,7 +51,7 @@ pub async fn compress_items(
     .map_err(|e| e.to_string())?
 }
 
-fn compress_items_blocking(
+pub(crate) fn compress_items_blocking(
     sink: &crate::events::EventSink,
     paths: Vec<String>,
     target_dir: String,
