@@ -61,7 +61,9 @@ fn val<T: serde::Serialize>(r: Result<T, String>) -> Result<Value, String> {
 }
 
 /// 写类命令清单：`--read-only` 时服务端统一拒绝（比 UI 隐藏更可靠的防线；
-/// 新增写类命令必须同步登记，漏登记 = 只读模式出现写通道）
+/// 新增写类命令必须同步登记，漏登记 = 只读模式出现写通道）。
+/// 口径 = 修改被浏览的文件系统（本地或远端）。缓存性写入不算：缩略图缓存、
+/// sftp_download 落临时目录（远程预览/打开的前置步骤）在只读模式下照常工作。
 const WRITE_COMMANDS: &[&str] = &[
     "copy_entries",
     "move_entries",
@@ -75,6 +77,18 @@ const WRITE_COMMANDS: &[&str] = &[
     "create_file",
     "compress_items",
     "extract_archive",
+    // 远端写 / 落用户指定本地目录
+    "sftp_download_to",
+    "sftp_upload",
+    "sftp_mkdir",
+    "sftp_create_file",
+    "sftp_delete",
+    "sftp_rename",
+    "write_text_file",
+    "http_download_to",
+    // 写用户在服务端指定路径（导出类）
+    "sftp_export_servers",
+    "theme_export",
 ];
 
 /// 声明式分发表：单一 match 生成 dispatch + 命令清单。
@@ -131,12 +145,10 @@ async fn c_parent_dir(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     }
 }
 
-async fn c_list_dir(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+/// 全后端路由（smb/sftp/nfs/http/local），与 GUI list_dir 共用 list_side
+async fn c_list_dir(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let path: String = arg(args, "path")?;
-    tokio::task::spawn_blocking(move || crate::fs_ops::list_dir(&path))
-        .await
-        .map_err(|e| e.to_string())?
-        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+    val(crate::list_side(&ctx.state, &path).await)
 }
 
 async fn c_resolve_path(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
@@ -154,19 +166,10 @@ async fn c_complete_path(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
 }
 
-/// 条目类型探测：web 首批仅本地路径（远程后端路由未桥接，明确报错）
-async fn c_stat_path(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+/// 条目类型探测：全后端路由（与 GUI stat_path 共用 stat_path_core）
+async fn c_stat_path(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let path: String = arg(args, "path")?;
-    if crate::fs_ops::is_scheme_path(&path) {
-        return Err("WEB_UNSUPPORTED|web 模式暂不支持远程路径探测".into());
-    }
-    let kind = match std::fs::symlink_metadata(&path) {
-        Ok(m) if m.file_type().is_symlink() => "symlink",
-        Ok(m) if m.is_dir() => "dir",
-        Ok(_) => "file",
-        Err(e) => return Err(format!("路径不可访问：{e}")),
-    };
-    val(Ok(kind))
+    val(crate::stat_path_core(&ctx.state, path).await)
 }
 
 /// 镜像 lib.rs stat_paths（批量，等长 kind 列表）
@@ -633,6 +636,357 @@ async fn c_extract_archive(ctx: &WebCtx, args: &Value) -> Result<Value, String> 
     result.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
 }
 
+// ==================== SFTP（第三批；NFS 插件链路不桥接） ====================
+// servers.json 落 WebCtx.config_dir（与 GUI 共用同一份清单）；服务器管理/连接/传输
+// 全部调 lib.rs 的 *_core 共享实现（合并/解密/主密钥回填逻辑单一来源）。
+
+#[cfg(feature = "sftp")]
+fn sftp_servers_path(ctx: &WebCtx) -> PathBuf {
+    ctx.config_dir.join(crate::sftp::servers::SERVERS_FILE)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_list_servers(ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    val(crate::sftp_list_servers_core(&ctx.state, &sftp_servers_path(ctx)).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_save_server(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let server = arg(args, "server")?;
+    val(crate::sftp_save_server_core(&ctx.state, &sftp_servers_path(ctx), server).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_remove_server(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let id: String = arg(args, "id")?;
+    val(crate::sftp_remove_server_core(&ctx.state, &sftp_servers_path(ctx), id).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_set_server_group(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let ids: Vec<String> = arg(args, "ids")?;
+    let group: String = arg(args, "group")?;
+    val(crate::sftp_set_server_group_core(&ctx.state, &sftp_servers_path(ctx), ids, group).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_master_key_status(ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    val(crate::sftp_master_key_status_core(&ctx.state, &sftp_servers_path(ctx)).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_set_master_key(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let key: String = arg(args, "key")?;
+    val(crate::sftp_set_master_key_core(&ctx.state, &sftp_servers_path(ctx), key).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_reset_master_key(ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    val(crate::sftp_reset_master_key_core(&ctx.state, &sftp_servers_path(ctx)).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_connect(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let server = arg(args, "server")?;
+    val(crate::sftp_connect_core(&ctx.state, &sftp_servers_path(ctx), server).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_disconnect(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let id: String = arg(args, "id")?;
+    crate::ensure_plugin(&ctx.state, "sftp")?;
+    ctx.state.sftp_pool.lock().await.remove(&id);
+    Ok(Value::Null)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_download(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let path: String = arg(args, "path")?;
+    let local_dir: Option<String> = opt_arg(args, "localDir")?;
+    val(crate::sftp_download_core(&ctx.state, &ctx.sink, path, local_dir).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_download_to(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let local_dir: String = arg(args, "localDir")?;
+    let path: String = arg(args, "path")?;
+    let overwrite: Option<bool> = opt_arg(args, "overwrite")?;
+    val(crate::sftp_download_to_core(&ctx.state, &ctx.sink, local_dir, path, overwrite).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_upload(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let local: String = arg(args, "local")?;
+    let dest: String = arg(args, "dest")?;
+    let name: String = arg(args, "name")?;
+    val(crate::sftp_upload_core(&ctx.state, &ctx.sink, local, dest, name).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_mkdir(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let dir: String = arg(args, "dir")?;
+    let name: String = arg(args, "name")?;
+    crate::ensure_plugin(&ctx.state, "sftp")?;
+    let pool = ctx.state.sftp_pool.lock().await;
+    val(crate::sftp::mkdir(&pool, &dir, &name).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_create_file(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let dir: String = arg(args, "dir")?;
+    let name: String = arg(args, "name")?;
+    crate::ensure_plugin(&ctx.state, "sftp")?;
+    let pool = ctx.state.sftp_pool.lock().await;
+    val(crate::sftp::create_file(&pool, &dir, &name).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_delete(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    crate::ensure_plugin(&ctx.state, "sftp")?;
+    let pool = ctx.state.sftp_pool.lock().await;
+    crate::sftp::delete_entries(&pool, &paths)
+        .await
+        .map(|_| Value::Null)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_rename(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let path: String = arg(args, "path")?;
+    let new_name: String = arg(args, "newName")?;
+    crate::ensure_plugin(&ctx.state, "sftp")?;
+    let pool = ctx.state.sftp_pool.lock().await;
+    val(crate::sftp::rename_entry(&pool, &path, &new_name).await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_export_servers(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let target: String = arg(args, "target")?;
+    let exported_at: String = arg(args, "exportedAt")?;
+    let master_key: Option<String> = opt_arg(args, "masterKey")?;
+    val(crate::sftp_export_servers_core(
+        &ctx.state,
+        &sftp_servers_path(ctx),
+        target,
+        exported_at,
+        master_key,
+    )
+    .await)
+}
+
+#[cfg(feature = "sftp")]
+async fn c_sftp_import_servers(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let file_path: String = arg(args, "filePath")?;
+    let master_key: Option<String> = opt_arg(args, "masterKey")?;
+    val(crate::sftp_import_servers_core(
+        &ctx.state,
+        &sftp_servers_path(ctx),
+        file_path,
+        master_key,
+    )
+    .await)
+}
+
+/// 未编译 sftp feature 的构建：全部 SFTP 命令统一拒绝（与 GUI「SFTP 插件未编译」同文案）
+#[cfg(not(feature = "sftp"))]
+macro_rules! sftp_stubs {
+    ( $( $name:ident ),* $(,)? ) => {
+        $(
+            async fn $name(_ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+                Err("SFTP 插件未编译（该构建已拔出远程功能）".into())
+            }
+        )*
+    };
+}
+#[cfg(not(feature = "sftp"))]
+sftp_stubs!(
+    c_sftp_list_servers,
+    c_sftp_save_server,
+    c_sftp_remove_server,
+    c_sftp_set_server_group,
+    c_sftp_master_key_status,
+    c_sftp_set_master_key,
+    c_sftp_reset_master_key,
+    c_sftp_connect,
+    c_sftp_disconnect,
+    c_sftp_download,
+    c_sftp_download_to,
+    c_sftp_upload,
+    c_sftp_mkdir,
+    c_sftp_create_file,
+    c_sftp_delete,
+    c_sftp_rename,
+    c_sftp_export_servers,
+    c_sftp_import_servers,
+);
+
+// ==================== 比对 / 文本 / 搜索 / 杂项 ====================
+
+/// 目录差异比对（两侧任意后端组合；diff-progress 经 sink，层级按后端能力钳制）
+async fn c_diff_dirs(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let id: String = arg(args, "id")?;
+    let left: String = arg(args, "left")?;
+    let right: String = arg(args, "right")?;
+    let level: u8 = arg(args, "level")?;
+    let case_sensitive: bool = arg(args, "caseSensitive")?;
+    let mtime_tolerance_ms: i64 = arg(args, "mtimeToleranceMs")?;
+    val(crate::diff_dirs_core(
+        &ctx.state,
+        &ctx.sink,
+        id,
+        left,
+        right,
+        level,
+        case_sensitive,
+        mtime_tolerance_ms,
+    )
+    .await)
+}
+
+async fn c_cancel_diff(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let id: String = arg(args, "id")?;
+    if let Some(flag) = ctx.state.diff_cancels.lock().unwrap().get(&id) {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(Value::Null)
+}
+
+async fn c_diff_text_files(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let left: String = arg(args, "left")?;
+    let right: String = arg(args, "right")?;
+    let encoding: Option<String> = opt_arg(args, "encoding")?;
+    val(crate::diff_text_files_core(&ctx.state, left, right, encoding).await)
+}
+
+async fn c_read_text_file(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let path: String = arg(args, "path")?;
+    val(crate::read_text_file_core(&ctx.state, path).await)
+}
+
+async fn c_write_text_file(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let path: String = arg(args, "path")?;
+    let lines: Vec<String> = arg(args, "lines")?;
+    let eol: String = arg(args, "eol")?;
+    let encoding: Option<String> = opt_arg(args, "encoding")?;
+    crate::write_text_file_core(&ctx.state, path, lines, eol, encoding)
+        .await
+        .map(|_| Value::Null)
+}
+
+async fn c_search_content(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let query: String = arg(args, "query")?;
+    let dir: String = arg(args, "dir")?;
+    let recursive: bool = arg(args, "recursive")?;
+    let case_sensitive: bool = arg(args, "caseSensitive")?;
+    let include_hidden: bool = arg(args, "includeHidden")?;
+    let use_regex: bool = arg(args, "useRegex")?;
+    tokio::task::spawn_blocking(move || {
+        crate::search::search_content(&query, &dir, recursive, case_sensitive, include_hidden, use_regex)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+async fn c_find_files(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let pattern: String = arg(args, "pattern")?;
+    let dir: String = arg(args, "dir")?;
+    let show_hidden: bool = arg(args, "showHidden")?;
+    let max_depth: Option<usize> = opt_arg(args, "maxDepth")?;
+    let glob: bool = arg(args, "glob")?;
+    let case_sensitive: bool = arg(args, "caseSensitive")?;
+    tokio::task::spawn_blocking(move || {
+        crate::find::find_files(&pattern, &dir, show_hidden, max_depth, glob, case_sensitive)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+async fn c_file_fingerprints(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    tokio::task::spawn_blocking(move || crate::fs_ops::file_fingerprints(&paths))
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+/// 镜像 lib.rs remote_temp_info（camelCase 载荷：path/files/bytes）
+async fn c_remote_temp_info(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let local_dir: Option<String> = opt_arg(args, "localDir")?;
+    let dir = crate::remote_temp::resolve_temp_dir(local_dir.as_deref());
+    let (bytes, files) = crate::remote_temp::temp_usage(&dir);
+    Ok(serde_json::json!({
+        "path": dir.to_string_lossy(),
+        "files": files,
+        "bytes": bytes,
+    }))
+}
+
+async fn c_remote_temp_clear(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let local_dir: Option<String> = opt_arg(args, "localDir")?;
+    val(crate::remote_temp::clear_temp(
+        &crate::remote_temp::resolve_temp_dir(local_dir.as_deref()),
+    ))
+}
+
+async fn c_http_download_to(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let local_dir: String = arg(args, "localDir")?;
+    let url: String = arg(args, "url")?;
+    val(crate::http_autoindex::http_download_to_core(&ctx.state, &ctx.sink, local_dir, url).await)
+}
+
+async fn c_cancel_http_download(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let url: String = arg(args, "url")?;
+    crate::http_autoindex::cancel_http_download(url);
+    Ok(Value::Null)
+}
+
+// ==================== 主题管理 / 插件开关 ====================
+// 与 GUI 共用 config_dir/themes 与 plugins.json（主题调色盘保存、插件开关即改即生效）
+
+async fn c_theme_install(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let path: String = arg(args, "path")?;
+    let dir = crate::themes::themes_dir_in(&ctx.config_dir);
+    tokio::task::spawn_blocking(move || crate::themes::install_into(&dir, std::path::Path::new(&path)))
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+async fn c_theme_delete(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let id: String = arg(args, "id")?;
+    let dir = crate::themes::themes_dir_in(&ctx.config_dir);
+    tokio::task::spawn_blocking(move || crate::themes::delete_in(&dir, &id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|_| Value::Null)
+}
+
+async fn c_theme_save(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let pack = arg(args, "pack")?;
+    let dir = crate::themes::themes_dir_in(&ctx.config_dir);
+    tokio::task::spawn_blocking(move || crate::themes::save_into(&dir, pack))
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+async fn c_theme_export(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let pack = arg(args, "pack")?;
+    let path: String = arg(args, "path")?;
+    tokio::task::spawn_blocking(move || crate::themes::export_to(std::path::Path::new(&path), pack))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|_| Value::Null)
+}
+
+async fn c_set_plugin_enabled(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let id: String = arg(args, "id")?;
+    let enabled: bool = arg(args, "enabled")?;
+    val(crate::set_plugin_enabled_core(&ctx.state, &ctx.config_dir, id, enabled))
+}
+
 // ==================== 分发表 ====================
 // 首批：浏览/持久化/缩略图/预览/属性统计；第二批：写类（复制/移动/删除/改名/新建/压缩/解压）。
 
@@ -680,6 +1034,44 @@ web_commands! {
     "cancel_transfer" => c_cancel_transfer,
     "compress_items" => c_compress_items,
     "extract_archive" => c_extract_archive,
+    // ---- 第三批：SFTP（NFS 插件链路不桥接） ----
+    "sftp_list_servers" => c_sftp_list_servers,
+    "sftp_save_server" => c_sftp_save_server,
+    "sftp_remove_server" => c_sftp_remove_server,
+    "sftp_set_server_group" => c_sftp_set_server_group,
+    "sftp_master_key_status" => c_sftp_master_key_status,
+    "sftp_set_master_key" => c_sftp_set_master_key,
+    "sftp_reset_master_key" => c_sftp_reset_master_key,
+    "sftp_connect" => c_sftp_connect,
+    "sftp_disconnect" => c_sftp_disconnect,
+    "sftp_download" => c_sftp_download,
+    "sftp_download_to" => c_sftp_download_to,
+    "sftp_upload" => c_sftp_upload,
+    "sftp_mkdir" => c_sftp_mkdir,
+    "sftp_create_file" => c_sftp_create_file,
+    "sftp_delete" => c_sftp_delete,
+    "sftp_rename" => c_sftp_rename,
+    "sftp_export_servers" => c_sftp_export_servers,
+    "sftp_import_servers" => c_sftp_import_servers,
+    // ---- 比对 / 文本 / 搜索 / 杂项 ----
+    "diff_dirs" => c_diff_dirs,
+    "cancel_diff" => c_cancel_diff,
+    "diff_text_files" => c_diff_text_files,
+    "read_text_file" => c_read_text_file,
+    "write_text_file" => c_write_text_file,
+    "search_content" => c_search_content,
+    "find_files" => c_find_files,
+    "file_fingerprints" => c_file_fingerprints,
+    "remote_temp_info" => c_remote_temp_info,
+    "remote_temp_clear" => c_remote_temp_clear,
+    "http_download_to" => c_http_download_to,
+    "cancel_http_download" => c_cancel_http_download,
+    // ---- 主题管理 / 插件开关 ----
+    "theme_install" => c_theme_install,
+    "theme_delete" => c_theme_delete,
+    "theme_save" => c_theme_save,
+    "theme_export" => c_theme_export,
+    "set_plugin_enabled" => c_set_plugin_enabled,
 }
 
 #[cfg(test)]
@@ -703,12 +1095,12 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
-        // sftp 系命令尚未桥接（后续批次）
+        // 用永远不会成为真实命令的名字：桥表扩容不会再让本用例失效
         let err = rt
-            .block_on(dispatch(&ctx, "sftp_connect", &json!({})))
+            .block_on(dispatch(&ctx, "__no_such_command__", &json!({})))
             .unwrap_err();
         assert!(err.starts_with("WEB_UNSUPPORTED|"), "{err}");
-        assert!(err.contains("sftp_connect"));
+        assert!(err.contains("__no_such_command__"));
     }
 
     #[test]
@@ -781,8 +1173,42 @@ mod tests {
             "create_dir",
             "compress_items",
             "extract_archive",
+            // 第三批：SFTP / 比对 / 文本 / 搜索锚点
+            "sftp_list_servers",
+            "sftp_connect",
+            "sftp_upload",
+            "sftp_download_to",
+            "diff_dirs",
+            "diff_text_files",
+            "read_text_file",
+            "write_text_file",
+            "search_content",
+            "find_files",
+            "theme_save",
+            "set_plugin_enabled",
         ] {
             assert!(COMMANDS.contains(&must), "缺少桥接命令 {must}");
+        }
+    }
+
+    #[test]
+    fn read_only_keeps_remote_preview_but_blocks_remote_writes() {
+        // 只读口径：sftp_download（落临时目录，远程预览前置）不在写清单；
+        // 远端写与落用户目录的下载在写清单
+        assert!(!WRITE_COMMANDS.contains(&"sftp_download"));
+        assert!(!WRITE_COMMANDS.contains(&"read_text_file"));
+        assert!(!WRITE_COMMANDS.contains(&"diff_dirs"));
+        for w in [
+            "sftp_upload",
+            "sftp_delete",
+            "sftp_rename",
+            "sftp_mkdir",
+            "sftp_create_file",
+            "sftp_download_to",
+            "write_text_file",
+            "http_download_to",
+        ] {
+            assert!(WRITE_COMMANDS.contains(&w), "写清单缺 {w}");
         }
     }
 

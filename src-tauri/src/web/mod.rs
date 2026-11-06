@@ -45,11 +45,19 @@ pub struct WebOptions {
 }
 
 /// 启动服务（阻塞至 Ctrl+C / 监听失败）。fs/volumes 两个监视线程随进程退出结束。
-pub async fn serve(state: crate::AppState, options: WebOptions) -> Result<(), String> {
+pub async fn serve(mut state: crate::AppState, options: WebOptions) -> Result<(), String> {
+    // 数据目录必须存在：json_store::write_atomic 不建父目录，全新 --data-dir
+    // 下 session/prefs/servers 等首次保存会直接失败
+    for dir in [&options.config_dir, &options.data_dir] {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("无法创建数据目录 {}：{e}", dir.display()))?;
+    }
     // NFS 伴生进程插件安装根与 GUI setup 同构（config_dir/plugins）
     state
         .nfs
         .init(Some(options.config_dir.join("plugins")));
+    // 插件启用状态与 GUI 共用同一份 plugins.json（用户在桌面版关掉的插件，web 同步关闭）
+    crate::plugins::init_in(&options.config_dir, &mut state.plugins);
     let emitter = Arc::new(crate::events::WebEmitter::new());
     let sink = crate::events::EventSink::new(emitter.clone());
     // 磁盘/卷热插拔 + 打开目录内容监视：事件经 WS 广播给所有浏览器端

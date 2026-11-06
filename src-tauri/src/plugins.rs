@@ -230,9 +230,19 @@ fn plugins_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(dir.join(PLUGINS_FILE))
 }
 
+/// 插件文件路径（配置目录显式传入；GUI 命令与 web 桥共用）
+pub(crate) fn plugins_file_in(config_dir: &std::path::Path) -> std::path::PathBuf {
+    config_dir.join(PLUGINS_FILE)
+}
+
 /// 载入持久化状态（首次运行返回空，全部插件默认启用）
 pub fn load_file(app: &tauri::AppHandle) -> PluginStateFile {
-    let path = plugins_path(app).unwrap_or_default();
+    load_file_in(&crate::paths::config_dir(app).unwrap_or_default())
+}
+
+/// load_file 核心（GUI 命令与 web 桥共用）
+pub(crate) fn load_file_in(config_dir: &std::path::Path) -> PluginStateFile {
+    let path = plugins_file_in(config_dir);
     std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -241,7 +251,15 @@ pub fn load_file(app: &tauri::AppHandle) -> PluginStateFile {
 
 /// 原子写入（tmp + rename）
 pub fn save_file(app: &tauri::AppHandle, file: &PluginStateFile) -> Result<(), String> {
-    let path = plugins_path(app)?;
+    save_file_in(&crate::paths::config_dir(app)?, file)
+}
+
+/// save_file 核心（GUI 命令与 web 桥共用）
+pub(crate) fn save_file_in(
+    config_dir: &std::path::Path,
+    file: &PluginStateFile,
+) -> Result<(), String> {
+    let path = plugins_file_in(config_dir);
     let dir = path.parent().ok_or("配置目录无效")?;
     std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败：{e}"))?;
     let json = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
@@ -250,7 +268,12 @@ pub fn save_file(app: &tauri::AppHandle, file: &PluginStateFile) -> Result<(), S
 
 /// 启动时初始化：载入 plugins.json → 填充 PluginState
 pub fn init(app: &tauri::AppHandle, state: &PluginState) {
-    let file = load_file(app);
+    init_in(&crate::paths::config_dir(app).unwrap_or_default(), state);
+}
+
+/// init 核心（GUI 命令与 web 桥共用）
+pub(crate) fn init_in(config_dir: &std::path::Path, state: &PluginState) {
+    let file = load_file_in(config_dir);
     let mut map = state.enabled.lock().unwrap();
     for (id, entry) in file.plugins {
         map.insert(id, entry.enabled);

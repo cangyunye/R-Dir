@@ -201,8 +201,12 @@ pub fn export_to(path: &Path, pack: ThemePack) -> Result<(), String> {
 }
 
 fn themes_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = crate::paths::config_dir(app)?;
-    Ok(dir.join(THEMES_DIR))
+    Ok(themes_dir_in(&crate::paths::config_dir(app)?))
+}
+
+/// 主题目录（配置目录显式传入；GUI 命令与 web 桥共用）
+pub(crate) fn themes_dir_in(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join(THEMES_DIR)
 }
 
 #[tauri::command]

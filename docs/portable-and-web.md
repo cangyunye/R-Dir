@@ -85,24 +85,51 @@ cargo build --release --features web --bin rdir-web
 
 ### 待实施阶段
 
-1. **桥表扩容（远程后端）**：SFTP/NFS 路由（sftp:// 路径走既有模块，零 AppHandle 已就绪）、
-   搜索/find/diff/文本比较等剩余读类命令。
-2. **能力降级**：`/api/caps` 能力位（含 `bridge::COMMANDS` + `WRITE_COMMANDS`）；OLE 拖出/系统剪贴板
-   文件已天然不可用（桥接命令即服务端能力），原生对话框换浏览器实现，
-   终端/`open_local_file`/`open_with` 默认禁用（`--allow-exec` 显式开启）。
-3. **安全加固**：`READ_ONLY` 错误码入语言包；令牌失效重登引导页。
-4. **CI**：web feature 构建矩阵 + `rdir-web` 独立产物（GUI/绿色版/web 三形态）。
+1. **能力降级（web 专属 UX，需产品设计决策）**：双击打开 → 浏览器下载/预览端点
+   （`/api/file?path=` 流式 + Range，复用 token cookie）；从**用户本机**上传
+   （multipart 路由 + 前端拖放/选择器）；原生文件选择器的浏览器替代。
+2. **安全加固**：`READ_ONLY`/`WEB_UNSUPPORTED`/`ARG_*` 错误码入语言包；令牌失效重登
+   引导页；`--allow-exec`/`--allow-share` 显式开关落地。
+3. **CI**：web feature 构建矩阵 + `rdir-web` 独立产物（GUI/绿色版/web 三形态）。
 
-### 已桥接命令（web/bridge.rs）
+### 已桥接命令（web/bridge.rs，共 77 个）
 
-- 读类：浏览（list_dir/resolve/complete/stat/parent/volumes/quick/stat_entry）、
-  持久化（session/favorites/prefs/icon-positions）、themes_list/list_plugins、
-  thumb_get/preview_data/probe_local_file、compute_size/cancel_size、fs_watch_set
-- 写类（`--read-only` 服务端拒绝，READ_ONLY 码）：copy/move_entries（+ 冲突裁决表
-  plan 变体与 scan_conflicts/scan_dir_duplicates）、rename_entry、
-  delete/permanent_delete/restore_from_trash、create_dir/create_file、
-  cancel_transfer、compress_items/extract_archive（NEED_PASSWORD 密码重试契约透传）
+- 读类：浏览（list_dir/resolve/complete/stat/parent/volumes/quick/stat_entry，
+  list_dir 与 stat_path 走 `list_side`/`stat_path_core` **全后端路由**：
+  smb/sftp/nfs/http/local）、持久化（session/favorites/prefs/icon-positions）、
+  主题管理（themes_list/install/delete/save/export）、插件开关
+  （list_plugins/set_plugin_enabled，与 GUI 共用 plugins.json，启动时 `init_in` 载入）、
+  thumb_get/preview_data/probe_local_file、compute_size/cancel_size、fs_watch_set、
+  file_fingerprints、remote_temp_info/clear
+- SFTP（18）：服务器管理（list/save/remove/group + master-key 三件套 + export/import，
+  servers.json 与 GUI 同一份）、连接（connect/disconnect）、传输（download/download_to/
+  upload）、远端写（mkdir/create_file/delete/rename）
+- 比对 / 文本：diff_dirs/cancel_diff（层级按后端能力钳制）、diff_text_files/
+  read_text_file/write_text_file（SFTP 侧自动落临时目录）
+- 搜索：search_content/find_files；HTTP autoindex：http_download_to/cancel_http_download
+- 写类（`--read-only` 服务端拒绝，READ_ONLY 码）：copy/move（+plan 变体与
+  scan_conflicts/scan_dir_duplicates）、rename/create_dir/create_file、
+  delete/permanent_delete/restore_from_trash、cancel_transfer、
+  compress_items/extract_archive（NEED_PASSWORD 契约透传）、sftp_download_to/
+  sftp_upload/sftp_mkdir/sftp_create_file/sftp_delete/sftp_rename/write_text_file、
+  http_download_to、sftp_export_servers/theme_export（写用户指定路径）
 - 进度/收尾帧与取消旗标同构：前端进度条、取消按钮、撤销（还原）经 WS 原样工作
+
+**共享核心原则**：凡有内联业务逻辑的命令（SFTP 服务器管理合并/解密、diff 能力钳制、
+文本家族、插件/主题持久化）都在 lib.rs/模块抽成 `*_core(&AppState, 路径/sink, …)`，
+tauri 命令与 web 桥调**同一份实现**——零复制、零漂移。
+
+**刻意不桥（41 个，均有明确理由）**：
+- NFS 12 个：按产品决策不接（未初始化即调用也得到未安装错误）
+- 服务端执行族 16 个：open_local_file/open_with/open_terminal/open_vscode/
+  open_git_tool/open_quick_tool/run_command/complete_commands、打开方式管理
+  （list_openers/自定义 opener/扩展名设置）、快捷工具条 5 个、detect_editors/
+  vscode_detected/list_shells/list_git_tools——检测与执行的都是**服务端机器上的
+  程序**，web 远端使用无意义且扩大安全面；默认禁用，将来统一归 `--allow-exec`
+- 桌面专属 9 个：clipboard 三件套（前端已 catch → 回退应用内剪贴板，复制粘贴不受
+  影响）、drag_out_files/query_modifiers（探针被拒恰好让前端走浏览器拖拽路径）、
+  allow_exit（web 无退出语义）、share 四件套（会在服务器额外开 0.0.0.0 监听，
+  web 默认 127.0.0.1 场景下等于让远程会话扩大暴露面——将来需显式 `--allow-share`）
 
 ### 测试约定（与 ipc.ts 配套）
 
