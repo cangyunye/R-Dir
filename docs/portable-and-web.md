@@ -83,11 +83,27 @@ cargo build --release --features web --bin rdir-web
 - 默认监听 127.0.0.1；`--listen 0.0.0.0` 显式开放局域网；无内置 TLS，外网暴露需反代
 - 事件链路已验证：fs_watch 线程 → WebEmitter broadcast → WS → 前端 `fs://changed` 刷新
 
+### 文件打开（双击/外部打开链路）
+
+- `GET /api/file?path=<绝对路径>[&dl=1]`：服务端文件流。Content-Type 按扩展名
+  （图/文/PDF/音视频/字体/vite 产物全覆盖）；`dl=1` 强制 attachment，否则 inline
+  （浏览器内联展示或按 octet-stream 落下载）；Range 单段断点（视频拖动，
+  解析失败整文件 200 兜底）；流式 unfold 不占内存。
+- 安全：响应带 `Content-Security-Policy: sandbox` + `X-Content-Type-Options: nosniff`
+  ——双击打开的文档（含不可信 HTML）运行在 opaque origin，拿不到应用 cookie、
+  调不了 /api/*，杜绝「打开下载的网页 → 脚本以应用身份读全盘」的提权。
+- 前端：`openLocalFile` 浏览器分支 → 新标签页 `/api/file`；`openExternal`（原
+  plugin-opener 的 openUrl）同理。远程文件复用既有 ensureLocalCopy 链路：
+  sftp_download 落服务端临时目录（桥接命令）→ 拿服务端路径 → 同一端点展示。
+- 实测：curl 8 项（401/内联/类型/206 Range/attachment/404/400/Content-Length）+
+  浏览器渲染确认 + CSP sandbox 隔离验证（页面上下文脚本无法执行）。
+  注：ZCode IAB 自动化环境拦截 window.open（真实浏览器的双击手势内不拦）。
+
 ### 待实施阶段
 
-1. **能力降级（web 专属 UX，需产品设计决策）**：双击打开 → 浏览器下载/预览端点
-   （`/api/file?path=` 流式 + Range，复用 token cookie）；从**用户本机**上传
-   （multipart 路由 + 前端拖放/选择器）；原生文件选择器的浏览器替代。
+1. **从用户本机上传**（web 专属 UX）：multipart 路由 + 前端 HTML5 拖放/文件选择器
+   （桌面走 Tauri onDragDropEvent 的路径在浏览器不可用，需浏览器分支）；
+   原生文件选择器的浏览器替代（保存类对话框同理）。
 2. **安全加固**：`READ_ONLY`/`WEB_UNSUPPORTED`/`ARG_*` 错误码入语言包；令牌失效重登
    引导页；`--allow-exec`/`--allow-share` 显式开关落地。
 3. **CI**：web feature 构建矩阵 + `rdir-web` 独立产物（GUI/绿色版/web 三形态）。

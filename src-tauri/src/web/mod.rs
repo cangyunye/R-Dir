@@ -4,22 +4,27 @@
 //! - `POST /api/invoke`  命令透传（web/bridge.rs 分发表）→ `{ok, data|error}`
 //! - `GET  /api/events`  WebSocket 事件通道，帧 = `{"event","payload"}`（与桌面
 //!   tauri emit 同构；ipc.ts WS 分支按此解析）
+//! - `GET  /api/file`    服务端文件流（双击打开 / 远程打开临时副本；Range 断点续传）
 //! - `GET  /login?k=...` 令牌换 cookie（HttpOnly; SameSite=Lax; 30 天），302 → /
 //! - `/*`                内嵌前端静态资源（web/assets.rs）
 //!
 //! 安全模型：
 //! - 鉴权 = 访问令牌，cookie（fetch/WS 自动携带，前端 ipc.ts 零改动）或查询串
 //!   `?k=`（首次进入 / WS 直连）任一匹配即可；未授权 → 401 JSON / 提示页
+//! - `/api/file` 响应带 `CSP: sandbox` + `nosniff`：双击打开的文档（含不可信 HTML）
+//!   运行在 opaque origin，拿不到应用 cookie / 无法调 /api/*，杜绝「打开下载的
+//!   网页 → 脚本以应用身份读全盘」的提权
 //! - 默认监听 127.0.0.1（bin 侧）；`--listen 0.0.0.0` 开放局域网由使用者显式选择
 //! - 不内置 TLS：外网暴露文档要求套反向代理
-//! - `read_only` 开关保留给后续批次写类命令的服务端拦截
+//! - `read_only` 只拦写类命令；文件流是读操作，只读模式照常（浏览的前提）
 
 pub mod assets;
 pub mod bridge;
 
+use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::{header, HeaderMap, StatusCode, Uri};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -77,6 +82,7 @@ pub async fn serve(mut state: crate::AppState, options: WebOptions) -> Result<()
     let app = Router::new()
         .route("/api/invoke", post(invoke_handler))
         .route("/api/events", get(events_handler))
+        .route("/api/file", get(file_handler))
         .route("/login", get(login_handler))
         .fallback(static_handler)
         .with_state(ctx);
@@ -227,6 +233,167 @@ async fn static_handler(
     assets::handler(uri)
 }
 
+// ==================== 服务端文件流（双击打开 / 远程打开临时副本） ====================
+
+#[derive(Deserialize)]
+struct FileQuery {
+    path: String,
+    /// dl=1 强制附件下载（否则按 Content-Type 内联展示）
+    dl: Option<String>,
+}
+
+/// 解析 Range 头 → (start, end)（含端）。total=0 忽略；多段/越界 Range 返回 None
+/// （调用方整文件 200 兜底——浏览器对 416 的处理参差，退化为全量最稳）。
+fn parse_file_range(range: Option<&str>, total: u64) -> Option<(u64, u64)> {
+    if total == 0 {
+        return None;
+    }
+    let spec = range?.trim().strip_prefix("bytes=")?;
+    if spec.contains(',') {
+        return None; // 多段 Range 不支持，整文件兜底
+    }
+    let (s, e) = spec.split_once('-')?;
+    if s.is_empty() {
+        // 后缀：bytes=-N 最后 N 字节
+        let n: u64 = e.trim().parse().ok()?;
+        if n == 0 {
+            return None;
+        }
+        return Some((total.saturating_sub(n), total - 1));
+    }
+    let start: u64 = s.trim().parse().ok()?;
+    let end: u64 = if e.trim().is_empty() {
+        total - 1
+    } else {
+        e.trim().parse().ok()?
+    };
+    if start >= total || end < start {
+        return None;
+    }
+    Some((start, end.min(total - 1)))
+}
+
+async fn file_handler(
+    State(ctx): State<Arc<bridge::WebCtx>>,
+    Query(q): Query<FileQuery>,
+    headers: HeaderMap,
+) -> Response {
+    if !authorized(&ctx, &headers, None) {
+        return unauthorized_page();
+    }
+    let meta = match tokio::fs::metadata(&q.path).await {
+        Ok(m) => m,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                format!("文件不存在：{}", q.path),
+            )
+                .into_response()
+        }
+    };
+    if meta.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "路径是目录".to_string(),
+        )
+            .into_response();
+    }
+    let total = meta.len();
+    let mut file = match tokio::fs::File::open(&q.path).await {
+        Ok(f) => f,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                format!("无法打开：{e}"),
+            )
+                .into_response()
+        }
+    };
+
+    // Range → seek + 限长读取（share::http 同款语义；解析失败整文件 200 兜底）
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|r| parse_file_range(Some(r), total));
+    let (start, limit, partial) = match range {
+        Some((s, e)) => (s, e - s + 1, true),
+        None => (0, total, false),
+    };
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    if start > 0 && file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "定位失败".to_string(),
+        )
+            .into_response();
+    }
+    // 与 share/http.rs 同款 unfold 流：不引入 futures-util io feature
+    let stream = futures_util::stream::unfold((file, limit), |(mut f, mut remaining)| async move {
+        if remaining == 0 {
+            return None;
+        }
+        let want = remaining.min(64 * 1024) as usize;
+        let mut buf = vec![0u8; want];
+        let n = match f.read(&mut buf).await {
+            Ok(0) => return None,
+            Ok(n) => n,
+            Err(_) => return Some((Err(std::io::Error::other("读取失败")), (f, remaining))),
+        };
+        remaining -= n as u64;
+        Some((Ok::<_, std::io::Error>(buf[..n].to_vec()), (f, remaining)))
+    });
+
+    let fname = std::path::Path::new(&q.path)
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let disposition = if q.dl.as_deref() == Some("1") {
+        "attachment"
+    } else {
+        "inline"
+    };
+    let mut resp = Response::new(Body::from_stream(stream));
+    *resp.status_mut() = if partial {
+        StatusCode::PARTIAL_CONTENT
+    } else {
+        StatusCode::OK
+    };
+    let h = resp.headers_mut();
+    h.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(crate::web::assets::mime_of(&fname)),
+    );
+    // 不可信文档隔离：opaque origin，拿不到应用 cookie、调不了 /api/*
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("sandbox"),
+    );
+    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    h.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    if let Ok(v) = HeaderValue::from_str(&format!(
+        "{disposition}; filename=\"{}\"",
+        fname.replace('"', "")
+    )) {
+        h.insert(header::CONTENT_DISPOSITION, v);
+    }
+    if partial {
+        if let (Ok(cr), Ok(cl)) = (
+            HeaderValue::from_str(&format!("bytes {start}-{}/{total}", start + limit - 1)),
+            HeaderValue::from_str(&limit.to_string()),
+        ) {
+            h.insert(header::CONTENT_RANGE, cr);
+            h.insert(header::CONTENT_LENGTH, cl);
+        }
+    } else if let Ok(cl) = HeaderValue::from_str(&total.to_string()) {
+        h.insert(header::CONTENT_LENGTH, cl);
+    }
+    resp
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,5 +453,21 @@ mod tests {
         assert_eq!(cookie_token(&h), Some("a=b"));
         let h = HeaderMap::new();
         assert_eq!(cookie_token(&h), None);
+    }
+
+    #[test]
+    fn file_range_parsing_matches_share_semantics() {
+        assert_eq!(parse_file_range(Some("bytes=10-"), 100), Some((10, 99)));
+        assert_eq!(parse_file_range(Some("bytes=10-19"), 100), Some((10, 19)));
+        assert_eq!(parse_file_range(Some("bytes=-20"), 100), Some((80, 99)));
+        // 越界 / 逆序 / 多段 / 非法 → None（整文件 200 兜底）
+        assert_eq!(parse_file_range(Some("bytes=100-"), 100), None);
+        assert_eq!(parse_file_range(Some("bytes=20-10"), 100), None);
+        assert_eq!(parse_file_range(Some("bytes=0-1,5-9"), 100), None);
+        assert_eq!(parse_file_range(Some("items=0-1"), 100), None);
+        assert_eq!(parse_file_range(Some("bytes=abc-"), 100), None);
+        // 无 Range 头 / 空文件 → None（整文件）
+        assert_eq!(parse_file_range(None, 100), None);
+        assert_eq!(parse_file_range(Some("bytes=0-"), 0), None);
     }
 }

@@ -1,5 +1,4 @@
 ﻿import { Activity, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
 import { isTauri, listen } from "@/lib/ipc";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -16,6 +15,7 @@ import {
   cancelHttpDownload,
   openWith as apiOpenWith,
   openLocalFile as apiOpenLocalFile,
+  openExternal as apiOpenExternal,
   addCustomOpener as apiAddCustomOpener,
   removeCustomOpener as apiRemoveCustomOpener,
   setOpenerExtensions as apiSetOpenerExtensions,
@@ -811,12 +811,12 @@ useEffect(() => {
 
   /** 打开 GitHub 仓库 */
   const openRepo = useCallback(() => {
-    void openUrl(REPO_URL).catch((e) => showError(t("打开仓库失败：{msg}", { msg: String(e) })));
+    void apiOpenExternal(REPO_URL).catch((e) => showError(t("打开仓库失败：{msg}", { msg: String(e) })));
   }, [showError]);
 
   /** 打开使用指南站点 */
   const openDocs = useCallback(() => {
-    void openUrl(DOCS_URL).catch((e) => showError(t("打开使用指南失败：{msg}", { msg: String(e) })));
+    void apiOpenExternal(DOCS_URL).catch((e) => showError(t("打开使用指南失败：{msg}", { msg: String(e) })));
   }, [showError]);
 
   /**
@@ -844,7 +844,7 @@ useEffect(() => {
           confirmLabel: t("前往下载"),
           cancelLabel: t("以后再说"),
         });
-        if (go) void openUrl(info.url);
+        if (go) void apiOpenExternal(info.url);
       } catch (e) {
         if (!silent) showError(t("检查更新失败：{msg}", { msg: String(e) }));
       }
@@ -2263,7 +2263,7 @@ useEffect(() => {
   const openFileExternal = useCallback(
     (path: string) => {
       if (path.startsWith("http://") || path.startsWith("https://")) {
-        openUrl(path).catch((e) => showError(t("打开 URL 失败：{msg}", { msg: String(e) })));
+        apiOpenExternal(path).catch((e) => showError(t("打开 URL 失败：{msg}", { msg: String(e) })));
         return;
       }
       const remote = path.startsWith("sftp://");

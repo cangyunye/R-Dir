@@ -1,4 +1,5 @@
-import { invoke } from "./ipc";
+import { invoke, isTauri } from "./ipc";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 export interface OpenerItem {
   id: string;
@@ -46,8 +47,27 @@ export const openTerminal = (shellId: string, path: string) =>
 
 /** 用系统默认方式打开本地文件；exe/bat/cmd 以其父目录为工作目录启动（资源管理器
  *  双击语义——ShellExecute lpDirectory=NULL 会把 R-Dir 自身进程 cwd 传给子程序，
- *  依赖 cwd 的程序如 Go 的 filepath.Abs(".") 会拿到错目录） */
-export const openLocalFile = (path: string) => invoke<void>("open_local_file", { path });
+ *  依赖 cwd 的程序如 Go 的 filepath.Abs(".") 会拿到错目录）。
+ *  浏览器（web 模式）→ 新标签页请求 /api/file：浏览器按 Content-Type 内联展示
+ *  （图/文/PDF/音视频，Range 支持拖动），二进制落下载；响应带 CSP sandbox，
+ *  打开的文档与后端 API 隔离。远程文件先经 sftp_download 落服务端临时目录
+ *  （ensureLocalCopy 既有链路），拿到服务端本地路径后走同一端点 */
+export const openLocalFile = (path: string) => {
+  if (!isTauri()) {
+    window.open(`/api/file?path=${encodeURIComponent(path)}`, "_blank", "noopener");
+    return Promise.resolve();
+  }
+  return invoke<void>("open_local_file", { path });
+};
+
+/** 打开外部 URL：桌面走系统 opener（默认浏览器）；浏览器新标签页 */
+export const openExternal = (url: string): Promise<void> => {
+  if (!isTauri()) {
+    window.open(url, "_blank", "noopener");
+    return Promise.resolve();
+  }
+  return openUrl(url);
+};
 
 // ==================== v0.29.0 右键 VSCode / Git 打开 ====================
 

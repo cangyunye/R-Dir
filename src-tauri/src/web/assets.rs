@@ -13,8 +13,8 @@ use rust_embed::RustEmbed;
 #[folder = "../dist"]
 struct Frontend;
 
-/// 常见扩展名 → Content-Type（vite 产物覆盖面；缺省 octet-stream）
-fn mime_of(path: &str) -> &'static str {
+/// 常见扩展名 → Content-Type（vite 产物 + 本地文件服务覆盖面；缺省 octet-stream）
+pub(crate) fn mime_of(path: &str) -> &'static str {
     let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
         "html" | "htm" => "text/html; charset=utf-8",
@@ -26,13 +26,26 @@ fn mime_of(path: &str) -> &'static str {
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
         "webp" => "image/webp",
+        "bmp" => "image/bmp",
         "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        "pdf" => "application/pdf",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
         "woff" => "font/woff",
         "woff2" => "font/woff2",
         "ttf" => "font/ttf",
         "wasm" => "application/wasm",
-        "txt" => "text/plain; charset=utf-8",
+        "txt" | "log" | "md" | "rs" | "py" | "ts" | "tsx" | "jsx" | "toml" | "yml" | "yaml"
+        | "sh" | "c" | "h" | "cpp" | "ini" | "conf" => "text/plain; charset=utf-8",
         "xml" => "application/xml",
+        "zip" => "application/zip",
+        "gz" | "tgz" => "application/gzip",
         _ => "application/octet-stream",
     }
 }
