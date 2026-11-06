@@ -16,6 +16,13 @@ members = ["crates/rdir-nfs"]
 name = "R-Dir"
 path = "src/main.rs"
 
+# v0.43 web 子命令二进制：无窗口文件服务（cargo build --features web --bin rdir-web）。
+# required-features 缺席时 cargo 自动跳过本 bin——默认构建/发行安装包零影响
+[[bin]]
+name = "rdir-web"
+path = "src/bin/rdir-web.rs"
+required-features = ["web"]
+
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
@@ -69,13 +76,15 @@ axum = { version = "0.8", optional = true, features = ["ws", "http1"] }
 local-ip-address = { version = "0.6", optional = true }
 # 流式文件下载（ReaderStream）
 futures-util = { version = "0.3", optional = true }
-tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros", "process"] }
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros", "process", "signal"] }
 # 密码加密存储（master-key，AES-256-GCM；密钥仅存内存）
 aes-gcm = { version = "0.10", optional = true }
 sha2 = { version = "0.10", optional = true }
 # v0.27 缩略图 base64 data URL（画廊模式）；sftp 也复用
 base64 = "0.22"
 rand = { version = "0.8", optional = true }
+# v0.43 web 服务（web feature）：dist/ 静态资源编译期内嵌，rdir-web 单文件部署
+rust-embed = { version = "8", optional = true }
 
 # 系统剪贴板文件格式（跨应用复制粘贴文件）：平台特定，仅编译对应平台
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -130,6 +139,9 @@ nfs = ["rdir-nfs/client", "dep:tokio", "dep:futures-util"]
 nfs-sidecar = ["dep:tokio", "dep:sha2"]
 # v0.7 窗口分享（内置插件）：去掉 share 即不编译分享服务
 share = ["dep:axum", "dep:tokio", "dep:local-ip-address", "dep:futures-util"]
+# v0.43 web 子命令（rdir-web bin）：axum 单端口 invoke 透传 + WS 事件广播 +
+# rust-embed 内嵌前端静态资源；与 share 共享 axum/tokio 可选依赖
+web = ["dep:axum", "dep:tokio", "dep:futures-util", "dep:rust-embed", "dep:rand"]
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

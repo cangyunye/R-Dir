@@ -3,7 +3,7 @@ mod cmdrun;
 mod compress;
 mod diff;
 mod drag_out;
-mod events;
+pub mod events;
 mod extract;
 mod find;
 mod fs_ops;
@@ -29,11 +29,14 @@ mod nfs_plugin;
 mod smb;
 
 mod opener;
-mod paths;
+pub mod paths;
 mod plugins;
 mod http_autoindex;
 #[cfg(feature = "share")]
 mod share;
+/// v0.43 web 服务（rdir-web bin 专用，web feature 门控）
+#[cfg(feature = "web")]
+pub mod web;
 
 use events::EventSink;
 use find::FindEntry;

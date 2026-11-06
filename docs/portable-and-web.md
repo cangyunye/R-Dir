@@ -64,18 +64,31 @@ GET  /*            前端静态资源（rust-embed 内嵌进二进制）
 | 前端 | `api.ts`/`persist.ts`/`themePacks.ts`/`openerApi.ts` 的 invoke 与 App/三对话框的 listen 全部收敛到 ipc.ts；桌面专属 API（窗口控制、webview 拖放、原生对话框、app 元数据）保留直引 + 既有 `__TAURI_INTERNALS__` 能力探测 |
 | 后端 | `src-tauri/src/paths.rs` 数据目录收敛（便携/Web 共用；web 模式无需 AppHandle 以外的目录来源） |
 | 后端 | `src-tauri/src/events.rs` **EventSink**：`Emitter` trait（对象安全，收 `serde_json::Value`）+ `EventSink`（可克隆 Arc 出口）+ `TauriEmitter`（泛型 Runtime）。fs_watch/volumes/progress/compress/extract/http_autoindex/share 全部改为 sink 发射——**模块层已零 AppHandle**；`app-exit-requested`（窗口生命周期，纯桌面概念）仍直接 emit。18+ 处 lib.rs 命令边界 `EventSink::from(&app)` 接线 |
+| 后端 | `src-tauri/src/web/` + `bin/rdir-web.rs`（web feature 门控，`required-features` 使默认构建自动跳过 bin）：`POST /api/invoke` 命令透传（bridge.rs 分发表，首批 27 命令 = 浏览/持久化/主题/插件/缩略图/预览/属性统计）、`WS /api/events` 事件广播（`events.rs::WebEmitter` broadcast → `{event,payload}` 帧）、rust-embed 内嵌 `../dist` 静态资源、cookie 鉴权（`/login?k=令牌` 换 HttpOnly cookie，fetch/WS 自动携带，ipc.ts 零改动）。未收录命令统一 `WEB_UNSUPPORTED\|...` 码化拒绝 |
+
+### rdir-web 使用
+
+```bash
+pnpm build                       # 先产出 dist/（rust-embed 编译期内嵌）
+cargo build --release --features web --bin rdir-web
+./target/release/rdir-web --listen 127.0.0.1:8420
+# → 打印带令牌进站链接：http://127.0.0.1:8420/login?k=<32位hex>
+```
+
+- 数据目录：`--data-dir` > 便携标记（exe 旁 `R-Dir.portable`）> 用户配置目录（与 GUI 同落点）
+- 与 GUI 版共用同一套配置（session/prefs/favorites/themes/plugins），可互启
+- 默认监听 127.0.0.1；`--listen 0.0.0.0` 显式开放局域网；无内置 TLS，外网暴露需反代
+- 事件链路已验证：fs_watch 线程 → WebEmitter broadcast → WS → 前端 `fs://changed` 刷新
 
 ### 待实施阶段
 
-1. **`bridge_commands!` 宏 + rdir-web bin**：axum（`ws`/`http1` 已有依赖）、`EventSink::new(WebEmitter(broadcast::Sender))` 接入 `/api/events`（帧格式已与 ipc.ts 对齐）、token 鉴权
-   （复用 `ShareManager::gen_token` 形态）、rust-embed 静态资源、
-   默认 `127.0.0.1` + `--listen 0.0.0.0` 显式开 + `--read-only` 命令白名单。
-2. **能力降级**：`/api/caps` 能力位；OLE 拖出/系统剪贴板文件/回收站禁用，
+1. **桥表扩容**：写类命令（复制/移动/改名/删除/压缩/解压/搜索/find/diff）接入
+   `--read-only` 服务端拦截；SFTP/NFS 后端路由（sftp:// 路径走既有模块，零 AppHandle 已就绪）。
+2. **能力降级**：`/api/caps` 能力位（含 `bridge::COMMANDS`）；OLE 拖出/系统剪贴板文件/回收站禁用，
    原生对话框换浏览器实现，终端/`open_local_file`/`open_with` 默认禁用
    （`--allow-exec` 显式开启，服务端执行对外网暴露有风险）。
-3. **安全**：无内置 TLS，外网暴露文档要求套反代；写类命令服务端白名单拦截
-   （比 UI 隐藏更可靠）。
-4. **CI**：`rdir-web` 独立产物 + 文档。
+3. **安全加固**：写类命令服务端白名单拦截（比 UI 隐藏更可靠）；`--read-only` 接入已有开关。
+4. **CI**：web feature 构建矩阵 + `rdir-web` 独立产物（GUI/绿色版/web 三形态）。
 
 ### 测试约定（与 ipc.ts 配套）
 

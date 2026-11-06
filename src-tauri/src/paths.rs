@@ -29,6 +29,13 @@ fn portable_root_for(exe: &Path) -> Option<PathBuf> {
     }
 }
 
+/// 当前进程的便携数据根（AppHandle 无关；rdir-web bin 与诊断用）。
+/// 便携模式 → `exe_dir/data`；安装模式 → None。
+pub fn portable_data_root() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    portable_root_for(&exe)
+}
+
 /// 配置目录（session.json / prefs.json / servers.json / themes/ / plugins/ 等）。
 /// 便携模式 → `data/config`（确保存在）；安装版 → Tauri app_config_dir。
 pub fn config_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {

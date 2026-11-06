@@ -67,6 +67,34 @@ impl<R: tauri::Runtime> From<tauri::AppHandle<R>> for EventSink {
     }
 }
 
+/// web 实现（rdir-web bin）：事件帧序列化进 broadcast 通道，WS /api/events
+/// 每个订阅者持一个 Receiver 逐帧下发。帧即序列化后的 JSON
+/// `{"event": ..., "payload": ...}`——与前端 ipc.ts WS 分支的解析格式对齐。
+#[cfg(feature = "web")]
+pub struct WebEmitter(tokio::sync::broadcast::Sender<serde_json::Value>);
+
+#[cfg(feature = "web")]
+impl WebEmitter {
+    /// 建通道（容量 = 在途帧缓冲；Lagged 漏帧由前端刷新逻辑自愈，取 256 平衡内存）。
+    /// 初始无订阅者，send 失败静默——首个 WS 连接 subscribe 后开始收帧。
+    pub fn new() -> Self {
+        let (tx, _rx) = tokio::sync::broadcast::channel(256);
+        Self(tx)
+    }
+
+    /// 新订阅（每个 WS 连接一个 Receiver）
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<serde_json::Value> {
+        self.0.subscribe()
+    }
+}
+
+#[cfg(feature = "web")]
+impl Emitter for WebEmitter {
+    fn emit_json(&self, event: &str, payload: serde_json::Value) {
+        let _ = self.0.send(serde_json::json!({ "event": event, "payload": payload }));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
