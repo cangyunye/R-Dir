@@ -69,7 +69,10 @@ GET  /*            前端静态资源（rust-embed 内嵌进二进制）
 ### rdir-web 使用
 
 ```bash
-pnpm build                       # 先产出 dist/（rust-embed 编译期内嵌）
+pnpm web            # = pnpm build && (cd src-tauri) cargo run --features web --bin rdir-web
+# 或手动（注意 cargo 在 src-tauri/ 层）：
+pnpm build
+cd src-tauri
 cargo build --release --features web --bin rdir-web
 ./target/release/rdir-web --listen 127.0.0.1:8420
 # → 打印带令牌进站链接：http://127.0.0.1:8420/login?k=<32位hex>
