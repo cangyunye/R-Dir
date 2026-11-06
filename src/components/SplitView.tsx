@@ -854,7 +854,10 @@ export function SplitView({
         showExtensions={showExtensions}
         showProperties={showProperties}
         previewSpace={previewSpace}
-        renaming={renaming}
+        // 重命名按发起窗格隔离：renaming 本就带 paneId，但此前未过滤地下发给所有
+        // PaneView——两窗格打开同一目录时，两侧行都按 path 命中，编辑框渲染两份、
+        // 焦点竞争落到后挂载的窗格，表现为「在上窗格重命名，编辑框出现在下窗格」
+        renaming={renaming?.paneId === pane.id ? renaming : null}
         isActive={pane.id === activePaneId}
         dragOver={dragOver}
         dragDir={dragDir}

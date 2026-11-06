@@ -64,6 +64,8 @@ const COLUMNS: { key: SortKey | null; label: string; width: string }[] = [
 
 
 export interface RenameState {
+  /** 发起窗格：同目录双窗格时按此隔离，编辑框只出现在发起重命名的窗格（v0.42.1） */
+  paneId: number;
   path: string;
   name: string;
 }

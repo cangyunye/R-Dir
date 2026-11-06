@@ -328,7 +328,7 @@ describe("FileList 行内重命名提交（v0.26.1 macOS 回车/失焦不生效�
   it("回车提交重命名", () => {
     const onRenameCommit = vi.fn();
     renderList({
-      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      renaming: { paneId: 0, path: "/mock/dir/main.rs", name: "main.rs" },
       onRenameCommit,
     });
     const input = document.querySelector<HTMLInputElement>(
@@ -344,7 +344,7 @@ describe("FileList 行内重命名提交（v0.26.1 macOS 回车/失焦不生效�
     const onRenameCommit = vi.fn();
     const onRenameCancel = vi.fn();
     renderList({
-      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      renaming: { paneId: 0, path: "/mock/dir/main.rs", name: "main.rs" },
       onRenameCommit,
       onRenameCancel,
     });
@@ -365,7 +365,7 @@ describe("FileList 行内重命名提交（v0.26.1 macOS 回车/失焦不生效�
     const onRenameCommit = vi.fn();
     const onRenameCancel = vi.fn();
     renderList({
-      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      renaming: { paneId: 0, path: "/mock/dir/main.rs", name: "main.rs" },
       onRenameCommit,
       onRenameCancel,
     });
@@ -384,7 +384,7 @@ describe("FileList 行内重命名提交（v0.26.1 macOS 回车/失焦不生效�
     const onRenameCommit = vi.fn();
     const onRenameCancel = vi.fn();
     renderList({
-      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      renaming: { paneId: 0, path: "/mock/dir/main.rs", name: "main.rs" },
       onRenameCommit,
       onRenameCancel,
     });
@@ -405,7 +405,7 @@ describe("FileList 行内重命名提交（v0.26.1 macOS 回车/失焦不生效�
     const onOpen = vi.fn();
     const onRenameCommit = vi.fn();
     renderList({
-      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      renaming: { paneId: 0, path: "/mock/dir/main.rs", name: "main.rs" },
       onRenameCommit,
       onOpen,
     });
@@ -421,7 +421,7 @@ describe("FileList 行内重命名提交（v0.26.1 macOS 回车/失焦不生效�
     const onRenameCommit = vi.fn();
     const onRenameCancel = vi.fn();
     renderList({
-      renaming: { path: "/mock/dir/main.rs", name: "main.rs" },
+      renaming: { paneId: 0, path: "/mock/dir/main.rs", name: "main.rs" },
       onRenameCommit,
       onRenameCancel,
     });
@@ -540,7 +540,7 @@ describe("FileList 重命名行滚动定位（v0.35 新建文件/文件夹后可
     // 视口高 52px = 两行：photo.png 在 idx=2（target=52）→ 超出 bottom(26) → 滚到 52
     const get = captureScroll(utils.body, 52);
     utils.rerender(
-      <FileList {...makeProps({ renaming: { path: "/mock/dir/photo.png", name: "photo.png" } })} />,
+      <FileList {...makeProps({ renaming: { paneId: 0, path: "/mock/dir/photo.png", name: "photo.png" } })} />,
     );
     expect(get()).toBe(52);
   });
@@ -550,14 +550,14 @@ describe("FileList 重命名行滚动定位（v0.35 新建文件/文件夹后可
     // idx=1 target=26，未超出 bottom=26 → 不产生滚动
     const get = captureScroll(utils.body, 52);
     utils.rerender(
-      <FileList {...makeProps({ renaming: { path: "/mock/dir/main.rs", name: "main.rs" } })} />,
+      <FileList {...makeProps({ renaming: { paneId: 0, path: "/mock/dir/main.rs", name: "main.rs" } })} />,
     );
     expect(get()).toBe(0);
   });
 
   it("renaming 条目尚未出现在列表（目录还在加载）→ 不滚动也不报错", () => {
     const utils = renderList({
-      renaming: { path: "/mock/dir/新建文件夹", name: "新建文件夹" },
+      renaming: { paneId: 0, path: "/mock/dir/新建文件夹", name: "新建文件夹" },
     });
     expect(utils.body.scrollTop).toBe(0);
   });

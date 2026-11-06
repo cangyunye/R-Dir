@@ -104,3 +104,33 @@ test.describe("重命名框内鼠标拖选（v0.41.2 回归）", () => {
     await dragSelectInsideRenameInput(page, item.locator("input"));
   });
 });
+
+test.describe("分屏重命名（窗格隔离）", () => {
+  test("上下分屏同目录：在上窗格重命名，编辑框只出现一份且属于上窗格", async ({ page }) => {
+    // 应用菜单 → 上下分屏：原窗格成为上（node.a），新窗格在下——两窗格默认同目录
+    await page.getByTitle("应用菜单").click();
+    await page.getByRole("menuitem", { name: "上下分屏" }).click();
+    const rows = page.locator(`[data-path="${HOME}/Notes.txt"]`);
+    await expect(rows).toHaveCount(2);
+    // 上窗格（DOM 顺序第一 = 先打开的原窗格）右键 → 重命名
+    await rows.first().click({ button: "right" });
+    await page.getByRole("menu").getByText("重命名").click();
+    const input = page.locator(`[data-path="${HOME}/Notes.txt"] input`);
+    // 修复前：renaming 未按窗格过滤，两侧行同 path 双命中，编辑框渲染两份、
+    // 焦点竞争落到后挂载的下窗格
+    await expect(input).toHaveCount(1);
+    const [top, bottom, box] = await Promise.all([
+      rows.nth(0).boundingBox(),
+      rows.nth(1).boundingBox(),
+      input.boundingBox(),
+    ]);
+    if (!top || !bottom || !box) throw new Error("几何信息缺失");
+    expect(box.y).toBeLessThan(bottom.y); // 编辑框在上窗格区域内
+    // 改名提交走原链路：发起窗格刷新出现新名
+    await page.waitForTimeout(400);
+    await input.fill("Split.txt");
+    await input.press("Enter");
+    await expect(page.locator(`[data-path="${HOME}/Split.txt"]`)).toHaveCount(1);
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"] input`)).toHaveCount(0);
+  });
+});
