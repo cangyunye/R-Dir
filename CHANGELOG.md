@@ -5,6 +5,19 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.42.0 (2026-11-06)
+
+- **重命名输入框支持鼠标拖选/双击选词（第一层）**：列表/网格滚动容器的 `select-none` 会被 WKWebView 继承进 `<input>`（Chromium 不受影响）——框内拖选、双击选词全部失效，而初始 JS `select()` 正常，表现为「已全选但拖不出选区」；RenameInput 加 `select-text` 显式放行（同 TextView v0.41 做法）。同时 FileList/IconGrid 的按压处理器（startRowPress / startItemPress）对落在重命名输入框内的按下早退——不再把 >5px 的框内拖动升级成文件拖拽（此前 userSelect=none +「复制 1 项」幽灵标签会掐断框内选区，Windows WebView2 同样中招）。
+- **双击/回车打开可执行文件以父目录为工作目录（资源管理器双击语义）**：此前走 opener 插件的 ShellExecuteExW 且 lpDirectory=NULL，子进程继承 R-Dir 自身进程 cwd——依赖工作目录的程序（如 Go 的 `filepath.Abs(".")`）拿到的是 R-Dir 启动目录而非 exe 所在目录。新增 `open_local_file` 命令：exe/bat/cmd 以 `current_dir(父目录)` + CREATE_NEW_CONSOLE 启动（控制台程序照常开窗、GUI 程序标志无效，与双击一致）；requireAdministrator 的 exe（CreateProcess 报 740 ERROR_ELEVATION_REQUIRED）退回系统关联打开（ShellExecute 弹 UAC，cwd 不保证）；.lnk 等其余文件保持原路径（快捷方式本就沿用其记录的起始目录）。非 Windows 平台语义不变。
+- **未知类型试探预览（text-probe）：门控 + 组合探测**：本地未知/乱写/无扩展名文件不再一律「此类型暂不支持预览」——filekind 落 file 桶 → 新预览类 `text-probe`，选中时调新命令 `probe_local_file` 做内容探测（嗅探优先：先读 16B 头判图片 magic，命中直接路由；否则走文本读取，二进制文件最坏 IO 从「整读 8MB 再拒」降到 16B）。四态路由（`TextProbe` 组件）：text → TextView（顶部「未知类型，按纯文本预览」横幅 + 既有 UTF-16/lossy/截断提示，超 2MB 回信息卡）；image → 原图查看器（复用 30MB 门槛与超限缩略图回退）；binary → 「疑似二进制文件，不支持按文本预览」信息卡（不误渲乱码不出失败占位）；oversized（非图片超 8MB）→ 默认信息卡。已知二进制类型（video/audio/archive/app）与远程路径仍 info 不试探。探测按 `path|mtime|size` 会话缓存（下载中的半截文件改完自动重探），同文件只发一次 IPC。试探是纯文本渲染——未知类型无 languageForPath 映射，天然不进语法高亮的 dangerouslySetInnerHTML 分支。
+- **magic 嗅探（手写子集）+ 图片路由三处接线**：`sniff_image_format` 只收精确前缀（PNG 8B / JPEG SOI / GIF87a·89a / WebP RIFF+WEBP / AVIF ftyp 品牌 avif·avis），共享/模糊容器不发言（ZIP 家族与 docx/jar/epub 同魔数、EBML、非 AVIF 品牌一律不猜；BMP 仅 2 字节纯 ASCII 可撞头、TIFF WebView 不解码、HEIC 解码链路不确定，均不入表）。接线：① `preview_data` 扩展名不支持时嗅探兜底（命中按对应 mime 回原字节，解码失败前端已有 fallback 链）；② `thumb_eligible`/`thumb_blocking` 同款兜底（嗅探图片在浏览条/画廊出真缩略图，AVIF 走 image crate 未启用解码特性时回图标）；③ probe 命令路由。嗅探绝不进 `list_dir`/目录扫描阶段。
+- **浏览模式懒收录（画廊场景）**：`useSniffPreviewList` 在扩展名可判定清单基础上，对未知类型条目后台串行探测（仅预览栏开启或浏览模式打开时进行），命中图片的渐进追加进浏览清单（每 8 个命中批量落地渲染）——恢复工具/中断传输产出的无扩展名图片目录由此获得画廊体验；文本/二进制/超大不收录，其余收录面不变。`BrowseMode` 改收调用方算好的 `list`（清单口径单点化：App 侧 canBrowse/快捷键/浏览覆盖层共用同一清单）。
+- **重命名框内拖选第二层修复（WKWebView 选区拖动手势）**：上条第一层修复（`select-text` 放行 + 按压早退）仍有残留——起手 `select()` 全选让框内按下永远落在选区内，而 WebKit 对按在选区内的按下走「拖动既有选区」默认手势（放大镜 + 只移动光标，永远拖不出新选区；Chromium 无此语义，e2e 测不出）。裸 `setSelectionRange` 塌缩又会连带打断 Blink 自己的原生拖选手势（两引擎皆失，单测与 e2e 双双暴露后定案）——最终把「按在选区内」这一路径整个接管：`preventDefault` 拦掉默认手势，mousedown 塌缩到按点（canvas 按实际字体量宽二分定位字符），mousemove 手动扩展选区，mouseup 收尾；光标态按下 / 按在选区外 / 双击三击（选词全选，`e.detail>1`）/ 非左键全部留给原生。RenameInput 三处挂载（详情行/搜索行/图标网格）一处修复全覆盖。
+- **文本读取守卫升级 + 错误码化（`text_diff.rs`）**：① `BINARY_ERR` 按 CODE|中文详情 契约改为 `NOT_TEXT|疑似二进制文件，不支持按文本读取`（前端新增 `ERR_NOT_TEXT`/`isNotTextError`，i18n.ts 与 EXISTS 同款模式）；② 原仅拒目录的检查升级为常规文件守卫——目录/FIFO/socket/设备一律 `NOT_FILE|路径不是常规文件（目录/管道/设备），无法按文本读取`（试探门控放开后，无扩展名命名管道会永久阻塞读取；probe 命令同款守卫）。TextDiffDialog 两处错误展示（读取/保存）补 `terr()` 剥码翻译，否则码化后 zh 会裸显码前缀。
+- 测试：cargo +6（嗅探 magic 正负例、probe 四态路由、非常规文件拒绝含 mkfifo、二进制产出 NOT_TEXT 码、preview_data 嗅探兜底；lib 229 通过）；vitest +17（preview 门控、probe 会话缓存、TextProbe 四态路由、useSniffPreviewList 懒收录、BrowseMode list 化与嗅探 tile、RenameInput 拖选接管 4 例、terr 剥码等；736 通过）；e2e +4（P4b 试探横幅/疑似二进制回退/zip 不试探，P4c 嗅探图片出原图 + 浏览懒收录 1/1 + 超大信息卡，重命名框内拖选回归×2（详情列表与网格，真实鼠标事件 + 拖拽幽灵显形断言）；全量 209 通过）。
+- i18n：新 key「未知类型，按纯文本预览」「疑似二进制文件，不支持按文本预览」「文本读取失败」（TextView 失败占位原裸串补 t()）「文件超过 30MB，显示缩略图（「外部打开」查看原图）」（InfoCard 抽出时补 t()），新错误码 NOT_TEXT / NOT_FILE——知会语言包仓库补六语言词条（缺包时 terr 回退中文详情）。
+- e2e 桩补缺（随本版带上）：tauri-mock 补 `open_local_file` 桩（上条批次把双击本地文件改走该命令，S3/31D 因缺桩失败）；read_text_file / 新增 probe_local_file 桩对 .bin / 无扩展名二进制按真实后端契约产出 NOT_TEXT 码——对齐 Tauri `Err(String)` 的 reject 形态（throw Error 会被 String(e) 加 "Error: " 前缀破坏码匹配）。
+
 ## v0.41.1 (2026-11-05)
 
 补丁版本：预览选区三连修 + 新建/重命名体验批次（本版主体）。
