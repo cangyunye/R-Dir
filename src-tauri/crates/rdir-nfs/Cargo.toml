@@ -1,6 +1,6 @@
 [package]
 name = "rdir-nfs"
-version = "0.42.0"
+version = "0.42.1"
 description = "R-Dir NFS 插件：NFSv3 客户端（可内嵌编译，也可作为独立伴生进程插件）"
 edition = "2021"
 
