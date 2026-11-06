@@ -7,7 +7,9 @@ vi.mock("@/lib/api", () => ({
   computeSize: vi.fn(async () => ({ bytes: 4096, files: 3, dirs: 2 })),
   cancelSize: vi.fn(async () => undefined),
 }));
-vi.mock("@tauri-apps/api/event", () => ({
+// 组件经 src/lib/ipc.ts 适配层订阅事件；jsdom 无 Tauri 运行时（isTauri()=false），
+// 直接 mock 适配层的 listen 中和订阅副作用
+vi.mock("@/lib/ipc", () => ({
   listen: vi.fn(async () => () => undefined),
 }));
 

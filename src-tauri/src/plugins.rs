@@ -5,7 +5,6 @@
 //! 只需替换加载层（wasm / 独立进程 IPC），路由、配置、诊断零改动。
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -227,10 +226,7 @@ pub fn set_enabled(state: &PluginState, id: &str, enabled: bool) {
 // ==================== 持久化 ====================
 
 fn plugins_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    let dir = crate::paths::config_dir(app)?;
     Ok(dir.join(PLUGINS_FILE))
 }
 

@@ -13,7 +13,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@/lib/ipc";
 import type { DiffEntry, DiffLevel, DiffProgress } from "@/lib/types";
 import { diffDirs, cancelDiff, copyEntries, deleteEntries } from "@/lib/api";
 import { formatSize, formatTime } from "@/lib/format";

@@ -7,7 +7,7 @@
  * 写盘尽力而为（失败静默），测试环境（jsdom 无 Tauri）不影响。
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./ipc";
 import { t, loadLanguage } from "./i18n";
 
 /** 磁盘偏好快照：与 prefs.json 字段对齐（v0.14） */

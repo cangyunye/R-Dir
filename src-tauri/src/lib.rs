@@ -28,6 +28,7 @@ mod nfs_plugin;
 mod smb;
 
 mod opener;
+mod paths;
 mod plugins;
 mod http_autoindex;
 #[cfg(feature = "share")]
@@ -319,10 +320,7 @@ fn set_plugin_enabled(
 
 #[cfg(feature = "sftp")]
 fn sftp_servers_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    let dir = paths::config_dir(app)?;
     Ok(dir.join(sftp::servers::SERVERS_FILE))
 }
 
@@ -642,10 +640,7 @@ pub struct SessionLayout {
 }
 
 fn session_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    let dir = paths::config_dir(app)?;
     Ok(dir.join("session.json"))
 }
 
@@ -711,10 +706,7 @@ pub struct FavoritesFile {
 }
 
 fn favorites_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    let dir = paths::config_dir(app)?;
     Ok(dir.join("favorites.json"))
 }
 
@@ -750,10 +742,7 @@ async fn favorites_save(app: tauri::AppHandle, items: Vec<TabFavorite>) -> Resul
 /// prefs.json 存标签重命名/文件标签/快捷访问，与 session.json 同级；
 /// 作为 WebView localStorage 的可靠备份（避免本地存储被清空导致配置丢失）。
 fn prefs_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    let dir = paths::config_dir(app)?;
     Ok(dir.join("prefs.json"))
 }
 
@@ -2262,7 +2251,7 @@ pub fn run() {
             // v0.40 NFS 后端定型：InProcess（feature = "nfs"）或伴生进程插件（安装根定位）
             state
                 .nfs
-                .init(app.path().app_config_dir().ok().map(|d| d.join("plugins")));
+                .init(paths::config_dir(app.handle()).ok().map(|d| d.join("plugins")));
             // 命令补全索引预热（后台线程）：优先加载磁盘缓存，PATH 签名变化才重扫，
             // 避免首次在地址栏输入裸词时全量扫描 PATH 卡住主线程
             cmdrun::warm_cache_async(

@@ -12,7 +12,6 @@ pub mod launch;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
 
 /// 打开方式条目（内置探测 / Agent / 用户自定义）
 #[derive(Serialize, Clone)]
@@ -97,10 +96,7 @@ struct OpenersConfig {
 }
 
 fn config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_config_dir()
-        .map_err(|e| format!("无法获取配置目录：{e}"))
-        .map(|d| d.join("openers.json"))
+    crate::paths::config_dir(app).map(|d| d.join("openers.json"))
 }
 
 fn load_config(app: &tauri::AppHandle) -> OpenersConfig {

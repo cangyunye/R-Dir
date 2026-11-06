@@ -1,7 +1,7 @@
 ﻿import { Activity, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@/lib/ipc";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName, getVersion } from "@tauri-apps/api/app";
 import {

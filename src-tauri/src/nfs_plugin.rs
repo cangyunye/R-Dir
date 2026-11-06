@@ -65,10 +65,7 @@ pub struct NfsPluginStatus {
 // ==================== 路径与目标三元组 ====================
 
 pub fn plugins_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    let dir = crate::paths::config_dir(app)?;
     Ok(dir.join("plugins"))
 }
 

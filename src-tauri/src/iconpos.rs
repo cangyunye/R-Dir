@@ -12,14 +12,10 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde_json::Value;
-use tauri::Manager;
 
 /// 位置文件路径（app_data_dir/icon-positions.json）。
 fn positions_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("无法定位应用数据目录: {e}"))?;
+    let dir = crate::paths::data_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建数据目录: {e}"))?;
     Ok(dir.join("icon-positions.json"))
 }

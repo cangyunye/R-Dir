@@ -13,7 +13,6 @@
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
-use tauri::Manager;
 
 /// image crate 可解码的扩展名（gif 取第一帧）
 fn image_ext(ext: &str) -> bool {
@@ -79,11 +78,7 @@ pub async fn thumb_get(
         return Ok(None);
     }
     let size = size.clamp(32, 512);
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("无法定位应用数据目录: {e}"))?
-        .join("thumbs");
+    let dir = crate::paths::data_dir(&app)?.join("thumbs");
     tauri::async_runtime::spawn_blocking(move || thumb_blocking(dir, path, size))
         .await
         .map_err(|e| format!("缩略图任务失败: {e}"))?
