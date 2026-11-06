@@ -143,7 +143,9 @@ fn unauthorized_page() -> Response {
     (
         StatusCode::UNAUTHORIZED,
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>R-Dir web</title></head>\
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">\
+         <link rel=\"icon\" type=\"image/png\" href=\"/favicon.png\" />\
+         <title>R-Dir web</title></head>\
          <body style=\"font-family:sans-serif;margin:60px;text-align:center\">\
          <h2>需要访问令牌</h2><p>请使用服务启动时输出的带令牌链接打开（…/login?k=…）。</p></body></html>",
     )
