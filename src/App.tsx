@@ -1,7 +1,7 @@
 ﻿import { Activity, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { exit } from "@tauri-apps/plugin-process";
-import { listen } from "@/lib/ipc";
+import { isTauri, listen } from "@/lib/ipc";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName, getVersion } from "@tauri-apps/api/app";
 import {
@@ -1811,6 +1811,10 @@ useEffect(() => {
 
   // 拦截窗口关闭 → 询问是否保存会话（v0.3.0）
   useEffect(() => {
+    // 浏览器（web 模式）无窗口可关：getCurrentWindow() 是同步调用，无
+    // __TAURI_INTERNALS__ 时在返回 Promise 前即抛 TypeError——下面的 .catch
+    // 兜不住同步异常，会崩掉整棵组件树（React 无错误边界 → 白屏）
+    if (!isTauri()) return;
     let unlisten: (() => void) | undefined;
     getCurrentWindow()
       .onCloseRequested((e) => {
