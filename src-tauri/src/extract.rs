@@ -644,8 +644,9 @@ pub async fn extract_archive(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_task = id.clone();
+    let sink = crate::events::EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        run_extract(&app, &id_task, &flag, &path, &target_dir, mode.as_deref().unwrap_or("smart"), password.as_deref())
+        run_extract(&sink, &id_task, &flag, &path, &target_dir, mode.as_deref().unwrap_or("smart"), password.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -654,7 +655,7 @@ pub async fn extract_archive(
 }
 
 fn run_extract(
-    app: &AppHandle,
+    sink: &crate::events::EventSink,
     id: &str,
     flag: &AtomicBool,
     path: &str,
@@ -718,7 +719,7 @@ fn run_extract(
             }
         };
         p.id = Some(id_task.clone());
-        emit(app, &p);
+        emit(sink, &p);
         true
     };
     let check = || flag.load(Ordering::Relaxed);
@@ -745,7 +746,7 @@ fn run_extract(
     let mut p = TransferProgress::start("extract", &label, total_files);
     p.done_files = total_files;
     p.done = true;
-    emit(app, &p);
+    emit(sink, &p);
     r
 }
 

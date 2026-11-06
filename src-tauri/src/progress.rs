@@ -39,10 +39,10 @@ impl TransferProgress {
     }
 }
 
-/// 向所有前端窗口推送进度（同步命令与异步命令均可调用；泛型 Runtime 便于单测 mock）
-pub fn emit<R: tauri::Runtime>(app: &tauri::AppHandle<R>, p: &TransferProgress) {
-    use tauri::Emitter;
-    let _ = app.emit("transfer-progress", p);
+/// 向所有前端窗口推送进度（EventSink 出口：桌面经 tauri emit；测试注入 mock Emitter，
+/// 未来 web 模式经 broadcast 广播）
+pub fn emit(sink: &crate::events::EventSink, p: &TransferProgress) {
+    sink.emit("transfer-progress", p);
 }
 
 /// 进度发射节流器：本地复制 1MB/帧、SFTP/HTTP 64KB/帧，千兆级传输会产生上万次

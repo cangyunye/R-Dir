@@ -86,9 +86,9 @@ fn volumes_signature(vols: &[VolumeInfo]) -> String {
 /// 后台监视磁盘/卷变化（挂载、卸载、推出、热插拔）：每 2 秒轮询一次列表，
 /// 仅在集合真正变化时经 `volumes://changed` 事件推送最新列表，前端据此即时刷新
 /// 侧边栏（无需重启）。`read_dir` 开销极小，跨平台且不引入新依赖。
-/// 线程随进程退出而结束（detach 型，无 join）。
-pub fn spawn_watcher(app: tauri::AppHandle) {
-    use tauri::Emitter;
+/// 线程随进程退出而结束（detach 型，无 join）。事件经 EventSink 发射
+/// （桌面 tauri emit / web 广播），模块不再依赖 AppHandle。
+pub fn spawn_watcher(sink: crate::events::EventSink) {
     thread::spawn(move || {
         let mut last = volumes_signature(&list_volumes());
         loop {
@@ -97,7 +97,7 @@ pub fn spawn_watcher(app: tauri::AppHandle) {
             let sig = volumes_signature(&vols);
             if sig != last {
                 last = sig;
-                let _ = app.emit("volumes://changed", &vols);
+                sink.emit("volumes://changed", &vols);
             }
         }
     });

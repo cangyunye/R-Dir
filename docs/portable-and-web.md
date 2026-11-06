@@ -60,23 +60,22 @@ GET  /*            前端静态资源（rust-embed 内嵌进二进制）
 
 | 层 | 改动 |
 |---|---|
-| 前端 | `src/lib/ipc.ts`：`invoke`/`listen` 双传输适配（Tauri 直传；Web 走 `/api/invoke` fetch + `/api/events` WS 扇出、指数退避重连、退订即断开）。错误契约与 Tauri 一致（reject 原始 `CODE|详情` 字符串；传输层自身失败以 `WEB_OFFLINE`/`WEB_BAD_RESPONSE` 码化） |
+| 前端 | `src/lib/ipc.ts`：`invoke`/`listen` 双传输适配（Tauri 直传；Web 走 `/api/invoke` fetch + `/api/events` WS 扇出、指数退避重连、退订即断开）。错误契约与 Tauri 一致（reject 原始 `CODE\|详情` 字符串；传输层自身失败以 `WEB_OFFLINE`/`WEB_BAD_RESPONSE` 码化） |
 | 前端 | `api.ts`/`persist.ts`/`themePacks.ts`/`openerApi.ts` 的 invoke 与 App/三对话框的 listen 全部收敛到 ipc.ts；桌面专属 API（窗口控制、webview 拖放、原生对话框、app 元数据）保留直引 + 既有 `__TAURI_INTERNALS__` 能力探测 |
 | 后端 | `src-tauri/src/paths.rs` 数据目录收敛（便携/Web 共用；web 模式无需 AppHandle 以外的目录来源） |
+| 后端 | `src-tauri/src/events.rs` **EventSink**：`Emitter` trait（对象安全，收 `serde_json::Value`）+ `EventSink`（可克隆 Arc 出口）+ `TauriEmitter`（泛型 Runtime）。fs_watch/volumes/progress/compress/extract/http_autoindex/share 全部改为 sink 发射——**模块层已零 AppHandle**；`app-exit-requested`（窗口生命周期，纯桌面概念）仍直接 emit。18+ 处 lib.rs 命令边界 `EventSink::from(&app)` 接线 |
 
 ### 待实施阶段
 
-1. **EventSink**：约 7 处 `app.emit`（fs://changed、volumes://changed、share://changed、
-   transfer/size/diff-progress、app-exit）解耦为 `Tauri(AppHandle) | Web(broadcast)` 双实现。
-2. **`bridge_commands!` 宏 + rdir-web bin**：axum（`ws`/`http1` 已有依赖）、token 鉴权
+1. **`bridge_commands!` 宏 + rdir-web bin**：axum（`ws`/`http1` 已有依赖）、`EventSink::new(WebEmitter(broadcast::Sender))` 接入 `/api/events`（帧格式已与 ipc.ts 对齐）、token 鉴权
    （复用 `ShareManager::gen_token` 形态）、rust-embed 静态资源、
    默认 `127.0.0.1` + `--listen 0.0.0.0` 显式开 + `--read-only` 命令白名单。
-3. **能力降级**：`/api/caps` 能力位；OLE 拖出/系统剪贴板文件/回收站禁用，
+2. **能力降级**：`/api/caps` 能力位；OLE 拖出/系统剪贴板文件/回收站禁用，
    原生对话框换浏览器实现，终端/`open_local_file`/`open_with` 默认禁用
    （`--allow-exec` 显式开启，服务端执行对外网暴露有风险）。
-4. **安全**：无内置 TLS，外网暴露文档要求套反代；写类命令服务端白名单拦截
+3. **安全**：无内置 TLS，外网暴露文档要求套反代；写类命令服务端白名单拦截
    （比 UI 隐藏更可靠）。
-5. **CI**：`rdir-web` 独立产物 + 文档。
+4. **CI**：`rdir-web` 独立产物 + 文档。
 
 ### 测试约定（与 ipc.ts 配套）
 

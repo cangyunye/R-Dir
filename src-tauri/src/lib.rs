@@ -3,6 +3,7 @@ mod cmdrun;
 mod compress;
 mod diff;
 mod drag_out;
+mod events;
 mod extract;
 mod find;
 mod fs_ops;
@@ -34,6 +35,7 @@ mod http_autoindex;
 #[cfg(feature = "share")]
 mod share;
 
+use events::EventSink;
 use find::FindEntry;
 use fs_ops::FileEntry;
 use search::SearchMatch;
@@ -789,10 +791,10 @@ async fn compute_size(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_for_task = id.clone();
+    let sink = EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        use tauri::Emitter;
         sizestat::compute(&id_for_task, &paths, &flag, |p| {
-            let _ = app.emit("size-progress", p);
+            sink.emit("size-progress", p);
         })
     })
     .await
@@ -846,10 +848,10 @@ async fn diff_dirs(
     // 两侧串行列目录（同主机的 SFTP 会话本就由 pool 互斥）
     let l = list_side(&state, &left).await?;
     let r = list_side(&state, &right).await?;
+    let sink = EventSink::from(app);
     let joined = tauri::async_runtime::spawn_blocking(move || {
-        use tauri::Emitter;
         diff::compare_entries(&id_for_task, l, r, &opts, &flag, |p| {
-            let _ = app.emit("diff-progress", p);
+            sink.emit("diff-progress", p);
         })
     })
     .await;
@@ -1182,10 +1184,10 @@ fn transfer_label(path: &str, fallback: &str) -> String {
 
 /// 传输收尾事件：前端仅在收到 done=true 后 1.5s 清除状态栏传输指示，
 /// 缺失会导致指示器永久卡在「下载中… 100%」（v0.18.1 修复）。
-fn emit_transfer_done(app: &tauri::AppHandle, phase: &str, label: &str) {
+fn emit_transfer_done(sink: &EventSink, phase: &str, label: &str) {
     let mut p = progress::TransferProgress::start(phase, label, 1);
     p.done = true;
-    progress::emit(app, &p);
+    progress::emit(sink, &p);
 }
 
 /// 注册可取消传输：transfer_cancels 插入新旗标，返回 (id, 旗标)。
@@ -1207,7 +1209,7 @@ fn register_transfer_cancel(
 /// SFTP 递归传输收尾：完成/失败/取消统一发 done 帧（取消文案收敛为「已取消」，
 /// 与本地复制 emit_transfer_end 同语义；其余 label 由前端按 phase 渲染「xx完成」）。
 fn emit_sftp_transfer_end(
-    app: &tauri::AppHandle,
+    sink: &EventSink,
     phase: &str,
     total_files: usize,
     r: &Result<impl Sized, String>,
@@ -1220,7 +1222,7 @@ fn emit_sftp_transfer_end(
     let mut p = progress::TransferProgress::start(phase, label, total_files);
     p.done_files = total_files;
     p.done = true;
-    progress::emit(app, &p);
+    progress::emit(sink, &p);
 }
 
 /// 下载远程文件到临时目录，返回本地路径（供打开）
@@ -1233,6 +1235,7 @@ async fn sftp_download(
     local_dir: Option<String>,
 ) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
+    let sink = EventSink::from(&app);
     let temp_dir = remote_temp::resolve_temp_dir(local_dir.as_deref());
     let name = transfer_label(&path, "下载中…");
     let pool = state.sftp_pool.lock().await;
@@ -1244,10 +1247,10 @@ async fn sftp_download(
         let mut p = progress::TransferProgress::start("download", &name, 1);
         p.file_done = done;
         p.file_total = total;
-        progress::emit(&app, &p);
+        progress::emit(&sink, &p);
     })
     .await;
-    emit_transfer_done(&app, "download", &name);
+    emit_transfer_done(&sink, "download", &name);
     result
 }
 
@@ -1264,6 +1267,7 @@ async fn sftp_download_to(
     overwrite: Option<bool>,
 ) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
+    let sink = EventSink::from(&app);
     let label = transfer_label(&path, "下载中…");
     let (id, flag) = register_transfer_cancel(&state, "sftp:");
     let pool = state.sftp_pool.lock().await;
@@ -1279,7 +1283,7 @@ async fn sftp_download_to(
     let mut done_files = 0usize;
     let mut cur_label = label.clone();
     let id_task = id.clone();
-    let app_task = app.clone();
+    let sink_task = sink.clone();
     let result = sftp::download_to(&pool, &local_dir, &path, overwrite.unwrap_or(false), &mut move |ev| {
         if flag.load(std::sync::atomic::Ordering::Relaxed) {
             return false;
@@ -1296,7 +1300,7 @@ async fn sftp_download_to(
                     p.file_done = done;
                     p.file_total = total;
                     p.done_files = done_files;
-                    progress::emit(&app_task, &p);
+                    progress::emit(&sink_task, &p);
                 }
                 return true;
             }
@@ -1304,12 +1308,12 @@ async fn sftp_download_to(
         }
         p.label = cur_label.clone();
         p.done_files = done_files;
-        progress::emit(&app_task, &p);
+        progress::emit(&sink_task, &p);
         true
     })
     .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
-    emit_sftp_transfer_end(&app, "download", plan.files, &result);
+    emit_sftp_transfer_end(&sink, "download", plan.files, &result);
     result
 }
 
@@ -1326,6 +1330,7 @@ async fn sftp_upload(
     name: String,
 ) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
+    let sink = EventSink::from(&app);
     let label = transfer_label(&name, "上传中…");
     // 计划阶段：统计本地树（纯本地遍历，快）；失败回退单文件分母，不阻塞传输
     let plan = sftp::upload_plan(&local).unwrap_or(sftp::TransferPlan { files: 1, bytes: 0 });
@@ -1335,7 +1340,7 @@ async fn sftp_upload(
     let mut done_files = 0usize;
     let mut cur_label = label.clone();
     let id_task = id.clone();
-    let app_task = app.clone();
+    let sink_task = sink.clone();
     let result = sftp::upload_path(&pool, &local, &dest, &name, &mut move |ev| {
         if flag.load(std::sync::atomic::Ordering::Relaxed) {
             return false;
@@ -1353,7 +1358,7 @@ async fn sftp_upload(
                     p.file_done = done;
                     p.file_total = total;
                     p.done_files = done_files;
-                    progress::emit(&app_task, &p);
+                    progress::emit(&sink_task, &p);
                 }
                 return true;
             }
@@ -1361,12 +1366,12 @@ async fn sftp_upload(
         }
         p.label = cur_label.clone();
         p.done_files = done_files;
-        progress::emit(&app_task, &p);
+        progress::emit(&sink_task, &p);
         true
     })
     .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
-    emit_sftp_transfer_end(&app, "upload", plan.files, &result);
+    emit_sftp_transfer_end(&sink, "upload", plan.files, &result);
     result
 }
 
@@ -1432,6 +1437,7 @@ async fn nfs_download(
     local_dir: Option<String>,
 ) -> Result<String, String> {
     ensure_plugin(&state, "nfs")?;
+    let sink = EventSink::from(&app);
     let temp_dir = remote_temp::resolve_temp_dir(local_dir.as_deref());
     let name = transfer_label(&path, "下载中…");
     let mut throttle = progress::Throttle::new();
@@ -1444,10 +1450,10 @@ async fn nfs_download(
             let mut p = progress::TransferProgress::start("download", &name, 1);
             p.file_done = done;
             p.file_total = total;
-            progress::emit(&app, &p);
+            progress::emit(&sink, &p);
         })
         .await;
-    emit_transfer_done(&app, "download", &name);
+    emit_transfer_done(&sink, "download", &name);
     result
 }
 
@@ -1461,6 +1467,7 @@ async fn nfs_download_to(
     overwrite: Option<bool>,
 ) -> Result<String, String> {
     ensure_plugin(&state, "nfs")?;
+    let sink = EventSink::from(&app);
     let label = transfer_label(&path, "下载中…");
     let (id, flag) = register_transfer_cancel(&state, "sftp:");
     // 计划阶段：遍历远程树统计文件数（多个 RTT，期间响应取消）
@@ -1475,7 +1482,7 @@ async fn nfs_download_to(
     let mut done_files = 0usize;
     let mut cur_label = label.clone();
     let id_task = id.clone();
-    let app_task = app.clone();
+    let sink_task = sink.clone();
     let result = state
         .nfs
         .download_to(local_dir, path, overwrite.unwrap_or(false), &mut move |ev| {
@@ -1494,7 +1501,7 @@ async fn nfs_download_to(
                         p.file_done = done;
                         p.file_total = total;
                         p.done_files = done_files;
-                        progress::emit(&app_task, &p);
+                        progress::emit(&sink_task, &p);
                     }
                     return true;
                 }
@@ -1502,12 +1509,12 @@ async fn nfs_download_to(
             }
             p.label = cur_label.clone();
             p.done_files = done_files;
-            progress::emit(&app_task, &p);
+            progress::emit(&sink_task, &p);
             true
         })
         .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
-    emit_sftp_transfer_end(&app, "download", plan.files, &result);
+    emit_sftp_transfer_end(&sink, "download", plan.files, &result);
     result
 }
 
@@ -1521,6 +1528,7 @@ async fn nfs_upload(
     name: String,
 ) -> Result<String, String> {
     ensure_plugin(&state, "nfs")?;
+    let sink = EventSink::from(&app);
     let label = transfer_label(&name, "上传中…");
     // 计划阶段：统计本地树（纯本地遍历，快）；失败回退单文件分母，不阻塞传输
     let plan = nfs_backend::upload_plan(&local).unwrap_or(nfs_backend::TransferPlan { files: 1, bytes: 0 });
@@ -1529,7 +1537,7 @@ async fn nfs_upload(
     let mut done_files = 0usize;
     let mut cur_label = label.clone();
     let id_task = id.clone();
-    let app_task = app.clone();
+    let sink_task = sink.clone();
     let result = state
         .nfs
         .upload_path(local, dest, name, &mut move |ev| {
@@ -1548,7 +1556,7 @@ async fn nfs_upload(
                         p.file_done = done;
                         p.file_total = total;
                         p.done_files = done_files;
-                        progress::emit(&app_task, &p);
+                        progress::emit(&sink_task, &p);
                     }
                     return true;
                 }
@@ -1556,12 +1564,12 @@ async fn nfs_upload(
             }
             p.label = cur_label.clone();
             p.done_files = done_files;
-            progress::emit(&app_task, &p);
+            progress::emit(&sink_task, &p);
             true
         })
         .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
-    emit_sftp_transfer_end(&app, "upload", plan.files, &result);
+    emit_sftp_transfer_end(&sink, "upload", plan.files, &result);
     result
 }
 
@@ -1796,6 +1804,7 @@ async fn copy_entries(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_task = id.clone();
+    let sink = EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
         let mut done_entries = 0usize;
@@ -1829,10 +1838,10 @@ async fn copy_entries(
             p.file_done = file_done;
             p.file_total = file_total;
             p.id = Some(id_task.clone());
-            progress::emit(&app, &p);
+            progress::emit(&sink, &p);
             true
         });
-        emit_transfer_end(&app, "copy", n, &r);
+        emit_transfer_end(&sink, "copy", n, &r);
         r
     })
     .await
@@ -1857,6 +1866,7 @@ async fn move_entries(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_task = id.clone();
+    let sink = EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
         let mut done_entries = 0usize;
@@ -1890,10 +1900,10 @@ async fn move_entries(
             p.file_done = file_done;
             p.file_total = file_total;
             p.id = Some(id_task.clone());
-            progress::emit(&app, &p);
+            progress::emit(&sink, &p);
             true
         });
-        emit_transfer_end(&app, "move", n, &r);
+        emit_transfer_end(&sink, "move", n, &r);
         r
     })
     .await
@@ -1904,8 +1914,8 @@ async fn move_entries(
 
 /// 传输结束（完成/失败/取消）统一发 done 事件：失败与取消也要终止进度条，
 /// 取消时前端把文案收敛为「已取消」。
-fn emit_transfer_end<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+fn emit_transfer_end(
+    sink: &EventSink,
     phase: &str,
     total: usize,
     r: &Result<impl Sized, String>,
@@ -1917,7 +1927,7 @@ fn emit_transfer_end<R: tauri::Runtime>(
         Err(_) => "传输失败".into(),
     };
     progress::emit(
-        app,
+        sink,
         &progress::TransferProgress {
             phase: phase.into(),
             label,
@@ -1964,6 +1974,7 @@ async fn copy_entries_plan(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_task = id.clone();
+    let sink = EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
         let mut done_entries = 0usize;
@@ -1997,10 +2008,10 @@ async fn copy_entries_plan(
             p.file_done = file_done;
             p.file_total = file_total;
             p.id = Some(id_task.clone());
-            progress::emit(&app, &p);
+            progress::emit(&sink, &p);
             true
         });
-        emit_transfer_end(&app, "copy", n, &r);
+        emit_transfer_end(&sink, "copy", n, &r);
         r
     })
     .await
@@ -2026,6 +2037,7 @@ async fn move_entries_plan(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_task = id.clone();
+    let sink = EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
         let mut done_entries = 0usize;
@@ -2059,10 +2071,10 @@ async fn move_entries_plan(
             p.file_done = file_done;
             p.file_total = file_total;
             p.id = Some(id_task.clone());
-            progress::emit(&app, &p);
+            progress::emit(&sink, &p);
             true
         });
-        emit_transfer_end(&app, "move", n, &r);
+        emit_transfer_end(&sink, "move", n, &r);
         r
     })
     .await
@@ -2260,9 +2272,11 @@ pub fn run() {
                 plugins::plugin_enabled(&state.plugins, "cmdrun"),
             );
             // 磁盘/卷热插拔监视（v0.27）：挂载/卸载/推出后推送最新列表，侧边栏即时刷新
-            volumes::spawn_watcher(app.handle().clone());
+            // 事件出口：桌面实现（tauri emit）；web 模式（rdir-web）将以广播实现注入
+            let sink = EventSink::from(app.handle().clone());
+            volumes::spawn_watcher(sink.clone());
             // 打开目录内容监视（v0.26.1）：程序外新增/删除文件推送 fs://changed，窗体即时刷新
-            fs_watch::spawn_fs_watcher(app.handle().clone());
+            fs_watch::spawn_fs_watcher(sink);
             Ok(())
         });
     // 注意：tauri Builder::invoke_handler 是“覆盖”语义（后调覆盖先调），
