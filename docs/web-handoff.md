@@ -109,7 +109,10 @@ lib.rs 的 *_core()        共享核心：GUI 命令与 web 桥调同一份实�
   双击 /api-file/CSP 沙箱 fetch 被拒/搜索指纹 MD5）13 项 ✓；B14–B17 ✓；B19 ✓；
   B20 master-key 全环（设置→密文落盘→重启→未解锁拒连 NEED_MASTER_KEY→解锁重连）✓；
   B21 导出导入 ✓；B22 地址栏直连 ✓（弹连接对话框=预期流程）；B23 目录比对 ✓；
-  B24 文本比对+回写往返 ✓；B25 GBK 编码比对 ✓；B28 只读实例 ✓（浏览/下载照常、
+  B24 文本比对+回写往返 ✓；B25 GBK 编码比对 ✓；B26 GUI+web 共享配置 ✓（便携沙箱
+  双二进制实测：web 写 prefs → GUI 起读同一份、双实例并发 15s 双活、三个共享 json
+  无损坏——last-write-wins 语义确认，脚本 `web-b26-shared-config.mjs`，6 项断言）；
+  B28 只读实例 ✓（浏览/下载照常、
   写命令与上传全拒、banner 标注只读）；B29 便携标记 ✓（数据落 exe 旁 data/）；
   B32 0.0.0.0 banner 安全提示 ✓。**未跑：B26**（需同时构建 GUI 版做配置共享竞态，
   已知竞态为接受项）；B30/B31 降级路径由 WEB_UNSUPPORTED 报错覆盖（拖出/分享/
@@ -128,7 +131,8 @@ lib.rs 的 *_core()        共享核心：GUI 命令与 web 桥调同一份实�
 - 测试环境坑（供后人）：WSL2 发行版空闲自停，TCP SYN 唤不醒，须 wsl.exe 调用
   或常驻会话钉住；node v24 Windows 同进程多次 fs.rmSync 硬崩（exit 127 零输出，
   libuv UV_HANDLE_CLOSING 断言），测试脚本一律 execSync rm（dts
-  infra-build_node-rmsync-uv-assert-crash）。
+  infra-build_node-rmsync-uv-assert-crash）。另：本机 8425 端口被思源笔记服务占用，
+  rdir-web 绑定失败静默退出——banner 先打后绑定，端口探测要断言 login=303 防撞别家服务。
 
 ## 3. ✅ 待办 A（2026-11-07 已完成）：SFTP 窗格拖拽上传
 
