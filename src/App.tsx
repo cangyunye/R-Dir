@@ -1380,7 +1380,7 @@ useEffect(() => {
   // web 模式外部文件拖入：preventDefault 阻止浏览器整页打开被拖文件，
   // 文件经 /api/upload（multipart）上传到活动窗格目录后刷新窗格。
   // 桌面版走 Tauri onDragDropEvent 既有链路（本 effect 不启用）。
-  // SFTP 窗格需「落服务端临时目录 → sftp_upload」两段式，v1 暂不支持并提示。
+  // SFTP 窗格两段式：先落服务端临时目录，再 sftp_upload 转传远程。
   useEffect(() => {
     if (isTauri()) return;
     const onDragOver = (e: DragEvent) => {
@@ -1393,8 +1393,46 @@ useEffect(() => {
       const pane = activePane;
       const dir = pane?.path;
       if (!pane || !dir) return;
-      if (dir.startsWith("sftp://") || dir.startsWith("nfs://")) {
+      if (dir.startsWith("nfs://")) {
         showError(t("web 模式暂只支持拖拽上传到本地窗格"));
+        return;
+      }
+      if (dir.startsWith("sftp://")) {
+        try {
+          const temp = await remoteTempInfo();
+          // 临时目录在首次远程「打开/预览」前可能尚不存在（全新数据目录），先确保落盘；
+          // 已存在会报错，忽略（真正的失败由 /api/upload 兜底报出）
+          const base = basename(temp.path.replace(/[\\/]+$/, ""));
+          await createDir(temp.path.slice(0, temp.path.length - base.length - 1), base).catch(
+            () => {},
+          );
+          const fd = new FormData();
+          for (const f of files) fd.append("files", f, f.name);
+          const res = await fetch(`/api/upload?dir=${encodeURIComponent(temp.path)}`, {
+            method: "POST",
+            body: fd,
+          });
+          const body = (await res.json().catch(() => null)) as
+            | { ok: boolean; error?: string; data?: string[] }
+            | null;
+          if (!body?.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+          const landed = body.data ?? [];
+          try {
+            // 远端重名覆盖（FXF_TRUNC），与桌面拖拽/粘贴同一命令同语义
+            for (const p of landed) await sftpUpload(p, dir, basename(p));
+            refreshPane(pane.id);
+          } finally {
+            if (landed.length > 0) {
+              try {
+                await permanentDeleteEntries(landed);
+              } catch {
+                /* 清理失败不掩盖上传结果 */
+              }
+            }
+          }
+        } catch (err) {
+          showError(t("上传失败：{msg}", { msg: String(err) }));
+        }
         return;
       }
       try {
