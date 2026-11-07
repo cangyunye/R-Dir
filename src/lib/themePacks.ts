@@ -7,7 +7,7 @@
  * （index.css 的 .settings-glass 以 var(--glass-*, 原值) 消费）。
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./ipc";
 
 export interface ThemePack {
   /** "$schema"（rdir-theme/1） */

@@ -15,7 +15,9 @@ vi.mock("@/lib/api", () => ({
   deleteEntries: (...a: unknown[]) => deleteEntries(...a),
 }));
 
-vi.mock("@tauri-apps/api/event", () => ({
+// 组件经 src/lib/ipc.ts 适配层订阅事件；jsdom 无 Tauri 运行时（isTauri()=false），
+// 直接 mock 适配层的 listen 中和订阅副作用
+vi.mock("@/lib/ipc", () => ({
   listen: vi.fn(async () => () => undefined),
 }));
 

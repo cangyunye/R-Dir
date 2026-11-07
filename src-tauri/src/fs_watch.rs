@@ -57,8 +57,8 @@ fn dir_signature(dir: &Path) -> Option<u64> {
 }
 
 /// 后台轮询：签名变化的目录批量经 `fs://changed` 推送（载荷为目录路径数组）。
-pub fn spawn_fs_watcher(app: tauri::AppHandle) {
-    use tauri::Emitter;
+/// 事件经 EventSink 发射（桌面 tauri emit / web 广播），模块不再依赖 AppHandle。
+pub fn spawn_fs_watcher(sink: crate::events::EventSink) {
     thread::spawn(move || {
         // dir → 上次签名；None 签名（目录消失）也记录，避免每轮重复推送
         let mut last: BTreeMap<String, Option<u64>> = BTreeMap::new();
@@ -93,7 +93,7 @@ pub fn spawn_fs_watcher(app: tauri::AppHandle) {
             // 清理不再监视的目录，避免 last 无限增长
             last.retain(|k, _| seen.contains(k));
             if !changed.is_empty() {
-                let _ = app.emit("fs://changed", &changed);
+                sink.emit("fs://changed", &changed);
             }
         }
     });

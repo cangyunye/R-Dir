@@ -221,6 +221,40 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" "$PKG" "$MANIFEST" --clobber --repo "$GITHUB_REPOSITORY"
           echo "uploaded $PKG (+$MANIFEST)"
 
+      # 绿色版（免安装）：单 exe + 便携标记（R-Dir.portable，paths.rs 据此把全部数据
+      # 落到 exe 旁 data\）+ 说明 README，打成 zip 作为 Release 资产。
+      - name: Pack portable zip (windows)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Windows 宿主构建在 target/release（无 triple 段）；交叉布局一并兜底
+          $candidates = @(
+            "src-tauri/target/release/R-Dir.exe",
+            "src-tauri/target/x86_64-pc-windows-msvc/release/R-Dir.exe"
+          )
+          $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) { throw "绿色版源 exe 不存在：$($candidates -join ', ')" }
+          $ver = $env:GITHUB_REF_NAME -replace '^v', ''
+          $dir = "portable/R-Dir-Portable"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item $exe "$dir/R-Dir.exe"
+          # 便携模式标记：存在且为文件即启用（见 src-tauri/src/paths.rs）
+          New-Item -ItemType File -Force -Path "$dir/R-Dir.portable" | Out-Null
+          Copy-Item "tools/portable-README.txt" "$dir/README.txt"
+          $zip = "portable/R-Dir_${ver}_windows_x64_portable.zip"
+          Compress-Archive -Path "$dir/*" -DestinationPath $zip -Force
+          Write-Host "packed $zip"
+
+      - name: Archive portable zip (publish 兜底补传源)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-windows-x64
+          path: portable/*.zip
+          if-no-files-found: error
+          retention-days: 3
+
   # 三个平台都成功后才把 Draft 转正；任何平台失败则 release 永远停留在 Draft，用户看不到残缺版本
   publish:
     needs: build
@@ -256,13 +290,19 @@ jobs:
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/body.md"
 
       # v0.41 安装包资产门禁：tauri-action 可能静默丢件（见 build job 注释）。
-      # 五个安装包缺一不可——缺失先从 build artifacts 兜底补传，补不齐则本 job 失败，
-      # Release 停留在 Draft，绝不把缺资产的版本发成 Latest。
+      # 五个安装包 + 绿色版 zip 缺一不可——缺失先从 build artifacts 兜底补传，
+      # 补不齐则本 job 失败，Release 停留在 Draft，绝不把缺资产的版本发成 Latest。
       - name: Download bundles (repair source)
         uses: actions/download-artifact@v4
         with:
           pattern: bundles-*
           path: bundles-artifacts
+
+      - name: Download portable zip (repair source)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: portable-*
+          path: portable-artifacts
 
       - name: Verify & repair installers
         env:
@@ -271,6 +311,8 @@ jobs:
           set -euo pipefail
           VER="${GITHUB_REF_NAME#v}"
           TAG="$GITHUB_REF_NAME"
+          # 兜底目录可能因上游 job 跳过而不存在，find 前置保证存在
+          mkdir -p bundles-artifacts portable-artifacts
           existing="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort -u)"
           rc=0
           for a in \
@@ -278,12 +320,13 @@ jobs:
             "R-Dir_aarch64.app.tar.gz" \
             "R-Dir_${VER}_x64.dmg" \
             "R-Dir_x64.app.tar.gz" \
-            "R-Dir_${VER}_x64-setup.exe"
+            "R-Dir_${VER}_x64-setup.exe" \
+            "R-Dir_${VER}_windows_x64_portable.zip"
           do
             if grep -Fxq "$a" <<<"$existing"; then
               echo "ok: $a"; continue
             fi
-            file="$(find bundles-artifacts -name "$a" -print -quit)"
+            file="$(find bundles-artifacts portable-artifacts -name "$a" -print -quit)"
             if [ -z "$file" ]; then
               echo "::error::资产缺失且 build 产物中不存在：$a"; rc=1; continue
             fi

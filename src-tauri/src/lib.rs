@@ -3,6 +3,7 @@ mod cmdrun;
 mod compress;
 mod diff;
 mod drag_out;
+pub mod events;
 mod extract;
 mod find;
 mod fs_ops;
@@ -28,11 +29,16 @@ mod nfs_plugin;
 mod smb;
 
 mod opener;
+pub mod paths;
 mod plugins;
 mod http_autoindex;
 #[cfg(feature = "share")]
 mod share;
+/// v0.43 web 服务（rdir-web bin 专用，web feature 门控）
+#[cfg(feature = "web")]
+pub mod web;
 
+use events::EventSink;
 use find::FindEntry;
 use fs_ops::FileEntry;
 use search::SearchMatch;
@@ -139,8 +145,9 @@ impl BackendKind {
 
 /// 列目录的统一后端调度：`list_dir` 命令与 `diff_dirs` 共用，
 /// 「哪些后端能列目录」只有这一个权威答案。
-async fn list_side(
-    state: &tauri::State<'_, AppState>,
+/// 全后端目录列表路由（smb/sftp/nfs/http/local）；GUI 命令与 web 桥共用
+pub(crate) async fn list_side(
+    state: &AppState,
     path: &str,
 ) -> Result<Vec<FileEntry>, String> {
     if smb::is_smb_path(path) || smb::is_unc_server_root(path) {
@@ -202,6 +209,11 @@ async fn stat_path(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> Result<String, String> {
+    stat_path_core(&state, path).await
+}
+
+/// stat_path 核心（全后端路由；GUI 命令与 web 桥共用）
+pub(crate) async fn stat_path_core(state: &AppState, path: String) -> Result<String, String> {
     // smb:// → UNC 后按本地处理；UNC 服务器根（\\host）= 共享列表视图，恒为目录
     let path = smb::normalize_for_local(&path)?;
     if smb::is_unc_server_root(&path) {
@@ -261,7 +273,7 @@ async fn stat_paths(paths: Vec<String>) -> Vec<String> {
 // ==================== 插件注册表命令（v0.5） ====================
 
 /// 校验插件启用状态（返回 Err 时插件已禁用）。SFTP / NFS 命令共用。
-fn ensure_plugin(state: &AppState, id: &str) -> Result<(), String> {
+pub(crate) fn ensure_plugin(state: &AppState, id: &str) -> Result<(), String> {
     if plugins::plugin_enabled(&state.plugins, id) {
         Ok(())
     } else {
@@ -307,22 +319,28 @@ fn set_plugin_enabled(
     id: String,
     enabled: bool,
 ) -> Result<Vec<plugins::PluginInfo>, String> {
+    set_plugin_enabled_core(&state, &paths::config_dir(&app)?, id, enabled)
+}
+
+/// set_plugin_enabled 核心（GUI 命令与 web 桥共用；web 桥恒 nfs_installed=false）
+pub(crate) fn set_plugin_enabled_core(
+    state: &AppState,
+    config_dir: &std::path::Path,
+    id: String,
+    enabled: bool,
+) -> Result<Vec<plugins::PluginInfo>, String> {
     plugins::set_enabled(&state.plugins, &id, enabled);
     let file = plugins::to_file(&state.plugins);
-    plugins::save_file(&app, &file)?;
+    plugins::save_file_in(config_dir, &file)?;
     let map = state.plugins.enabled.lock().unwrap().clone();
-    let nfs_installed = nfs_plugin_installed(&app);
-    Ok(plugins::builtin_plugins(&map, nfs_installed))
+    Ok(plugins::builtin_plugins(&map, false))
 }
 
 // ==================== SFTP 插件命令（feature = "sftp"） ====================
 
 #[cfg(feature = "sftp")]
 fn sftp_servers_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    let dir = paths::config_dir(app)?;
     Ok(dir.join(sftp::servers::SERVERS_FILE))
 }
 
@@ -333,8 +351,16 @@ async fn sftp_list_servers(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<sftp::ServerView>, String> {
+    sftp_list_servers_core(&state, &sftp_servers_path(&app)?).await
+}
+
+/// sftp_list_servers 核心（servers.json 路径显式传入；GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_list_servers_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
+) -> Result<Vec<sftp::ServerView>, String> {
     ensure_plugin(&state, "sftp")?;
-    let path = sftp_servers_path(&app)?;
     let file = sftp::servers::load_file(&path);
     let pool = state.sftp_pool.lock().await;
     Ok(file.servers.iter().map(|s| sftp::to_view(s, &pool)).collect())
@@ -349,14 +375,27 @@ async fn sftp_list_servers(
 #[tauri::command]
 async fn sftp_save_server(
     app: tauri::AppHandle,
-    mut server: sftp::servers::ServerConfigFile,
+    server: sftp::servers::ServerConfigFile,
     state: tauri::State<'_, AppState>,
+) -> Result<Vec<sftp::ServerView>, String> {
+    sftp_save_server_core(&state, &sftp_servers_path(&app)?, server).await
+}
+
+/// sftp_save_server 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_save_server_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
+    mut server: sftp::servers::ServerConfigFile,
 ) -> Result<Vec<sftp::ServerView>, String> {
     ensure_plugin(&state, "sftp")?;
     use sftp::servers::AuthConfig;
-    let path = sftp_servers_path(&app)?;
     let mut file = sftp::servers::load_file(&path);
     let id = sftp::servers::server_id(&server.user, &server.host, server.port);
+    // id 归一：存盘 id 恒为 user@host:port（= 连接池键 = disconnect 的入参）。
+    // 前端三条路径（对话框/地址栏直连/会话恢复）都发派生 id，但外部调用方
+    // 可能带自定义 id——不归一的话 upsert 匹配不到派生 id，每次保存都追加重复。
+    server.id = id.clone();
     // 编辑保留：已存在服务器且对应字段留空 → 沿用旧值（密文原样保留）
     if let Some(old) = file.servers.iter().find(|s| s.id == id) {
         match (&mut server.auth, &old.auth) {
@@ -399,8 +438,17 @@ async fn sftp_remove_server(
     id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<sftp::ServerView>, String> {
+    sftp_remove_server_core(&state, &sftp_servers_path(&app)?, id).await
+}
+
+/// sftp_remove_server 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_remove_server_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
+    id: String,
+) -> Result<Vec<sftp::ServerView>, String> {
     ensure_plugin(&state, "sftp")?;
-    let path = sftp_servers_path(&app)?;
     let mut file = sftp::servers::load_file(&path);
     file.servers.retain(|s| s.id != id);
     sftp::servers::save_file(&path, &file)?;
@@ -418,8 +466,18 @@ async fn sftp_set_server_group(
     ids: Vec<String>,
     group: String,
 ) -> Result<Vec<sftp::ServerView>, String> {
+    sftp_set_server_group_core(&state, &sftp_servers_path(&app)?, ids, group).await
+}
+
+/// sftp_set_server_group 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_set_server_group_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
+    ids: Vec<String>,
+    group: String,
+) -> Result<Vec<sftp::ServerView>, String> {
     ensure_plugin(&state, "sftp")?;
-    let path = sftp_servers_path(&app)?;
     let mut file = sftp::servers::load_file(&path);
     let mut changed = false;
     for srv in file.servers.iter_mut() {
@@ -442,7 +500,15 @@ async fn sftp_master_key_status(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<sftp::MasterKeyStatus, String> {
-    let path = sftp_servers_path(&app)?;
+    sftp_master_key_status_core(&state, &sftp_servers_path(&app)?).await
+}
+
+/// sftp_master_key_status 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_master_key_status_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
+) -> Result<sftp::MasterKeyStatus, String> {
     let file = sftp::servers::load_file(&path);
     let configured = file.master_key_check.is_some();
     let active = state.master_key.lock().await.is_some();
@@ -463,10 +529,19 @@ async fn sftp_set_master_key(
     key: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    sftp_set_master_key_core(&state, &sftp_servers_path(&app)?, key).await
+}
+
+/// sftp_set_master_key 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_set_master_key_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
+    key: String,
+) -> Result<(), String> {
     if key.is_empty() {
         return Err("主密钥不能为空".into());
     }
-    let path = sftp_servers_path(&app)?;
     let mut file = sftp::servers::load_file(&path);
     if let Some(check) = &file.master_key_check {
         if *check != sftp::servers::master_key_check(key.as_bytes()) {
@@ -491,7 +566,15 @@ async fn sftp_reset_master_key(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let path = sftp_servers_path(&app)?;
+    sftp_reset_master_key_core(&state, &sftp_servers_path(&app)?).await
+}
+
+/// sftp_reset_master_key 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_reset_master_key_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
+) -> Result<(), String> {
     let mut file = sftp::servers::load_file(&path);
     file.master_key_check = None;
     // 清空所有 enc:v1: 开头的密码（无法解密的密文）
@@ -515,12 +598,21 @@ async fn sftp_reset_master_key(
 async fn sftp_connect(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    server: sftp::servers::ServerConfigFile,
+) -> Result<sftp::ServerView, String> {
+    sftp_connect_core(&state, &sftp_servers_path(&app)?, server).await
+}
+
+/// sftp_connect 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_connect_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
     mut server: sftp::servers::ServerConfigFile,
 ) -> Result<sftp::ServerView, String> {
     ensure_plugin(&state, "sftp")?;
     // 回退到已保存配置：host 留空 = 只传 id（会话恢复），整条回退存盘配置；
     // 字段留空 → 用存盘值（可能为 enc: 密文，下方统一解密）
-    let path = sftp_servers_path(&app)?;
     let file = sftp::servers::load_file(&path);
     if let Some(stored) = file.servers.iter().find(|s| s.id == server.id) {
         if server.host.is_empty() {
@@ -593,12 +685,34 @@ async fn sftp_connect(
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_disconnect(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
-    ensure_plugin(&state, "sftp")?;
+    sftp_disconnect_core(&state, &sftp_servers_path(&app)?, id).await
+}
+
+/// sftp_disconnect 核心（GUI 命令与 web 桥共用）。id 按活连接池键（user@host:port）
+/// 直断；不是池键时回退按存盘清单解析（兼容旧自定义 id 存盘的清单）。
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_disconnect_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
+    id: String,
+) -> Result<(), String> {
+    ensure_plugin(state, "sftp")?;
     let mut pool = state.sftp_pool.lock().await;
-    pool.remove(&id);
+    if pool.get(&id).is_some() {
+        pool.remove(&id);
+        return Ok(());
+    }
+    let file = sftp::servers::load_file(path);
+    if let Some(s) = file.servers.iter().find(|s| s.id == id) {
+        let key = sftp::pool_key(&s.user, &s.host, s.port);
+        if pool.get(&key).is_some() {
+            pool.remove(&key);
+        }
+    }
     Ok(())
 }
 
@@ -642,10 +756,7 @@ pub struct SessionLayout {
 }
 
 fn session_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    let dir = paths::config_dir(app)?;
     Ok(dir.join("session.json"))
 }
 
@@ -711,10 +822,7 @@ pub struct FavoritesFile {
 }
 
 fn favorites_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    let dir = paths::config_dir(app)?;
     Ok(dir.join("favorites.json"))
 }
 
@@ -750,10 +858,7 @@ async fn favorites_save(app: tauri::AppHandle, items: Vec<TabFavorite>) -> Resul
 /// prefs.json 存标签重命名/文件标签/快捷访问，与 session.json 同级；
 /// 作为 WebView localStorage 的可靠备份（避免本地存储被清空导致配置丢失）。
 fn prefs_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("无法定位配置目录：{e}"))?;
+    let dir = paths::config_dir(app)?;
     Ok(dir.join("prefs.json"))
 }
 
@@ -800,10 +905,10 @@ async fn compute_size(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_for_task = id.clone();
+    let sink = EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        use tauri::Emitter;
         sizestat::compute(&id_for_task, &paths, &flag, |p| {
-            let _ = app.emit("size-progress", p);
+            sink.emit("size-progress", p);
         })
     })
     .await
@@ -837,6 +942,31 @@ async fn diff_dirs(
     case_sensitive: bool,
     mtime_tolerance_ms: i64,
 ) -> Result<diff::DiffOutcome, String> {
+    diff_dirs_core(
+        &state,
+        &EventSink::from(app),
+        id,
+        left,
+        right,
+        level,
+        case_sensitive,
+        mtime_tolerance_ms,
+    )
+    .await
+}
+
+/// diff_dirs 核心（GUI 命令与 web 桥共用；sink 承载 diff-progress 事件）
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn diff_dirs_core(
+    state: &AppState,
+    sink: &EventSink,
+    id: String,
+    left: String,
+    right: String,
+    level: u8,
+    case_sensitive: bool,
+    mtime_tolerance_ms: i64,
+) -> Result<diff::DiffOutcome, String> {
     let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     state
         .diff_cancels
@@ -857,10 +987,10 @@ async fn diff_dirs(
     // 两侧串行列目录（同主机的 SFTP 会话本就由 pool 互斥）
     let l = list_side(&state, &left).await?;
     let r = list_side(&state, &right).await?;
+    let sink = sink.clone();
     let joined = tauri::async_runtime::spawn_blocking(move || {
-        use tauri::Emitter;
         diff::compare_entries(&id_for_task, l, r, &opts, &flag, |p| {
-            let _ = app.emit("diff-progress", p);
+            sink.emit("diff-progress", p);
         })
     })
     .await;
@@ -881,7 +1011,7 @@ fn cancel_diff(state: tauri::State<'_, AppState>, id: String) {
 /// 解析文本比较的一侧路径：本地直接用；SFTP/HTTP 先下载到临时目录（用完即删）。
 /// 返回 (本地路径, 是否临时文件)。
 async fn resolve_text_side(
-    state: &tauri::State<'_, AppState>,
+    state: &AppState,
     path: &str,
 ) -> Result<(String, bool), String> {
     // SMB：smb:// 翻译为 UNC 后走本地读取（UNC 本身走下面的本地分支）
@@ -933,6 +1063,16 @@ async fn resolve_text_side(
 #[tauri::command]
 async fn diff_text_files(
     state: tauri::State<'_, AppState>,
+    left: String,
+    right: String,
+    encoding: Option<String>,
+) -> Result<text_diff::TextDiffOutcome, String> {
+    diff_text_files_core(&state, left, right, encoding).await
+}
+
+/// diff_text_files 核心（GUI 命令与 web 桥共用）
+pub(crate) async fn diff_text_files_core(
+    state: &AppState,
     left: String,
     right: String,
     encoding: Option<String>,
@@ -997,6 +1137,14 @@ async fn diff_text_files(
 #[tauri::command]
 async fn read_text_file(
     state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<text_diff::TextFileContent, String> {
+    read_text_file_core(&state, path).await
+}
+
+/// read_text_file 核心（GUI 命令与 web 桥共用）
+pub(crate) async fn read_text_file_core(
+    state: &AppState,
     path: String,
 ) -> Result<text_diff::TextFileContent, String> {
     let (local, temp) = resolve_text_side(&state, &path).await?;
@@ -1070,6 +1218,17 @@ fn sanitize_remote_name(name: &str) -> String {
 #[tauri::command]
 async fn write_text_file(
     state: tauri::State<'_, AppState>,
+    path: String,
+    lines: Vec<String>,
+    eol: String,
+    encoding: Option<String>,
+) -> Result<(), String> {
+    write_text_file_core(&state, path, lines, eol, encoding).await
+}
+
+/// write_text_file 核心（GUI 命令与 web 桥共用）
+pub(crate) async fn write_text_file_core(
+    state: &AppState,
     path: String,
     lines: Vec<String>,
     eol: String,
@@ -1193,16 +1352,16 @@ fn transfer_label(path: &str, fallback: &str) -> String {
 
 /// 传输收尾事件：前端仅在收到 done=true 后 1.5s 清除状态栏传输指示，
 /// 缺失会导致指示器永久卡在「下载中… 100%」（v0.18.1 修复）。
-fn emit_transfer_done(app: &tauri::AppHandle, phase: &str, label: &str) {
+fn emit_transfer_done(sink: &EventSink, phase: &str, label: &str) {
     let mut p = progress::TransferProgress::start(phase, label, 1);
     p.done = true;
-    progress::emit(app, &p);
+    progress::emit(sink, &p);
 }
 
 /// 注册可取消传输：transfer_cancels 插入新旗标，返回 (id, 旗标)。
 /// prefix 用于前端取消路由判别（sftp: 走 cancel_transfer，无前缀的 download 是 http）。
 fn register_transfer_cancel(
-    state: &tauri::State<'_, AppState>,
+    state: &AppState,
     prefix: &str,
 ) -> (String, std::sync::Arc<std::sync::atomic::AtomicBool>) {
     let id = format!("{prefix}{}", next_transfer_id());
@@ -1218,7 +1377,7 @@ fn register_transfer_cancel(
 /// SFTP 递归传输收尾：完成/失败/取消统一发 done 帧（取消文案收敛为「已取消」，
 /// 与本地复制 emit_transfer_end 同语义；其余 label 由前端按 phase 渲染「xx完成」）。
 fn emit_sftp_transfer_end(
-    app: &tauri::AppHandle,
+    sink: &EventSink,
     phase: &str,
     total_files: usize,
     r: &Result<impl Sized, String>,
@@ -1231,7 +1390,7 @@ fn emit_sftp_transfer_end(
     let mut p = progress::TransferProgress::start(phase, label, total_files);
     p.done_files = total_files;
     p.done = true;
-    progress::emit(app, &p);
+    progress::emit(sink, &p);
 }
 
 /// 下载远程文件到临时目录，返回本地路径（供打开）
@@ -1240,6 +1399,17 @@ fn emit_sftp_transfer_end(
 async fn sftp_download(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    path: String,
+    local_dir: Option<String>,
+) -> Result<String, String> {
+    sftp_download_core(&state, &EventSink::from(&app), path, local_dir).await
+}
+
+/// sftp_download 核心（GUI 命令与 web 桥共用；sink 承载 transfer-progress）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_download_core(
+    state: &AppState,
+    sink: &EventSink,
     path: String,
     local_dir: Option<String>,
 ) -> Result<String, String> {
@@ -1255,10 +1425,10 @@ async fn sftp_download(
         let mut p = progress::TransferProgress::start("download", &name, 1);
         p.file_done = done;
         p.file_total = total;
-        progress::emit(&app, &p);
+        progress::emit(&sink, &p);
     })
     .await;
-    emit_transfer_done(&app, "download", &name);
+    emit_transfer_done(&sink, "download", &name);
     result
 }
 
@@ -1270,6 +1440,18 @@ async fn sftp_download(
 async fn sftp_download_to(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    local_dir: String,
+    path: String,
+    overwrite: Option<bool>,
+) -> Result<String, String> {
+    sftp_download_to_core(&state, &EventSink::from(&app), local_dir, path, overwrite).await
+}
+
+/// sftp_download_to 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_download_to_core(
+    state: &AppState,
+    sink: &EventSink,
     local_dir: String,
     path: String,
     overwrite: Option<bool>,
@@ -1290,7 +1472,7 @@ async fn sftp_download_to(
     let mut done_files = 0usize;
     let mut cur_label = label.clone();
     let id_task = id.clone();
-    let app_task = app.clone();
+    let sink_task = sink.clone();
     let result = sftp::download_to(&pool, &local_dir, &path, overwrite.unwrap_or(false), &mut move |ev| {
         if flag.load(std::sync::atomic::Ordering::Relaxed) {
             return false;
@@ -1307,7 +1489,7 @@ async fn sftp_download_to(
                     p.file_done = done;
                     p.file_total = total;
                     p.done_files = done_files;
-                    progress::emit(&app_task, &p);
+                    progress::emit(&sink_task, &p);
                 }
                 return true;
             }
@@ -1315,12 +1497,12 @@ async fn sftp_download_to(
         }
         p.label = cur_label.clone();
         p.done_files = done_files;
-        progress::emit(&app_task, &p);
+        progress::emit(&sink_task, &p);
         true
     })
     .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
-    emit_sftp_transfer_end(&app, "download", plan.files, &result);
+    emit_sftp_transfer_end(&sink, "download", plan.files, &result);
     result
 }
 
@@ -1336,6 +1518,18 @@ async fn sftp_upload(
     dest: String,
     name: String,
 ) -> Result<String, String> {
+    sftp_upload_core(&state, &EventSink::from(&app), local, dest, name).await
+}
+
+/// sftp_upload 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_upload_core(
+    state: &AppState,
+    sink: &EventSink,
+    local: String,
+    dest: String,
+    name: String,
+) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
     let label = transfer_label(&name, "上传中…");
     // 计划阶段：统计本地树（纯本地遍历，快）；失败回退单文件分母，不阻塞传输
@@ -1346,7 +1540,7 @@ async fn sftp_upload(
     let mut done_files = 0usize;
     let mut cur_label = label.clone();
     let id_task = id.clone();
-    let app_task = app.clone();
+    let sink_task = sink.clone();
     let result = sftp::upload_path(&pool, &local, &dest, &name, &mut move |ev| {
         if flag.load(std::sync::atomic::Ordering::Relaxed) {
             return false;
@@ -1364,7 +1558,7 @@ async fn sftp_upload(
                     p.file_done = done;
                     p.file_total = total;
                     p.done_files = done_files;
-                    progress::emit(&app_task, &p);
+                    progress::emit(&sink_task, &p);
                 }
                 return true;
             }
@@ -1372,12 +1566,12 @@ async fn sftp_upload(
         }
         p.label = cur_label.clone();
         p.done_files = done_files;
-        progress::emit(&app_task, &p);
+        progress::emit(&sink_task, &p);
         true
     })
     .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
-    emit_sftp_transfer_end(&app, "upload", plan.files, &result);
+    emit_sftp_transfer_end(&sink, "upload", plan.files, &result);
     result
 }
 
@@ -1443,6 +1637,7 @@ async fn nfs_download(
     local_dir: Option<String>,
 ) -> Result<String, String> {
     ensure_plugin(&state, "nfs")?;
+    let sink = EventSink::from(&app);
     let temp_dir = remote_temp::resolve_temp_dir(local_dir.as_deref());
     let name = transfer_label(&path, "下载中…");
     let mut throttle = progress::Throttle::new();
@@ -1455,10 +1650,10 @@ async fn nfs_download(
             let mut p = progress::TransferProgress::start("download", &name, 1);
             p.file_done = done;
             p.file_total = total;
-            progress::emit(&app, &p);
+            progress::emit(&sink, &p);
         })
         .await;
-    emit_transfer_done(&app, "download", &name);
+    emit_transfer_done(&sink, "download", &name);
     result
 }
 
@@ -1472,6 +1667,7 @@ async fn nfs_download_to(
     overwrite: Option<bool>,
 ) -> Result<String, String> {
     ensure_plugin(&state, "nfs")?;
+    let sink = EventSink::from(&app);
     let label = transfer_label(&path, "下载中…");
     let (id, flag) = register_transfer_cancel(&state, "sftp:");
     // 计划阶段：遍历远程树统计文件数（多个 RTT，期间响应取消）
@@ -1486,7 +1682,7 @@ async fn nfs_download_to(
     let mut done_files = 0usize;
     let mut cur_label = label.clone();
     let id_task = id.clone();
-    let app_task = app.clone();
+    let sink_task = sink.clone();
     let result = state
         .nfs
         .download_to(local_dir, path, overwrite.unwrap_or(false), &mut move |ev| {
@@ -1505,7 +1701,7 @@ async fn nfs_download_to(
                         p.file_done = done;
                         p.file_total = total;
                         p.done_files = done_files;
-                        progress::emit(&app_task, &p);
+                        progress::emit(&sink_task, &p);
                     }
                     return true;
                 }
@@ -1513,12 +1709,12 @@ async fn nfs_download_to(
             }
             p.label = cur_label.clone();
             p.done_files = done_files;
-            progress::emit(&app_task, &p);
+            progress::emit(&sink_task, &p);
             true
         })
         .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
-    emit_sftp_transfer_end(&app, "download", plan.files, &result);
+    emit_sftp_transfer_end(&sink, "download", plan.files, &result);
     result
 }
 
@@ -1532,6 +1728,7 @@ async fn nfs_upload(
     name: String,
 ) -> Result<String, String> {
     ensure_plugin(&state, "nfs")?;
+    let sink = EventSink::from(&app);
     let label = transfer_label(&name, "上传中…");
     // 计划阶段：统计本地树（纯本地遍历，快）；失败回退单文件分母，不阻塞传输
     let plan = nfs_backend::upload_plan(&local).unwrap_or(nfs_backend::TransferPlan { files: 1, bytes: 0 });
@@ -1540,7 +1737,7 @@ async fn nfs_upload(
     let mut done_files = 0usize;
     let mut cur_label = label.clone();
     let id_task = id.clone();
-    let app_task = app.clone();
+    let sink_task = sink.clone();
     let result = state
         .nfs
         .upload_path(local, dest, name, &mut move |ev| {
@@ -1559,7 +1756,7 @@ async fn nfs_upload(
                         p.file_done = done;
                         p.file_total = total;
                         p.done_files = done_files;
-                        progress::emit(&app_task, &p);
+                        progress::emit(&sink_task, &p);
                     }
                     return true;
                 }
@@ -1567,12 +1764,12 @@ async fn nfs_upload(
             }
             p.label = cur_label.clone();
             p.done_files = done_files;
-            progress::emit(&app_task, &p);
+            progress::emit(&sink_task, &p);
             true
         })
         .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
-    emit_sftp_transfer_end(&app, "upload", plan.files, &result);
+    emit_sftp_transfer_end(&sink, "upload", plan.files, &result);
     result
 }
 
@@ -1662,8 +1859,19 @@ async fn sftp_export_servers(
     exported_at: String,
     master_key: Option<String>,
 ) -> Result<sftp::servers::ExportOutcome, String> {
+    sftp_export_servers_core(&state, &sftp_servers_path(&app)?, target, exported_at, master_key).await
+}
+
+/// sftp_export_servers 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_export_servers_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
+    target: String,
+    exported_at: String,
+    master_key: Option<String>,
+) -> Result<sftp::servers::ExportOutcome, String> {
     ensure_plugin(&state, "sftp")?;
-    let path = sftp_servers_path(&app)?;
     let mut file = sftp::servers::load_file(&path);
     let provided = master_key.map(String::into_bytes);
     {
@@ -1705,6 +1913,17 @@ async fn sftp_import_servers(
     file_path: String,
     master_key: Option<String>,
 ) -> Result<sftp::servers::ImportOutcome, String> {
+    sftp_import_servers_core(&state, &sftp_servers_path(&app)?, file_path, master_key).await
+}
+
+/// sftp_import_servers 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_import_servers_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
+    file_path: String,
+    master_key: Option<String>,
+) -> Result<sftp::servers::ImportOutcome, String> {
     ensure_plugin(&state, "sftp")?;
     let text = tauri::async_runtime::spawn_blocking(move || {
         std::fs::read_to_string(&file_path).map_err(|e| format!("读取导出文件失败：{e}"))
@@ -1712,7 +1931,6 @@ async fn sftp_import_servers(
     .await
     .map_err(|e| format!("读取任务失败：{e}"))??;
     let export = sftp::servers::parse_export(&text)?;
-    let path = sftp_servers_path(&app)?;
     let mut file = sftp::servers::load_file(&path);
     let outcome = {
         let mk = state.master_key.lock().await;
@@ -1807,6 +2025,7 @@ async fn copy_entries(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_task = id.clone();
+    let sink = EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
         let mut done_entries = 0usize;
@@ -1840,10 +2059,10 @@ async fn copy_entries(
             p.file_done = file_done;
             p.file_total = file_total;
             p.id = Some(id_task.clone());
-            progress::emit(&app, &p);
+            progress::emit(&sink, &p);
             true
         });
-        emit_transfer_end(&app, "copy", n, &r);
+        emit_transfer_end(&sink, "copy", n, &r);
         r
     })
     .await
@@ -1868,6 +2087,7 @@ async fn move_entries(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_task = id.clone();
+    let sink = EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
         let mut done_entries = 0usize;
@@ -1901,10 +2121,10 @@ async fn move_entries(
             p.file_done = file_done;
             p.file_total = file_total;
             p.id = Some(id_task.clone());
-            progress::emit(&app, &p);
+            progress::emit(&sink, &p);
             true
         });
-        emit_transfer_end(&app, "move", n, &r);
+        emit_transfer_end(&sink, "move", n, &r);
         r
     })
     .await
@@ -1915,8 +2135,8 @@ async fn move_entries(
 
 /// 传输结束（完成/失败/取消）统一发 done 事件：失败与取消也要终止进度条，
 /// 取消时前端把文案收敛为「已取消」。
-fn emit_transfer_end<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+pub(crate) fn emit_transfer_end(
+    sink: &EventSink,
     phase: &str,
     total: usize,
     r: &Result<impl Sized, String>,
@@ -1928,7 +2148,7 @@ fn emit_transfer_end<R: tauri::Runtime>(
         Err(_) => "传输失败".into(),
     };
     progress::emit(
-        app,
+        sink,
         &progress::TransferProgress {
             phase: phase.into(),
             label,
@@ -1975,6 +2195,7 @@ async fn copy_entries_plan(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_task = id.clone();
+    let sink = EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
         let mut done_entries = 0usize;
@@ -2008,10 +2229,10 @@ async fn copy_entries_plan(
             p.file_done = file_done;
             p.file_total = file_total;
             p.id = Some(id_task.clone());
-            progress::emit(&app, &p);
+            progress::emit(&sink, &p);
             true
         });
-        emit_transfer_end(&app, "copy", n, &r);
+        emit_transfer_end(&sink, "copy", n, &r);
         r
     })
     .await
@@ -2037,6 +2258,7 @@ async fn move_entries_plan(
         .unwrap()
         .insert(id.clone(), flag.clone());
     let id_task = id.clone();
+    let sink = EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
         let n = paths.len();
         let mut done_entries = 0usize;
@@ -2070,10 +2292,10 @@ async fn move_entries_plan(
             p.file_done = file_done;
             p.file_total = file_total;
             p.id = Some(id_task.clone());
-            progress::emit(&app, &p);
+            progress::emit(&sink, &p);
             true
         });
-        emit_transfer_end(&app, "move", n, &r);
+        emit_transfer_end(&sink, "move", n, &r);
         r
     })
     .await
@@ -2262,7 +2484,7 @@ pub fn run() {
             // v0.40 NFS 后端定型：InProcess（feature = "nfs"）或伴生进程插件（安装根定位）
             state
                 .nfs
-                .init(app.path().app_config_dir().ok().map(|d| d.join("plugins")));
+                .init(paths::config_dir(app.handle()).ok().map(|d| d.join("plugins")));
             // 命令补全索引预热（后台线程）：优先加载磁盘缓存，PATH 签名变化才重扫，
             // 避免首次在地址栏输入裸词时全量扫描 PATH 卡住主线程
             cmdrun::warm_cache_async(
@@ -2271,9 +2493,11 @@ pub fn run() {
                 plugins::plugin_enabled(&state.plugins, "cmdrun"),
             );
             // 磁盘/卷热插拔监视（v0.27）：挂载/卸载/推出后推送最新列表，侧边栏即时刷新
-            volumes::spawn_watcher(app.handle().clone());
+            // 事件出口：桌面实现（tauri emit）；web 模式（rdir-web）将以广播实现注入
+            let sink = EventSink::from(app.handle().clone());
+            volumes::spawn_watcher(sink.clone());
             // 打开目录内容监视（v0.26.1）：程序外新增/删除文件推送 fs://changed，窗体即时刷新
-            fs_watch::spawn_fs_watcher(app.handle().clone());
+            fs_watch::spawn_fs_watcher(sink);
             Ok(())
         });
     // 注意：tauri Builder::invoke_handler 是“覆盖”语义（后调覆盖先调），

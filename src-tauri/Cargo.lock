@@ -279,6 +279,7 @@ dependencies = [
  "matchit",
  "memchr",
  "mime",
+ "multer",
  "percent-encoding",
  "pin-project-lite",
  "serde_core",
@@ -352,7 +353,7 @@ checksum = "6aeac2e1fe888769f34f05ac343bbef98b14d1ffb292ab69d4608b3abc86f2a2"
 dependencies = [
  "blowfish",
  "pbkdf2 0.12.2",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1418,7 +1419,7 @@ dependencies = [
  "ed25519",
  "rand_core 0.6.4",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "subtle",
  "zeroize",
 ]
@@ -2953,6 +2954,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
+name = "mime_guess"
+version = "2.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
+dependencies = [
+ "mime",
+ "unicase",
+]
+
+[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3012,6 +3023,23 @@ dependencies = [
  "serde",
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "multer"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83e87776546dc87511aa5ee218730c92b666d7264ab6ed41f9d215af9cd5224b"
+dependencies = [
+ "bytes 1.12.1",
+ "encoding_rs",
+ "futures-util",
+ "http",
+ "httparse",
+ "memchr",
+ "mime",
+ "spin",
+ "version_check",
 ]
 
 [[package]]
@@ -3520,7 +3548,7 @@ dependencies = [
  "ecdsa",
  "elliptic-curve",
  "primeorder",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3532,7 +3560,7 @@ dependencies = [
  "ecdsa",
  "elliptic-curve",
  "primeorder",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3546,7 +3574,7 @@ dependencies = [
  "elliptic-curve",
  "primeorder",
  "rand_core 0.6.4",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3629,7 +3657,7 @@ dependencies = [
  "digest 0.10.7",
  "hmac 0.12.1",
  "password-hash",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3812,7 +3840,7 @@ dependencies = [
  "der",
  "pbkdf2 0.12.2",
  "scrypt",
- "sha2",
+ "sha2 0.10.9",
  "spki",
 ]
 
@@ -4330,7 +4358,7 @@ dependencies = [
  "pkcs1",
  "pkcs8",
  "rand_core 0.6.4",
- "sha2",
+ "sha2 0.10.9",
  "signature",
  "spki",
  "subtle",
@@ -4372,7 +4400,7 @@ dependencies = [
  "russh-cryptovec",
  "russh-keys",
  "sha1 0.10.7",
- "sha2",
+ "sha2 0.10.9",
  "ssh-encoding",
  "ssh-key",
  "subtle",
@@ -4430,7 +4458,7 @@ dependencies = [
  "sec1",
  "serde",
  "sha1 0.10.7",
- "sha2",
+ "sha2 0.10.9",
  "spki",
  "ssh-encoding",
  "ssh-key",
@@ -4439,6 +4467,41 @@ dependencies = [
  "tokio-stream",
  "typenum",
  "zeroize",
+]
+
+[[package]]
+name = "rust-embed"
+version = "8.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19afa5b4b6a611de00bd1bdae6ae6f39084c9399f0679c3f52d8469cf335cc23"
+dependencies = [
+ "rust-embed-impl",
+ "rust-embed-utils",
+ "walkdir",
+]
+
+[[package]]
+name = "rust-embed-impl"
+version = "8.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0d8afda6374eac59e066abee06d265247ebbaf3006cf878e2879e8356e34053"
+dependencies = [
+ "mime_guess",
+ "proc-macro2",
+ "quote",
+ "rust-embed-utils",
+ "syn 2.0.119",
+ "walkdir",
+]
+
+[[package]]
+name = "rust-embed-utils"
+version = "8.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d84e8ba78bd384263e5922f084cbe1b081c3b7e69add59c8fb097b879ba968a"
+dependencies = [
+ "sha2 0.11.1",
+ "walkdir",
 ]
 
 [[package]]
@@ -4474,9 +4537,10 @@ dependencies = [
  "regex",
  "russh",
  "russh-keys",
+ "rust-embed",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tar",
  "tauri",
  "tauri-build",
@@ -4638,7 +4702,7 @@ checksum = "0516a385866c09368f0b5bcd1caff3366aace790fcd46e2bb032697bb172fd1f"
 dependencies = [
  "pbkdf2 0.12.2",
  "salsa20",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -4910,6 +4974,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha2"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
+]
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5074,7 +5149,7 @@ checksum = "eb9242b9ef4108a78e8cd1a2c98e193ef372437f8c22be363075233321dd4a15"
 dependencies = [
  "base64ct",
  "pem-rfc7468",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -5092,7 +5167,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rsa",
  "sec1",
- "sha2",
+ "sha2 0.10.9",
  "signature",
  "ssh-cipher",
  "ssh-encoding",
@@ -5388,7 +5463,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "syn 2.0.119",
  "tauri-utils",
  "thiserror 2.0.20",
@@ -6122,6 +6197,12 @@ checksum = "96bd2f2237fe450fcd0a1d2f5f4e91711124f7857ba2e964247776ebeeb7b0c4"
 dependencies = [
  "unic-common",
 ]
+
+[[package]]
+name = "unicase"
+version = "2.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357cc3acc6a036009fd6c973ed009037c732d60d0b4f6c673e9041497482a28f"
 
 [[package]]
 name = "unicode-ident"
@@ -7083,7 +7164,7 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "raw-window-handle",
- "sha2",
+ "sha2 0.10.9",
  "soup3",
  "tao-macros",
  "thiserror 2.0.20",

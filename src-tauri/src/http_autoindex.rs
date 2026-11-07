@@ -5,6 +5,7 @@
 //! 验证 v0.5 插件注册表对"新增插件"的零改动扩展性；未来外置插件加载层接入时
 //! 本模块的解析逻辑可直接复用。
 
+use crate::events::EventSink;
 use crate::fs_ops::FileEntry;
 use crate::progress;
 use regex::Regex;
@@ -451,13 +452,24 @@ pub async fn http_download_to(
     local_dir: String,
     url: String,
 ) -> Result<String, String> {
+    http_download_to_core(&state, &EventSink::from(app), local_dir, url).await
+}
+
+/// http_download_to 核心（GUI 命令与 web 桥共用；sink 承载 transfer-progress）
+pub(crate) async fn http_download_to_core(
+    state: &crate::AppState,
+    sink: &EventSink,
+    local_dir: String,
+    url: String,
+) -> Result<String, String> {
     if !crate::plugins::plugin_enabled(&state.plugins, "http") {
         return Err("HTTP autoindex 插件已禁用（设置 → 插件中可重新启用）".into());
     }
     let cancel = Arc::new(AtomicBool::new(false));
     download_cancels().lock().unwrap().insert(url.clone(), cancel.clone());
     let cleanup_url = url.clone();
-    let res = tauri::async_runtime::spawn_blocking(move || download_impl(&app, &local_dir, &url, &cancel))
+    let sink = sink.clone();
+    let res = tauri::async_runtime::spawn_blocking(move || download_impl(&sink, &local_dir, &url, &cancel))
         .await
         .map_err(|e| format!("下载任务失败：{e}"))?;
     download_cancels().lock().unwrap().remove(&cleanup_url);
@@ -620,14 +632,14 @@ fn download_with_progress(
     Ok(dest.to_string_lossy().to_string())
 }
 
-/// 命令入口：进度转发到前端传输面板
+/// 命令入口：进度转发到前端传输面板（EventSink 出口，模块核心不含 AppHandle）
 fn download_impl(
-    app: &tauri::AppHandle,
+    sink: &EventSink,
     local_dir: &str,
     url: &str,
     cancel: &AtomicBool,
 ) -> Result<String, String> {
-    download_with_progress(local_dir, url, cancel, &mut |p| progress::emit(app, p))
+    download_with_progress(local_dir, url, cancel, &mut |p| progress::emit(sink, p))
 }
 
 /// 提取 URL 最后一段作为文件名（去 query/fragment，百分号解码）

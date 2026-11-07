@@ -23,10 +23,10 @@ import type { SftpConnectInitial } from "@/components/ConnectDialog";
 import { parseSftpAuthority, sftpUrl } from "@/lib/sftp-path";
 import { formatSize } from "@/lib/format";
 import {
-  confirm as confirmDialog,
-  open as openFileDialog,
-  save as saveFileDialog,
-} from "@tauri-apps/plugin-dialog";
+  dialogConfirm as confirmDialog,
+  dialogOpen as openFileDialog,
+  dialogSave as saveFileDialog,
+} from "@/lib/fileDialog";
 
 /** 会话恢复中挂起的 SFTP 连接（master-key 输入成功后重试） */
 export interface PendingSftpRestore {

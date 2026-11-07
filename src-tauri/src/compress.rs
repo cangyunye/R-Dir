@@ -7,8 +7,6 @@
 //! - 进度：仅起止两次事件（系统命令不回传按文件粒度的进度）
 
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
-
 use crate::progress::{emit, TransferProgress};
 
 /// 同名冲突自动改名：name.zip → name (2).zip → name (3).zip …
@@ -41,20 +39,20 @@ pub(crate) fn unique_dest(p: &Path) -> PathBuf {
 /// 返回生成的文件完整路径。
 #[tauri::command]
 pub async fn compress_items(
-    app: AppHandle,
+    app: tauri::AppHandle,
     paths: Vec<String>,
     target_dir: String,
     format: String,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        compress_items_blocking(app, paths, target_dir, format)
+        compress_items_blocking(&crate::events::EventSink::from(app), paths, target_dir, format)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-fn compress_items_blocking(
-    app: AppHandle,
+pub(crate) fn compress_items_blocking(
+    sink: &crate::events::EventSink,
     paths: Vec<String>,
     target_dir: String,
     format: String,
@@ -90,14 +88,14 @@ fn compress_items_blocking(
 
     let mut prog = TransferProgress::start("compress", &label, paths.len());
     prog.done_files = 0;
-    emit(&app, &prog);
+    emit(sink, &prog);
 
     // 用系统命令压缩（比纯 Rust crate 快很多）
     let result = compress_with_system(&paths, &out, &format, dir);
 
     prog.done = true;
     prog.done_files = prog.total_files;
-    emit(&app, &prog);
+    emit(sink, &prog);
     result.map_err(|e| format!("压缩失败:{e}"))?;
     Ok(out.to_string_lossy().into_owned())
 }

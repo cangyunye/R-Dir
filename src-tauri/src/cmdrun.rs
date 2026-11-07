@@ -17,7 +17,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
 
 /// 补全条目：命令名 + 命中的可执行文件完整路径
 #[derive(Serialize, Deserialize, Clone)]
@@ -285,8 +284,7 @@ fn rebuild(dirs: &[PathBuf]) -> Vec<ExecEntry> {
 
 /// 索引文件路径（app_config_dir/cmd-index.json）；解析失败返回 None（仅内存缓存）
 pub fn index_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    app.path()
-        .app_config_dir()
+    crate::paths::config_dir(app)
         .ok()
         .map(|dir| dir.join(INDEX_FILE))
 }

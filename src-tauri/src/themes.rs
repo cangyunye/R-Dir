@@ -7,7 +7,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use tauri::Manager;
 
 pub const THEME_SCHEMA: &str = "rdir-theme/1";
 pub const THEMES_DIR: &str = "themes";
@@ -202,11 +201,12 @@ pub fn export_to(path: &Path, pack: ThemePack) -> Result<(), String> {
 }
 
 fn themes_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("无法定位配置目录：{e}"))?;
-    Ok(dir.join(THEMES_DIR))
+    Ok(themes_dir_in(&crate::paths::config_dir(app)?))
+}
+
+/// 主题目录（配置目录显式传入；GUI 命令与 web 桥共用）
+pub(crate) fn themes_dir_in(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join(THEMES_DIR)
 }
 
 #[tauri::command]

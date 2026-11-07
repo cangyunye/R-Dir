@@ -7,9 +7,9 @@
 pub mod http;
 pub mod session;
 
+use crate::events::EventSink;
 use crate::share::session::{ShareManager, SharePerm, ShareRoot, ShareSession, ShareSessionView};
 use serde::Serialize;
-use tauri::Emitter;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -60,6 +60,8 @@ pub async fn share_create(
     if !crate::plugins::plugin_enabled(&plugins.plugins, "share") {
         return Err("分享插件已禁用（设置 → 插件中可重新启用）".into());
     }
+    // 事件出口：到期/启停通知统一经 sink（桌面 tauri emit / web 广播）
+    let sink = EventSink::from(app);
     let root = PathBuf::from(&dir);
     if !root.is_dir() {
         return Err("分享目录不存在或不是文件夹".into());
@@ -99,16 +101,16 @@ pub async fn share_create(
     if let Some(exp) = expires_at {
         let mgr2 = Arc::clone(&mgr);
         let id2 = id.clone();
-        let app2 = app.clone();
+        let sink2 = sink.clone();
         let dur = exp.duration_since(SystemTime::now()).unwrap_or_default();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(dur).await;
             mgr2.stop(&id2);
-            let _ = app2.emit("share://changed", ());
+            sink2.emit("share://changed", &());
         });
     }
     // 通知前端刷新
-    let _ = app.emit("share://changed", ());
+    sink.emit("share://changed", &());
 
     let url = format!("http://{}:{}/{}", lan_ip(), port, token);
     Ok(ShareCreateResult {
@@ -154,7 +156,7 @@ pub fn share_list(state: tauri::State<'_, ShareState>) -> Vec<ShareSessionView> 
 #[tauri::command]
 pub fn share_stop(app: tauri::AppHandle, state: tauri::State<'_, ShareState>, id: String) -> Result<(), String> {
     let ok = state.manager.stop(&id);
-    let _ = app.emit("share://changed", ());
+    EventSink::from(app).emit("share://changed", &());
     if ok {
         Ok(())
     } else {
@@ -167,7 +169,7 @@ pub fn share_stop(app: tauri::AppHandle, state: tauri::State<'_, ShareState>, id
 pub fn share_stop_by_dir(app: tauri::AppHandle, state: tauri::State<'_, ShareState>, dir: String) -> usize {
     let n = state.manager.stop_by_root(std::path::Path::new(&dir));
     if n > 0 {
-        let _ = app.emit("share://changed", ());
+        EventSink::from(app).emit("share://changed", &());
     }
     n
 }
