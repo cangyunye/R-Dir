@@ -5,6 +5,17 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.43.0 (2026-11-07)
+
+- **便携模式数据目录收敛（`paths.rs`）**：exe 旁存在 `R-Dir.portable` 标记（只认 exe 直接父目录）时，GUI 与 web 的全部数据（config/data）落到 `data/{config,data}`，与安装版（`%APPDATA%\com.rfm.app`）互不干扰；数据目录三级解析 `--data-dir > 便携标记 > 用户配置目录`，GUI 与 web 可同时运行并共享同一份配置/主题/插件/SFTP 清单（B26 实测：双实例并发 15s 双活、三个共享 json 无损坏，last-write-wins）。
+- **rdir-web 无窗口 web 服务**：console 子系统二进制（不依赖 WebView2、可跑无桌面环境），rust-embed 内嵌前端，`pnpm web` 一键启动；CLI：`--listen`（默认 127.0.0.1:8420）/`--token`（默认随机 32 hex）/`--data-dir`/`--read-only`。鉴权走 `/login?k=` 换 HttpOnly cookie（30 天）+ `?k=` 兜底；写类命令服务端 `WRITE_COMMANDS` 只读门禁 + `/api/upload` 双闸；`/api/file` 文件流端点（Range + **CSP sandbox**——不可信 HTML 内 fetch API 实测被拒，安全底线）；事件六类经 `EventSink` 抽象 → `WebEmitter` WS 广播（`fs://changed`/`transfer-progress` 等）。
+- **web 桥表 77 命令 + 41 刻意不桥**：浏览/写链路/SFTP 全环/比对/搜索/主题包/插件开关/持久化全量桥接（GUI 命令与 web 桥调同一份 `*_core`，零复制零漂移）；刻意不桥三类——NFS 伴生插件族 11（产品决策）、本机执行族 22（终端/打开方式/快捷工具，预留 `--allow-exec`）、桌面 shell 10（系统剪贴板文件格式/原生拖出/分享）。新增 `pnpm audit:web` 覆盖审计脚本：桌面命令全集 vs 桥表 vs 不桥登记三方核对，漏桥即失败（首跑抓到 `share_stop_by_dir` 漏登记）。
+- **SFTP 窗格拖拽上传（web）**：浏览器拖文件到 `sftp://` 活动窗格两段式上传——`remote_temp_info` 取服务端临时目录（上传前 `create_dir` 兜底：临时目录在首次远程打开前不存在，`/api/upload` 会 NOT_DIR 400）→ `/api/upload` 落盘 → 逐个 `sftp_upload` 转传（远端重名覆盖 `FXF_TRUNC`，与桌面拖拽/粘贴同语义）→ `permanent_delete_entries` try/finally 清理；断网拖拽明确报错不崩页、临时目录零残留。本机拖入本地窗格维持原有直传链路（重名自动 `(n)`）。
+- **SFTP 服务器 id 契约归一（修复）**：`sftp_save_server` 派生 id（`user@host:port`）后未赋回存盘对象——外部调用方传自定义 id 时每次保存盲追加重复条目；`sftp_disconnect` 按 id 直接删连接池键，id≠池键时静默空操作。修复：存盘 id 恒归一为派生键 + disconnect 抽 `sftp_disconnect_core`（GUI 命令与 web 桥共用，带存盘清单回退解析）。GUI 三条路径（对话框/地址栏/会话恢复）本就发派生 id，行为不变。
+- **web 会话/布局持久化**：15s 脏检查自动保存 + 标签页隐藏即存跨端通用（桌面专有的关闭询问对话框在浏览器不注册——`getCurrentWindow()` 无 Tauri 环境同步抛错会崩组件树，已按端早退）；实测浏览器关闭重开后布局与 SFTP 路径完整恢复。
+- **i18n（语言包 v0.5.0）**：`@rdir/l10n` bump——web 批次 +2 strings ×6 包（拖拽上传提示/上传失败）+10 errors ×6 包（`READ_ONLY`/`WEB_UNSUPPORTED`/`WEB_OFFLINE`/`WEB_BAD_RESPONSE`/`ARG_MISSING`/`ARG_TYPE`/`UNAUTHORIZED`/`NOT_FOUND`/`NOT_DIR`/`UPLOAD_FAILED`）；CANONICAL_CODES 补前端传输层两码（check-coverage 全绿：strings 899/899、errors 17/17）。
+- 测试：cargo +12（web 桥/事件/上传安全/便携路径；`cargo test` 234 与 `cargo test --features web` 245/241 全绿——Windows 首跑修两处测试可移植性：nfs_plugin 夹具三元组动态选异平台、smb 活体测试 TCP 445 预检门控）；vitest +40（ipc 双传输/文件对话框兜底/共享 core 重构面；744 全绿）；e2e 真后端回归脚本四件入库（`e2e-shots/web-sftp-loop.mjs` 37 项含 ssh 二次核验、`web-masterkey.mjs` 主密钥全环 11 项、`web-cli-regression.mjs` 只读/便携/0.0.0.0 banner/重启 cookie 12 项、`web-ui-local.mjs` 本地管理 UI 环 13 项）——B1–B32 回归全绿；`web-b26-shared-config.mjs` 共享配置 6 项。
+
 ## v0.42.1 (2026-11-06)
 
 - **分屏重命名窗格隔离**：上下/左右分屏打开同一目录时，在其中一个窗格发起重命名，编辑框会同时出现在两个窗格——`renaming` 状态本就带 `paneId`（提交/刷新链路一直在用），但 SplitView 向 PaneView 下发时未过滤，两窗格的行按 path 双命中，编辑框渲染两份、焦点竞争落到后挂载的窗格，表现为「在上窗格重命名、编辑框出现在下窗格」。修复：下发时按 `renaming.paneId === pane.id` 过滤（与 dragOver/dragDir 同款窗格过滤模式），编辑框只出现在发起重命名的窗格；`RenameState` 类型补 `paneId` 字段。
