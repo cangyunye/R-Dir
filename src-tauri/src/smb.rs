@@ -251,6 +251,12 @@ mod tests {
     #[test]
     fn smb_live_share_list() {
         let host = std::env::var("RDIR_SMB_TEST_HOST").unwrap_or_else(|_| "172.20.214.44".into());
+        // 445 不可达（主机离线/SMB 未开）= 环境不具备，先于文本门跳过；
+        // 错误文案会随版本改写（v0.39 友好化就曾让「错误码 53」文本门失灵），可达性只认 TCP
+        if std::net::TcpStream::connect((host.as_str(), 445)).is_err() {
+            eprintln!("[skip] SMB 测试环境不可用（{host}:445 不可达）");
+            return;
+        }
         match list_shares(&host) {
             Ok(shares) => {
                 assert!(

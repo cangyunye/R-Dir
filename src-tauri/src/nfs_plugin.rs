@@ -549,13 +549,19 @@ mod tests {
     fn manifest_rejects_bad_contract() {
         let body = b"#!/bin/sh\necho rdir-nfs\n";
         // 平台不匹配
-        let zip = build_plugin_zip("nfs", "0.40.0", 1, "0.0.0", "x86_64-pc-windows-msvc", body);
+        // 平台不匹配（夹具三元组取与当前平台必然不同的一个）
+        let foreign = if cfg!(target_os = "windows") {
+            "x86_64-unknown-linux-gnu"
+        } else {
+            "x86_64-pc-windows-msvc"
+        };
+        let zip = build_plugin_zip("nfs", "0.40.0", 1, "0.0.0", foreign, body);
         let cursor = std::io::Cursor::new(zip);
         let mut ar = zip::ZipArchive::new(cursor).unwrap();
         let mut manifest_raw = String::new();
         ar.by_name("manifest.json").unwrap().read_to_string(&mut manifest_raw).unwrap();
         let m: PluginManifest = serde_json::from_str(&manifest_raw).unwrap();
-        assert_ne!(m.target, current_target(), "windows 包不应匹配当前平台");
+        assert_ne!(m.target, current_target(), "异平台包不应匹配当前平台");
         // id 不匹配
         let zip = build_plugin_zip("sftp", "0.40.0", 1, "0.0.0", current_target(), body);
         let cursor = std::io::Cursor::new(zip);
