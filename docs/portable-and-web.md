@@ -114,6 +114,10 @@ cargo build --release --features web --bin rdir-web
 
 ### 待实施阶段
 
+> SFTP 上传与回归测试已立项交接：**Windows 实操环境的接手者请从
+> [`docs/web-handoff.md`](./web-handoff.md) 开始**（含两段式方案草图、B1–B32
+> 回归清单、环境搭法）。
+
 1. **拖拽上传到 SFTP 窗格**（两段式：/api/upload 落服务端临时目录 → sftp_upload → 清理）。
 2. **安全加固**：`READ_ONLY`/`WEB_UNSUPPORTED`/`ARG_*` 错误码入语言包；令牌失效重登
    引导页；`--allow-exec`/`--allow-share` 显式开关落地。
