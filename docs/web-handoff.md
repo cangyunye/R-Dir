@@ -92,7 +92,45 @@ lib.rs 的 *_core()        共享核心：GUI 命令与 web 桥调同一份实�
   （ZCode IAB 拦截 window.open，双击弹新标签无法在该环境演示——真实浏览器
   手势内不拦，已用当前标签导航单独验证端点）。
 
-## 3. 待办 A（你接手的首要任务）：SFTP 窗格拖拽上传
+### 2.1 Windows 实测结果（2026-11-07，headless Chromium + Playwright + 真实 SSH 服务器）
+
+测试机器：WSL Ubuntu2604（kube@172.20.214.44:2222，密钥认证）+ 树莓派 kali
+（192.168.31.100，密码认证）。脚本四件入库 `e2e-shots/`：`web-sftp-upload.mjs`（待办 A
+验收）、`web-sftp-loop.mjs`（37 项）、`web-masterkey.mjs`（B20 两阶段）、
+`web-cli-regression.mjs`（12 项）、`web-ui-local.mjs`（13 项）。
+
+- **待办 A 完成**：SFTP 窗格拖拽上传两段式落地（commit `39a9129`）。验收全过：
+  3 文件（中文名×2+ascii）拖拽上传远端 md5 一致、服务端临时目录零残留、重名覆盖
+  （与桌面同语义）、断网拖拽明确报错页面不崩、清理无残留。实现中修了一个真 bug：
+  临时目录在首次远程打开前不存在 → /api/upload 400（NOT_DIR），上传前 create_dir
+  兜底（dts feat-web_sftp-upload-temp-dir-400）。
+- **B 全表**：B1–B5（鉴权/CLI，B4 用随机 token 实例验证 401）✓；
+  B6–B13（UI 环：导航/标签/右键建改名删撤销/冲突弹窗/压缩 tar/拖入本地 (2) 后缀/
+  双击 /api-file/CSP 沙箱 fetch 被拒/搜索指纹 MD5）13 项 ✓；B14–B17 ✓；B19 ✓；
+  B20 master-key 全环（设置→密文落盘→重启→未解锁拒连 NEED_MASTER_KEY→解锁重连）✓；
+  B21 导出导入 ✓；B22 地址栏直连 ✓（弹连接对话框=预期流程）；B23 目录比对 ✓；
+  B24 文本比对+回写往返 ✓；B25 GBK 编码比对 ✓；B28 只读实例 ✓（浏览/下载照常、
+  写命令与上传全拒、banner 标注只读）；B29 便携标记 ✓（数据落 exe 旁 data/）；
+  B32 0.0.0.0 banner 安全提示 ✓。**未跑：B26**（需同时构建 GUI 版做配置共享竞态，
+  已知竞态为接受项）；B30/B31 降级路径由 WEB_UNSUPPORTED 报错覆盖（拖出/分享/
+  终端在 UI 实测中按设计报错，浏览器内行为符合预期）。
+- **Windows 基线修复**（commit `ff15e37`）：cargo test --features web 首跑 2 failed
+  ——nfs_plugin 夹具三元组写死 + smb 活体测试跳过门不认新错误文案，均为测试
+  可移植性问题；修后 241 passed / 0 failed / 8 ignored；vitest 744 / tsc 0 错。
+- **顺手修的产品级问题**（commit `fad18ca`）：sftp_save_server 传自定义 id 时盲追加
+  重复条目 + disconnect 按非池键 id 静默空操作——id 契约归一为 user@host:port，
+  disconnect 抽 core 带存盘清单回退（dts feat-web_sftp-server-id-not-normalized）。
+- **i18n（待办 C.1 完成）**：L10n 仓库 main 新增 web 批次词条（+2 strings ×6 包、
+  +10 errors ×6 包、CANONICAL_CODES 补 WEB_OFFLINE/WEB_BAD_RESPONSE，check 六包
+  899 strings / 17 errors 全绿，commit c0efb1f）。**注意：L10n main 领先 origin 2 个
+  提交未推送、未打 tag——主仓库依赖仍锁 #v0.4.2，非中文界面在本批次词条上会回退
+  中文详情，推 tag + bump 后消除**（zh 界面不受影响，terr 剥前缀显示详情）。
+- 测试环境坑（供后人）：WSL2 发行版空闲自停，TCP SYN 唤不醒，须 wsl.exe 调用
+  或常驻会话钉住；node v24 Windows 同进程多次 fs.rmSync 硬崩（exit 127 零输出，
+  libuv UV_HANDLE_CLOSING 断言），测试脚本一律 execSync rm（dts
+  infra-build_node-rmsync-uv-assert-crash）。
+
+## 3. ✅ 待办 A（2026-11-07 已完成）：SFTP 窗格拖拽上传
 
 现状：`App.tsx` 的 web 拖放 effect（`refreshPanes` 定义之后，搜「web 模式外部文件拖入」）
 对 `sftp://` 活动窗格只弹「暂不支持」。方案已设计好，**零新增后端命令**，全部用已桥接命令拼装：
