@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "web": "pnpm build && cd src-tauri && cargo run --features web --bin rdir-web",
+    "audit:web": "node tools/audit-web-coverage.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
