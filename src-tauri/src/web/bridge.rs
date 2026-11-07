@@ -694,8 +694,7 @@ async fn c_sftp_connect(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
 #[cfg(feature = "sftp")]
 async fn c_sftp_disconnect(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let id: String = arg(args, "id")?;
-    crate::ensure_plugin(&ctx.state, "sftp")?;
-    ctx.state.sftp_pool.lock().await.remove(&id);
+    crate::sftp_disconnect_core(&ctx.state, &sftp_servers_path(ctx), id).await?;
     Ok(Value::Null)
 }
 

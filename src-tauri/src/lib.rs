@@ -392,6 +392,10 @@ pub(crate) async fn sftp_save_server_core(
     use sftp::servers::AuthConfig;
     let mut file = sftp::servers::load_file(&path);
     let id = sftp::servers::server_id(&server.user, &server.host, server.port);
+    // id 归一：存盘 id 恒为 user@host:port（= 连接池键 = disconnect 的入参）。
+    // 前端三条路径（对话框/地址栏直连/会话恢复）都发派生 id，但外部调用方
+    // 可能带自定义 id——不归一的话 upsert 匹配不到派生 id，每次保存都追加重复。
+    server.id = id.clone();
     // 编辑保留：已存在服务器且对应字段留空 → 沿用旧值（密文原样保留）
     if let Some(old) = file.servers.iter().find(|s| s.id == id) {
         match (&mut server.auth, &old.auth) {
@@ -681,12 +685,34 @@ pub(crate) async fn sftp_connect_core(
 #[cfg(feature = "sftp")]
 #[tauri::command]
 async fn sftp_disconnect(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
-    ensure_plugin(&state, "sftp")?;
+    sftp_disconnect_core(&state, &sftp_servers_path(&app)?, id).await
+}
+
+/// sftp_disconnect 核心（GUI 命令与 web 桥共用）。id 按活连接池键（user@host:port）
+/// 直断；不是池键时回退按存盘清单解析（兼容旧自定义 id 存盘的清单）。
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_disconnect_core(
+    state: &AppState,
+    path: &std::path::PathBuf,
+    id: String,
+) -> Result<(), String> {
+    ensure_plugin(state, "sftp")?;
     let mut pool = state.sftp_pool.lock().await;
-    pool.remove(&id);
+    if pool.get(&id).is_some() {
+        pool.remove(&id);
+        return Ok(());
+    }
+    let file = sftp::servers::load_file(path);
+    if let Some(s) = file.servers.iter().find(|s| s.id == id) {
+        let key = sftp::pool_key(&s.user, &s.host, s.port);
+        if pool.get(&key).is_some() {
+            pool.remove(&key);
+        }
+    }
     Ok(())
 }
 
