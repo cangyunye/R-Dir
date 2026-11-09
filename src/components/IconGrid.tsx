@@ -39,6 +39,7 @@ import {
   setHtml5Drag,
 } from "@/lib/native-drag";
 import { useDragRubberBand } from "@/hooks/useDragRubberBand";
+import { useT } from "@/lib/LanguageProvider";
 import { FileIcon } from "@/components/FileIcon";
 import { ThumbImage } from "@/components/ThumbImage";
 import { TagDots } from "@/components/TagView";
@@ -300,6 +301,7 @@ export function IconGrid({
   onToggleAutoArrange: () => void;
   linkBadge?: LinkSide;
 }) {
+  const t = useT();
   const sorted = useMemo(
     () => sortEntries(entries, sortKey, sortDir, showHidden),
     [entries, sortKey, sortDir, showHidden],
@@ -702,8 +704,8 @@ export function IconGrid({
                 // pointer-events-none + -mb-6：纯展示浮层，不占流式高度、不抢首行命中，跨窗格拖入时网格内容不在光标下移动
                 <div className="pointer-events-none -mb-6 sticky top-0 z-10 flex h-6 items-center justify-center bg-primary/10 text-[11px] font-medium text-primary">
                   {dragOp === "copy"
-                    ? `复制到此处（按住 ${isMac ? "Option" : "Alt"} 切换移动）`
-                    : "移动到此处"}
+                    ? t("复制到此处（按住 {key} 切换移动）", { key: isMac ? "Option" : "Alt" })
+                    : t("移动到此处")}
                 </div>
               )}
               <div className="relative" style={{ height: totalH }}>
@@ -965,7 +967,7 @@ export function IconGrid({
               </div>
               {sorted.length === 0 && (
                 <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">
-                  此目录为空
+                  {t("此目录为空")}
                 </div>
               )}
               {rubber && (
@@ -986,7 +988,7 @@ export function IconGrid({
               className="pointer-events-none fixed left-0 top-0 z-50 rounded-md border bg-popover px-2 py-1 text-xs opacity-0 shadow-elevate"
               style={{ transform: "translate(0px, 0px)" }}
             >
-              复制 0 项
+              {t("复制 {n} 项", { n: 0 })}
             </div>
           </div>
         </ContextMenuTrigger>
@@ -1028,17 +1030,17 @@ export function IconGrid({
               <>
                 <MenuGroup
                   id="sortGrid"
-                  label="排序方式"
+                  label={t("排序方式")}
                   icon={<LayoutGrid className="mr-2 h-4 w-4" />}
                   expanded={expandedMenu === "sortGrid"}
                   onToggle={toggleMenuGroup}
                 >
                   {(
                     [
-                      ["name", "名称"],
-                      ["size", "大小"],
-                      ["modified", "修改时间"],
-                      ["type", "类型"],
+                      ["name", t("名称")],
+                      ["size", t("大小")],
+                      ["modified", t("修改时间")],
+                      ["type", t("类型")],
                     ] as [SortKey, string][]
                   ).map(([key, label]) => (
                     <ContextMenuItem key={key} onSelect={() => onSort(key)}>
@@ -1049,14 +1051,14 @@ export function IconGrid({
                 </MenuGroup>
                 <MenuGroup
                   id="iconSize"
-                  label="图标大小"
+                  label={t("图标大小")}
                   icon={<LayoutGrid className="mr-2 h-4 w-4" />}
                   expanded={expandedMenu === "iconSize"}
                   onToggle={toggleMenuGroup}
                 >
                   {([48, 64, 96, 128] as IconSize[]).map((s) => (
                     <ContextMenuItem key={s} onSelect={() => onIconSizeChange(s)}>
-                      {s === 48 ? "小" : s === 64 ? "中" : s === 96 ? "大" : "超大"}
+                      {s === 48 ? t("小") : s === 64 ? t("中") : s === 96 ? t("大") : t("超大")}
                       {iconSize === s && " ✓"}
                     </ContextMenuItem>
                   ))}
@@ -1066,13 +1068,13 @@ export function IconGrid({
                     onSelect={onToggleAutoArrange}
                     data-auto-arrange-item=""
                   >
-                    <LayoutGrid className="mr-2 h-4 w-4" /> 自动排列
+                    <LayoutGrid className="mr-2 h-4 w-4" /> {t("自动排列")}
                     {autoArrange && <span className="ml-1">✓</span>}
                   </ContextMenuItem>
                 )}
                 {hasPositions && !autoArrange && mode === "icons" && (
                   <ContextMenuItem onSelect={onClearIconPositions}>
-                    <LayoutGrid className="mr-2 h-4 w-4" /> 整理图标
+                    <LayoutGrid className="mr-2 h-4 w-4" /> {t("整理图标")}
                   </ContextMenuItem>
                 )}
               </>

@@ -397,7 +397,7 @@ export function SettingsDialog({
           <button
             onClick={onClose}
             className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="关闭（Esc）"
+            title={t("关闭（Esc）")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -1294,7 +1294,7 @@ export function SettingsDialog({
                         <div key={p.id} className="rounded-md border bg-card px-3 py-2">
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex min-w-0 items-center gap-2">
-                              <span className="truncate text-xs font-medium">{p.name}</span>
+                              <span className="truncate text-xs font-medium">{t(p.name)}</span>
                               <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
                                 v{p.version}
                               </span>
@@ -1356,7 +1356,7 @@ export function SettingsDialog({
                               </div>
                             )}
                           </div>
-                          <div className="mt-1 text-[11px] text-muted-foreground">{p.description}</div>
+                          <div className="mt-1 text-[11px] text-muted-foreground">{t(p.description)}</div>
                           {p.id === "nfs" && p.source === "external" && (
                             <div className="mt-1 text-[11px] text-muted-foreground/80">
                               {p.installed

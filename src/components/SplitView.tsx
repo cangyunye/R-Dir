@@ -19,6 +19,7 @@ import type { IconSize, PaneNode, PaneState, SplitDir, ViewMode } from "@/lib/ty
 import type { IconPositionMap } from "@/lib/api";
 import type { EntryAliases, FileTags, TagDef } from "@/lib/persist";
 import { FileList, type RenameState } from "@/components/FileList";
+import { useT } from "@/lib/LanguageProvider";
 import { IconGrid } from "@/components/IconGrid";
 import { PropertiesBar } from "@/components/PropertiesBar";
 import { TagView } from "@/components/TagView";
@@ -197,6 +198,7 @@ function PaneHead({
   handlers: PaneHandlers;
   paneId: number;
 }) {
+  const t = useT();
   const segs = splitPathSegments(path);
   // 右键落在哪个分段上（null=空白处）；菜单关闭时复位
   const [segmentTarget, setSegmentTarget] = useState<string | null>(null);
@@ -319,14 +321,14 @@ function PaneHead({
           <div
             className="mr-1 flex shrink-0 items-center gap-0.5 rounded-md border border-transparent p-0.5"
             role="group"
-            aria-label="视图模式"
+            aria-label={t("视图模式")}
             data-view-switch=""
           >
             {(
               (
                 [
-                  ["details", <List key="l" className="h-3.5 w-3.5" />, "详情列表"],
-                  ["icons", <LayoutGrid key="g" className="h-3.5 w-3.5" />, "大图标"],
+                  ["details", <List key="l" className="h-3.5 w-3.5" />, t("详情列表")],
+                  ["icons", <LayoutGrid key="g" className="h-3.5 w-3.5" />, t("大图标")],
                   // ["gallery", <GalleryVerticalEnd key="v" className="h-3.5 w-3.5" />, "画廊"],
                 ] as [ViewMode, React.ReactNode, string][]
               ).filter(([mode]) => mode !== "gallery")
@@ -334,7 +336,10 @@ function PaneHead({
               <button
                 key={mode}
                 type="button"
-                title={`${label}（Alt+${mode === "details" ? 1 : mode === "icons" ? 2 : 3}）`}
+                title={t("{label}（Alt+{n}）", {
+                  label,
+                  n: mode === "details" ? 1 : mode === "icons" ? 2 : 3,
+                })}
                 aria-pressed={viewMode === mode}
                 data-view-mode={mode}
                 onClick={(e) => {
@@ -356,7 +361,7 @@ function PaneHead({
           {closable && (
             <button
               type="button"
-              title="关闭窗格"
+              title={t("关闭窗格")}
               data-panehead-close=""
               onClick={onClose}
               className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -370,22 +375,22 @@ function PaneHead({
         {segmentTarget && seg && (
           <>
             <ContextMenuItem onClick={() => h.onMiddleOpen(paneId, segmentTarget)}>
-              <SquarePlus className="mr-2 h-4 w-4" /> 在新标签页打开「{seg.label}」
+              <SquarePlus className="mr-2 h-4 w-4" /> {t("在新标签页打开「{label}」", { label: seg.label })}
             </ContextMenuItem>
             <ContextMenuItem onClick={() => h.onCopyPath(segmentTarget)}>
-              <Copy className="mr-2 h-4 w-4" /> 复制此层级路径
+              <Copy className="mr-2 h-4 w-4" /> {t("复制此层级路径")}
             </ContextMenuItem>
             <ContextMenuSeparator />
           </>
         )}
         <ContextMenuItem onClick={() => h.onCopyPath(path)}>
-          <Copy className="mr-2 h-4 w-4" /> 复制窗格路径
+          <Copy className="mr-2 h-4 w-4" /> {t("复制窗格路径")}
         </ContextMenuItem>
         {h.pluginTerminal && h.shells.length > 0 && (
           <>
             <MenuGroup
               id="terminal"
-              label="在此窗格打开终端"
+              label={t("在此窗格打开终端")}
               icon={<TerminalSquare className="mr-2 h-4 w-4" />}
               expanded={termOpen}
               onToggle={() => setTermOpen((v) => !v)}
@@ -398,7 +403,7 @@ function PaneHead({
                 >
                   <span className="flex-1">{sh.name}</span>
                   {!sh.detected && (
-                    <span className="text-[10px] text-muted-foreground">未安装</span>
+                    <span className="text-[10px] text-muted-foreground">{t("未安装")}</span>
                   )}
                 </ContextMenuItem>
               ))}
@@ -408,14 +413,14 @@ function PaneHead({
         )}
         {!hasScheme(path) && (
           <ContextMenuItem onClick={() => h.onPropertiesDir(path)}>
-            <Info className="mr-2 h-4 w-4" /> 属性（当前目录）
+            <Info className="mr-2 h-4 w-4" /> {t("属性（当前目录）")}
           </ContextMenuItem>
         )}
         {closable && (
           <>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={onClose}>
-              <X className="mr-2 h-4 w-4" /> 关闭窗格
+              <X className="mr-2 h-4 w-4" /> {t("关闭窗格")}
             </ContextMenuItem>
           </>
         )}
@@ -483,6 +488,7 @@ const PaneView = memo(function PaneView({
   paneSwap: PaneSwapDrag | null;
   handlers: PaneHandlers;
 }) {
+  const t = useT();
   const h = handlers;
   const showingTag = pane.tagId ?? null;
   const swapActive = paneSwap?.source === pane.id;
@@ -502,13 +508,13 @@ const PaneView = memo(function PaneView({
       {swapOver && (
         <div className="pointer-events-none absolute inset-x-0 top-7 z-20 flex justify-center">
           <div className="flex items-center gap-1 rounded-md border bg-popover px-2 py-0.5 text-xs font-medium text-primary shadow-elevate">
-            <ArrowLeftRight className="h-3 w-3" /> 交换到此处
+            <ArrowLeftRight className="h-3 w-3" /> {t("交换到此处")}
           </div>
         </div>
       )}
       {pane.loading && (
         <div className="absolute inset-x-0 top-0 z-10 flex h-6 items-center justify-center gap-2 bg-background/80 text-xs text-muted-foreground backdrop-blur-sm">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在加载…
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("正在加载…")}
         </div>
       )}
       {showingTag ? (
@@ -739,6 +745,7 @@ function SplitDivider({
   splitId: number;
   onRatioChange: (splitId: number, ratio: number) => void;
 }) {
+  const t = useT();
   const [drag, setDrag] = useState<{
     startPos: number;
     size: number;
@@ -782,7 +789,7 @@ function SplitDivider({
           ? "w-1 cursor-col-resize"
           : "h-1 cursor-row-resize",
       )}
-      title="拖拽调整分割比例"
+      title={t("拖拽调整分割比例")}
     />
   );
 }

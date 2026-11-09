@@ -5694,22 +5694,21 @@ useEffect(() => {
           }}
         >
           <div className="w-[360px] max-w-[92vw] rounded-lg border bg-background p-4 shadow-xl">
-            <div className="text-sm font-semibold">保存会话布局？</div>
+            <div className="text-sm font-semibold">{t("保存会话布局？")}</div>
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              会话已随使用自动保存，程序意外中断后下次启动会恢复最近布局。
-              「保存并退出」立即保存当前布局；「不保存」将清除已保存会话，下次启动回到默认页。
+              {t("会话已随使用自动保存，程序意外中断后下次启动会恢复最近布局。「保存并退出」立即保存当前布局；「不保存」将清除已保存会话，下次启动回到默认页。")}
               <br />
-              SFTP 远程目录需验证主密钥后恢复，否则显示占位。
+              {t("SFTP 远程目录需验证主密钥后恢复，否则显示占位。")}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setCloseDialogOpen(false)}>
-                取消<span className="ml-1.5 text-[10px] opacity-60">Esc</span>
+                {t("取消")}<span className="ml-1.5 text-[10px] opacity-60">Esc</span>
               </Button>
               <Button variant="outline" size="sm" onClick={() => void handleExitNoSave()}>
-                不保存<span className="ml-1.5 text-[10px] opacity-60">Ctrl+C</span>
+                {t("不保存")}<span className="ml-1.5 text-[10px] opacity-60">Ctrl+C</span>
               </Button>
               <Button size="sm" onClick={() => void handleExitWithSave()} autoFocus>
-                保存并退出
+                {t("保存并退出")}
                 <span className="ml-1.5 text-[10px] opacity-60">{isMac ? "⌘S" : "Ctrl+S"}</span>
               </Button>
             </div>

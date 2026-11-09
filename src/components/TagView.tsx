@@ -337,7 +337,7 @@ export function TagView({
           {/* 标签（内联展开，避免 Radix Sub 在 WKWebView 下的点击丢失） */}
           <MenuGroup
             id="tagViewTags"
-            label="标签"
+            label={t("标签")}
             icon={<Tag className="mr-2 h-4 w-4" />}
             expanded={expandedMenu === "tagViewTags"}
             onToggle={(id) =>

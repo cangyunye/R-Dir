@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/LanguageProvider";
 import { formatSize, formatTime, extLabel } from "@/lib/format";
 import { FileIcon } from "./FileIcon";
 import type { FileEntry } from "@/lib/types";
@@ -74,6 +75,7 @@ export function QuickJump({
   onCancel,
   onOutsideDown,
 }: QuickJumpProps) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -109,7 +111,7 @@ export function QuickJump({
           <input
             ref={inputRef}
             data-quickjump-input=""
-            aria-label="快速定位查询"
+            aria-label={t("快速定位查询")}
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
             onBlur={onOutsideDown}
@@ -136,7 +138,7 @@ export function QuickJump({
             className="sr-only"
           />
           <span className="min-w-0 flex-1 truncate text-sm">
-            {query || <span className="text-muted-foreground">输入以筛选…</span>}
+            {query || <span className="text-muted-foreground">{t("输入以筛选…")}</span>}
           </span>
         </div>
 
@@ -191,8 +193,8 @@ export function QuickJump({
           className="flex items-center justify-between border-t border-border/50 px-3 py-1.5 text-[11px] text-muted-foreground"
           onMouseDown={(e) => e.preventDefault()}
         >
-          <span>{totalMatches} 项匹配</span>
-          <span>↑↓ 选择 · ↵ 定位/进入 · Esc 取消</span>
+          <span>{t("{n} 项匹配", { n: totalMatches })}</span>
+          <span>{t("↑↓ 选择 · ↵ 定位/进入 · Esc 取消")}</span>
         </div>
       </div>
     </div>

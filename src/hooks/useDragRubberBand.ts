@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, RefObject } from "react";
+import { t } from "@/lib/i18n";
 
 /**
  * 自研鼠标拖拽（复制/移动跨窗格投放）+ 橡皮筋框选的共用引擎
@@ -136,7 +137,10 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
         const op: "copy" | "move" = e.altKey ? "move" : "copy";
         if (ghostRef.current) {
           ghostRef.current.style.transform = `translate(${e.clientX + 10}px, ${e.clientY + 10}px)`;
-          ghostRef.current.textContent = `${op === "move" ? "移动" : "复制"} ${cand.paths.length} 项`;
+          ghostRef.current.textContent =
+            op === "move"
+              ? t("移动 {n} 项", { n: cand.paths.length })
+              : t("复制 {n} 项", { n: cand.paths.length });
         }
         // 目标检测（仅变化时通知，避免高频重渲染）
         const hit = opts.resolveTarget(e.clientX, e.clientY, cand.paths);
