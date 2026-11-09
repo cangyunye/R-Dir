@@ -9,6 +9,7 @@ mod find;
 mod fs_ops;
 mod fs_watch;
 mod iconpos;
+mod indexer;
 mod json_store;
 mod ops;
 mod preview;
@@ -333,6 +334,12 @@ pub(crate) fn set_plugin_enabled_core(
     enabled: bool,
 ) -> Result<Vec<plugins::PluginInfo>, String> {
     plugins::set_enabled(&state.plugins, &id, enabled);
+    // 全盘索引插件开关同步进后台线程（关 → 线程转 disabled 不再构建/重扫）
+    if id == "index-search" {
+        if let Some(ix) = indexer::shared() {
+            ix.sync_enabled(&state.plugins);
+        }
+    }
     let file = plugins::to_file(&state.plugins);
     plugins::save_file_in(config_dir, &file)?;
     let map = state.plugins.enabled.lock().unwrap().clone();
@@ -2683,6 +2690,92 @@ async fn find_files(
     .map_err(|e| e.to_string())?
 }
 
+// ==================== 全盘索引命令（v0.45，默认关闭） ====================
+
+/// 索引状态（phase/条目数/上次扫描/错误数/roots）：设置分区与搜索面板轮询用，
+/// 顺带把插件开关同步进后台线程
+#[tauri::command]
+async fn index_status(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<indexer::IndexStatusView, String> {
+    let ix = indexer::ensure(
+        &paths::config_dir(&app)?,
+        plugins::plugin_enabled(&state.plugins, "index-search"),
+    );
+    ix.sync_enabled(&state.plugins);
+    Ok(ix.status())
+}
+
+/// 全盘索引搜索（gram 交集亚毫秒级；regex/glob 模式线性扫描较重，spawn_blocking 包裹）
+#[tauri::command]
+async fn index_search(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    query: String,
+    case_sensitive: bool,
+    glob: bool,
+    regex: bool,
+    is_dir: Option<bool>,
+) -> Result<Vec<indexer::IndexHit>, String> {
+    let ix = indexer::ensure(
+        &paths::config_dir(&app)?,
+        plugins::plugin_enabled(&state.plugins, "index-search"),
+    );
+    // spawn_blocking 需要 owned 数据：插件开关表克隆一份（同 web 桥的处理）
+    let enabled_map = state.plugins.enabled.lock().unwrap().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let ps = plugins::PluginState {
+            enabled: std::sync::Mutex::new(enabled_map),
+        };
+        indexer::search_checked(&ps, &ix, &query, case_sensitive, glob, regex, is_dir)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 手动全量重建（后台线程 ≤2s 内响应；构建期间旧索引继续可查）
+#[tauri::command]
+async fn index_rebuild(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let ix = indexer::ensure(
+        &paths::config_dir(&app)?,
+        plugins::plugin_enabled(&state.plugins, "index-search"),
+    );
+    ix.rebuild();
+    Ok(())
+}
+
+/// 索引配置读取（roots + 排除清单）
+#[tauri::command]
+async fn index_get_config(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<indexer::IndexConfigFile, String> {
+    let ix = indexer::ensure(
+        &paths::config_dir(&app)?,
+        plugins::plugin_enabled(&state.plugins, "index-search"),
+    );
+    Ok(ix.get_config())
+}
+
+/// 索引配置写入：落盘 index.json；指纹变化由后台线程检测后自动全量重建
+#[tauri::command]
+async fn index_set_config(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    roots: Vec<String>,
+    exclusions: Vec<String>,
+) -> Result<(), String> {
+    let ix = indexer::ensure(
+        &paths::config_dir(&app)?,
+        plugins::plugin_enabled(&state.plugins, "index-search"),
+    );
+    ix.set_config(roots, exclusions)
+}
+
 /// Windows：显式设置进程 AppUserModelID，让任务栏把 R-Dir 当作独立应用
 /// （正确分组 / 固定到任务栏 / 通知显示应用名，而非挂到 WebView2 或通用宿主名下）。
 #[cfg(target_os = "windows")]
@@ -2738,6 +2831,12 @@ pub fn run() {
             }
             let state = app.state::<AppState>();
             plugins::init(app.handle(), &state.plugins);
+            // 全盘索引后台线程（v0.45）：默认关闭（插件面板启用后开始构建/查询）。
+            // 启动即挂线程：快照加载 <1s 恢复，无快照时空闲节流全量构建
+            indexer::ensure(
+                &paths::config_dir(app.handle())?,
+                plugins::plugin_enabled(&state.plugins, "index-search"),
+            );
             // v0.40 NFS 后端定型：InProcess（feature = "nfs"）或伴生进程插件（安装根定位）
             state
                 .nfs
@@ -2797,6 +2896,11 @@ pub fn run() {
         create_file,
         search_content,
         find_files,
+        index_status,
+        index_search,
+        index_rebuild,
+        index_get_config,
+        index_set_config,
         #[cfg(feature = "sftp")]
         sftp_list_servers,
         #[cfg(feature = "sftp")]

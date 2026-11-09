@@ -69,6 +69,8 @@ russh-keys = { version = "0.45", optional = true }
 # NFS 插件 crate：线协议类型恒需（host ↔ 伴生进程契约）；NFS 客户端本体由 nfs feature 经
 # rdir-nfs/client 门控——发行版不带 nfs，NFS 能力经 .rdplugin 安装的伴生进程动态获得
 rdir-nfs = { path = "crates/rdir-nfs", default-features = false }
+# 全盘索引搜索引擎（字符级 2-gram 倒排 + 快照；默认关闭，插件面板启用后后台构建）
+rdir-index = { path = "crates/rdir-index" }
 async-trait = "0.1"
 # v0.7 分享服务（内置插件，feature = "share" 可编译期拔出）：内嵌 HTTP 文件服务
 axum = { version = "0.8", optional = true, features = ["ws", "http1", "multipart"] }

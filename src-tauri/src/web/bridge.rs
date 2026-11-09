@@ -922,6 +922,58 @@ async fn c_find_files(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
 }
 
+// ==================== 全盘索引（v0.45） ====================
+
+/// 惰性启动共享索引器（web 模式无 setup 钩子，首条 index_* 命令启动）；
+/// 同时同步插件开关（设置分区/搜索面板轮询状态即完成同步）
+fn index_with_ctx(ctx: &WebCtx) -> &'static std::sync::Arc<crate::indexer::Indexer> {
+    let ix = crate::indexer::ensure(&ctx.config_dir, {
+        crate::plugins::plugin_enabled(&ctx.state.plugins, "index-search")
+    });
+    ix.sync_enabled(&ctx.state.plugins);
+    ix
+}
+
+async fn c_index_status(ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    val(Ok(index_with_ctx(ctx).status()))
+}
+
+async fn c_index_search(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let query: String = arg(args, "query")?;
+    let case_sensitive: bool = arg(args, "caseSensitive")?;
+    let glob: bool = arg(args, "glob")?;
+    let regex: bool = arg(args, "regex")?;
+    let is_dir: Option<bool> = opt_arg(args, "isDir")?;
+    let ix = index_with_ctx(ctx);
+    // spawn_blocking 需要owned 数据：插件开关表克隆一份（PluginState.enabled 是 pub 字段）
+    let enabled_map = ctx.state.plugins.enabled.lock().unwrap().clone();
+    tokio::task::spawn_blocking(move || {
+        let ps = crate::plugins::PluginState {
+            enabled: std::sync::Mutex::new(enabled_map),
+        };
+        crate::indexer::search_checked(&ps, &ix, &query, case_sensitive, glob, regex, is_dir)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
+async fn c_index_rebuild(ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    index_with_ctx(ctx).rebuild();
+    val(Ok(()))
+}
+
+async fn c_index_get_config(ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    val(Ok(index_with_ctx(ctx).get_config()))
+}
+
+async fn c_index_set_config(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let roots: Vec<String> = arg(args, "roots")?;
+    let exclusions: Vec<String> = arg(args, "exclusions")?;
+    index_with_ctx(ctx).set_config(roots, exclusions)?;
+    val(Ok(()))
+}
+
 async fn c_file_fingerprints(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let paths: Vec<String> = arg(args, "paths")?;
     tokio::task::spawn_blocking(move || crate::fs_ops::file_fingerprints(&paths))
@@ -1081,6 +1133,11 @@ web_commands! {
     "write_text_file" => c_write_text_file,
     "search_content" => c_search_content,
     "find_files" => c_find_files,
+    "index_status" => c_index_status,
+    "index_search" => c_index_search,
+    "index_rebuild" => c_index_rebuild,
+    "index_get_config" => c_index_get_config,
+    "index_set_config" => c_index_set_config,
     "file_fingerprints" => c_file_fingerprints,
     "remote_temp_info" => c_remote_temp_info,
     "remote_temp_clear" => c_remote_temp_clear,
@@ -1205,6 +1262,8 @@ mod tests {
             "write_text_file",
             "search_content",
             "find_files",
+            "index_search",
+            "index_status",
             "theme_save",
             "set_plugin_enabled",
         ] {

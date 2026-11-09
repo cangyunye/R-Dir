@@ -204,10 +204,28 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>, nfs_installed: bool)
         configurable: false,
         installed: true,
     });
+    v.push(PluginInfo {
+        id: "index-search".into(),
+        name: "全盘索引搜索".into(),
+        description: "后台索引本地固定卷，文件名检索 Everything 级瞬时返回：默认关闭，启用后利用空闲时间构建、周期秒级增量；范围与排除在 设置 → 全盘索引 配置".into(),
+        version: "0.1".into(),
+        source: "builtin".into(),
+        protocols: vec![],
+        operations: vec!["search".into()],
+        enabled: enabled("index-search"),
+        configurable: true,
+        installed: true,
+    });
     v
 }
 
 // ==================== 状态操作 ====================
+
+/// 各插件的默认启用状态。绝大多数默认开启；「全盘索引搜索」默认关闭——
+/// 后台全盘扫描属重资源功能，由用户在插件面板显式开启。
+pub fn default_enabled(id: &str) -> bool {
+    !matches!(id, "index-search")
+}
 
 pub fn plugin_enabled(state: &PluginState, id: &str) -> bool {
     state
@@ -216,7 +234,7 @@ pub fn plugin_enabled(state: &PluginState, id: &str) -> bool {
         .unwrap()
         .get(id)
         .copied()
-        .unwrap_or(true)
+        .unwrap_or_else(|| default_enabled(id))
 }
 
 pub fn set_enabled(state: &PluginState, id: &str, enabled: bool) {
@@ -280,13 +298,14 @@ pub(crate) fn init_in(config_dir: &std::path::Path, state: &PluginState) {
     }
 }
 
-/// 把内存状态整理为持久化结构（只记录非默认值，减少文件噪音）
+/// 把内存状态整理为持久化结构（只记录与默认值不同的项，减少文件噪音；
+/// 「全盘索引」默认关闭，其 enabled=true 也会被记录）
 pub fn to_file(state: &PluginState) -> PluginStateFile {
     let map = state.enabled.lock().unwrap().clone();
     PluginStateFile {
         plugins: map
             .into_iter()
-            .filter(|(_, enabled)| !*enabled)
+            .filter(|(id, enabled)| *enabled != default_enabled(id))
             .map(|(id, enabled)| (id, PluginEntry { enabled }))
             .collect(),
     }
