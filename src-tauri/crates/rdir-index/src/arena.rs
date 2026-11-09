@@ -50,6 +50,11 @@ impl PathArena {
         unsafe { std::str::from_utf8_unchecked(s) }
     }
 
+    /// 打包字节数（内存占用统计用）
+    pub fn len(&self) -> usize {
+        self.buf.len()
+    }
+
     /// 全部字节（快照序列化用）
     pub fn into_bytes(self) -> Vec<u8> {
         self.buf

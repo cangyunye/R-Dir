@@ -136,6 +136,11 @@ impl EngineState {
         self.meta.len()
     }
 
+    /// 打包路径字节数（内存占用统计用）
+    pub fn arena_len(&self) -> usize {
+        self.arena.len()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.meta.is_empty()
     }
