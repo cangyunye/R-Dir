@@ -255,6 +255,47 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      # web 服务（rdir-web）：无窗口文件服务单文件 zip。dist/ 已由 tauri-action 的
+      # beforeBuildCommand（pnpm build）产出，rust-embed 编译期内嵌；--bin 只编
+      # rdir-web，不重编 GUI。与 GUI/绿色版相互独立：rdir-web.exe 不依赖 WebView2。
+      - name: Build rdir-web (windows)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest'
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          set -euo pipefail
+          test -f ../dist/index.html || { echo "dist/index.html 不存在（web 版需内嵌前端产物）"; exit 1; }
+          cargo build --release --features web --bin rdir-web
+
+      - name: Pack web zip (windows)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $candidates = @(
+            "src-tauri/target/release/rdir-web.exe",
+            "src-tauri/target/x86_64-pc-windows-msvc/release/rdir-web.exe"
+          )
+          $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) { throw "rdir-web.exe 不存在：$($candidates -join ', ')" }
+          $ver = $env:GITHUB_REF_NAME -replace '^v', ''
+          $dir = "webbuild/rdir-web"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item $exe "$dir/rdir-web.exe"
+          Copy-Item "tools/web-README.txt" "$dir/README.txt"
+          $zip = "webbuild/rdir-web_${ver}_windows_x64.zip"
+          Compress-Archive -Path "$dir/*" -DestinationPath $zip -Force
+          Write-Host "packed $zip"
+
+      - name: Archive web zip (publish 兜底补传源)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-windows-x64
+          path: webbuild/*.zip
+          if-no-files-found: error
+          retention-days: 3
+
   # 三个平台都成功后才把 Draft 转正；任何平台失败则 release 永远停留在 Draft，用户看不到残缺版本
   publish:
     needs: build
@@ -290,8 +331,9 @@ jobs:
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/body.md"
 
       # v0.41 安装包资产门禁：tauri-action 可能静默丢件（见 build job 注释）。
-      # 五个安装包 + 绿色版 zip 缺一不可——缺失先从 build artifacts 兜底补传，
-      # 补不齐则本 job 失败，Release 停留在 Draft，绝不把缺资产的版本发成 Latest。
+      # 五个安装包 + 绿色版 zip + web 服务 zip 缺一不可——缺失先从 build
+      # artifacts 兜底补传，补不齐则本 job 失败，Release 停留在 Draft，
+      # 绝不把缺资产的版本发成 Latest。
       - name: Download bundles (repair source)
         uses: actions/download-artifact@v4
         with:
@@ -304,6 +346,12 @@ jobs:
           pattern: portable-*
           path: portable-artifacts
 
+      - name: Download web zip (repair source)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: web-*
+          path: web-artifacts
+
       - name: Verify & repair installers
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -312,7 +360,7 @@ jobs:
           VER="${GITHUB_REF_NAME#v}"
           TAG="$GITHUB_REF_NAME"
           # 兜底目录可能因上游 job 跳过而不存在，find 前置保证存在
-          mkdir -p bundles-artifacts portable-artifacts
+          mkdir -p bundles-artifacts portable-artifacts web-artifacts
           existing="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort -u)"
           rc=0
           for a in \
@@ -321,12 +369,13 @@ jobs:
             "R-Dir_${VER}_x64.dmg" \
             "R-Dir_x64.app.tar.gz" \
             "R-Dir_${VER}_x64-setup.exe" \
-            "R-Dir_${VER}_windows_x64_portable.zip"
+            "R-Dir_${VER}_windows_x64_portable.zip" \
+            "rdir-web_${VER}_windows_x64.zip"
           do
             if grep -Fxq "$a" <<<"$existing"; then
               echo "ok: $a"; continue
             fi
-            file="$(find bundles-artifacts portable-artifacts -name "$a" -print -quit)"
+            file="$(find bundles-artifacts portable-artifacts web-artifacts -name "$a" -print -quit)"
             if [ -z "$file" ]; then
               echo "::error::资产缺失且 build 产物中不存在：$a"; rc=1; continue
             fi

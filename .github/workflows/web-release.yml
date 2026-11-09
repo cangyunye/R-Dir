@@ -1,0 +1,125 @@
+# 手动补发 web 服务产物：给「web CI 加入之前」发布的历史版本补 rdir-web zip。
+# 主 release 流程（release.yml）自加入 web 构建起，新 tag 会自动携带 web 包，
+# 本工作流仅用于存量补发——workflow 定义从默认分支读取，可 checkout 任意历史
+# ref 构建（旧 tag 上的 release.yml 没有 web 步骤，也触发不了本文件）。
+#
+# 用法：Actions → web-release → Run workflow
+#   ref: 要构建的 ref（tag / commit，如 v0.43.0）
+#   tag: 目标 Release 的 tag（默认同 ref；资产上传到此 Release）
+# 需该 Release 已存在（发布版或 Draft 均可）。
+name: web-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "构建的 ref（tag/commit，如 v0.43.0）"
+        required: true
+        default: "v0.43.0"
+      tag:
+        description: "目标 Release tag（默认 = ref）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-web:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 12.4.2
+          run_install: false
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 版本号以 ref 为准写入三处版本字段（与 release.yml 的 Sync 步骤同源逻辑）
+      - name: Sync version from ref
+        if: startsWith(github.event.inputs.ref, 'refs/tags/v') || startsWith(github.event.inputs.ref, 'v')
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const v = process.env.INPUT_REF.replace(/^v/, '');
+          const patchJson = (p, fn) => {
+            const o = JSON.parse(fs.readFileSync(p, 'utf8'));
+            fn(o);
+            fs.writeFileSync(p, JSON.stringify(o, null, 2) + '\n');
+          };
+          patchJson('package.json', (o) => (o.version = v));
+          patchJson('src-tauri/tauri.conf.json', (o) => (o.version = v));
+          const cargo = fs
+            .readFileSync('src-tauri/Cargo.toml', 'utf8')
+            .replace(/^version = ".*"/m, `version = "${v}"`);
+          fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+          console.log(`synced app version -> ${v}`);
+          NODE
+        env:
+          INPUT_REF: ${{ github.event.inputs.ref }}
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build rdir-web
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          set -euo pipefail
+          test -f ../dist/index.html || { echo "dist/index.html 不存在"; exit 1; }
+          cargo build --release --features web --bin rdir-web
+
+      - name: Pack web zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $candidates = @(
+            "src-tauri/target/release/rdir-web.exe",
+            "src-tauri/target/x86_64-pc-windows-msvc/release/rdir-web.exe"
+          )
+          $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) { throw "rdir-web.exe 不存在：$($candidates -join ', ')" }
+          $ref = "${{ github.event.inputs.ref }}"
+          $ver = $ref -replace '^v', ''
+          $dir = "webbuild/rdir-web"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item $exe "$dir/rdir-web.exe"
+          Copy-Item "tools/web-README.txt" "$dir/README.txt"
+          $zip = "webbuild/rdir-web_${ver}_windows_x64.zip"
+          Compress-Archive -Path "$dir/*" -DestinationPath $zip -Force
+          Write-Host "packed $zip"
+          "WEB_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload to target release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${{ github.event.inputs.ref }}"
+          # Release 必须已存在（发布版或 Draft）；不存在则报错退出，避免静默丢失
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null
+          gh release upload "$TAG" "$WEB_ZIP" --clobber --repo "$GITHUB_REPOSITORY"
+          echo "uploaded $WEB_ZIP -> $TAG"
