@@ -890,8 +890,17 @@ async fn c_search_content(_ctx: &WebCtx, args: &Value) -> Result<Value, String> 
     let case_sensitive: bool = arg(args, "caseSensitive")?;
     let include_hidden: bool = arg(args, "includeHidden")?;
     let use_regex: bool = arg(args, "useRegex")?;
+    let max_depth: Option<usize> = opt_arg(args, "maxDepth")?;
     tokio::task::spawn_blocking(move || {
-        crate::search::search_content(&query, &dir, recursive, case_sensitive, include_hidden, use_regex)
+        crate::search::search_content(
+            &query,
+            &dir,
+            recursive,
+            case_sensitive,
+            include_hidden,
+            use_regex,
+            max_depth,
+        )
     })
     .await
     .map_err(|e| e.to_string())?

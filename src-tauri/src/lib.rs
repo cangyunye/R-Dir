@@ -2640,7 +2640,7 @@ async fn create_file(parent: String, name: String) -> Result<String, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// 内容搜索（VSCode 风格，默认字面量关键词；默认仅当前层）。
+/// 内容搜索（VSCode 风格，默认字面量关键词；默认仅当前层；maxDepth 限递归层数，None 不限）。
 #[tauri::command]
 async fn search_content(
     query: String,
@@ -2649,9 +2649,18 @@ async fn search_content(
     case_sensitive: bool,
     include_hidden: bool,
     use_regex: bool,
+    max_depth: Option<usize>,
 ) -> Result<Vec<SearchMatch>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        search::search_content(&query, &dir, recursive, case_sensitive, include_hidden, use_regex)
+        search::search_content(
+            &query,
+            &dir,
+            recursive,
+            case_sensitive,
+            include_hidden,
+            use_regex,
+            max_depth,
+        )
     })
     .await
     .map_err(|e| e.to_string())?

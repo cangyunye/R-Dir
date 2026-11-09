@@ -28,6 +28,8 @@ import { isTopModalLayer } from "@/lib/modal-stack";
 import { findFiles, renameEntry, searchContent } from "@/lib/api";
 import { isSftpPath, isNfsPath } from "@/lib/sftp-path";
 import { useT } from "@/lib/LanguageProvider";
+import { terr } from "@/lib/i18n";
+import { loadSearchMaxDepth, saveSearchMaxDepth } from "@/lib/persist";
 import type { FileEntry, FindEntry, SearchMatch } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -107,6 +109,30 @@ function ToggleChip({
       />
       {label}
     </button>
+  );
+}
+
+/** 深度下拉：递归搜索层数上限（fd 与内容递归共用持久化值）；哨兵 0 = 不限 */
+function DepthSelect({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const t = useT();
+  return (
+    <select
+      value={value ?? 0}
+      onChange={(e) => {
+        const n = Number(e.target.value);
+        onChange(n === 0 ? null : n);
+      }}
+      aria-label={t("搜索深度")}
+      title={t("递归层数上限（不限 = 一直递归到底）")}
+      className="h-6 shrink-0 cursor-pointer rounded-md border border-border bg-transparent px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >
+      <option value={1}>1</option>
+      <option value={2}>2</option>
+      <option value={3}>3</option>
+      <option value={5}>5</option>
+      <option value={10}>10</option>
+      <option value={0}>{t("不限")}</option>
+    </select>
   );
 }
 
@@ -362,6 +388,12 @@ export function SearchPanel({
   const cSeq = useRef(0);
   const t = useT();
 
+  // 递归搜索深度（fd / 内容递归共用）：null = 不限；持久化到 localStorage，面板每次打开重读
+  const [maxDepth, setMaxDepth] = useState<number | null>(() => loadSearchMaxDepth());
+  useEffect(() => {
+    saveSearchMaxDepth(maxDepth);
+  }, [maxDepth]);
+
   // 文件名搜索（当前层，前端过滤）——匹配语义与 fd 灯钮一致：
   // 正则/通配符整名匹配（无效正则回退字面量包含），隐藏灯控制 `.` 开头项
   const results = useMemo(() => {
@@ -402,12 +434,12 @@ export function SearchPanel({
     const seq = ++fdSeq.current;
     fdTimer.current = window.setTimeout(async () => {
       try {
-        const res = await findFiles(q, dir, nameHidden, null, nameMode === "glob", nameCase);
+        const res = await findFiles(q, dir, nameHidden, maxDepth, nameMode === "glob", nameCase);
         if (seq !== fdSeq.current) return;
         setFdResults(res);
       } catch (e) {
         if (seq !== fdSeq.current) return;
-        setFdError(String(e));
+        setFdError(terr(String(e)));
         setFdResults([]);
       } finally {
         if (seq === fdSeq.current) setFdLoading(false);
@@ -416,7 +448,7 @@ export function SearchPanel({
     return () => {
       if (fdTimer.current) window.clearTimeout(fdTimer.current);
     };
-  }, [query, fdEnabled, dir, nameHidden, nameMode, nameCase]);
+  }, [query, fdEnabled, dir, nameHidden, nameMode, nameCase, maxDepth]);
 
   // 内容搜索：防抖 250ms，后台线程执行
   useEffect(() => {
@@ -433,12 +465,12 @@ export function SearchPanel({
     const seq = ++cSeq.current;
     cTimer.current = window.setTimeout(async () => {
       try {
-        const res = await searchContent(q, dir, recursive, caseSensitive, cHidden, cRegex);
+        const res = await searchContent(q, dir, recursive, caseSensitive, cHidden, cRegex, maxDepth);
         if (seq !== cSeq.current) return;
         setCResults(res);
       } catch (e) {
         if (seq !== cSeq.current) return;
-        setCError(String(e));
+        setCError(terr(String(e)));
         setCResults([]);
       } finally {
         if (seq === cSeq.current) setCLoading(false);
@@ -447,7 +479,7 @@ export function SearchPanel({
     return () => {
       if (cTimer.current) window.clearTimeout(cTimer.current);
     };
-  }, [cQuery, dir, recursive, caseSensitive, cHidden, cRegex]);
+  }, [cQuery, dir, recursive, caseSensitive, cHidden, cRegex, maxDepth]);
 
   return (
     // v0.29.0 模态框化：原右侧 256px 停靠栏在递归检索时 rel_path 截断严重，
@@ -541,6 +573,7 @@ export function SearchPanel({
                 >
                   {nameMode === "regex" ? t(".* 正则") : t("✱ 通配")}
                 </button>
+                {fdEnabled && <DepthSelect value={maxDepth} onChange={setMaxDepth} />}
               </div>
               <p className="truncate text-[11px] text-muted-foreground">
                 {[
@@ -549,6 +582,9 @@ export function SearchPanel({
                   nameHidden ? t("含隐藏") : t("跳过隐藏"),
                   nameCase ? t("区分大小写") : t("不区分大小写"),
                   fdEnabled ? t("尊重 .gitignore") : t("共 {n} 项", { n: entries.length }),
+                  ...(fdEnabled
+                    ? [maxDepth == null ? t("深度不限") : t("深度：{n} 层", { n: maxDepth })]
+                    : []),
                 ].join(" · ")}
               </p>
             </>
@@ -591,6 +627,7 @@ export function SearchPanel({
                   title={t("查询词按正则解析（默认字面量匹配）")}
                   onClick={() => setCRegex((v) => !v)}
                 />
+                {recursive && <DepthSelect value={maxDepth} onChange={setMaxDepth} />}
               </div>
             </>
           )}

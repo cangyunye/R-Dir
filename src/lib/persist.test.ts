@@ -15,6 +15,8 @@ import {
   parentOf,
   remapPrefixedPath,
   loadShareAllowParent,
+  loadSearchMaxDepth,
+  saveSearchMaxDepth,
   loadUiFontFamily,
   saveUiFontFamily,
   saveUiFontFamilyCustom,
@@ -155,6 +157,31 @@ describe("分享设置", () => {
   it("保存 true 后读回", () => {
     saveShareAllowParent(true);
     expect(loadShareAllowParent()).toBe(true);
+  });
+});
+
+describe("搜索深度", () => {
+  it("默认不限（null）", () => {
+    expect(loadSearchMaxDepth()).toBe(null);
+  });
+  it("保存后读回", () => {
+    saveSearchMaxDepth(5);
+    expect(loadSearchMaxDepth()).toBe(5);
+  });
+  it("null 落盘后回到不限", () => {
+    saveSearchMaxDepth(3);
+    saveSearchMaxDepth(null);
+    expect(loadSearchMaxDepth()).toBe(null);
+  });
+  it("非法值（0 / 负数 / 非整数）回落不限", () => {
+    localStorage.setItem("rfm.search-depth", "0");
+    expect(loadSearchMaxDepth()).toBe(null);
+    localStorage.setItem("rfm.search-depth", "-2");
+    expect(loadSearchMaxDepth()).toBe(null);
+    localStorage.setItem("rfm.search-depth", "2.5");
+    expect(loadSearchMaxDepth()).toBe(null);
+    localStorage.setItem("rfm.search-depth", "abc");
+    expect(loadSearchMaxDepth()).toBe(null);
   });
 });
 

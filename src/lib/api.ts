@@ -255,7 +255,7 @@ export const extractArchive = async (
   return outcome;
 };
 
-/** 内容搜索（默认字面量关键词；includeHidden 含 `.` 开头项，useRegex 按正则解析） */
+/** 内容搜索（默认字面量关键词；includeHidden 含 `.` 开头项，useRegex 按正则解析；maxDepth 限递归层数，null 不限） */
 export const searchContent = (
   query: string,
   dir: string,
@@ -263,6 +263,7 @@ export const searchContent = (
   caseSensitive: boolean,
   includeHidden: boolean,
   useRegex: boolean,
+  maxDepth: number | null = null,
 ) =>
   invoke<SearchMatch[]>("search_content", {
     query,
@@ -271,6 +272,7 @@ export const searchContent = (
     caseSensitive,
     includeHidden,
     useRegex,
+    maxDepth,
   });
 
 /** fd 快速文件检索（glob=true 通配符否则正则；显式大小写开关；递归） */

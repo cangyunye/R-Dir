@@ -12,6 +12,10 @@
 //! - 超过 `MAX_FILE_BYTES` 的文件不搜内容；
 //! - 每文件最多 `MAX_PER_FILE` 条命中，总计最多 `MAX_TOTAL` 条，防止大目录卡死；
 //! - `recursive = false` 时只搜当前目录的直接子文件（默认，用户明确要求）；
+//! - `max_depth` 限制递归层数（None = 不限；Some(1) = 只搜当前层，与 walkdir
+//!   语义对齐：根目录第 0 层、直接子项第 1 层）；
+//! - 不跟随目录符号链接（`entry.file_type()` 判定，防止环；对齐 find 的
+//!   `follow_links(false)`）；
 //! - 单行最多保留 `MAX_LINE_CHARS` 字符。
 
 use crate::text_diff::{decode_auto, NonUtf8};
@@ -45,6 +49,7 @@ pub fn search_content(
     case_sensitive: bool,
     include_hidden: bool,
     use_regex: bool,
+    max_depth: Option<usize>,
 ) -> Result<Vec<SearchMatch>, String> {
     let root = Path::new(dir);
     if !root.is_dir() {
@@ -74,18 +79,32 @@ pub fn search_content(
 
     let mut out = Vec::new();
     let mut total = 0usize;
-    walk(&root, &root, recursive, include_hidden, &re, &mut out, &mut total);
+    walk(
+        &root,
+        &root,
+        recursive,
+        include_hidden,
+        max_depth,
+        &re,
+        &mut out,
+        &mut total,
+        1,
+    );
     Ok(out)
 }
 
+/// `depth` = 当前目录内文件所处的层级（根的直接子文件为第 1 层）。
+/// 进入子目录的文件在第 depth+1 层，超过 `max_depth` 即剪枝（Some(1) = 只搜当前层）。
 fn walk(
     dir: &Path,
     root: &Path,
     recursive: bool,
     include_hidden: bool,
+    max_depth: Option<usize>,
     re: &Regex,
     out: &mut Vec<SearchMatch>,
     total: &mut usize,
+    depth: usize,
 ) {
     if *total >= MAX_TOTAL {
         return;
@@ -103,9 +122,23 @@ fn walk(
         if !include_hidden && name.starts_with('.') {
             continue; // 跳过隐藏项
         }
-        if path.is_dir() {
-            if recursive {
-                walk(&path, root, recursive, include_hidden, re, out, total);
+        // entry.file_type() 不跟随符号链接（is_dir 对符号链接为 false），
+        // 目录符号链接按文件处理（read 失败自然跳过），杜绝符号链接环
+        let is_dir = matches!(entry.file_type(), Ok(ft) if ft.is_dir());
+        if is_dir {
+            // 子目录内文件在第 depth+1 层，达到上限就不再进入
+            if recursive && max_depth.map_or(true, |m| depth + 1 <= m) {
+                walk(
+                    &path,
+                    root,
+                    recursive,
+                    include_hidden,
+                    max_depth,
+                    re,
+                    out,
+                    total,
+                    depth + 1,
+                );
             }
         } else {
             search_file(&path, root, re, out, total);
@@ -225,7 +258,7 @@ mod tests {
         std::fs::write(sub.join("big.log"), "x".repeat(5 * 1024 * 1024)).unwrap();
 
         // 非递归：只命中 a.txt 的一行
-        let hits = search_content("hello", root.to_str().unwrap(), false, false, false, false).unwrap();
+        let hits = search_content("hello", root.to_str().unwrap(), false, false, false, false, None).unwrap();
         assert!(hits.iter().any(|m| m.rel_path == "a.txt" && m.line_number == 1));
         assert!(!hits.iter().any(|m| m.rel_path == "sub/c.md"), "非递归不应进入子目录");
         assert!(!hits.iter().any(|m| m.rel_path == ".hidden.txt"), "应跳过隐藏文件");
@@ -233,34 +266,62 @@ mod tests {
         assert!(!hits.iter().any(|m| m.rel_path == "big.log"), "应跳过超大文件");
 
         // 递归：命中 c.md
-        let hits = search_content("hello", root.to_str().unwrap(), true, false, false, false).unwrap();
+        let hits = search_content("hello", root.to_str().unwrap(), true, false, false, false, None).unwrap();
         assert!(hits.iter().any(|m| m.rel_path == "sub/c.md"));
 
         // 大小写不敏感命中 Hello；敏感时不命中
-        assert!(search_content("HELLO", root.to_str().unwrap(), false, false, false, false)
+        assert!(search_content("HELLO", root.to_str().unwrap(), false, false, false, false, None)
             .unwrap()
             .iter()
             .any(|m| m.rel_path == "a.txt"));
-        assert!(!search_content("HELLO", root.to_str().unwrap(), false, true, false, false)
+        assert!(!search_content("HELLO", root.to_str().unwrap(), false, true, false, false, None)
             .unwrap()
             .iter()
             .any(|m| m.rel_path == "a.txt"));
 
         // include_hidden：命中 .hidden.txt
-        let hits = search_content("hidden", root.to_str().unwrap(), false, false, true, false).unwrap();
+        let hits = search_content("hidden", root.to_str().unwrap(), false, false, true, false, None).unwrap();
         assert!(hits.iter().any(|m| m.rel_path == ".hidden.txt"), "应包含隐藏文件");
 
         // use_regex：正则 hel+o 命中 hello；字面量模式下 hel+o 无命中
-        assert!(search_content(r"hel+o", root.to_str().unwrap(), false, false, false, true)
+        assert!(search_content(r"hel+o", root.to_str().unwrap(), false, false, false, true, None)
             .unwrap()
             .iter()
             .any(|m| m.rel_path == "a.txt"));
-        assert!(search_content(r"hel+o", root.to_str().unwrap(), false, false, false, false)
+        assert!(search_content(r"hel+o", root.to_str().unwrap(), false, false, false, false, None)
             .unwrap()
             .is_empty());
         // 正则语法错误返回 Err（UI 显示错误提示）
-        assert!(search_content("(unclosed", root.to_str().unwrap(), false, false, false, true).is_err());
+        assert!(search_content("(unclosed", root.to_str().unwrap(), false, false, false, true, None).is_err());
 
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// max_depth 语义（对齐 walkdir：根第 0 层、直接子项第 1 层）：
+    /// Some(1) 只搜当前层文件，Some(2) 深入一层子目录，None 全部
+    #[test]
+    fn search_max_depth() {
+        let root = std::env::temp_dir().join("rfm_search_depth_test");
+        let _ = std::fs::remove_dir_all(&root);
+        let sub = root.join("sub");
+        let deep = sub.join("deep");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(root.join("a.txt"), "hello\n").unwrap();
+        std::fs::write(sub.join("b.txt"), "hello\n").unwrap();
+        std::fs::write(deep.join("c.txt"), "hello\n").unwrap();
+        let dir = root.to_str().unwrap();
+        let paths = |d: Option<usize>| -> Vec<String> {
+            let mut v: Vec<String> = search_content("hello", dir, true, false, false, false, d)
+                .unwrap()
+                .into_iter()
+                .map(|m| m.rel_path)
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(paths(Some(1)), vec!["a.txt"]);
+        assert_eq!(paths(Some(2)), vec!["a.txt", "sub/b.txt"]);
+        assert_eq!(paths(None), vec!["a.txt", "sub/b.txt", "sub/deep/c.txt"]);
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -285,7 +346,7 @@ mod tests {
 
         let dir = root.to_str().unwrap();
         let hits = |q: &str, re: bool| -> Vec<(String, usize)> {
-            let mut v: Vec<_> = search_content(q, dir, false, false, false, re)
+            let mut v: Vec<_> = search_content(q, dir, false, false, false, re, None)
                 .unwrap()
                 .into_iter()
                 .map(|m| (m.rel_path, m.line_number))

@@ -361,6 +361,33 @@ export function saveShareDefaultExpires(hours: number | null): void {
   }
 }
 
+// ---- v0.45 搜索深度（递归搜索层数；null = 不限） ----
+const SEARCH_DEPTH_KEY = "rfm.search-depth";
+
+/** 递归搜索层数上限；null = 不限（fd 与内容递归共用一个值） */
+export function loadSearchMaxDepth(): number | null {
+  try {
+    const raw = localStorage.getItem(SEARCH_DEPTH_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 1 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveSearchMaxDepth(depth: number | null): void {
+  try {
+    if (depth == null) {
+      localStorage.removeItem(SEARCH_DEPTH_KEY);
+    } else {
+      localStorage.setItem(SEARCH_DEPTH_KEY, String(depth));
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 // ---- v0.8 界面字体大小（整体缩放等效，13px = 100%，范围 10–18） ----
 const UI_FONT_KEY = "rfm.ui-font";
 
