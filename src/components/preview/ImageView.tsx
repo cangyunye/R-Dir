@@ -184,7 +184,7 @@ export function ImageView({
     }
   };
 
-  const percent = zoom === 1 ? "适配" : `${Math.round(zoom * fitPercent)}%`;
+  const percent = zoom === 1 ? t("适配") : `${Math.round(zoom * fitPercent)}%`;
 
   return (
     <div className={cn("relative flex min-h-0 flex-col", className)}>

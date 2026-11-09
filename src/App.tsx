@@ -114,6 +114,7 @@ import {
   sftpDownloadTo,
   sftpMkdir,
   sftpRename,
+  sftpRelay,
   sftpUpload,
   nfsCreateFile,
   nfsDelete,
@@ -201,6 +202,8 @@ import {
   uiFontFamilyStack,
   UI_FONT_FAMILIES,
   loadShowExtensions,
+  loadSidebarCollapsed,
+  saveSidebarCollapsed,
   saveShowExtensions,
   loadDiffCaseSensitive,
   loadDiffMtimeTolerance,
@@ -387,6 +390,37 @@ function parentPath(path: string): string {
   return path.slice(0, idx);
 }
 
+/** 去掉末尾斜杠（sftp 根目录窗格路径带 `/`，parentPath 结果不带）后再比较目录 */
+function trimSlash(path: string): string {
+  return path.replace(/\/+$/, "");
+}
+
+/** 远程传输同名确认文案（v0.44.0 抽出：远程→本地下载 / 本地→远程上传 / SFTP 中转共用）。
+ *  v0.37 单条冲突附源/目标大小对比（SFTP 不查 MD5：远程算哈希代价高且不普遍支持）；
+ *  任一侧为目录或大小查不到 → 退回仅名单；多条列前 5 个名字 */
+async function clashConfirmMessage(
+  clashPaths: string[],
+  destByName: Map<string, FileEntry>,
+  srcEntryOf: (path: string) => Promise<FileEntry | undefined>,
+): Promise<string> {
+  if (clashPaths.length === 1) {
+    const p = clashPaths[0];
+    const srcEntry = await srcEntryOf(p).catch(() => undefined);
+    const destEntry = destByName.get(basename(p));
+    const sizeLine =
+      srcEntry && destEntry && !srcEntry.is_dir && !destEntry.is_dir
+        ? t("源 {src}　目标 {dst}", { src: formatSize(srcEntry.size), dst: formatSize(destEntry.size) })
+        : null;
+    return sizeLine
+      ? t("目标目录已有同名条目：{name}\n{size}", { name: basename(p), size: sizeLine })
+      : t("目标目录已有同名条目：{name}", { name: basename(p) });
+  }
+  return t("目标目录已有同名条目：{names}{more}", {
+    names: clashPaths.map(basename).slice(0, 5).join("、"),
+    more: clashPaths.length > 5 ? t("等 {n} 项", { n: clashPaths.length }) : "",
+  });
+}
+
 /** 远程协议路径（sftp / http）：交给本地应用前需先取回本地副本（v0.37） */
 function isRemoteSchemePath(path: string): boolean {
   return (
@@ -506,6 +540,14 @@ export default function App() {
       const next = { ...prev, ...patch };
       savePreviewPrefs(next);
       return next;
+    });
+  }, []);
+  /** v0.44.0 左侧导航栏收缩为图标栏（标题栏按钮 / 栏底按钮 / mod+e；跨重启保留） */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => loadSidebarCollapsed());
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      saveSidebarCollapsed(!prev);
+      return !prev;
     });
   }, []);
   /** 设置 / 快捷键一览对话框 */
@@ -766,14 +808,14 @@ useEffect(() => {
       const msg = String(e);
       // 按码判定取消（i18n-error-codes：Rust 取消路径统一产出 CANCELLED）
       if (isCancelledError(msg)) {
-        showError("已取消");
+        showError(t("已取消"));
         return;
       }
       const translated = terr(msg);
       flashErrorTip(translated);
       showError(msg);
     },
-    [flashErrorTip, showError],
+    [t, flashErrorTip, showError],
   );
 
   /** v0.17 打开差异比对：需活动标签正好两个本地窗格（各指向一个目录）。
@@ -831,7 +873,7 @@ useEffect(() => {
       try {
         const info = await fetchLatestRelease(current);
         if (!info) {
-          if (!silent) flashClipboardTip(`当前已是最新版本 v${current}`, 2000);
+          if (!silent) flashClipboardTip(t("当前已是最新版本 v{ver}", { ver: current }), 2000);
           return;
         }
         if (silent) {
@@ -849,7 +891,7 @@ useEffect(() => {
         if (!silent) showError(t("检查更新失败：{msg}", { msg: String(e) }));
       }
     },
-    [appVersion, showError, appConfirm, flashClipboardTip],
+    [t, appVersion, showError, appConfirm, flashClipboardTip],
   );
 
   // 启动后静默检查一次更新（3s 延迟，避免与首屏加载抢网络）
@@ -925,7 +967,7 @@ useEffect(() => {
   const handleImportNfsPlugin = useCallback(async () => {
     const picked = await openDialog({
       multiple: false,
-      filters: [{ name: "R-Dir 插件包", extensions: ["rdplugin"] }],
+      filters: [{ name: t("R-Dir 插件包"), extensions: ["rdplugin"] }],
     });
     const path = typeof picked === "string" ? picked : picked?.[0];
     if (!path) return;
@@ -987,7 +1029,7 @@ useEffect(() => {
   const handleInstallThemePack = useCallback(async () => {
     const picked = await webDialogOpen({
       multiple: false,
-      filters: [{ name: "R-Dir 主题包", extensions: ["json"] }],
+      filters: [{ name: t("R-Dir 主题包"), extensions: ["json"] }],
     });
     const path = typeof picked === "string" ? picked : picked?.[0];
     if (!path) return;
@@ -1104,7 +1146,7 @@ useEffect(() => {
     }
     const path = await webDialogSave({
       defaultPath: `${studio.draft.id}.rdtheme.json`,
-      filters: [{ name: "R-Dir 主题包", extensions: ["json"] }],
+      filters: [{ name: t("R-Dir 主题包"), extensions: ["json"] }],
     });
     if (!path) return;
     try {
@@ -1844,7 +1886,7 @@ useEffect(() => {
       try {
         await sessionSave(serializeSession(tabsRef.current, activeIdRef.current));
         lastSessionSigRef.current = sig;
-        if (!opts?.silent) flashClipboardTip("会话已保存");
+        if (!opts?.silent) flashClipboardTip(t("会话已保存"));
       } catch (e) {
         if (!opts?.silent) showError(t("保存会话失败：{msg}", { msg: String(e) }));
       }
@@ -2042,20 +2084,20 @@ useEffect(() => {
   /** 收藏指定标签（标签右键 / 面板「收藏当前标签页」）：名称取自定义标题或自动标题，重名加序号 */
   const addFavorite = useCallback(
     (tabId: number) => {
-      const t = tabsRef.current.find((x) => x.id === tabId);
-      if (!t) return;
+      const tab = tabsRef.current.find((x) => x.id === tabId);
+      if (!tab) return;
       const name = dedupeName(
-        t.customTitle ?? t.title,
+        tab.customTitle ?? tab.title,
         favorites.map((f) => f.name),
       );
       const now = new Date().toISOString();
       persistFavorites([
         ...favorites,
-        { id: crypto.randomUUID(), name, createdAt: now, updatedAt: now, tab: serializeSessionTab(t) },
+        { id: crypto.randomUUID(), name, createdAt: now, updatedAt: now, tab: serializeSessionTab(tab) },
       ]);
-      flashClipboardTip(`已收藏「${name}」`);
+      flashClipboardTip(t("已收藏「{name}」", { name }));
     },
-    [favorites, persistFavorites, flashClipboardTip],
+    [t, favorites, persistFavorites, flashClipboardTip],
   );
 
   /** 重命名收藏（重名自动加序号；只动元数据，updatedAt 反映快照新鲜度故不变） */
@@ -2087,9 +2129,9 @@ useEffect(() => {
       const fav = favorites.find((f) => f.id === id);
       if (!fav) return;
       persistFavorites(favorites.filter((f) => f.id !== id));
-      flashClipboardTip(`已删除收藏「${fav.name}」`, 1400);
+      flashClipboardTip(t("已删除收藏「{name}」", { name: fav.name }), 1400);
     },
-    [favorites, persistFavorites, flashClipboardTip],
+    [t, favorites, persistFavorites, flashClipboardTip],
   );
 
   /** 用当前活动标签的布局覆盖收藏快照（名称与创建时间不变） */
@@ -2103,9 +2145,9 @@ useEffect(() => {
             : f,
         ),
       );
-      flashClipboardTip("收藏已更新为当前布局");
+      flashClipboardTip(t("收藏已更新为当前布局"));
     },
-    [activeTab, favorites, persistFavorites, flashClipboardTip],
+    [t, activeTab, favorites, persistFavorites, flashClipboardTip],
   );
 
   /** 打开收藏：按快照重建一个新标签页并激活（不动现有标签）。
@@ -2502,7 +2544,8 @@ useEffect(() => {
         if (dups.length > 0) {
           const names = dups.map((d) => basename(d.src));
           const preview =
-            names.slice(0, 5).join("、") + (names.length > 5 ? ` 等 ${dups.length} 项` : "");
+            names.slice(0, 5).join("、") +
+            (names.length > 5 ? ` ${t("等 {n} 项", { n: dups.length })}` : "");
           const choice = await appConfirmChoice({
             title: t("目标已存在同名文件夹"),
             message: t("当前目录已存在同名文件夹：{preview}\n\n「覆盖」保留原文件夹，递归覆盖其中的同名内容；「新增目录」复制为自动命名的新文件夹（如「xx (2)」）；取消则跳过这些文件夹。", { preview }),
@@ -2603,7 +2646,7 @@ useEffect(() => {
       }
       const tabId = tabsRef.current.find((t) => !!t.panes[paneId])?.id ?? -1;
       setCompareBase({ path: entry.path, name: entry.name, tabId, paneId });
-      showCompareBaseHint(`已设为比较基准：${entry.name}`);
+      showCompareBaseHint(t("已设为比较基准：{name}", { name: entry.name }));
     },
     [compareBase, showCompareBaseHint],
   );
@@ -2698,7 +2741,7 @@ useEffect(() => {
     if (syncLinksRef.current[activeTab.id]) {
       unlinkSync(activeTab.id);
       // v0.21.1 开/断开同步比对给中央提示（状态栏 pill 太小，新用户难发现）
-      flashClipboardTip("已断开同步比对", 1200);
+      flashClipboardTip(t("已断开同步比对"), 1200);
       return;
     }
     const panes = collectPaneIds(activeTab.root)
@@ -2719,7 +2762,9 @@ useEffect(() => {
       },
     }));
     flashClipboardTip(
-      `已开启同步比对：左右窗格联动导航（${isMac ? "⌘+⇧+X" : "Ctrl+Shift+X"} 查看结果）`,
+      t("已开启同步比对：左右窗格联动导航（{combo} 查看结果）", {
+        combo: isMac ? "⌘+⇧+X" : "Ctrl+Shift+X",
+      }),
       2400,
     );
   }, [activeTab, unlinkSync, showError, flashClipboardTip]);
@@ -3126,6 +3171,16 @@ useEffect(() => {
     () => showError(t("标签最多 {n} 个（含预设），已达上限", { n: MAX_TAGS })),
     [showError],
   );
+  /** v0.44.0 收缩态点远程服务器：图标无名称、无分组、无区分度 → 居中提示先展开（附当前快捷键） */
+  const collapsedServerHint = useCallback(
+    () =>
+      showInfo(
+        t("展开侧边栏后查看远程服务器（{key}）", {
+          key: formatBinding(bindingOf(ACTIONS.find((a) => a.id === "toggleSidebar")!)),
+        }),
+      ),
+    [showInfo],
+  );
   /** 自定义快捷访问（持久化）；上限 10 个（v0.28.0），加满后提醒 */
   const [customQuick, setCustomQuick] = useState<string[]>(() => loadCustomQuick());
   const toggleQuick = useCallback(
@@ -3204,7 +3259,7 @@ useEffect(() => {
       if (isHttpPath(path)) {
         if (trimmed === entryDisplayName(path, entryAliases)) return;
         setEntryAlias(path, trimmed);
-        flashClipboardTip("已更新显示名（HTTP 目录为只读，不改远程本体）", 1800);
+        flashClipboardTip(t("已更新显示名（HTTP 目录为只读，不改远程本体）"), 1800);
         return;
       }
       if (trimmed === basename(path)) return;
@@ -3315,16 +3370,36 @@ useEffect(() => {
       const pasted: string[] = [];
       try {
         if (destIsSftp || destIsNfs) {
-          // 目标远程：仅支持本地 → 远程上传；远程→远程暂不支持
-          if (sftpSrcs.length + nfsSrcs.length > 0) {
-            showError(t("双端远程传输暂不支持（方案已评估保留）"));
-            if (localSrcs.length === 0) return;
+          // 目标远程：本地 → 远程上传；v0.44.0 SFTP → SFTP 经临时目录中转；
+          // 其余双端远程组合（涉及 NFS）暂不支持
+          const relaySrcs = destIsSftp ? sftpSrcs : [];
+          const unsupported = sftpSrcs.length + nfsSrcs.length - relaySrcs.length;
+          if (unsupported > 0) {
+            showError(t("双端远程传输暂不支持"));
+            if (localSrcs.length + relaySrcs.length === 0) return;
+          }
+          // 粘贴回源所在目录 = 远程复制到当前目录：中转回写同一路径毫无意义，
+          // 且上传为截断写，中途失败会损坏源文件——跳过并沿用远程复制提示；
+          // 全部被跳过时保留剪贴板（可换个目录再粘贴）
+          const sameDir = relaySrcs.filter((s) => trimSlash(parentPath(s)) === trimSlash(dest));
+          if (sameDir.length > 0) {
+            showError(t("远程复制暂不支持（可拖拽到其他窗格）"));
+            if (localSrcs.length === 0 && sameDir.length === relaySrcs.length) return;
           }
           for (const src of localSrcs) {
             await (destIsSftp
               ? sftpUpload(src, dest, basename(src))
               : nfsUpload(src, dest, basename(src)));
             pasted.push(dest.endsWith("/") ? dest + basename(src) : `${dest}/${basename(src)}`);
+          }
+          for (const src of relaySrcs) {
+            if (sameDir.includes(src)) continue;
+            // 顶层同名语义同本地→远程粘贴：静默覆盖（拖拽才走覆盖确认）
+            pasted.push(await sftpRelay(src, dest, basename(src)));
+          }
+          if (relaySrcs.length > sameDir.length && isCut) {
+            // 远程剪切：与远程→本地一致，按复制处理（不删源）
+            showError(t("远程剪切暂按复制处理（不删除源文件）"));
           }
         setClipboard(null);
         if (pasted.length > 0) pendingSelectRef.current = pasted;
@@ -3462,7 +3537,37 @@ useEffect(() => {
           refreshPanes(refreshIds);
           return;
         }
-        // 远程 ⇄ 远程：暂不支持（方案已评估保留）
+        // v0.44.0 SFTP → SFTP：经远程临时目录中转（同服务器跨目录 / 跨服务器）。
+        // 远程语义不删源（拖拽的 move 同按复制，与远程↔本地一致）；SFTP 写入为 FXF_TRUNC
+        // 静默覆盖，同本地→远程：先列目标目录，存在同名 → 用户确认后才传
+        if (srcIsSftp && destIsSftp) {
+          // 投放到自身 / 源所在目录 = 无操作（回写同一路径还会因截断写在失败时损坏源）
+          const relayPaths = paths.filter(
+            (p) => trimSlash(p) !== trimSlash(dest) && trimSlash(parentPath(p)) !== trimSlash(dest),
+          );
+          if (relayPaths.length === 0) return;
+          const existing = await listDir(dest).catch(() => [] as FileEntry[]);
+          const destByName = new Map(existing.map((e) => [e.name, e] as const));
+          const clashPaths = relayPaths.filter((p) => destByName.has(basename(p)));
+          if (clashPaths.length > 0) {
+            const message = await clashConfirmMessage(clashPaths, destByName, (p) =>
+              listDir(parentPath(p)).then((es) => es.find((e) => e.name === basename(p))),
+            );
+            const ok = await appConfirm({
+              title: t("覆盖上传"),
+              message,
+              confirmLabel: t("覆盖"),
+              danger: true,
+            });
+            if (!ok) return;
+          }
+          for (const p of relayPaths) {
+            await sftpRelay(p, dest, basename(p));
+          }
+          refreshPanes(refreshIds);
+          return;
+        }
+        // 远程 ⇄ 远程：其余组合（涉及 NFS）暂不支持
         if ((srcIsSftp || srcIsNfs) && (destIsSftp || destIsNfs)) {
           showError(t("双端远程传输暂不支持"));
           return;
@@ -3475,28 +3580,9 @@ useEffect(() => {
           const clashPaths = paths.filter((p) => destByName.has(basename(p)));
           let overwrite = false;
           if (clashPaths.length > 0) {
-            let message: string;
-            if (clashPaths.length === 1) {
-              // v0.37 单文件覆盖附源/目标大小对比（SFTP 不查 MD5：远程算哈希代价高
-              // 且不普遍支持）；任一侧目录或大小不可知 → 退回仅名单
-              const p = clashPaths[0];
-              const remoteEntry = await listDir(parentPath(p))
-                .then((es) => es.find((e) => e.name === basename(p)))
-                .catch(() => undefined);
-              const destEntry = destByName.get(basename(p));
-              const sizeLine =
-                remoteEntry && destEntry && !remoteEntry.is_dir && !destEntry.is_dir
-                  ? t("源 {src}　目标 {dst}", { src: formatSize(remoteEntry.size), dst: formatSize(destEntry.size) })
-                  : null;
-              message = sizeLine
-                ? t("目标目录已有同名条目：{name}\n{size}", { name: basename(p), size: sizeLine })
-                : t("目标目录已有同名条目：{name}", { name: basename(p) });
-            } else {
-              message = t("目标目录已有同名条目：{names}{more}", {
-                names: clashPaths.map(basename).slice(0, 5).join("、"),
-                more: clashPaths.length > 5 ? t("等 {n} 项", { n: clashPaths.length }) : "",
-              });
-            }
+            const message = await clashConfirmMessage(clashPaths, destByName, (p) =>
+              listDir(parentPath(p)).then((es) => es.find((e) => e.name === basename(p))),
+            );
             // v0.28.0 应用内确认框（Windows 原生 confirm 是经典样式弹窗）
             const ok = await appConfirm({
               title: t("覆盖下载"),
@@ -3521,25 +3607,7 @@ useEffect(() => {
           const remoteByName = new Map(existing.map((e) => [e.name, e] as const));
           const clashPaths = paths.filter((p) => remoteByName.has(basename(p)));
           if (clashPaths.length > 0) {
-            let message: string;
-            if (clashPaths.length === 1) {
-              // v0.37 单文件覆盖附源/目标大小对比（SFTP 不查 MD5）；查不到或涉及目录 → 退回仅名单
-              const p = clashPaths[0];
-              const localEntry = await statEntry(p).catch(() => undefined);
-              const remoteEntry = remoteByName.get(basename(p));
-              const sizeLine =
-                localEntry && remoteEntry && !localEntry.is_dir && !remoteEntry.is_dir
-                  ? t("源 {src}　目标 {dst}", { src: formatSize(localEntry.size), dst: formatSize(remoteEntry.size) })
-                  : null;
-              message = sizeLine
-                ? t("目标目录已有同名条目：{name}\n{size}", { name: basename(p), size: sizeLine })
-                : t("目标目录已有同名条目：{name}", { name: basename(p) });
-            } else {
-              message = t("目标目录已有同名条目：{names}{more}", {
-                names: clashPaths.map(basename).slice(0, 5).join("、"),
-                more: clashPaths.length > 5 ? t("等 {n} 项", { n: clashPaths.length }) : "",
-              });
-            }
+            const message = await clashConfirmMessage(clashPaths, remoteByName, (p) => statEntry(p));
             // v0.28.0 应用内确认框（Windows 原生 confirm 是经典样式弹窗）
             const ok = await appConfirm({
               title: t("覆盖上传"),
@@ -4113,7 +4181,7 @@ useEffect(() => {
       }
       // 自动编号（对齐资源管理器「新建文件夹 (2)」）：先按当前列表跳到空闲序号，
       // 落盘撞名（列表过期的竞态）再靠后端 EXISTS 码逐个顺延重试
-      const base = kind === "dir" ? "新建文件夹" : "新建文件.txt";
+      const base = kind === "dir" ? t("新建文件夹") : t("新建文件.txt");
       const taken = new Set(pane.entries.map((e) => e.name));
       let n = 1;
       const takenName = (i: number) => (i === 1 ? base : `${base} (${i})`);
@@ -4663,6 +4731,7 @@ useEffect(() => {
       }
       updatePreviewPrefs({ expanded: !previewPrefs.expanded });
     },
+    toggleSidebar: () => toggleSidebar(),
     toggleBrowse: () => {
       if (browseOpen) {
         setBrowseOpen(false);
@@ -5141,6 +5210,9 @@ useEffect(() => {
                 expanded: !previewPrefs.enabled || previewPrefs.expanded,
               })
             }
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={toggleSidebar}
+            sidebarShortcut={formatBinding(bindingOf(ACTIONS.find((a) => a.id === "toggleSidebar")!))}
             appName={appName}
             appVersion={appVersion}
             dark={effectiveDark}
@@ -5210,6 +5282,10 @@ useEffect(() => {
           onOpenTerminal={handleOpenTerminal}
           onPropertiesDir={handlers.onPropertiesDir}
           onCopyPath={copyPath}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={toggleSidebar}
+          collapseShortcut={formatBinding(bindingOf(ACTIONS.find((a) => a.id === "toggleSidebar")!))}
+          onCollapsedServerHint={collapsedServerHint}
         />
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -5574,7 +5650,7 @@ useEffect(() => {
               throw new Error(t("密码不正确，请重试"));
             }
             if (isCancelledError(msg)) {
-              showError("已取消");
+              showError(t("已取消"));
             } else {
               showTransferError(e);
             }

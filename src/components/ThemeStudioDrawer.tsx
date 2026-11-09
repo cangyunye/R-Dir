@@ -168,7 +168,7 @@ export function ThemeStudioDrawer({
                 <option value="dark">{t("内置深色")}</option>
                 {packs.map((p) => (
                   <option key={p.id} value={`pack:${p.id}`}>
-                    {p.name}
+                    {t(p.name)}
                   </option>
                 ))}
               </select>

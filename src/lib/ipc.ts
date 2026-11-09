@@ -16,6 +16,7 @@
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
+import { t } from "@/lib/i18n";
 
 /** Tauri 事件模块的退订函数签名（两端一致） */
 export type UnlistenFn = () => void;
@@ -64,7 +65,7 @@ async function webInvoke<T>(
     if (body.ok) return body.data as T;
     throw typeof body.error === "string"
       ? body.error
-      : JSON.stringify(body.error ?? "未知错误");
+      : JSON.stringify(body.error ?? t("未知错误"));
   }
   throw `WEB_BAD_RESPONSE|服务响应异常（HTTP ${res.status}）`;
 }

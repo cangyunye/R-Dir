@@ -13,6 +13,7 @@ import {
   open as tauriOpen,
   save as tauriSave,
 } from "@tauri-apps/plugin-dialog";
+import { t } from "@/lib/i18n";
 
 /** plugin-dialog open/save 选项的兼容子集（桌面原样透传；浏览器忽略高级项） */
 export interface FileDialogOptions {
@@ -23,7 +24,7 @@ export interface FileDialogOptions {
   filters?: { name: string; extensions: string[] }[];
 }
 
-const WEB_HINT = "（web 模式：请输入服务端机器上的路径）";
+const WEB_HINT = () => t("（web 模式：请输入服务端机器上的路径）");
 
 /** 选择已有文件/目录；浏览器 → 输入框（multiple 时返回单元素数组） */
 export async function dialogOpen(
@@ -32,10 +33,10 @@ export async function dialogOpen(
   if (isTauri()) {
     return tauriOpen(opts as Parameters<typeof tauriOpen>[0]);
   }
-  const v = window.prompt(`${opts.title ?? "选择路径"}${WEB_HINT}`, opts.defaultPath ?? "");
-  const t = v?.trim();
-  if (!t) return null;
-  return opts.multiple ? [t] : t;
+  const v = window.prompt(`${opts.title ?? t("选择路径")}${WEB_HINT()}`, opts.defaultPath ?? "");
+  const target = v?.trim();
+  if (!target) return null;
+  return opts.multiple ? [target] : target;
 }
 
 /** 选择保存位置；浏览器 → 输入框（默认值为 defaultPath） */
@@ -43,9 +44,9 @@ export async function dialogSave(opts: FileDialogOptions = {}): Promise<string |
   if (isTauri()) {
     return tauriSave(opts as Parameters<typeof tauriSave>[0]);
   }
-  const v = window.prompt(`${opts.title ?? "保存到"}${WEB_HINT}`, opts.defaultPath ?? "");
-  const t = v?.trim();
-  return t ? t : null;
+  const v = window.prompt(`${opts.title ?? t("保存到")}${WEB_HINT()}`, opts.defaultPath ?? "");
+  const target = v?.trim();
+  return target ? target : null;
 }
 
 /** 原生确认框；浏览器 → window.confirm */

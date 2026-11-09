@@ -998,10 +998,10 @@ export function TextDiffDialog({
                         style={{ gridTemplateColumns: gridCols, height: ROW_H }}
                       >
                         <span className="col-span-2 truncate px-2 font-mono" title={s.leftName}>
-                          {s.leftName}
+                          {t(s.leftName)}
                         </span>
                         <span className="col-span-2 truncate px-2 font-mono" title={s.rightName}>
-                          {s.rightName}
+                          {t(s.rightName)}
                         </span>
                       </div>
                     );

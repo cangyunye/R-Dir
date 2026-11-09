@@ -242,7 +242,7 @@ export function SettingsDialog({
   const handlePickRemoteTempDir = useCallback(async () => {
     try {
       const picked = await openDialog({
-        title: "选择远程临时目录",
+        title: t("选择远程临时目录"),
         multiple: false,
         directory: true,
       });
@@ -375,7 +375,7 @@ export function SettingsDialog({
     setRecordingId(null);
     setConflict(null);
     onBindingsChanged();
-    flashTip("已恢复全部默认键位");
+    flashTip(t("已恢复全部默认键位"));
   }, [onBindingsChanged, flashTip]);
 
   if (!open) return null;
@@ -392,7 +392,7 @@ export function SettingsDialog({
       <div className="settings-glass flex h-[min(600px,85vh)] w-[720px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl">
         <div className="flex items-center justify-between border-b px-4 py-2.5">
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <Settings className="h-4 w-4" /> 设置
+            <Settings className="h-4 w-4" /> {t("设置")}
           </div>
           <button
             onClick={onClose}
@@ -1270,6 +1270,10 @@ export function SettingsDialog({
                   </div>
                   <p className="mt-1.5 text-[11px] text-muted-foreground">
                     {t("远程文件（SFTP / HTTP 等）通过「打开」或「打开方式」交给外部应用前，会先下载到此目录；清理只删除本地副本，不影响远程原件。更改目录不迁移旧文件，旧目录可在更改前先清理。")}
+                  </p>
+                  {/* v0.44.0 SFTP 按服务器分类 + 中转 + 退出清理 */}
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {t("SFTP 文件按服务器分目录存放（sftp/主机名），也用于 SFTP 之间互传的中转，程序退出时自动清理。")}
                   </p>
                 </div>
             </div>

@@ -1,4 +1,6 @@
 import {
+  ChevronsLeft,
+  ChevronsRight,
   Copy,
   Download,
   Film,
@@ -14,6 +16,7 @@ import {
   Pencil,
   Plug,
   Plus,
+  Server,
   SquarePlus,
   Star,
   Tag,
@@ -137,6 +140,10 @@ export function Sidebar({
   onOpenTerminal,
   onPropertiesDir,
   onCopyPath,
+  collapsed = false,
+  onToggleCollapsed,
+  collapseShortcut = "",
+  onCollapsedServerHint,
 }: {
   quickAccess: QuickAccessItem[];
   volumes: VolumeInfo[];
@@ -182,6 +189,14 @@ export function Sidebar({
   onOpenTerminal?: (shellId: string, path: string) => void;
   onPropertiesDir?: (dir: string) => void;
   onCopyPath?: (path: string) => void;
+  /** v0.44.0 收起为仅图标的窄栏：文字隐藏（悬停 title 识别），远程服务器只显示图标且不可操作 */
+  collapsed?: boolean;
+  /** 栏底收放按钮（缺省不渲染） */
+  onToggleCollapsed?: () => void;
+  /** toggleSidebar 当前键位显示文案（按钮/提示的 title 用，如 Ctrl+E） */
+  collapseShortcut?: string;
+  /** 收缩态点击远程服务器：App 弹「展开后查看」提示 */
+  onCollapsedServerHint?: () => void;
 }) {
   const copyPath = onCopyPath ?? ((p: string) => navigator.clipboard?.writeText(p).catch(() => {}));
   const t = useT();
@@ -252,14 +267,15 @@ export function Sidebar({
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
   const openRenameGroup = (group: string) => {
     setRenameGroupOld(group);
-    setRenameGroupInput(group); // 默认组（""）留空待填，其余预填现名
+    // 预填显示名（数据哨兵「默认」→ 显示层翻译），提交时按显示名对齐回数据值
+    setRenameGroupInput(group === "默认" ? t("默认") : group);
     setRenameGroupOpen(true);
   };
   const submitRenameGroup = () => {
     const name = renameGroupInput.trim();
     if (!name) return;
     // 分组按显示名对齐（空组名显示为「默认」）；改回「默认」= 解除分组（存空串）
-    const value = name === "默认" ? "" : name;
+    const value = name === t("默认") ? "" : name;
     const ids = sftpServers
       .filter((s) => (s.group || "默认") === renameGroupOld)
       .map((s) => s.id);
@@ -456,7 +472,7 @@ export function Sidebar({
           <DialogTitle>{t("重命名分组")}</DialogTitle>
           <DialogDescription>
             {t("将「{name}」组内的 {n} 台服务器整体移到新分组", {
-              name: renameGroupOld || "默认",
+              name: renameGroupOld === "默认" ? t("默认") : renameGroupOld,
               n: sftpServers.filter((s) => (s.group || "默认") === renameGroupOld).length,
             })}
           </DialogDescription>
@@ -533,12 +549,29 @@ export function Sidebar({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    <ScrollArea className="w-44 shrink-0 border-r bg-sidebar select-none">
+    {/* v0.44.0 根改为 flex 列：上为可滚动内容，下为固定的收放按钮（不随列表滚走）；
+        收起 = w-12 仅图标（不完全隐藏），宽度过渡 200ms 与预览拉门一致 */}
+    <div
+      data-sidebar=""
+      data-collapsed={collapsed ? "" : undefined}
+      className={cn(
+        "flex shrink-0 flex-col border-r bg-sidebar select-none transition-[width] duration-200 ease-out",
+        collapsed ? "w-12" : "w-44",
+      )}
+    >
+    <ScrollArea className="min-h-0 flex-1">
       <div className="flex flex-col gap-4 p-2">
         {/* 快速访问（内置 + 用户自定义） */}
         <div>
-          <div className="flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground">
-            <FolderHeart className="h-3.5 w-3.5" /> {t("快速访问")}
+          <div
+            className={cn(
+              "flex items-center gap-1.5 pb-1 text-[11px] font-semibold text-muted-foreground",
+              collapsed ? "justify-center" : "px-2",
+            )}
+            title={collapsed ? t("快速访问") : undefined}
+          >
+            <FolderHeart className="h-3.5 w-3.5" />
+            {!collapsed && t("快速访问")}
           </div>
           {quickAccess.map((item) => {
             const Icon = QUICK_ICONS[item.key] ?? Folder;
@@ -550,16 +583,17 @@ export function Sidebar({
                   <button
                     onClick={() => onNavigate(item.path)}
                     onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(item.path))}
-                    title={item.path}
+                    title={collapsed ? `${label}\n${item.path}` : item.path}
                     className={cn(
-                      "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
+                      "flex w-full items-center gap-2 rounded py-1.5 text-left text-xs",
+                      collapsed ? "justify-center" : "px-2",
                       isActive(currentPath, item.path)
                         ? "bg-accent text-accent-foreground"
                         : "text-foreground hover:bg-muted",
                     )}
                   >
                     <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 truncate">{label}</span>
+                    {!collapsed && <span className="min-w-0 truncate">{label}</span>}
                   </button>
                 </ContextMenuTrigger>
                 <ContextMenuContent className="min-w-44" collisionPadding={10}>
@@ -583,29 +617,33 @@ export function Sidebar({
                         <button
                           onClick={() => onNavigate(p)}
                           onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(p))}
-                          title={p}
+                          title={collapsed ? `${name}\n${p}` : p}
                           className={cn(
-                            "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",
+                            "flex w-full items-center gap-2 rounded py-1.5 text-left text-xs",
+                            collapsed ? "justify-center" : "pr-6 pl-2",
                             isActive(currentPath, p)
                               ? "bg-accent text-accent-foreground"
                               : "text-foreground hover:bg-muted",
                           )}
                         >
                           <Star className="h-4 w-4 shrink-0 text-folder" />
-                          <span className="min-w-0 truncate">{name}</span>
+                          {!collapsed && <span className="min-w-0 truncate">{name}</span>}
                         </button>
                       </ContextMenuTrigger>
                       <ContextMenuContent className="min-w-44" collisionPadding={10}>
                         {dirMenuItems(p, () => onRemoveQuick(p))}
                       </ContextMenuContent>
                     </ContextMenu>
-                    <button
-                      onClick={() => onRemoveQuick(p)}
-                      title={t("从快捷访问移除")}
-                      className="absolute top-1/2 right-1 hidden -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
+                    {/* 收缩态无空间放悬停移除钮：改走右键菜单「从快捷访问移除」 */}
+                    {!collapsed && (
+                      <button
+                        onClick={() => onRemoveQuick(p)}
+                        title={t("从快捷访问移除")}
+                        className="absolute top-1/2 right-1 hidden -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -617,16 +655,23 @@ export function Sidebar({
         <div>
           <div
             data-sidebar-tags-header=""
-            className="group flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground"
+            className={cn(
+              "group flex items-center gap-1.5 pb-1 text-[11px] font-semibold text-muted-foreground",
+              collapsed ? "justify-center" : "px-2",
+            )}
+            title={collapsed ? t("标签") : undefined}
           >
-            <Tag className="h-3.5 w-3.5" /> {t("标签")}
-            <button
-              onClick={openAddTag}
-              title={tags.length >= MAX_TAGS ? t("最多 {n} 个标签", { n: MAX_TAGS }) : t("新增标签")}
-              className="ml-auto hidden rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
+            <Tag className="h-3.5 w-3.5" />
+            {!collapsed && t("标签")}
+            {!collapsed && (
+              <button
+                onClick={openAddTag}
+                title={tags.length >= MAX_TAGS ? t("最多 {n} 个标签", { n: MAX_TAGS }) : t("新增标签")}
+                className="ml-auto hidden rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
           {tags.map((tag) => {
             const count = tagCounts[tag.id] ?? 0;
@@ -642,7 +687,8 @@ export function Sidebar({
                       (count > 0 ? t("（{n} 项）", { n: count }) : "")
                     }
                     className={cn(
-                      "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
+                      "flex w-full items-center gap-2 rounded py-1.5 text-left text-xs",
+                      collapsed ? "justify-center" : "px-2",
                       active
                         ? "bg-accent text-accent-foreground"
                         : count === 0
@@ -654,8 +700,11 @@ export function Sidebar({
                       className="h-3 w-3 shrink-0 rounded-full"
                       style={{ background: tag.color }}
                     />
-                    <span className="min-w-0 flex-1 truncate">{tagLabel(tag, tagNames)}</span>
-                    {count > 0 && (
+                    {/* 收缩态只留色点（各标签颜色不同，仍可区分）；名称与数量见 title */}
+                    {!collapsed && (
+                      <span className="min-w-0 flex-1 truncate">{tagLabel(tag, tagNames)}</span>
+                    )}
+                    {!collapsed && count > 0 && (
                       <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">
                         {count}
                       </span>
@@ -677,8 +726,15 @@ export function Sidebar({
         </div>
 
         <div>
-          <div className="flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground">
-            <HardDrive className="h-3.5 w-3.5" /> {t("磁盘 / 卷")}
+          <div
+            className={cn(
+              "flex items-center gap-1.5 pb-1 text-[11px] font-semibold text-muted-foreground",
+              collapsed ? "justify-center" : "px-2",
+            )}
+            title={collapsed ? t("磁盘 / 卷") : undefined}
+          >
+            <HardDrive className="h-3.5 w-3.5" />
+            {!collapsed && t("磁盘 / 卷")}
           </div>
           {volumes.map((vol) => (
             <ContextMenu key={vol.path} onOpenChange={(o) => !o && setExpandedMenu(null)}>
@@ -686,16 +742,17 @@ export function Sidebar({
                 <button
                   onClick={() => onNavigate(vol.path)}
                   onAuxClick={(e) => e.button === 1 && (e.preventDefault(), onMiddleOpen(vol.path))}
-                  title={vol.path}
+                  title={collapsed ? `${vol.name}\n${vol.path}` : vol.path}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
+                    "flex w-full items-center gap-2 rounded py-1.5 text-left text-xs",
+                    collapsed ? "justify-center" : "px-2",
                     isActive(currentPath, vol.path)
                       ? "bg-accent text-accent-foreground"
                       : "text-foreground hover:bg-muted",
                   )}
                 >
                     <HardDrive className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 truncate">{vol.name}</span>
+                    {!collapsed && <span className="min-w-0 truncate">{vol.name}</span>}
                 </button>
               </ContextMenuTrigger>
               <ContextMenuContent className="min-w-44" collisionPadding={10}>
@@ -703,7 +760,7 @@ export function Sidebar({
               </ContextMenuContent>
             </ContextMenu>
           ))}
-          {volumes.length === 0 && (
+          {volumes.length === 0 && !collapsed && (
             <div className="px-2 py-1 text-xs text-muted-foreground">{t("未检测到磁盘")}</div>
           )}
         </div>
@@ -715,16 +772,23 @@ export function Sidebar({
             <ContextMenuTrigger asChild>
               <div
                 data-sidebar-servers-header=""
-                className="group flex cursor-default items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold text-muted-foreground"
+                className={cn(
+                  "group flex cursor-default items-center gap-1.5 pb-1 text-[11px] font-semibold text-muted-foreground",
+                  collapsed ? "justify-center" : "px-2",
+                )}
+                title={collapsed ? t("远程服务器") : undefined}
               >
-                <MonitorSmartphone className="h-3.5 w-3.5" /> {t("远程服务器")}
-                <button
-                  onClick={onSftpAdd}
-                  title={t("添加 SFTP 服务器")}
-                  className="ml-auto hidden rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
+                <MonitorSmartphone className="h-3.5 w-3.5" />
+                {!collapsed && t("远程服务器")}
+                {!collapsed && (
+                  <button
+                    onClick={onSftpAdd}
+                    title={t("添加 SFTP 服务器")}
+                    className="ml-auto hidden rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             </ContextMenuTrigger>
             {(onSftpExport || onSftpImport || onSftpClearTemp) && (
@@ -753,12 +817,40 @@ export function Sidebar({
               </ContextMenuContent>
             )}
           </ContextMenu>
-          {sftpServers.length === 0 && (
+          {!collapsed && sftpServers.length === 0 && (
             <div className="px-2 py-1 text-xs text-muted-foreground">
               {t("地址栏输入 sftp:// 连接，或点上方 +")}
             </div>
           )}
-          {groupedServers.map(([group, servers]) => (
+          {/* v0.44.0 收缩态：名称看不到、图标同款无区分度、分组也无从体现——只显示
+              服务器图标（叠加连接状态点），不可操作：无右键/拖拽换组/中键新标签/断开钮；
+              点击只弹「展开后查看」提示。用 aria-disabled 而非 disabled：后者吞掉点击，
+              提示出不来 */}
+          {collapsed &&
+            groupedServers.flatMap(([, servers]) => servers).map((sv) => (
+              <button
+                key={sv.id}
+                type="button"
+                data-sidebar-server-collapsed=""
+                aria-disabled="true"
+                onClick={() => onCollapsedServerHint?.()}
+                title={t("展开侧边栏后查看远程服务器（{key}）", { key: collapseShortcut })}
+                className={cn(
+                  "relative flex w-full cursor-not-allowed items-center justify-center rounded py-1.5 text-muted-foreground",
+                  isActive(currentPath, `sftp://${sv.user}@${sv.host}:${sv.port}/`) &&
+                    "bg-accent text-accent-foreground",
+                )}
+              >
+                <Server className="h-4 w-4" />
+                <span
+                  className={cn(
+                    "absolute right-[5px] bottom-[3px] h-1.5 w-1.5 rounded-full ring-2 ring-sidebar",
+                    sv.connected ? "bg-ok" : "bg-muted-foreground/40",
+                  )}
+                />
+              </button>
+            ))}
+          {!collapsed && groupedServers.map(([group, servers]) => (
             <div key={group} className="mb-0.5">
               <ContextMenu onOpenChange={(o) => !o && setExpandedMenu(null)}>
                 <ContextMenuTrigger asChild>
@@ -874,6 +966,28 @@ export function Sidebar({
         </div>
       </div>
     </ScrollArea>
+      {onToggleCollapsed && (
+        <div className="shrink-0 border-t p-1.5">
+          <button
+            type="button"
+            data-testid="sidebar-collapse-toggle"
+            onClick={onToggleCollapsed}
+            aria-expanded={!collapsed}
+            title={
+              collapsed
+                ? t("展开侧边栏（{key}）", { key: collapseShortcut })
+                : t("收起侧边栏（{key}）", { key: collapseShortcut })
+            }
+            className={cn(
+              "flex w-full items-center rounded py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              collapsed ? "justify-center" : "justify-end px-1.5",
+            )}
+          >
+            {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
+          </button>
+        </div>
+      )}
+    </div>
     </>
   );
 }

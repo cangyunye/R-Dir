@@ -22,6 +22,7 @@ import type {
 import type { SftpConnectInitial } from "@/components/ConnectDialog";
 import { parseSftpAuthority, sftpUrl } from "@/lib/sftp-path";
 import { formatSize } from "@/lib/format";
+import { useT } from "@/lib/LanguageProvider";
 import {
   dialogConfirm as confirmDialog,
   dialogOpen as openFileDialog,
@@ -52,6 +53,7 @@ export interface UseSftpDeps {
  * 保存 → 连接 → 会话恢复），集中在这里便于单独理解。
  */
 export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: UseSftpDeps) {
+  const t = useT();
   const [servers, setServers] = useState<SftpServerView[]>([]);
   /** 已连接 id 集合（ref 同步，供 navigate 同步判断） */
   const connectedRef = useRef<Set<string>>(new Set());
@@ -117,7 +119,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
           setMasterKeyOpen(true);
           return;
         }
-        showError(`保存服务器失败：${e}`);
+        showError(t("保存服务器失败：{msg}", { msg: String(e) }));
       }
       if (!list) list = await sftpListServers().catch(() => []);
       syncConnected(list);
@@ -144,7 +146,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
         const pending = pendingRestoreRef.current;
         pendingRestoreRef.current = [];
         for (const sp of pending) {
-          patchPane(sp.paneId, { loading: false, error: "SFTP 未连接（需要主密钥验证）" });
+          patchPane(sp.paneId, { loading: false, error: t("SFTP 未连接（需要主密钥验证）") });
         }
         return;
       }
@@ -170,7 +172,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
           await sftpConnect(cfg);
           await handleConnected(cfg);
         } catch (e) {
-          showError(`连接失败：${e}`);
+          showError(t("连接失败：{msg}", { msg: String(e) }));
         }
       }
       // 3) 挂起的会话恢复连接（主密钥验证后重试）
@@ -193,7 +195,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
             const entries = await listDir(sp.path);
             patchPane(sp.paneId, { entries, loading: false, error: null });
           } catch (e) {
-            patchPane(sp.paneId, { error: `会话未恢复：SFTP 需要验证（${e}）` });
+            patchPane(sp.paneId, { error: t("会话未恢复：SFTP 需要验证（{msg}）", { msg: String(e) }) });
           }
         }
       }
@@ -250,7 +252,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
             }
             // 重连失败（如凭据已失效）→ 回退弹连接框让用户输入
             openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
-            showError(`重连失败：${e}`);
+            showError(t("重连失败：{msg}", { msg: String(e) }));
           }
         })();
         return;
@@ -310,7 +312,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
           return false;
         }
         openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
-        showError(`自动连接失败：${e}`);
+        showError(t("自动连接失败：{msg}", { msg: String(e) }));
         return false;
       }
     },
@@ -337,13 +339,13 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
   /** 侧边栏右键"删除服务器配置"（连接不断开） */
   const removeServer = useCallback(
     async (sv: SftpServerView) => {
-      if (!(await confirmDialog(`删除服务器配置「${sv.name}」？连接不会断开。`))) return;
+      if (!(await confirmDialog(t("删除服务器配置「{name}」？连接不会断开。", { name: sv.name })))) return;
       try {
         const list = await sftpRemoveServer(sv.id);
         syncConnected(list);
         setServers(list);
       } catch (e) {
-        showError(`删除服务器失败：${e}`);
+        showError(t("删除服务器失败：{msg}", { msg: String(e) }));
       }
     },
     [showError, syncConnected],
@@ -357,7 +359,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
         syncConnected(list);
         setServers(list);
       } catch (e) {
-        showError(`断开失败：${e}`);
+        showError(t("断开失败：{msg}", { msg: String(e) }));
       }
     },
     [showError, syncConnected],
@@ -378,7 +380,9 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
       pendingExportTargetRef.current = null;
       setExportPwOpen(false);
       showInfo(
-        `已导出 ${s.exported} 台服务器${s.encrypted ? "（含加密密码，导入时需输入主密码）" : ""}`,
+        s.encrypted
+          ? t("已导出 {n} 台服务器（含加密密码，导入时需输入主密码）", { n: s.exported })
+          : t("已导出 {n} 台服务器", { n: s.exported }),
       );
       sftpMasterKeyStatus().then(setMasterKeyStatus).catch(() => {});
     },
@@ -398,7 +402,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
           setExportPwOpen(true);
           return;
         }
-        showError(`导出失败：${msg}`);
+        showError(t("导出失败：{msg}", { msg }));
       }
     },
     [finishExport, showError],
@@ -407,7 +411,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
   /** 导出服务器清单（save 对话框选位置；明文密码需主密码就地加密后再写出） */
   const exportServers = useCallback(async () => {
     const target = await saveFileDialog({
-      title: "导出远程服务器列表",
+      title: t("导出远程服务器列表"),
       defaultPath: `rdir-servers-${new Date().toISOString().slice(0, 10)}.json`,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
@@ -443,7 +447,9 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
       syncConnected(list);
       setServers(list);
       showInfo(
-        `已导入 ${s.imported} 台服务器${s.skipped > 0 ? `（跳过 ${s.skipped} 台已存在）` : ""}`,
+        s.skipped > 0
+          ? t("已导入 {n} 台服务器（跳过 {m} 台已存在）", { n: s.imported, m: s.skipped })
+          : t("已导入 {n} 台服务器", { n: s.imported }),
       );
     },
     [showInfo, syncConnected],
@@ -463,7 +469,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
           setImportPwOpen(true);
           return;
         }
-        showError(`导入失败：${msg}`);
+        showError(t("导入失败：{msg}", { msg }));
       }
     },
     [finishImport, showError],
@@ -472,7 +478,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
   /** 导入服务器清单（open 对话框选文件；需主密码时经 PasswordDialog 追加输入） */
   const importServers = useCallback(async () => {
     const file = await openFileDialog({
-      title: "导入远程服务器列表",
+      title: t("导入远程服务器列表"),
       multiple: false,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
@@ -504,13 +510,13 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
     try {
       const info = await remoteTempInfo();
       if (info.files === 0) {
-        showInfo("远程临时目录已是空的");
+        showInfo(t("远程临时目录已是空的"));
         return;
       }
       const freed = await remoteTempClear();
-      showInfo(`已清理 ${info.files} 个远程临时文件（释放 ${formatSize(freed)}）`);
+      showInfo(t("已清理 {n} 个远程临时文件（释放 {size}）", { n: info.files, size: formatSize(freed) }));
     } catch (e) {
-      showError(`清理失败：${e}`);
+      showError(t("清理失败：{msg}", { msg: String(e) }));
     }
   }, [showInfo, showError]);
 
@@ -523,7 +529,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
       const list = await sftpSaveServer(config);
       syncConnected(list);
       setServers(list);
-      showInfo(`已保存「${config.name || config.id}」`);
+      showInfo(t("已保存「{name}」", { name: config.name || config.id }));
     },
     [syncConnected, showInfo],
   );
@@ -536,7 +542,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
         syncConnected(list);
         setServers(list);
       } catch (e) {
-        showError(`修改分组失败：${e}`);
+        showError(t("修改分组失败：{msg}", { msg: String(e) }));
       }
     },
     [syncConnected, showError],

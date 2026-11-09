@@ -1,6 +1,7 @@
 /** 标签收藏夹纯函数:命名去重、面板搜索打分、路径展示。与 UI 解耦便于单测。 */
 import { fuzzyMatch } from "@/lib/fuzzy";
 import type { SessionTab, TabFavorite } from "@/lib/types";
+import { t } from "@/lib/i18n";
 
 /** 收藏面板行视图:名称命中位置 + 展示路径(最佳命中,无命中取首个)与命中位置 */
 export interface FavoriteRow {
@@ -17,7 +18,7 @@ export function favoritePaths(fav: TabFavorite): string[] {
 
 /** 重名去重:base、base (2)、base (3)…;空名回落「收藏标签」 */
 export function dedupeName(base: string, existing: readonly string[]): string {
-  const trimmed = base.trim() || "收藏标签";
+  const trimmed = base.trim() || t("收藏标签");
   const taken = new Set(existing);
   if (!taken.has(trimmed)) return trimmed;
   for (let i = 2; ; i++) {
