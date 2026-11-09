@@ -7,7 +7,7 @@ edition = "2021"
 
 # NFS 插件 crate：客户端本体 + 伴生进程二进制（rdir-nfs，发行时不随主程序打包）
 [workspace]
-members = ["crates/rdir-nfs"]
+members = ["crates/rdir-nfs", "crates/rdir-index"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

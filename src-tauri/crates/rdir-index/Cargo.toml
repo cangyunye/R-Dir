@@ -1,0 +1,16 @@
+[package]
+name = "rdir-index"
+version = "0.43.0"
+description = "R-Dir 全盘索引搜索引擎：字符级 2-gram 倒排 + 打包路径 arena + 目录 mtime 剪枝增量重扫 + bincode 快照"
+edition = "2021"
+
+[lib]
+name = "rdir_index"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+# 全量枚举用 ignore 的并行遍历（与主程序同一依赖，零新增编译体积）
+ignore = "0.4"
+globset = "0.4"
+regex = "1"
