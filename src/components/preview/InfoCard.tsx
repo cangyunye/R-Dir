@@ -45,7 +45,7 @@ export function InfoCard({
         {entry.name}
       </div>
       <div className="text-[10px] text-muted-foreground">
-        {extLabel(entry)} · {formatSize(entry.size)} · {formatTime(entry.modified)}
+        {t(extLabel(entry))} · {formatSize(entry.size)} · {formatTime(entry.modified)}
       </div>
       <div className="max-w-[260px] text-[10px] leading-relaxed text-muted-foreground/80">{hint}</div>
       {action && (

@@ -365,26 +365,39 @@ export function FileList({
 
   // ---- v0.34 名称列宽：拖表头分隔线调整，全局共享（所有窗格一致）、localStorage 持久化 ----
   const nameColW = useSyncExternalStore(subscribeNameColumnWidth, getNameColumnWidth);
-  /** 名称列固定像素宽时，最右「权限」列改吃剩余空间，行不再留右侧空白 */
+  /** 名称列固定像素宽时，最右「权限」列改吃剩余空间，行不再留右侧空白。
+   *  v0.44.0 名称列用 minmax(0, W)：窗格（分屏）不够宽时名称列先收缩，
+   *  大小/时间等后续列不被挤出可视区（Windows 分屏表头只剩名称的根因）。 */
   const gridCols =
     nameColW > 0
-      ? `${nameColW}px 84px 132px 80px minmax(88px, 1fr)`
+      ? `minmax(0, ${nameColW}px) 84px 132px 80px minmax(88px, 1fr)`
       : COLUMNS.map((c) => c.width).join(" ");
-  const colResizeRef = useRef<{ startX: number; startW: number } | null>(null);
+  const colResizeRef = useRef<{
+    startX: number;
+    startW: number;
+    /** 根 zoom × 窗格 zoom：视觉位移 → 布局位移的换算比 */
+    ratio: number;
+  } | null>(null);
   const startColResize = (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
     e.preventDefault();
     const headEl = e.currentTarget.parentElement;
-    const startW =
-      nameColW > 0 ? nameColW : (headEl?.getBoundingClientRect().width ?? 0);
-    colResizeRef.current = { startX: e.clientX, startW };
+    // v0.44.0 起点取本窗格名称单元格的布局宽（offsetWidth，未缩放坐标）：
+    // Chromium ≥128 下 getBoundingClientRect/clientX 是 zoom 后的视觉像素，
+    // 而 gridTemplateColumns 的 px 渲染时会再乘 zoom——直接相加会把宽度放大
+    // (zoom−1) 倍并每帧复利（Windows 分屏名称列顶满、后续列消失的根因）。
+    // 换算比照 TabBar openBlankMenu：rect.width / offsetWidth。
+    const startW = headEl?.offsetWidth ?? 0;
+    const rect = headEl?.getBoundingClientRect();
+    const ratio = rect && startW > 0 ? rect.width / startW : 1;
+    colResizeRef.current = { startX: e.clientX, startW, ratio: ratio > 0 ? ratio : 1 };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const moveColResize = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = colResizeRef.current;
     if (!d) return;
-    // clientX 与渲染宽度同处 CSS 缩放后的布局像素系，位移可直接相加
-    setNameColumnWidth(d.startW + e.clientX - d.startX);
+    // clientX 是视觉（zoom 后）坐标，起点宽度是布局坐标，位移按 ratio 换算回布局空间
+    setNameColumnWidth(d.startW + (e.clientX - d.startX) / d.ratio);
   };
   const endColResize = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!colResizeRef.current) return;
@@ -766,22 +779,23 @@ export function FileList({
       >
         <ContextMenuTrigger asChild>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {/* 表头 */}
+            {/* 表头（v0.44.0 scrollbar-gutter:stable：与下方行区预留相同滚动条槽位，
+                Windows 常驻滚动条下列边界与行对齐；macOS 覆盖式滚动条槽宽为 0 无变化） */}
       <div
-        className="grid shrink-0 items-center border-b bg-background text-xs font-medium text-muted-foreground select-none"
+        className="grid shrink-0 items-center overflow-hidden border-b bg-background text-xs font-medium text-muted-foreground select-none [scrollbar-gutter:stable]"
         style={{ gridTemplateColumns: gridCols }}
       >
         {COLUMNS.map((col) => (
           <button
             key={col.label}
             className={cn(
-              "relative flex h-7 items-center gap-1 px-2 text-left hover:bg-muted",
+              "relative flex h-7 min-w-0 items-center gap-1 overflow-hidden px-2 text-left hover:bg-muted",
               col.key === null && "cursor-default hover:bg-transparent",
             )}
             onClick={() => col.key && onSort(col.key)}
             disabled={col.key === null}
           >
-            {t(col.label)}
+            <span className="truncate">{t(col.label)}</span>
             {/* v0.34 名称列宽拖动分隔线：按住左右拖调宽，双击恢复自动。
                 pointer 事件 stopPropagation 避免触发排序/表头悬停样式误闪 */}
             {col.key === "name" && (
@@ -834,7 +848,7 @@ export function FileList({
         ref={listScrollRef}
         data-filelist-body=""
         tabIndex={0}
-        className="min-h-0 flex-1 overflow-y-auto pb-8 outline-none select-none"
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-auto pb-8 outline-none select-none [scrollbar-gutter:stable]"
         onMouseDown={startRubber}
         onMouseDownCapture={(e) => {
           // 地址栏聚焦时保持光标；点击输入框/文本域不抢焦点；浮层内不抢焦点；否则聚焦列表
@@ -1043,7 +1057,7 @@ export function FileList({
                   <div className="px-2 tabular-nums text-muted-foreground">
                     {formatTime(entry.modified)}
                   </div>
-                  <div className="px-2 text-muted-foreground">{extLabel(entry)}</div>
+                  <div className="px-2 text-muted-foreground">{t(extLabel(entry))}</div>
                   <div className="px-2 font-mono text-xs text-muted-foreground">
                     {entry.permissions}
                   </div>

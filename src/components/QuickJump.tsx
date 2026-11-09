@@ -181,7 +181,7 @@ export function QuickJump({
                     {formatTime(row.entry.modified)}
                   </span>
                   <span className="shrink-0 text-muted-foreground">
-                    {extLabel(row.entry)}
+                    {t(extLabel(row.entry))}
                   </span>
                 </div>
               );
