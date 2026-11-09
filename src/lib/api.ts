@@ -3,6 +3,9 @@ import { loadRemoteTempDir } from "./persist";
 import type {
   FileEntry,
   FindEntry,
+  IndexConfigFile,
+  IndexHit,
+  IndexStatusView,
   MasterKeyStatus,
   QuickAccessItem,
   SearchMatch,
@@ -285,6 +288,37 @@ export const findFiles = (
   caseSensitive: boolean,
 ) =>
   invoke<FindEntry[]>("find_files", { pattern, dir, showHidden, maxDepth, glob, caseSensitive });
+
+// ==================== 全盘索引（v0.45，默认关闭） ====================
+
+/** 索引状态轮询（顺带在后端同步插件开关） */
+export const indexStatus = () => invoke<IndexStatusView>("index_status");
+
+/** 全盘索引检索（子串/通配/正则按文件名整段匹配；结果上限 500） */
+export const indexSearch = (
+  query: string,
+  caseSensitive: boolean,
+  glob: boolean,
+  regex: boolean,
+  isDir: boolean | null = null,
+) =>
+  invoke<IndexHit[]>("index_search", {
+    query,
+    caseSensitive,
+    glob,
+    regex,
+    isDir,
+  });
+
+/** 手动全量重建（后台线程 ≤2s 内响应，构建期间旧索引继续可查） */
+export const indexRebuild = () => invoke<void>("index_rebuild");
+
+/** 索引配置读取（roots + 排除清单） */
+export const indexGetConfig = () => invoke<IndexConfigFile>("index_get_config");
+
+/** 索引配置写入（落盘后指纹变化自动触发全量重建） */
+export const indexSetConfig = (roots: string[], exclusions: string[]) =>
+  invoke<void>("index_set_config", { roots, exclusions });
 
 // ==================== SFTP 远程服务器 ====================
 

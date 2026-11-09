@@ -2,6 +2,7 @@
 import {
   BookOpen,
   Check,
+  Database,
   Download,
   ExternalLink,
   Eye,
@@ -46,6 +47,13 @@ import type { OpenerItem, PluginInfo } from "@/lib/openerApi";
 import { normalizeExts } from "@/lib/openers";
 import { formatSize } from "@/lib/format";
 import { remoteTempInfo, type RemoteTempInfo } from "@/lib/api";
+import {
+  indexGetConfig,
+  indexRebuild,
+  indexSetConfig,
+  indexStatus,
+} from "@/lib/api";
+import type { IndexStatusView } from "@/lib/types";
 import { useModalLayer } from "@/hooks/useModalLayer";
 import { isTopModalLayer } from "@/lib/modal-stack";
 import {
@@ -61,7 +69,7 @@ import { useT } from "@/lib/LanguageProvider";
 import type { Language } from "@/lib/i18n";
 
 /** 设置分区标识（左栏导航 + 右栏锚点共用） */
-export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "favorites" | "share" | "remoteTemp" | "plugins" | "about";
+export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "favorites" | "share" | "remoteTemp" | "index" | "plugins" | "about";
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
   { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
@@ -72,6 +80,7 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
   { id: "favorites", label: "收藏夹", icon: <Star className="h-4 w-4" /> },
   { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
   { id: "remoteTemp", label: "远程临时", icon: <HardDrive className="h-4 w-4" /> },
+  { id: "index", label: "全盘索引", icon: <Database className="h-4 w-4" /> },
   { id: "plugins", label: "插件", icon: <Puzzle className="h-4 w-4" /> },
   { id: "about", label: "关于", icon: <Info className="h-4 w-4" /> },
 ];
@@ -208,6 +217,27 @@ export function SettingsDialog({
   /** v0.7 分享设置 */
   const [shareAllowParent, setShareAllowParent] = useState(() => loadShareAllowParent());
   const [shareExpiresHours, setShareExpiresHours] = useState<number | null>(() => loadShareDefaultExpires());
+  // v0.45 全盘索引（自管：状态轮询 + 配置文本区；开关本体在「插件」分区）
+  const [indexSt, setIndexSt] = useState<IndexStatusView | null>(null);
+  const [indexRoots, setIndexRoots] = useState("");
+  const [indexExcl, setIndexExcl] = useState("");
+  const [indexDirty, setIndexDirty] = useState(false);
+  const [indexSaving, setIndexSaving] = useState(false);
+  const [indexSaved, setIndexSaved] = useState(false);
+  const handleSaveIndexConfig = useCallback(async () => {
+    setIndexSaving(true);
+    try {
+      const roots = indexRoots.split("\n").map((s) => s.trim()).filter(Boolean);
+      const excl = indexExcl.split("\n").map((s) => s.trim()).filter(Boolean);
+      await indexSetConfig(roots, excl);
+      setIndexDirty(false);
+      setIndexSaved(true);
+      window.setTimeout(() => setIndexSaved(false), 2000);
+    } catch {
+      /* 保存失败静默（下次轮询状态可见配置未生效） */
+    }
+    setIndexSaving(false);
+  }, [indexRoots, indexExcl]);
   /** 正在录制键位的 actionId（null = 未录制） */
   const [recordingId, setRecordingId] = useState<string | null>(null);
   /** v0.8 分类导航当前分区（由滚动位置反推，用于左栏高亮） */
@@ -237,6 +267,32 @@ export function SettingsDialog({
   useEffect(() => {
     if (open) refreshRemoteTempUsage();
   }, [open, remoteTempDir, refreshRemoteTempUsage]);
+
+  // v0.45 全盘索引：打开设置期间每 2s 轮询状态（顺带在后端同步插件开关）+ 首次拉取配置
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    const poll = () =>
+      indexStatus()
+        .then((s) => {
+          if (alive) setIndexSt(s);
+        })
+        .catch(() => {});
+    poll();
+    const timer = window.setInterval(poll, 2000);
+    indexGetConfig()
+      .then((c) => {
+        if (!alive) return;
+        // 不覆盖编辑中的草稿（仅在为空时填充）
+        setIndexRoots((prev) => prev || c.roots.join("\n"));
+        setIndexExcl((prev) => prev || c.exclusions.join("\n"));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [open]);
 
   /** 更改远程临时目录：系统目录选择对话框（取消不动） */
   const handlePickRemoteTempDir = useCallback(async () => {
@@ -1274,6 +1330,102 @@ export function SettingsDialog({
                   {/* v0.44.0 SFTP 按服务器分类 + 中转 + 退出清理 */}
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     {t("SFTP 文件按服务器分目录存放（sftp/主机名），也用于 SFTP 之间互传的中转，程序退出时自动清理。")}
+                  </p>
+                </div>
+            </div>
+
+            {/* v0.45 全盘索引：状态统计 + 范围/排除配置（开关本体在「插件」分区） */}
+            <div
+              ref={(el) => { sectionRefs.current.index = el; }}
+              data-settings-section="index"
+              className="scroll-mt-3 mb-6"
+            >
+                <div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("全盘索引")}</div>
+                  <p className="mb-2.5 text-[11px] text-muted-foreground">
+                    {t("后台索引本地磁盘文件名，搜索面板点亮「全盘」即瞬时检索。启用开关在「插件」分区（默认关闭）。")}
+                  </p>
+                  <div className="overflow-hidden rounded-md border bg-card">
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+                      <span className="min-w-0 flex-1 truncate">
+                        {indexSt == null
+                          ? t("状态加载中…")
+                          : indexSt.phase === "disabled"
+                            ? t("未启用（在「插件」分区开启）")
+                            : indexSt.phase === "building"
+                              ? t("索引构建中（已索引 {n} 项）…", { n: indexSt.entries })
+                              : t("已索引 {n} 项", { n: indexSt.entries })}
+                        {indexSt != null && indexSt.errors > 0 && (
+                          <span className="ml-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                            {t("（枚举跳过 {n} 项：无权限或已消失）", { n: indexSt.errors })}
+                          </span>
+                        )}
+                      </span>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {indexSaved && (
+                          <span className="text-[11px] text-emerald-600 dark:text-emerald-400">{t("已保存")}</span>
+                        )}
+                        <button
+                          onClick={() => void handleSaveIndexConfig()}
+                          disabled={indexSaving || !indexDirty}
+                          className="rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {indexSaving ? t("保存中…") : t("保存索引配置")}
+                        </button>
+                        <button
+                          onClick={() => void indexRebuild()}
+                          disabled={indexSt == null || indexSt.phase === "disabled"}
+                          className="rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                          title={t("丢弃快照，从磁盘重新全量构建（期间旧索引继续可查）")}
+                        >
+                          <RotateCcw className="mr-1 inline h-3 w-3" />
+                          {t("重建索引")}
+                        </button>
+                      </div>
+                    </div>
+                    {indexSt != null && indexSt.lastScanMs > 0 && (
+                      <div className="border-t px-3 py-2 text-[11px] text-muted-foreground">
+                        {t("上次扫描：{t}（耗时 {ms} ms）", {
+                          t: new Date(indexSt.lastScanMs).toLocaleString(),
+                          ms: indexSt.lastDurationMs,
+                        })}
+                      </div>
+                    )}
+                    <div className="border-t px-3 py-2.5">
+                      <label className="block">
+                        <span className="mb-1 block text-[11px] text-muted-foreground">
+                          {t("索引范围（每行一个根目录）")}
+                        </span>
+                        <textarea
+                          value={indexRoots}
+                          onChange={(e) => {
+                            setIndexRoots(e.target.value);
+                            setIndexDirty(true);
+                          }}
+                          rows={3}
+                          spellCheck={false}
+                          className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
+                        />
+                      </label>
+                      <label className="mt-2 block">
+                        <span className="mb-1 block text-[11px] text-muted-foreground">
+                          {t("排除目录（每行一个，含其全部子内容）")}
+                        </span>
+                        <textarea
+                          value={indexExcl}
+                          onChange={(e) => {
+                            setIndexExcl(e.target.value);
+                            setIndexDirty(true);
+                          }}
+                          rows={3}
+                          spellCheck={false}
+                          className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    {t("保存后范围/排除变化会自动触发重新构建；增量扫描每 10 分钟一次（目录未变化时零成本）。首次构建可能需要数分钟，期间可照常使用。")}
                   </p>
                 </div>
             </div>

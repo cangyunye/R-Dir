@@ -375,6 +375,32 @@ export async function installTauriMock(page: Page): Promise<void> {
         walk(root);
         return out.slice(0, 500);
       },
+      // 全盘索引（v0.45）：mock 为即时就绪 + 虚拟 FS 全盘子串匹配
+      index_status: () => ({
+        phase: "ready",
+        entries: Object.keys(FS).reduce((n, d) => n + (FS[d]?.length ?? 0), 0),
+        lastScanMs: Date.now(),
+        lastDurationMs: 1,
+        errors: 0,
+        roots: ["/"],
+        exclusions: [],
+      }),
+      index_search: (a) => {
+        const q = String(a.query).toLowerCase();
+        const out: { path: string; name: string; is_dir: boolean; size: number; mtime: number }[] = [];
+        for (const dir of Object.keys(FS)) {
+          for (const f of FS[dir] ?? []) {
+            if (f.name.toLowerCase().includes(q)) {
+              out.push({ path: `${dir}/${f.name}`, name: f.name, is_dir: !!f.dir, size: 1, mtime: 0 });
+              if (out.length >= 500) return out;
+            }
+          }
+        }
+        return out;
+      },
+      index_rebuild: () => undefined,
+      index_get_config: () => ({ roots: ["/"], exclusions: [] }),
+      index_set_config: () => undefined,
       // 返回数组（真实后端为补全列表；空数组 = 不弹补全下拉）
       complete_path: () => [],
       stat_path: (a) => {

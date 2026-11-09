@@ -132,6 +132,34 @@ export interface FindEntry {
   is_dir: boolean;
 }
 
+/** 全盘索引命中（v0.45；size/mtime 来自索引，有真值） */
+export interface IndexHit {
+  path: string;
+  name: string;
+  is_dir: boolean;
+  size: number;
+  /** 修改时间（Unix 毫秒；0 = 未知） */
+  mtime: number;
+}
+
+/** 全盘索引状态（phase 与 Rust Indexer 的 AtomicU8 对齐） */
+export interface IndexStatusView {
+  phase: "disabled" | "building" | "ready";
+  entries: number;
+  /** 上次扫描完成时间（Unix 毫秒；0 = 从未） */
+  lastScanMs: number;
+  lastDurationMs: number;
+  errors: number;
+  roots: string[];
+  exclusions: string[];
+}
+
+/** 全盘索引配置（roots + 排除清单） */
+export interface IndexConfigFile {
+  roots: string[];
+  exclusions: string[];
+}
+
 // ==================== SFTP 远程服务器（v0.2 插件） ====================
 
 /** 服务器清单条目（与 Rust servers::ServerConfigFile 对齐，camelCase） */

@@ -25,12 +25,12 @@ import { FileIcon } from "@/components/FileIcon";
 import { RenameInput } from "@/components/RenameInput";
 import { useModalLayer } from "@/hooks/useModalLayer";
 import { isTopModalLayer } from "@/lib/modal-stack";
-import { findFiles, renameEntry, searchContent } from "@/lib/api";
+import { findFiles, indexSearch, indexStatus, renameEntry, searchContent } from "@/lib/api";
 import { isSftpPath, isNfsPath } from "@/lib/sftp-path";
 import { useT } from "@/lib/LanguageProvider";
 import { terr } from "@/lib/i18n";
 import { loadSearchMaxDepth, saveSearchMaxDepth } from "@/lib/persist";
-import type { FileEntry, FindEntry, SearchMatch } from "@/lib/types";
+import type { FileEntry, FindEntry, IndexHit, IndexStatusView, SearchMatch } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 function extensionOf(path: string): string {
@@ -51,8 +51,8 @@ function globToRegExp(glob: string, caseSensitive: boolean): RegExp {
   return new RegExp(`^${src}$`, caseSensitive ? "" : "i");
 }
 
-/** 灯芯按钮灯色分组：蓝/绿 = 搜索范围，琥珀/紫 = 匹配方式 */
-type ChipColor = "blue" | "green" | "amber" | "purple";
+/** 灯芯按钮灯色分组：蓝/绿/青 = 搜索范围，琥珀/紫 = 匹配方式 */
+type ChipColor = "blue" | "green" | "teal" | "amber" | "purple";
 
 const CHIP_ON: Record<ChipColor, { frame: string; led: string }> = {
   blue: {
@@ -62,6 +62,10 @@ const CHIP_ON: Record<ChipColor, { frame: string; led: string }> = {
   green: {
     frame: "border-emerald-500/60 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
     led: "bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.9)]",
+  },
+  teal: {
+    frame: "border-teal-500/60 bg-teal-500/10 text-teal-600 dark:text-teal-400",
+    led: "bg-teal-500 shadow-[0_0_4px_rgba(20,184,166,0.9)]",
   },
   amber: {
     frame: "border-amber-500/60 bg-amber-500/10 text-amber-600 dark:text-amber-400",
@@ -339,6 +343,14 @@ export function SearchPanel({
           m.path === oldPath ? { ...m, path: newPath, rel_path: withNewTail(m.rel_path, oldName, trimmed) } : m,
         ),
       );
+      // 全盘索引结果同样乐观更新（索引本体待下次增量重扫收敛）
+      setIdxResults((rs) =>
+        rs.map((h) =>
+          h.path === oldPath
+            ? { ...h, path: newPath, name: newPath.split(/[\\/]/).pop() ?? trimmed }
+            : h,
+        ),
+      );
       onRenamed(oldPath, newPath);
     } catch (e) {
       onError(String(e));
@@ -364,7 +376,7 @@ export function SearchPanel({
     }
   }, [cmd]);
 
-  // 文件名检索：当前层前端过滤 / fd 递归引擎；灯钮 = 递归(蓝) 隐藏(绿) 大小写(琥珀) 正则⇄通配(紫)
+  // 文件名检索：当前层前端过滤 / fd 递归引擎 / 全盘索引引擎；灯钮 = 递归(蓝) 全盘(青) 隐藏(绿) 大小写(琥珀) 正则⇄通配(紫)
   const [fdEnabled, setFdEnabled] = useState(false);
   const [nameHidden, setNameHidden] = useState(false);
   const [nameCase, setNameCase] = useState(false);
@@ -374,6 +386,15 @@ export function SearchPanel({
   const [fdError, setFdError] = useState<string | null>(null);
   const fdTimer = useRef<number | null>(null);
   const fdSeq = useRef(0);
+
+  // 全盘索引引擎（v0.45）：与 fd 灯钮互斥——两个都是「文件名递归类」检索源
+  const [idxEnabled, setIdxEnabled] = useState(false);
+  const [idxResults, setIdxResults] = useState<IndexHit[]>([]);
+  const [idxLoading, setIdxLoading] = useState(false);
+  const [idxError, setIdxError] = useState<string | null>(null);
+  const [idxStatus, setIdxStatus] = useState<IndexStatusView | null>(null);
+  const idxTimer = useRef<number | null>(null);
+  const idxSeq = useRef(0);
 
   // 内容搜索状态；灯钮 = 递归(蓝) 隐藏(绿) 大小写(琥珀) 正则(紫)
   const [cQuery, setCQuery] = useState("");
@@ -449,6 +470,55 @@ export function SearchPanel({
       if (fdTimer.current) window.clearTimeout(fdTimer.current);
     };
   }, [query, fdEnabled, dir, nameHidden, nameMode, nameCase, maxDepth]);
+
+  // 全盘索引检索：防抖 250ms；查询走内存倒排（亚毫秒级），忽略面板锚定目录（全盘）
+  useEffect(() => {
+    if (idxTimer.current) window.clearTimeout(idxTimer.current);
+    const q = query.trim();
+    if (!idxEnabled || !q) {
+      setIdxResults([]);
+      setIdxLoading(false);
+      setIdxError(null);
+      return;
+    }
+    setIdxLoading(true);
+    setIdxError(null);
+    const seq = ++idxSeq.current;
+    idxTimer.current = window.setTimeout(async () => {
+      try {
+        const res = await indexSearch(q, nameCase, nameMode === "glob", nameMode === "regex", null);
+        if (seq !== idxSeq.current) return;
+        setIdxResults(res);
+      } catch (e) {
+        if (seq !== idxSeq.current) return;
+        setIdxError(terr(String(e)));
+        setIdxResults([]);
+      } finally {
+        if (seq === idxSeq.current) setIdxLoading(false);
+      }
+    }, 250);
+    return () => {
+      if (idxTimer.current) window.clearTimeout(idxTimer.current);
+    };
+  }, [query, idxEnabled, nameCase, nameMode]);
+
+  // 全盘灯钮点亮时轮询索引状态（构建中提示「已索引 n 项」；顺带在后端同步插件开关）
+  useEffect(() => {
+    if (!idxEnabled) return;
+    let alive = true;
+    const poll = () =>
+      indexStatus()
+        .then((s) => {
+          if (alive) setIdxStatus(s);
+        })
+        .catch(() => {});
+    poll();
+    const t = window.setInterval(poll, 2000);
+    return () => {
+      alive = false;
+      window.clearInterval(t);
+    };
+  }, [idxEnabled]);
 
   // 内容搜索：防抖 250ms，后台线程执行
   useEffect(() => {
@@ -529,11 +599,15 @@ export function SearchPanel({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={
-                  fdEnabled
+                  idxEnabled
                     ? nameMode === "glob"
-                      ? t("检索文件（fd 通配符，如 *.rs）…")
-                      : t("检索文件（fd 正则）…")
-                    : t("搜索当前层文件名…")
+                      ? t("全盘索引检索（通配符整名，如 *.rs）…")
+                      : t("全盘索引检索（输入文件名片段，瞬时返回）…")
+                    : fdEnabled
+                      ? nameMode === "glob"
+                        ? t("检索文件（fd 通配符，如 *.rs）…")
+                        : t("检索文件（fd 正则）…")
+                      : t("搜索当前层文件名…")
                 }
                 className="h-7 text-xs"
                 autoFocus
@@ -544,7 +618,22 @@ export function SearchPanel({
                   color="blue"
                   label={t("递归")}
                   title={t("递归搜索子目录（fd 引擎，尊重 .gitignore）")}
-                  onClick={() => setFdEnabled((v) => !v)}
+                  onClick={() => {
+                    const next = !fdEnabled;
+                    setFdEnabled(next);
+                    if (next) setIdxEnabled(false);
+                  }}
+                />
+                <ToggleChip
+                  on={idxEnabled}
+                  color="teal"
+                  label={t("全盘")}
+                  title={t("全盘索引检索（Everything 级瞬时返回；需在 设置 → 插件 开启，索引范围可在 设置 → 全盘索引 配置）")}
+                  onClick={() => {
+                    const next = !idxEnabled;
+                    setIdxEnabled(next);
+                    if (next) setFdEnabled(false);
+                  }}
                 />
                 <ToggleChip
                   on={nameHidden}
@@ -577,13 +666,20 @@ export function SearchPanel({
               </div>
               <p className="truncate text-[11px] text-muted-foreground">
                 {[
-                  fdEnabled ? t("fd 递归中") : t("当前层匹配"),
+                  fdEnabled ? t("fd 递归中") : idxEnabled ? t("全盘索引中") : t("当前层匹配"),
                   nameMode === "glob" ? t("通配符") : t("正则"),
                   nameHidden ? t("含隐藏") : t("跳过隐藏"),
                   nameCase ? t("区分大小写") : t("不区分大小写"),
                   fdEnabled ? t("尊重 .gitignore") : t("共 {n} 项", { n: entries.length }),
                   ...(fdEnabled
                     ? [maxDepth == null ? t("深度不限") : t("深度：{n} 层", { n: maxDepth })]
+                    : []),
+                  ...(idxEnabled && idxStatus
+                    ? [
+                        idxStatus.phase === "building"
+                          ? t("索引构建中（已索引 {n} 项）", { n: idxStatus.entries })
+                          : t("已索引 {n} 项", { n: idxStatus.entries }),
+                      ]
                     : []),
                 ].join(" · ")}
               </p>
@@ -635,7 +731,68 @@ export function SearchPanel({
 
         <TabsContent value="name" className="mt-0 min-h-0 flex-1">
           <ScrollArea className="h-full select-none">
-            {fdEnabled ? (
+            {idxEnabled ? (
+              idxLoading ? (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                  <span className="text-xs">{t("检索中…（全盘索引）")}</span>
+                </div>
+              ) : idxError ? (
+                <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-xs text-destructive">
+                  <SearchX className="h-6 w-6" />
+                  <span className="break-all">{idxError}</span>
+                </div>
+              ) : idxResults.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  {query.trim() ? <SearchX className="h-6 w-6" /> : <FolderSearch className="h-6 w-6" />}
+                  <span className="text-xs">
+                    {query.trim() ? t("无匹配结果") : t("输入关键词全盘检索")}
+                  </span>
+                </div>
+              ) : (
+                <div className="pb-6">
+                  {idxResults.map((h) => {
+                    // 索引命中自带 size/mtime 真值（优于 fd 结果的占位 0/null）
+                    const fe: FileEntry = {
+                      name: h.name,
+                      path: h.path,
+                      is_dir: h.is_dir,
+                      is_symlink: false,
+                      size: h.size,
+                      modified: h.mtime > 0 ? h.mtime : null,
+                      created: null,
+                      permissions: "",
+                      extension: extensionOf(h.path),
+                    };
+                    return (
+                      <ResultRow
+                        key={h.path}
+                        path={h.path}
+                        relPath={h.path}
+                        isDir={h.is_dir}
+                        selected={selected === h.path}
+                        onActivate={() => setSelected(h.path)}
+                        onReveal={onReveal}
+                        onOpenFile={onOpenFile}
+                        onCopyPath={onCopyPath}
+                        onRename={(p, name) => setRenaming({ path: p, name })}
+                        renaming={renamingForRow(h.path)}
+                      >
+                        <span className="flex w-full items-center gap-2 px-2.5 py-1.5 text-xs">
+                          <FileIcon entry={fe} size={14} className="shrink-0" />
+                          <span className="truncate">{h.path}</span>
+                        </span>
+                      </ResultRow>
+                    );
+                  })}
+                  {idxResults.length >= 500 && (
+                    <div className="flex items-center justify-center gap-1 px-2 py-2 text-[11px] text-muted-foreground">
+                      <Zap className="h-3 w-3" /> {t("已显示前 500 条")}
+                    </div>
+                  )}
+                </div>
+              )
+            ) : fdEnabled ? (
               fdLoading ? (
                 <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
                   <Loader2 className="h-6 w-6 animate-spin" />

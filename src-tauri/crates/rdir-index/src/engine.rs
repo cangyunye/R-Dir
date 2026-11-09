@@ -103,11 +103,11 @@ impl EngineState {
         state
     }
 
-    /// 全量枚举 + 构建
-    pub fn build_full(roots: &[String], exclusions: &Exclusions) -> EngineState {
+    /// 全量枚举 + 构建；返回 (状态, 枚举期跳过的错误数——权限/消失等)
+    pub fn build_full(roots: &[String], exclusions: &Exclusions) -> (EngineState, u64) {
         let fp = roots_fingerprint(roots, &exclusions.dirs);
-        let (entries, root_mtimes, _errs) = walk_all(roots, exclusions);
-        EngineState::build(entries, fp, root_mtimes)
+        let (entries, root_mtimes, errs) = walk_all(roots, exclusions);
+        (EngineState::build(entries, fp, root_mtimes), errs)
     }
 
     fn path_of(&self, id: u32) -> &str {
@@ -303,7 +303,7 @@ impl EngineState {
     ) -> Option<EngineState> {
         let fp = roots_fingerprint(roots, &exclusions.dirs);
         if fp != old.roots_fp {
-            return Some(EngineState::build_full(roots, exclusions));
+            return Some(EngineState::build_full(roots, exclusions).0);
         }
         let mut out = RescanCollector::default();
         let mut root_mtimes = Vec::with_capacity(roots.len());
@@ -594,7 +594,7 @@ mod tests {
 
         let roots = vec![root.to_str().unwrap().to_string()];
         let excl = Exclusions::default();
-        let st0 = EngineState::build_full(&roots, &excl);
+        let st0 = EngineState::build_full(&roots, &excl).0;
         // 根自身不收录：a、b、top.txt、deep.txt = 4 条
         assert_eq!(st0.len(), 4);
 
@@ -638,7 +638,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         let roots = vec![root.to_str().unwrap().to_string()];
         let excl = Exclusions::default();
-        let st0 = EngineState::build_full(&roots, &excl);
+        let st0 = EngineState::build_full(&roots, &excl).0;
 
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(deep.join("fresh.txt"), "f").unwrap();
@@ -658,7 +658,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         let roots = vec![root.to_str().unwrap().to_string()];
         let excl = Exclusions::default();
-        let st0 = EngineState::build_full(&roots, &excl);
+        let st0 = EngineState::build_full(&roots, &excl).0;
         assert!(st0.exact_lookup(&root.to_string_lossy()).is_none(), "根不收录");
         assert!(st0.exact_lookup(sub.to_str().unwrap()).is_some(), "嵌套目录收录");
 
