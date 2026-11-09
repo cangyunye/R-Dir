@@ -98,7 +98,8 @@ pub struct LocalText {
     pub text: String,
     pub lossy: bool,
     pub bytes: u64,
-    /// 实际采用的解码：自动探测得到的 "UTF-8" / "UTF-16LE" / "UTF-16BE"，或显式标签对应的规范名
+    /// 实际采用的解码：自动探测得到的 "UTF-8" / "UTF-16LE" / "UTF-16BE"（只读展示口另有 "GBK"），
+    /// 或显式标签对应的规范名
     pub encoding: &'static str,
 }
 
@@ -108,13 +109,136 @@ pub const NOT_TEXT_ERR_PREFIX: &str = "NOT_TEXT|";
 const BINARY_ERR: &str = "NOT_TEXT|疑似二进制文件，不支持按文本读取";
 const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 
+/// 解码产物（v0.44 自动探测 / 显式编码共用）。
+pub struct Decoded {
+    pub text: String,
+    pub lossy: bool,
+    /// 实际采用的解码规范名（"UTF-8" / "UTF-16LE" / "GBK" / …）
+    pub encoding: &'static str,
+}
+
+/// 自动探测遇到非 UTF-8 文本时的回退策略（v0.44）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NonUtf8 {
+    /// UTF-8 有损替换：比较链路——编辑保存按界面显式编码写回，猜成 GBK 再按 UTF-8 存会静默改写文件编码
+    Lossy,
+    /// GBK 严格解码，不中再 UTF-8 有损替换：预览 / 查看 Diff 等只读展示口
+    GbkOrLossy,
+    /// GBK 严格解码，不中视为不可读：内容搜索——乱码与前 8KB 无 NUL 的二进制（实测约四分之一
+    /// 的 PDF）不当文本搜，避免乱码命中
+    GbkOrSkip,
+}
+
+/// 自动探测解码：UTF-16（BOM / NUL 奇偶位启发）→ 二进制（前 8KB 含 NUL）→ 去 UTF-8 BOM 后
+/// 严格 UTF-8 → 非 UTF-8 按 `non_utf8` 回退。返回 None：二进制，或 GbkOrSkip 下既非 UTF-8 也非 GBK。
+/// GBK 回退为单一编码取舍（同 extract.rs 文件名探测，简中存量文件最常见）：Big5 / Shift_JIS
+/// 字节序列大多也是合法 GBK，会被解成错字而非报错。
+pub fn decode_auto(bytes: Vec<u8>, non_utf8: NonUtf8) -> Option<Decoded> {
+    if let Some(enc) = detect_utf16(&bytes) {
+        let (cow, had_errors) = enc.decode_with_bom_removal(&bytes);
+        return Some(Decoded {
+            text: cow.into_owned(),
+            lossy: had_errors,
+            encoding: enc.name(),
+        });
+    }
+    if looks_binary(&bytes) {
+        return None;
+    }
+    decode_utf8(bytes, non_utf8)
+}
+
+/// 去 UTF-8 BOM 后严格 UTF-8 解码；非 UTF-8 按 `non_utf8` 回退（调用方已做二进制探测）。
+fn decode_utf8(mut bytes: Vec<u8>, non_utf8: NonUtf8) -> Option<Decoded> {
+    if bytes.starts_with(UTF8_BOM) {
+        bytes.drain(..UTF8_BOM.len());
+    }
+    // UTF-8 快路径零拷贝（from_utf8 取回所有权）；遇首个非法字节即失败，GBK 文本在首个汉字处转回退
+    let bytes = match String::from_utf8(bytes) {
+        Ok(text) => {
+            return Some(Decoded {
+                text,
+                lossy: false,
+                encoding: "UTF-8",
+            })
+        }
+        Err(e) => e.into_bytes(),
+    };
+    if non_utf8 != NonUtf8::Lossy {
+        // 严格解码：首个非法序列即放弃，PDF 等非 GBK 字节流不会被整段解码；BOM 已处理，不再嗅探
+        if let Some(cow) = encoding_rs::GBK.decode_without_bom_handling_and_without_replacement(&bytes) {
+            return Some(Decoded {
+                text: cow.into_owned(),
+                lossy: false,
+                encoding: encoding_rs::GBK.name(),
+            });
+        }
+        if non_utf8 == NonUtf8::GbkOrSkip {
+            return None;
+        }
+    }
+    Some(Decoded {
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+        lossy: true,
+        encoding: "UTF-8",
+    })
+}
+
 /// 读取本地文件为文本（二进制 / 大小守卫）。
-/// encoding 为 None 时自动探测：UTF-8 BOM 去除；UTF-16 LE/BE 按 BOM 识别，无 BOM 时按
-/// 「NUL 几乎只落在同一奇偶位」启发识别（Windows 记事本 / PowerShell / regedit 写出的 ini、reg
-/// 常为 UTF-16，v0.30 之前一律被 NUL 探测判成二进制）；其余按 UTF-8，非法字节替换为 U+FFFD
-/// 并置 lossy。"utf-8" 显式指定时只去 BOM、不嗅探 UTF-16；其他 WhatWG 标签（gbk / big5 /
-/// shift_jis …）经 encoding_rs 解码，不做 BOM 嗅探（尊重用户显式选择），仅移除匹配的 BOM。
+/// encoding 为 None 时自动探测（decode_auto，非 UTF-8 不猜旧编码）：UTF-8 BOM 去除；UTF-16 LE/BE
+/// 按 BOM 识别，无 BOM 时按「NUL 几乎只落在同一奇偶位」启发识别（Windows 记事本 / PowerShell /
+/// regedit 写出的 ini、reg 常为 UTF-16，v0.30 之前一律被 NUL 探测判成二进制）；其余按 UTF-8，
+/// 非法字节替换为 U+FFFD 并置 lossy。"utf-8" 显式指定时只去 BOM、不嗅探 UTF-16；其他 WhatWG 标签
+/// （gbk / big5 / shift_jis …）经 encoding_rs 解码，不做 BOM 嗅探（尊重用户显式选择），仅移除匹配的 BOM。
 pub fn read_local_text_full(path: &Path, encoding: Option<&str>) -> Result<LocalText, String> {
+    let (bytes, bytes_len) = read_text_bytes(path)?;
+    let label = encoding.map(str::trim).unwrap_or("");
+    let explicit_utf8 = label.eq_ignore_ascii_case("utf-8") || label.eq_ignore_ascii_case("utf8");
+    let decoded = if label.is_empty() {
+        decode_auto(bytes, NonUtf8::Lossy)
+    } else if explicit_utf8 {
+        if looks_binary(&bytes) {
+            None
+        } else {
+            decode_utf8(bytes, NonUtf8::Lossy)
+        }
+    } else {
+        let enc = encoding_rs::Encoding::for_label(label.as_bytes())
+            .ok_or_else(|| format!("不支持的编码：{label}"))?;
+        // UTF-16 文本天然含 NUL，二进制探测只对单字节/多字节编码有效
+        if enc != encoding_rs::UTF_16LE && enc != encoding_rs::UTF_16BE && looks_binary(&bytes) {
+            None
+        } else {
+            let (cow, had_errors) = enc.decode_with_bom_removal(&bytes);
+            Some(Decoded {
+                text: cow.into_owned(),
+                lossy: had_errors,
+                encoding: enc.name(),
+            })
+        }
+    };
+    local_text(decoded, bytes_len)
+}
+
+/// 只读展示口的文本读取（v0.44 预览 / 查看 Diff）：自动探测同 read_local_text_full(None)，
+/// 非 UTF-8 再按 GBK 严格解码，不中仍按 UTF-8 有损显示。比较链路不走这里（见 NonUtf8::Lossy）。
+pub fn read_local_text_display(path: &Path) -> Result<LocalText, String> {
+    let (bytes, bytes_len) = read_text_bytes(path)?;
+    local_text(decode_auto(bytes, NonUtf8::GbkOrLossy), bytes_len)
+}
+
+fn local_text(decoded: Option<Decoded>, bytes_len: u64) -> Result<LocalText, String> {
+    let d = decoded.ok_or_else(|| BINARY_ERR.to_string())?;
+    Ok(LocalText {
+        text: d.text,
+        lossy: d.lossy,
+        bytes: bytes_len,
+        encoding: d.encoding,
+    })
+}
+
+/// 文本读取守卫（常规文件 / 大小上限）+ 整读，返回 (字节, 文件大小)。
+fn read_text_bytes(path: &Path) -> Result<(Vec<u8>, u64), String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("读取失败：{e}"))?;
     if !meta.is_file() {
         // 目录/FIFO/socket/设备一律拒绝（v0.42 预览试探对无扩展名放开门控：命名管道读取会永久阻塞）
@@ -129,53 +253,7 @@ pub fn read_local_text_full(path: &Path, encoding: Option<&str>) -> Result<Local
         ));
     }
     let bytes = std::fs::read(path).map_err(|e| format!("读取失败：{e}"))?;
-    let label = encoding.map(str::trim).unwrap_or("");
-    let explicit_utf8 = label.eq_ignore_ascii_case("utf-8") || label.eq_ignore_ascii_case("utf8");
-    let enc = if label.is_empty() {
-        detect_utf16(&bytes)
-    } else if explicit_utf8 {
-        None
-    } else {
-        Some(
-            encoding_rs::Encoding::for_label(label.as_bytes())
-                .ok_or_else(|| format!("不支持的编码：{label}"))?,
-        )
-    };
-    if let Some(enc) = enc {
-        // UTF-16 文本天然含 NUL，二进制探测只对单字节/多字节编码有效
-        if enc != encoding_rs::UTF_16LE && enc != encoding_rs::UTF_16BE && looks_binary(&bytes) {
-            return Err(BINARY_ERR.into());
-        }
-        let (cow, had_errors) = enc.decode_with_bom_removal(&bytes);
-        return Ok(LocalText {
-            text: cow.into_owned(),
-            lossy: had_errors,
-            bytes: bytes_len,
-            encoding: enc.name(),
-        });
-    }
-    if looks_binary(&bytes) {
-        return Err(BINARY_ERR.into());
-    }
-    let mut bytes = bytes;
-    if bytes.starts_with(UTF8_BOM) {
-        bytes.drain(..UTF8_BOM.len());
-    }
-    // UTF-8 快路径零拷贝（from_utf8 取回所有权）；仅非法字节才 lossy 复制一份
-    match String::from_utf8(bytes) {
-        Ok(text) => Ok(LocalText {
-            text,
-            lossy: false,
-            bytes: bytes_len,
-            encoding: "UTF-8",
-        }),
-        Err(e) => Ok(LocalText {
-            text: String::from_utf8_lossy(e.as_bytes()).to_string(),
-            lossy: true,
-            bytes: bytes_len,
-            encoding: "UTF-8",
-        }),
-    }
+    Ok((bytes, bytes_len))
 }
 
 /// 读取本地文件为文本，返回 (文本, 是否 lossy, 字节数)。比较链路沿用的精简形态。
@@ -642,6 +720,59 @@ mod tests {
         assert_eq!(text, "你好\n");
         // 不支持的编码标签 → 报错
         assert!(read_local_text(&f, Some("no-such-encoding")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn decode_auto_non_utf8_strategies() {
+        // "你好\n" 的 GBK 编码
+        let gbk = vec![0xC4, 0xE3, 0xBA, 0xC3, 0x0A];
+        // 比较链路：不猜旧编码，UTF-8 有损
+        let d = decode_auto(gbk.clone(), NonUtf8::Lossy).unwrap();
+        assert!(d.lossy);
+        assert_eq!(d.encoding, "UTF-8");
+        // 只读展示 / 内容搜索：GBK 严格解码
+        for mode in [NonUtf8::GbkOrLossy, NonUtf8::GbkOrSkip] {
+            let d = decode_auto(gbk.clone(), mode).unwrap();
+            assert_eq!(d.text, "你好\n");
+            assert!(!d.lossy);
+            assert_eq!(d.encoding, "GBK");
+        }
+        // 既非 UTF-8 也非 GBK（CP1252 的 é 后接空格不是合法 GBK 尾字节）：展示口有损、搜索放弃
+        let latin1 = b"caf\xE9 hello\n".to_vec();
+        let d = decode_auto(latin1.clone(), NonUtf8::GbkOrLossy).unwrap();
+        assert!(d.lossy);
+        assert_eq!(d.encoding, "UTF-8");
+        assert!(d.text.ends_with(" hello\n"));
+        assert!(decode_auto(latin1, NonUtf8::GbkOrSkip).is_none());
+        // 合法 UTF-8 不走回退；BOM 去除
+        let d = decode_auto(b"\xEF\xBB\xBF\xE4\xB8\xAD\n".to_vec(), NonUtf8::GbkOrSkip).unwrap();
+        assert_eq!(d.text, "中\n");
+        assert_eq!(d.encoding, "UTF-8");
+        // 二进制恒为 None
+        assert!(decode_auto(vec![0x68, 0x00, 0x69], NonUtf8::GbkOrLossy).is_none());
+    }
+
+    #[test]
+    fn read_local_text_display_gbk_fallback() {
+        let dir = std::env::temp_dir().join("r-dir-text-diff-display-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("g.txt");
+        std::fs::write(&f, [0xC4, 0xE3, 0xBA, 0xC3, 0x0A]).unwrap();
+        let t = read_local_text_display(&f).unwrap();
+        assert_eq!(t.text, "你好\n");
+        assert!(!t.lossy);
+        assert_eq!(t.encoding, "GBK");
+        assert_eq!(t.bytes, 5);
+        // 比较链路（None）保持 UTF-8 有损：猜成 GBK 后编辑再按 UTF-8 存会静默改写文件编码
+        let t = read_local_text_full(&f, None).unwrap();
+        assert!(t.lossy);
+        assert_eq!(t.encoding, "UTF-8");
+        // 守卫与二进制判定同 read_local_text_full
+        assert!(read_local_text_display(&dir).err().unwrap().starts_with("NOT_FILE|"));
+        let fb = dir.join("b.bin");
+        std::fs::write(&fb, [0x68, 0x00, 0x69]).unwrap();
+        assert!(read_local_text_display(&fb).err().unwrap().starts_with("NOT_TEXT|"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

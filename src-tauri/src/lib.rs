@@ -1133,7 +1133,8 @@ pub(crate) async fn diff_text_files_core(
 }
 
 /// v0.19 读取文本文件内容（.patch / .diff「查看 Diff」解析用；支持 SFTP/HTTP 路径）。
-/// v0.28 起也是预览栏文本预览的读取口；v0.30 返回实际解码（UTF-16 自动识别）。
+/// v0.28 起也是预览栏文本预览的读取口；v0.30 返回实际解码（UTF-16 自动识别）；
+/// v0.44 只读展示口，非 UTF-8 按 GBK 回退（text_diff::read_local_text_display）。
 #[tauri::command]
 async fn read_text_file(
     state: tauri::State<'_, AppState>,
@@ -1149,7 +1150,7 @@ pub(crate) async fn read_text_file_core(
 ) -> Result<text_diff::TextFileContent, String> {
     let (local, temp) = resolve_text_side(&state, &path).await?;
     tauri::async_runtime::spawn_blocking(move || {
-        let result = text_diff::read_local_text_full(std::path::Path::new(&local), None).map(|t| {
+        let result = text_diff::read_local_text_display(std::path::Path::new(&local)).map(|t| {
             text_diff::TextFileContent {
                 path,
                 local_path: local.clone(),

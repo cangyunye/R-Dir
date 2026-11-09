@@ -43,7 +43,7 @@ export function TextView({
     text: string;
     lossy: boolean;
     truncated: boolean;
-    /** v0.30 后端实际采用的解码；UTF-16 时给提示（Windows 工具写出的 ini/reg 常见） */
+    /** v0.30 后端实际采用的解码；UTF-16 / GBK（v0.44 非 UTF-8 回退）时给提示 */
     encoding: string;
     /** v0.41 高亮产物 HTML：null = 纯文本（无语法 / 加载失败 / 护栏回退） */
     html: string | null;
@@ -135,17 +135,22 @@ export function TextView({
       )}
       {state.encoding.startsWith("UTF-16") && (
         <div className="border-b bg-muted/40 px-3 py-1 text-[10px] text-muted-foreground">
-          已按 {state.encoding} 解码（Windows 记事本 / PowerShell 写出的配置常见编码）
+          {t("已按 {enc} 解码（Windows 记事本 / PowerShell 写出的配置常见编码）", { enc: state.encoding })}
+        </div>
+      )}
+      {state.encoding === "GBK" && (
+        <div className="border-b bg-muted/40 px-3 py-1 text-[10px] text-muted-foreground">
+          {t("非 UTF-8 文本，已按 {enc} 解码（繁体 / 日文等其他编码可能显示为错字）", { enc: state.encoding })}
         </div>
       )}
       {state.lossy && (
         <div className="border-b bg-muted/40 px-3 py-1 text-[10px] text-muted-foreground">
-          文件含非 {state.encoding} 字节，按近似字符显示
+          {t("文件含非 {enc} 字节，按近似字符显示", { enc: state.encoding })}
         </div>
       )}
       {state.truncated && (
         <div className="border-b bg-muted/40 px-3 py-1 text-[10px] text-muted-foreground">
-          文件较大，仅预览前 256 KB，完整内容请用外部应用打开
+          {t("文件较大，仅预览前 256 KB，完整内容请用外部应用打开")}
         </div>
       )}
       <ContextMenu>

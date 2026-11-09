@@ -344,7 +344,7 @@ export interface TextFileContent {
   isTemp: boolean;
   lossy: boolean;
   text: string;
-  /** v0.30 实际采用的解码（"UTF-8" / "UTF-16LE" / "UTF-16BE" / …）；旧桩可能缺省 */
+  /** v0.30 实际采用的解码（"UTF-8" / "UTF-16LE" / "UTF-16BE"；v0.44 非 UTF-8 回退 "GBK"）；旧桩可能缺省 */
   encoding?: string;
 }
 

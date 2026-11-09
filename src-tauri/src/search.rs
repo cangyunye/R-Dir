@@ -5,12 +5,16 @@
 //!   （等价 rg 默认行为，字面量对应 rg `-F`）；
 //! - 默认跳过隐藏文件/目录（名称以 `.` 开头），`include_hidden = true` 时包含
 //!   （等价 rg `--hidden`）；
-//! - 跳过二进制文件（前 8KB 含 NUL 字节即视为二进制）；
+//! - 编码自动探测（v0.44，与预览共用 `text_diff::decode_auto`）：UTF-8（含 BOM）/ UTF-16
+//!   （BOM 或 NUL 奇偶位启发）/ GBK；无法无损解码的（其他编码 / 乱码 / 前 8KB 无 NUL 的二进制）
+//!   不搜，避免乱码误报；
+//! - 跳过二进制文件（前 8KB 含 NUL 字节且不像 UTF-16 即视为二进制）；
 //! - 超过 `MAX_FILE_BYTES` 的文件不搜内容；
 //! - 每文件最多 `MAX_PER_FILE` 条命中，总计最多 `MAX_TOTAL` 条，防止大目录卡死；
 //! - `recursive = false` 时只搜当前目录的直接子文件（默认，用户明确要求）；
 //! - 单行最多保留 `MAX_LINE_CHARS` 字符。
 
+use crate::text_diff::{decode_auto, NonUtf8};
 use regex::Regex;
 use serde::Serialize;
 use std::fs;
@@ -129,13 +133,11 @@ fn search_file(
         Ok(b) => b,
         Err(_) => return,
     };
-    // 二进制检测：前 8KB 出现 NUL 视为二进制
-    if bytes.iter().take(8192).any(|&b| b == 0) {
-        return;
-    }
-    let text = match String::from_utf8(bytes) {
-        Ok(t) => t,
-        Err(_) => return, // 非 UTF-8 文本不做解码搜索（避免乱码误报）
+    // 此前只认合法 UTF-8，GBK 文件整文件跳过（连 ASCII 关键词也搜不到）；
+    // UTF-16 的 lossy 多为启发误判的二进制，同样不搜
+    let text = match decode_auto(bytes, NonUtf8::GbkOrSkip) {
+        Some(d) if !d.lossy => d.text,
+        _ => return,
     };
 
     let rel = rel_path(path, root);
@@ -216,7 +218,9 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(root.join("a.txt"), "hello world\nfoo bar\n").unwrap();
         std::fs::write(root.join(".hidden.txt"), "hello hidden\n").unwrap();
-        std::fs::write(root.join("b.bin"), [0u8, 1, 2, 3]).unwrap();
+        // PNG 头（NUL 散布在奇偶位）+ 关键词：二进制跳过才不命中；[0,1,2,3] 这类极短字节会被 UTF-16 启发收下，测不出跳过
+        let png_head: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52];
+        std::fs::write(root.join("b.bin"), [png_head, b"hello"].concat()).unwrap();
         std::fs::write(sub.join("c.md"), "deep hello here\n").unwrap();
         std::fs::write(sub.join("big.log"), "x".repeat(5 * 1024 * 1024)).unwrap();
 
@@ -256,6 +260,48 @@ mod tests {
             .is_empty());
         // 正则语法错误返回 Err（UI 显示错误提示）
         assert!(search_content("(unclosed", root.to_str().unwrap(), false, false, false, true).is_err());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// v0.44 编码探测：GBK / UTF-16 / UTF-8 BOM 可搜；Big5 按 GBK 解成错字（ASCII 照常命中、繁体不中，
+    /// 单一回退的已知取舍）；既非 UTF-8 也非 GBK 的（CP1252、前 8KB 无 NUL 的类 PDF 二进制）仍跳过
+    #[test]
+    fn search_decodes_legacy_encodings() {
+        let root = std::env::temp_dir().join("rfm_search_enc_test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let text = "第一行 hello\n中文内容测试\n";
+        std::fs::write(root.join("gbk.txt"), encoding_rs::GBK.encode(text).0).unwrap();
+        let mut le = vec![0xFF, 0xFE];
+        for u in text.encode_utf16() {
+            le.extend_from_slice(&u.to_le_bytes());
+        }
+        std::fs::write(root.join("utf16le.txt"), &le).unwrap();
+        std::fs::write(root.join("bom.txt"), [b"\xEF\xBB\xBF".as_slice(), text.as_bytes()].concat()).unwrap();
+        std::fs::write(root.join("big5.txt"), encoding_rs::BIG5.encode("繁體測試 hello\n").0).unwrap();
+        std::fs::write(root.join("latin1.txt"), encoding_rs::WINDOWS_1252.encode("café hello\n").0).unwrap();
+        std::fs::write(root.join("doc.pdf"), b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n1 0 obj hello\n\xFF\xFF\n").unwrap();
+
+        let dir = root.to_str().unwrap();
+        let hits = |q: &str, re: bool| -> Vec<(String, usize)> {
+            let mut v: Vec<_> = search_content(q, dir, false, false, false, re)
+                .unwrap()
+                .into_iter()
+                .map(|m| (m.rel_path, m.line_number))
+                .collect();
+            v.sort();
+            v
+        };
+        let at = |name: &str, n: usize| (name.to_string(), n);
+        assert_eq!(hits("中文", false), vec![at("bom.txt", 2), at("gbk.txt", 2), at("utf16le.txt", 2)]);
+        assert_eq!(
+            hits("hello", false),
+            vec![at("big5.txt", 1), at("bom.txt", 1), at("gbk.txt", 1), at("utf16le.txt", 1)]
+        );
+        // UTF-8 BOM 已去除：行首锚定命中第 1 行
+        assert_eq!(hits("^第一行", true), vec![at("bom.txt", 1), at("gbk.txt", 1), at("utf16le.txt", 1)]);
+        assert!(hits("繁體", false).is_empty());
 
         std::fs::remove_dir_all(&root).ok();
     }

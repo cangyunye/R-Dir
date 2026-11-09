@@ -171,7 +171,7 @@ pub fn probe_blocking(path: String) -> Result<ProbeOutcome, String> {
     if meta.len() > crate::text_diff::MAX_TEXT_BYTES {
         return Ok(ProbeOutcome::Oversized);
     }
-    match crate::text_diff::read_local_text_full(p, None) {
+    match crate::text_diff::read_local_text_display(p) {
         Ok(t) => Ok(ProbeOutcome::Text {
             content: crate::text_diff::TextFileContent {
                 path: path.clone(),

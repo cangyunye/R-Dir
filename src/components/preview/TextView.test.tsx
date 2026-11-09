@@ -81,3 +81,32 @@ describe("TextView 试探模式（v0.42 text-probe 的文本结果）", () => {
     });
   });
 });
+
+describe("TextView 编码横幅（v0.44 非 UTF-8 回退 GBK）", () => {
+  beforeEach(() => {
+    mockRead.mockReset();
+  });
+
+  it("GBK 回退：出现「已按 GBK 解码」横幅，无有损横幅", async () => {
+    mockRead.mockResolvedValue({ ...content("中文内容"), encoding: "GBK" });
+    render(<TextView path="/mock/home/gbk.txt" />);
+    await screen.findByTestId("preview-text");
+    expect(screen.getByText(/已按 GBK 解码/)).toBeTruthy();
+    expect(screen.queryByText(/按近似字符显示/)).toBeNull();
+  });
+
+  it("UTF-8 有损：编码名代入有损横幅，无 GBK 横幅", async () => {
+    mockRead.mockResolvedValue({ ...content("caf\uFFFD"), lossy: true });
+    render(<TextView path="/mock/home/latin1.txt" />);
+    await screen.findByTestId("preview-text");
+    expect(screen.getByText("文件含非 UTF-8 字节，按近似字符显示")).toBeTruthy();
+    expect(screen.queryByText(/已按 GBK 解码/)).toBeNull();
+  });
+
+  it("UTF-16：编码名代入 UTF-16 横幅", async () => {
+    mockRead.mockResolvedValue({ ...content("[app]"), encoding: "UTF-16LE" });
+    render(<TextView path="/mock/home/app.ini" />);
+    await screen.findByTestId("preview-text");
+    expect(screen.getByText(/已按 UTF-16LE 解码（Windows 记事本/)).toBeTruthy();
+  });
+});
