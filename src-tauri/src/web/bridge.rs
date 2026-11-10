@@ -940,6 +940,11 @@ async fn c_index_status(ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
     val(Ok(index_with_ctx(ctx).status()))
 }
 
+/// v0.46 启动路径拉取（桌面端 Explorer/Finder 右键集成）；web 模式无「带路径启动」语义，恒空
+async fn c_launch_paths_take(_ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    Ok(Value::Array(vec![]))
+}
+
 async fn c_index_search(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let query: String = arg(args, "query")?;
     let case_sensitive: bool = arg(args, "caseSensitive")?;
@@ -1139,6 +1144,7 @@ web_commands! {
     "search_content" => c_search_content,
     "find_files" => c_find_files,
     "index_status" => c_index_status,
+    "launch_paths_take" => c_launch_paths_take,
     "index_search" => c_index_search,
     "index_rebuild" => c_index_rebuild,
     "index_get_config" => c_index_get_config,

@@ -95,6 +95,81 @@ pub struct AppState {
     pub share: share::ShareState,
 }
 
+// ==================== 系统打开转发（v0.46 Explorer/Finder 右键集成） ====================
+
+/// 一条待打开的路径：is_dir 决定前端开目录标签还是「父目录标签 + 选中」
+#[derive(Clone, serde::Serialize)]
+pub struct OpenPathEntry {
+    pub path: String,
+    pub is_dir: bool,
+}
+
+/// 启动/二次启动路径队列（v0.46）：冷启动 argv、macOS odoc、二次实例 argv 统一入队；
+/// 前端挂载后 `launch_paths_take` 拉取一次，此后经 `open://paths` 事件推送。
+/// pulled 标志避免「入队 + 事件」双通道导致同一路径被打开两次。
+#[derive(Default)]
+pub struct LaunchPaths {
+    pending: std::sync::Mutex<Vec<OpenPathEntry>>,
+    pulled: std::sync::atomic::AtomicBool,
+}
+
+impl LaunchPaths {
+    fn enqueue(&self, app: &tauri::AppHandle, entries: Vec<OpenPathEntry>) {
+        if entries.is_empty() {
+            return;
+        }
+        if !self.pulled.load(std::sync::atomic::Ordering::Relaxed) {
+            // 前端尚未拉取：入队兜底（事件监听可能还没挂上），拉取时一并取走
+            self.pending.lock().unwrap().extend(entries.clone());
+        }
+        use tauri::Emitter;
+        let _ = app.emit("open://paths", &entries);
+    }
+}
+
+/// 统一入口：二次实例 argv / macOS odoc 的路径转发（入队兜底 + 事件推送）
+fn forward_open_paths(app: &tauri::AppHandle, entries: Vec<OpenPathEntry>) {
+    if entries.is_empty() {
+        return;
+    }
+    if let Some(lp) = app.try_state::<LaunchPaths>() {
+        lp.enqueue(app, entries);
+    }
+}
+
+/// 从参数里过滤出真实存在的文件/目录（跳过旗标与 macOS `-psn` 残留；`file://` URL 转本地路径）
+fn collect_path_args<I: IntoIterator<Item = String>>(args: I) -> Vec<OpenPathEntry> {
+    let mut out = Vec::new();
+    for a in args {
+        let p = if a.starts_with("file://") {
+            match a.parse::<tauri::Url>().ok().and_then(|u| u.to_file_path().ok()) {
+                Some(p) => p,
+                None => continue,
+            }
+        } else {
+            if a.is_empty() || a.starts_with('-') {
+                continue;
+            }
+            std::path::PathBuf::from(&a)
+        };
+        if !p.exists() {
+            continue;
+        }
+        out.push(OpenPathEntry {
+            path: p.to_string_lossy().into_owned(),
+            is_dir: p.is_dir(),
+        });
+    }
+    out
+}
+
+/// 取走启动路径（前端挂载时拉取一次；此后二次启动 / Finder 打开走 open://paths 事件）
+#[tauri::command]
+fn launch_paths_take(state: tauri::State<'_, LaunchPaths>) -> Vec<OpenPathEntry> {
+    state.pulled.store(true, std::sync::atomic::Ordering::Relaxed);
+    std::mem::take(&mut *state.pending.lock().unwrap())
+}
+
 // ==================== 后端能力抽象（v0.18 同步比对） ====================
 
 /// 后端分类（按路径前缀）。新后端（S3/网盘等）接入点：
@@ -2807,6 +2882,11 @@ fn set_app_user_model_id(id: &str) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default().manage(AppState::default());
+    // v0.46 系统打开转发：冷启动 argv（Explorer 右键 / CLI / Finder Open With）入队，
+    // 前端挂载后 launch_paths_take 拉取；二次实例与 macOS odoc 走 open://paths 事件
+    let launch_paths = LaunchPaths::default();
+    launch_paths.pending.lock().unwrap().extend(collect_path_args(std::env::args().skip(1)));
+    builder = builder.manage(launch_paths);
     #[cfg(feature = "share")]
     {
         builder = builder.manage(share::ShareState::default());
@@ -2905,6 +2985,7 @@ pub fn run() {
         create_file,
         search_content,
         find_files,
+        launch_paths_take,
         index_status,
         index_search,
         index_rebuild,
@@ -3050,10 +3131,29 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        // v0.46 单实例：二次启动聚焦主窗并转发路径（Explorer 右键「用 R-Dir 打开」入口）。
+        // macOS 系统自带单实例，插件在其上为 no-op；Finder 打开经下方 RunEvent::Opened 转发
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+            // argv 含程序名，跳过首项再过滤旗标
+            forward_open_paths(app, collect_path_args(argv.into_iter().skip(1)));
+        }))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
             match event {
+                // v0.46 macOS Finder 打开（odoc Apple event）：冷启动与运行中都会送达；
+                // Windows/Linux 无此事件。file:// URL 统一转本地路径
+                tauri::RunEvent::Opened { urls } => {
+                    forward_open_paths(
+                        _app_handle,
+                        collect_path_args(urls.into_iter().map(|u| u.to_string())),
+                    );
+                }
                 // v0.23：应用级退出（macOS ⌘Q / Dock「退出」/ app.exit）拦截转前端确认。
                 // 仅在仍有窗口可承载确认对话框时拦截；前端确认后经 allow_exit 置位
                 // 再 exit(0) 放行。窗口 X 关闭走 JS onCloseRequested（v0.3.0），不在此拦。

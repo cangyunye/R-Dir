@@ -134,6 +134,7 @@ import {
   statEntry,
   compressItems,
   extractArchive,
+  launchPathsTake,
 } from "@/lib/api";
 import { isArchiveExt } from "@/lib/filekind";
 import { ConnectDialog } from "@/components/ConnectDialog";
@@ -675,6 +676,26 @@ export default function App() {
       un = u;
     });
     return () => un?.();
+  }, []);
+
+  // v0.46 系统打开转发（open://paths）：二次实例 argv（Explorer 右键「用 R-Dir 打开」）与
+  // macOS Finder 打开（odoc）。handler 经 ref 取最新实现，避免监听器随 newTab 闭包频繁重挂；
+  // 冷启动路径在首启 effect 里经 launch_paths_take 拉取（拉取在监听注册之后，双通道不重复）
+  const openOsHandlerRef = useRef<(entries: { path: string; is_dir: boolean }[]) => void>(() => {});
+  useEffect(() => {
+    let disposed = false;
+    let un: (() => void) | undefined;
+    void listen<{ path: string; is_dir: boolean }[]>("open://paths", (e) => {
+      if (disposed || !e.payload?.length) return;
+      openOsHandlerRef.current(e.payload);
+    }).then((u) => {
+      if (disposed) u();
+      else un = u;
+    });
+    return () => {
+      disposed = true;
+      un?.();
+    };
   }, []);
 
   // v0.27 磁盘/卷热插拔：后端监视 /Volumes，挂载/卸载/推出后推送最新列表，
@@ -1807,14 +1828,34 @@ useEffect(() => {
         setVolumes(vols);
         setQuickAccess(qa);
         setFavorites(favs ?? []);
-        // 会话恢复（v0.3.0）：有保存的布局则恢复，否则默认家目录
-        const layout = await sessionLoad().catch(() => null);
-        if (layout && layout.tabs && layout.tabs.length > 0) {
-          await restoreSession(layout);
+        // v0.46 冷启动路径（安装版右键「用 R-Dir 打开」/ CLI 参数 / Finder Open With）：
+        // 带路径启动按参数开标签（目录直达，文件开父目录并选中），跳过会话恢复
+        let launchEntries: { path: string; is_dir: boolean }[] = [];
+        if (isTauri()) {
+          try {
+            launchEntries = await launchPathsTake();
+          } catch {
+            /* web 模式或旧后端无此命令：静默走会话恢复 */
+          }
+        }
+        if (launchEntries.length > 0) {
+          const tabsToOpen = launchEntries.map((ent) => {
+            const dir = ent.is_dir ? ent.path : parentPath(ent.path);
+            if (!ent.is_dir) pendingSelectRef.current = [ent.path];
+            return makeTab(dir);
+          });
+          setTabs(tabsToOpen);
+          setActiveId(tabsToOpen[tabsToOpen.length - 1].id);
         } else {
-          const tab = makeTab(home);
-          setTabs([tab]);
-          setActiveId(tab.id);
+          // 会话恢复（v0.3.0）：有保存的布局则恢复，否则默认家目录
+          const layout = await sessionLoad().catch(() => null);
+          if (layout && layout.tabs && layout.tabs.length > 0) {
+            await restoreSession(layout);
+          } else {
+            const tab = makeTab(home);
+            setTabs([tab]);
+            setActiveId(tab.id);
+          }
         }
         // v0.14：从磁盘恢复标签配置（localStorage 被清空时的可靠备份）
         const disk = await loadPrefsFromDisk();
@@ -2033,6 +2074,25 @@ useEffect(() => {
     setTabs((ts) => [...ts, tab]);
     setActiveId(tab.id);
   }, [activePane, homePath]);
+
+  // v0.46 系统打开转发：目录 → 新标签；文件 → 父目录新标签并选中
+  //（pendingSelectRef 由该窗格条目加载完成时消费，与粘贴后定位同机制）
+  const openOsPaths = useCallback(
+    (entries: { path: string; is_dir: boolean }[]) => {
+      for (const ent of entries) {
+        if (ent.is_dir) {
+          newTab(ent.path);
+        } else {
+          pendingSelectRef.current = [ent.path];
+          newTab(parentPath(ent.path));
+        }
+      }
+    },
+    [newTab],
+  );
+  useEffect(() => {
+    openOsHandlerRef.current = openOsPaths;
+  }, [openOsPaths]);
 
   const closeTab = useCallback(
     (id: number) => {

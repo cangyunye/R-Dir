@@ -283,6 +283,10 @@ export const searchContent = (
     excludeGlobs,
   });
 
+/** v0.46 启动路径拉取（冷启动 argv / macOS odoc；仅桌面端有值，拉取即清空） */
+export const launchPathsTake = () =>
+  invoke<{ path: string; is_dir: boolean }[]>("launch_paths_take");
+
 /** fd 快速文件检索（glob=true 通配符否则正则；显式大小写开关；递归） */
 export const findFiles = (
   pattern: string,
