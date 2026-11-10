@@ -152,12 +152,21 @@ export interface IndexStatusView {
   errors: number;
   roots: string[];
   exclusions: string[];
+  /** 实时监视是否已配置开启 */
+  watchEnabled: boolean;
+  /** 实时监视是否实际挂上（false 且 watchEnabled=true = 降级：例行扫描兜底） */
+  watch: boolean;
+  /** 例行重扫间隔秒（0 = 仅事件触发） */
+  rescanIntervalSecs: number;
 }
 
-/** 全盘索引配置（roots + 排除清单） */
+/** 全盘索引配置（roots + 排除清单 + 扫描选项） */
 export interface IndexConfigFile {
   roots: string[];
   exclusions: string[];
+  /** 例行重扫间隔秒（默认 600；0 = 仅事件触发） */
+  rescanIntervalSecs: number;
+  watchEnabled: boolean;
 }
 
 // ==================== SFTP 远程服务器（v0.2 插件） ====================

@@ -313,12 +313,16 @@ export const indexSearch = (
 /** 手动全量重建（后台线程 ≤2s 内响应，构建期间旧索引继续可查） */
 export const indexRebuild = () => invoke<void>("index_rebuild");
 
-/** 索引配置读取（roots + 排除清单） */
+/** 索引配置读取（roots + 排除清单 + 扫描选项） */
 export const indexGetConfig = () => invoke<IndexConfigFile>("index_get_config");
 
-/** 索引配置写入（落盘后指纹变化自动触发全量重建） */
-export const indexSetConfig = (roots: string[], exclusions: string[]) =>
-  invoke<void>("index_set_config", { roots, exclusions });
+/** 索引配置写入（落盘后指纹/选项变化自动生效：重建 / 重建监视器 / 间隔即时切换） */
+export const indexSetConfig = (
+  roots: string[],
+  exclusions: string[],
+  rescanIntervalSecs: number,
+  watchEnabled: boolean,
+) => invoke<void>("index_set_config", { roots, exclusions, rescanIntervalSecs, watchEnabled });
 
 // ==================== SFTP 远程服务器 ====================
 

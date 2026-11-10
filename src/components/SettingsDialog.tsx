@@ -224,12 +224,27 @@ export function SettingsDialog({
   const [indexDirty, setIndexDirty] = useState(false);
   const [indexSaving, setIndexSaving] = useState(false);
   const [indexSaved, setIndexSaved] = useState(false);
+  // v0.46 扫描选项：频率（秒；0=仅事件）与实时监视开关——改动即存（用已落盘的
+  // roots/排除清单，不携带文本区未保存草稿）；indexSavedCfg 记录最近一次落盘值
+  const [indexFreq, setIndexFreq] = useState(600);
+  const [indexWatch, setIndexWatch] = useState(true);
+  const [indexSavedCfg, setIndexSavedCfg] = useState<{ roots: string[]; exclusions: string[] }>({ roots: [], exclusions: [] });
+  const applyIndexOptions = useCallback(async (freq: number, watch: boolean) => {
+    try {
+      await indexSetConfig(indexSavedCfg.roots, indexSavedCfg.exclusions, freq, watch);
+      setIndexSaved(true);
+      window.setTimeout(() => setIndexSaved(false), 2000);
+    } catch {
+      /* 保存失败静默（下次轮询状态可见配置未生效） */
+    }
+  }, [indexSavedCfg]);
   const handleSaveIndexConfig = useCallback(async () => {
     setIndexSaving(true);
     try {
       const roots = indexRoots.split("\n").map((s) => s.trim()).filter(Boolean);
       const excl = indexExcl.split("\n").map((s) => s.trim()).filter(Boolean);
-      await indexSetConfig(roots, excl);
+      await indexSetConfig(roots, excl, indexFreq, indexWatch);
+      setIndexSavedCfg({ roots, exclusions: excl });
       setIndexDirty(false);
       setIndexSaved(true);
       window.setTimeout(() => setIndexSaved(false), 2000);
@@ -237,7 +252,22 @@ export function SettingsDialog({
       /* 保存失败静默（下次轮询状态可见配置未生效） */
     }
     setIndexSaving(false);
-  }, [indexRoots, indexExcl]);
+  }, [indexRoots, indexExcl, indexFreq, indexWatch]);
+  /** 添加索引范围目录：系统目录选择对话框，选完追加为草稿新行 */
+  const handleAddIndexRoot = useCallback(async () => {
+    try {
+      const picked = await openDialog({
+        title: t("添加索引范围目录"),
+        multiple: false,
+        directory: true,
+      });
+      if (!picked || Array.isArray(picked)) return;
+      setIndexRoots((prev) => (prev.trim() ? `${prev.trimEnd()}\n${picked}` : picked));
+      setIndexDirty(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
   /** 正在录制键位的 actionId（null = 未录制） */
   const [recordingId, setRecordingId] = useState<string | null>(null);
   /** v0.8 分类导航当前分区（由滚动位置反推，用于左栏高亮） */
@@ -283,9 +313,12 @@ export function SettingsDialog({
     indexGetConfig()
       .then((c) => {
         if (!alive) return;
-        // 不覆盖编辑中的草稿（仅在为空时填充）
+        // 不覆盖编辑中的草稿（仅在为空时填充）；扫描选项直接反映落盘值
         setIndexRoots((prev) => prev || c.roots.join("\n"));
         setIndexExcl((prev) => prev || c.exclusions.join("\n"));
+        setIndexFreq(c.rescanIntervalSecs);
+        setIndexWatch(c.watchEnabled);
+        setIndexSavedCfg({ roots: c.roots, exclusions: c.exclusions });
       })
       .catch(() => {});
     return () => {
@@ -1384,29 +1417,91 @@ export function SettingsDialog({
                       </div>
                     </div>
                     {indexSt != null && indexSt.lastScanMs > 0 && (
-                      <div className="border-t px-3 py-2 text-[11px] text-muted-foreground">
-                        {t("上次扫描：{t}（耗时 {ms} ms）", {
-                          t: new Date(indexSt.lastScanMs).toLocaleString(),
-                          ms: indexSt.lastDurationMs,
-                        })}
+                      <div className="flex items-center justify-between gap-3 border-t px-3 py-2 text-[11px] text-muted-foreground">
+                        <span>
+                          {t("上次扫描：{t}（耗时 {ms} ms）", {
+                            t: new Date(indexSt.lastScanMs).toLocaleString(),
+                            ms: indexSt.lastDurationMs,
+                          })}
+                        </span>
+                        <span
+                          className={
+                            indexSt.watch
+                              ? "shrink-0 text-emerald-600 dark:text-emerald-400"
+                              : indexSt.watchEnabled
+                                ? "shrink-0 text-amber-600 dark:text-amber-400"
+                                : "shrink-0 text-muted-foreground/70"
+                          }
+                        >
+                          {indexSt.watch
+                            ? t("实时监视：已开启（外部变更秒级自动同步）")
+                            : indexSt.watchEnabled
+                              ? t("实时监视：降级（周期扫描兜底，检查磁盘访问权限）")
+                              : t("实时监视：已关闭")}
+                        </span>
                       </div>
                     )}
+                    <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
+                      <span>{t("例行扫描频率")}</span>
+                      <select
+                        value={indexFreq}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setIndexFreq(v);
+                          void applyIndexOptions(v, indexWatch);
+                        }}
+                        aria-label={t("例行扫描频率")}
+                        title={t("目录未变化时的重扫是零成本 stat；外部变更由实时监视秒级捕获，无需调高频率")}
+                        className="w-36 rounded border bg-background px-2 py-1"
+                      >
+                        <option value={60}>{t("每 1 分钟")}</option>
+                        <option value={300}>{t("每 5 分钟")}</option>
+                        <option value={600}>{t("每 10 分钟（默认）")}</option>
+                        <option value={1800}>{t("每 30 分钟")}</option>
+                        <option value={0}>{t("仅实时监视触发")}</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
+                      <span>{t("实时监视（外部新增/删除/改名秒级进索引）")}</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={indexWatch}
+                        aria-label={t("实时监视")}
+                        onClick={() => {
+                          const next = !indexWatch;
+                          setIndexWatch(next);
+                          void applyIndexOptions(indexFreq, next);
+                        }}
+                        className="flex cursor-pointer"
+                      >
+                        <SwitchVisual checked={indexWatch} />
+                      </button>
+                    </div>
                     <div className="border-t px-3 py-2.5">
-                      <label className="block">
-                        <span className="mb-1 block text-[11px] text-muted-foreground">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-muted-foreground">
                           {t("索引范围（每行一个根目录）")}
                         </span>
-                        <textarea
-                          value={indexRoots}
-                          onChange={(e) => {
-                            setIndexRoots(e.target.value);
-                            setIndexDirty(true);
-                          }}
-                          rows={3}
-                          spellCheck={false}
-                          className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
-                        />
-                      </label>
+                        <button
+                          onClick={() => void handleAddIndexRoot()}
+                          className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          title={t("选择目录加入索引范围")}
+                        >
+                          <Plus className="mr-0.5 inline h-3 w-3" />
+                          {t("添加目录…")}
+                        </button>
+                      </div>
+                      <textarea
+                        value={indexRoots}
+                        onChange={(e) => {
+                          setIndexRoots(e.target.value);
+                          setIndexDirty(true);
+                        }}
+                        rows={3}
+                        spellCheck={false}
+                        className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
+                      />
                       <label className="mt-2 block">
                         <span className="mb-1 block text-[11px] text-muted-foreground">
                           {t("排除目录（每行一个，含其全部子内容）")}
@@ -1425,7 +1520,7 @@ export function SettingsDialog({
                     </div>
                   </div>
                   <p className="mt-1.5 text-[11px] text-muted-foreground">
-                    {t("保存后范围/排除变化会自动触发重新构建；增量扫描每 10 分钟一次（目录未变化时零成本）。首次构建可能需要数分钟，期间可照常使用。")}
+                    {t("保存后范围/排除变化会自动触发重新构建；外部变更由实时监视秒级同步（监视不可用时退回例行扫描）。首次构建可能需要数分钟，期间可照常使用。")}
                   </p>
                 </div>
             </div>

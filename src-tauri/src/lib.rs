@@ -2761,19 +2761,22 @@ async fn index_get_config(
     Ok(ix.get_config())
 }
 
-/// 索引配置写入：落盘 index.json；指纹变化由后台线程检测后自动全量重建
+/// 索引配置写入：落盘 index.json（roots/排除清单/例行间隔 0=仅事件/实时监视开关）；
+/// 指纹与选项变化由后台线程检测后自动生效（重建/重建监视器）
 #[tauri::command]
 async fn index_set_config(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     roots: Vec<String>,
     exclusions: Vec<String>,
+    rescan_interval_secs: u64,
+    watch_enabled: bool,
 ) -> Result<(), String> {
     let ix = indexer::ensure(
         &paths::config_dir(&app)?,
         plugins::plugin_enabled(&state.plugins, "index-search"),
     );
-    ix.set_config(roots, exclusions)
+    ix.set_config(roots, exclusions, rescan_interval_secs, watch_enabled)
 }
 
 /// Windows：显式设置进程 AppUserModelID，让任务栏把 R-Dir 当作独立应用

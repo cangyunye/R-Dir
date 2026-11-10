@@ -71,6 +71,9 @@ russh-keys = { version = "0.45", optional = true }
 rdir-nfs = { path = "crates/rdir-nfs", default-features = false }
 # 全盘索引搜索引擎（字符级 2-gram 倒排 + 快照；默认关闭，插件面板启用后后台构建）
 rdir-index = { path = "crates/rdir-index" }
+# 全盘索引实时监视（v0.46）：内核事件（macOS FSEvents / Windows ReadDirectoryChangesW /
+# Linux inotify 自动选择）——外部文件变更秒级进索引；空闲 0% CPU / 0 IO，<1MB 常驻
+notify = "7"
 async-trait = "0.1"
 # v0.7 分享服务（内置插件，feature = "share" 可编译期拔出）：内嵌 HTTP 文件服务
 axum = { version = "0.8", optional = true, features = ["ws", "http1", "multipart"] }

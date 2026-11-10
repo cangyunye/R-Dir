@@ -384,6 +384,9 @@ export async function installTauriMock(page: Page): Promise<void> {
         errors: 0,
         roots: ["/"],
         exclusions: [],
+        watchEnabled: true,
+        watch: true,
+        rescanIntervalSecs: 600,
       }),
       index_search: (a) => {
         const q = String(a.query).toLowerCase();
@@ -399,7 +402,7 @@ export async function installTauriMock(page: Page): Promise<void> {
         return out;
       },
       index_rebuild: () => undefined,
-      index_get_config: () => ({ roots: ["/"], exclusions: [] }),
+      index_get_config: () => ({ roots: ["/"], exclusions: [], rescanIntervalSecs: 600, watchEnabled: true }),
       index_set_config: () => undefined,
       // 返回数组（真实后端为补全列表；空数组 = 不弹补全下拉）
       complete_path: () => [],

@@ -970,7 +970,9 @@ async fn c_index_get_config(ctx: &WebCtx, _args: &Value) -> Result<Value, String
 async fn c_index_set_config(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let roots: Vec<String> = arg(args, "roots")?;
     let exclusions: Vec<String> = arg(args, "exclusions")?;
-    index_with_ctx(ctx).set_config(roots, exclusions)?;
+    let rescan_interval_secs: u64 = arg(args, "rescanIntervalSecs")?;
+    let watch_enabled: bool = arg(args, "watchEnabled")?;
+    index_with_ctx(ctx).set_config(roots, exclusions, rescan_interval_secs, watch_enabled)?;
     val(Ok(()))
 }
 
