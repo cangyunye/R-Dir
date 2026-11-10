@@ -60,11 +60,12 @@ export function rowsFromSegments(segs: TextSegment[]): DiffRow[] {
   for (const seg of segs) {
     if (seg.kind === "eq") {
       flush();
+      // 忽略正则生效时后端带 rightLines（掩码判定相同、原文各自保留）；缺省复用 lines
       seg.lines.forEach((text, i) => {
         rows.push({
           kind: "eq",
           left: { no: (seg.leftStart ?? 0) + i, text },
-          right: { no: (seg.rightStart ?? 0) + i, text },
+          right: { no: (seg.rightStart ?? 0) + i, text: seg.rightLines?.[i] ?? text },
         });
       });
     } else if (seg.kind === "del") {
@@ -308,6 +309,8 @@ export interface RegionMutation {
  *
  * mutation：调用方已在对应侧全量行数组上做过的 splice（行号仍为变化前的旧编号）。
  * 变更落在区域内/紧邻边界时，区域终点按行数增量延伸/收缩；整体在区域之前时平移区间。
+ * mask（v0.46）：忽略正则的行掩码函数——比较按掩码文本判定，展示仍用原文行；
+ * 与后端全量 diff 的掩码口径一致（JS/Rust 正则引擎差异由调用方保证模式可移植）。
  * 注意：锚点间的局部 diff 与全量最优 diff 在极少数情形下对齐不同，属有效差异表示；
  * 保存后会以后端全量 diff 为准刷新。
  */
@@ -318,6 +321,7 @@ export function rediffRegion(
   leftLines: string[],
   rightLines: string[],
   mutation?: { left?: RegionMutation; right?: RegionMutation },
+  mask?: (s: string) => string,
 ): DiffRow[] {
   let s = rs;
   let e = re;
@@ -354,7 +358,8 @@ export function rediffRegion(
   const [ra, rb] = rangeAfter(rStart, rEnd, mutation?.right);
   const a = leftLines.slice(la, lb + 1);
   const b = rightLines.slice(ra, rb + 1);
-  const regionRows = zipRows(a, b, diffOps(a, b));
+  // 掩码只参与判定；zipRows 仍用原文行展示
+  const regionRows = zipRows(a, b, diffOps(mask ? a.map(mask) : a, mask ? b.map(mask) : b));
   const next = [...rows.slice(0, s), ...regionRows, ...rows.slice(e)];
   renumberRows(next);
   return next;

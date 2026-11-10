@@ -806,3 +806,28 @@ export function saveRemoteTempDir(dir: string): void {
     /* ignore */
   }
 }
+
+// ---- v0.46 文本比较忽略正则（日志时间戳等比较噪声掩码；每行一条，跨重启持久化） ----
+const DIFF_IGNORE_KEY = "rfm.diff-ignore-patterns";
+
+/** 文本比较的忽略正则列表（比较时掩码、展示保留原文）；损坏数据静默回退空 */
+export function loadDiffIgnorePatterns(): string[] {
+  try {
+    const raw = localStorage.getItem(DIFF_IGNORE_KEY);
+    if (!raw) return [];
+    const arr: unknown = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.filter((s): s is string => typeof s === "string" && s.trim() !== "");
+  } catch {
+    return [];
+  }
+}
+
+export function saveDiffIgnorePatterns(patterns: string[]): void {
+  try {
+    if (patterns.length === 0) localStorage.removeItem(DIFF_IGNORE_KEY);
+    else localStorage.setItem(DIFF_IGNORE_KEY, JSON.stringify(patterns));
+  } catch {
+    /* ignore */
+  }
+}

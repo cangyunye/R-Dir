@@ -47,6 +47,16 @@ describe("rowsFromSegments", () => {
     const rows = rowsFromSegments([seg("add", null, 1, ["x"])]);
     expect(rows.map((r) => r.kind)).toEqual(["add"]);
   });
+
+  it("eq 段带 rightLines 时右侧行用原文（v0.46 忽略正则掩码）", () => {
+    const rows = rowsFromSegments([
+      { kind: "eq", leftStart: 1, rightStart: 1, lines: ["10:00:00 INFO", "shared"], rightLines: ["10:00:05 INFO", "shared"] },
+    ]);
+    // 掩码判定相同的行：左右各自保留原文；无 rightLines 的行回退复用 lines
+    expect(rows[0].left?.text).toBe("10:00:00 INFO");
+    expect(rows[0].right?.text).toBe("10:00:05 INFO");
+    expect(rows[1].right?.text).toBe("shared");
+  });
 });
 
 describe("parseUnifiedDiff", () => {
@@ -260,5 +270,22 @@ describe("zipRows / renumberRows / rediffRegion（v0.34 编辑与局部补丁）
     expect(next[0].kind).toBe("eq");
     expect(next[next.length - 1].left?.no).toBe(1601);
     expect(rowsStats(next).deletions).toBe(1600);
+  });
+
+  it("rediffRegion：mask 掩码参与判定、展示仍用原文（v0.46 忽略正则）", () => {
+    const rows = rowsFromSegments([
+      seg("eq", 1, 1, ["10:00:00 start"]),
+      seg("eq", 2, 2, ["10:00:01 end"]),
+    ]);
+    const leftLines = ["10:00:00 start", "10:00:01 end"];
+    const rightLines = ["10:00:09 start", "10:00:11 end"];
+    const mask = (s: string) => s.replace(/\d{2}:\d{2}:\d{2}/g, "");
+    // 无掩码：时间戳不同的行是差异；带掩码：全部按 eq 重建，行文本保留各自原文
+    const raw = rediffRegion(rows, 0, 2, leftLines, rightLines);
+    expect(raw.map((r) => r.kind)).toEqual(["pair", "pair"]);
+    const masked = rediffRegion(rows, 0, 2, leftLines, rightLines, undefined, mask);
+    expect(masked.map((r) => r.kind)).toEqual(["eq", "eq"]);
+    expect(masked[0].left?.text).toBe("10:00:00 start");
+    expect(masked[0].right?.text).toBe("10:00:09 start");
   });
 });

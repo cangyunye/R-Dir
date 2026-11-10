@@ -30,6 +30,7 @@ const outcome = (over: Partial<TextDiffOutcome> = {}): TextDiffOutcome => ({
 });
 
 beforeEach(() => {
+  localStorage.clear();
   diffTextFiles.mockReset().mockResolvedValue(outcome());
   readTextFile.mockReset();
   writeTextSide.mockReset().mockResolvedValue(undefined);
@@ -48,7 +49,7 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
     // eq 行左右两侧各渲染一次
     expect(screen.getAllByText("one")).toHaveLength(2);
     expect(screen.getAllByText("tail")).toHaveLength(2);
-    expect(diffTextFiles).toHaveBeenCalledWith("/L/a.log", "/R/a.log", "utf-8");
+    expect(diffTextFiles).toHaveBeenCalledWith("/L/a.log", "/R/a.log", "utf-8", []);
     expect(screen.getByText("+1")).toBeTruthy();
     expect(screen.getByText("−1")).toBeTruthy();
   });
@@ -136,7 +137,7 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
     const select = screen.getByDisplayValue("UTF-8") as HTMLSelectElement;
     fireEvent.change(select, { target: { value: "gbk" } });
     await waitFor(() =>
-      expect(diffTextFiles).toHaveBeenLastCalledWith("/L/a.log", "/R/a.log", "gbk"),
+      expect(diffTextFiles).toHaveBeenLastCalledWith("/L/a.log", "/R/a.log", "gbk", []),
     );
   });
 
@@ -345,6 +346,104 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
     // 双击右侧单元格不进入编辑
     fireEvent.doubleClick(screen.getByText("new"));
     expect(screen.queryByDisplayValue("new")).toBeNull();
+  });
+
+  it("v0.46 忽略正则：应用后重新比较并携带模式、跨重启持久化，eq 行展示右侧原文", async () => {
+    diffTextFiles.mockResolvedValue(
+      outcome({
+        segments: [
+          {
+            kind: "eq",
+            leftStart: 1,
+            rightStart: 1,
+            lines: ["2026-01-01 10:00:00 INFO one"],
+            rightLines: ["2026-01-01 10:00:05 INFO one"],
+          },
+          { kind: "eq", leftStart: 2, rightStart: 2, lines: ["tail"] },
+        ],
+        additions: 0,
+        deletions: 0,
+        same: true,
+      }),
+    );
+    render(
+      <TextDiffDialog
+        source={{ kind: "files", left: "/L/a.log", right: "/R/a.log" }}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() => expect(screen.getAllByText("tail").length).toBeGreaterThan(0));
+    // 掩码判定相同的 eq 行：左右各自保留原文（时间戳不同）
+    expect(screen.getByText("2026-01-01 10:00:00 INFO one")).toBeTruthy();
+    expect(screen.getByText("2026-01-01 10:00:05 INFO one")).toBeTruthy();
+    // 打开编辑器 → 点预设 → 应用 → 重新比较携带模式并落盘
+    fireEvent.click(screen.getByText("忽略正则"));
+    fireEvent.click(screen.getByText("+ 日志时间戳"));
+    fireEvent.click(screen.getByText("应用"));
+    await waitFor(() =>
+      expect(diffTextFiles).toHaveBeenLastCalledWith(
+        "/L/a.log",
+        "/R/a.log",
+        "utf-8",
+        [expect.stringContaining("\\d{4}")],
+      ),
+    );
+    expect(JSON.parse(localStorage.getItem("rfm.diff-ignore-patterns") ?? "[]")).toHaveLength(1);
+    // 按钮进入激活态（含条数徽标），编辑器收起
+    const btn = screen.getByText("忽略正则").closest("button") as HTMLButtonElement;
+    expect(btn.className).toContain("bg-accent");
+    expect(screen.queryByText("应用")).toBeNull();
+  });
+
+  it("v0.46 忽略正则：有未保存修改时应用需确认，确认后生效", async () => {
+    render(
+      <TextDiffDialog
+        source={{ kind: "files", left: "/L/a.log", right: "/R/a.log" }}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("new")).toBeTruthy());
+    // 制造脏编辑
+    fireEvent.doubleClick(screen.getByText("new"));
+    fireEvent.change(screen.getByDisplayValue("new"), { target: { value: "changed" } });
+    fireEvent.keyDown(screen.getByDisplayValue("changed"), { key: "Enter" });
+    await waitFor(() => expect(screen.getByText("changed")).toBeTruthy());
+    // 应用忽略正则 → 确认弹窗 → 确认后重新比较
+    fireEvent.click(screen.getByText("忽略正则"));
+    fireEvent.change(screen.getByPlaceholderText(/例如：/), {
+      target: { value: "\\d{2}:\\d{2}:\\d{2}" },
+    });
+    fireEvent.click(screen.getByText("应用"));
+    expect(screen.getByText("修改忽略正则将丢弃未保存的修改")).toBeTruthy();
+    expect(diffTextFiles).toHaveBeenCalledTimes(1); // 确认前不重比
+    fireEvent.click(screen.getByText("丢弃并应用")); // 确认弹窗的确认按钮
+    await waitFor(() => expect(diffTextFiles).toHaveBeenCalledTimes(2));
+    expect(diffTextFiles).toHaveBeenLastCalledWith("/L/a.log", "/R/a.log", "utf-8", [
+      "\\d{2}:\\d{2}:\\d{2}",
+    ]);
+  });
+
+  it("v0.46 忽略正则：清除后不再携带模式", async () => {
+    localStorage.setItem("rfm.diff-ignore-patterns", JSON.stringify(["\\d{2}:\\d{2}"]));
+    render(
+      <TextDiffDialog
+        source={{ kind: "files", left: "/L/a.log", right: "/R/a.log" }}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(diffTextFiles).toHaveBeenLastCalledWith("/L/a.log", "/R/a.log", "utf-8", [
+        "\\d{2}:\\d{2}",
+      ]),
+    );
+    fireEvent.click(screen.getByText("忽略正则"));
+    // 草稿预填了当前模式：清空后应用即清除
+    fireEvent.change(screen.getByPlaceholderText(/例如：/), { target: { value: "" } });
+    fireEvent.click(screen.getByText("应用"));
+    await waitFor(() =>
+      expect(diffTextFiles).toHaveBeenLastCalledWith("/L/a.log", "/R/a.log", "utf-8", []),
+    );
+    expect(localStorage.getItem("rfm.diff-ignore-patterns")).toBeNull();
   });
 });
 

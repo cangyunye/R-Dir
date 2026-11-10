@@ -12,6 +12,7 @@
 //!
 //! 行语义：\r\n 与 \n 归一；「结尾有无换行符」视为相同（轻量简化，git 语义会标记）。
 
+use regex::Regex;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -50,7 +51,7 @@ pub struct TextSide {
     pub eol: String,
 }
 
-/// 一段连续同类型的行。eq = 两侧相同；del = 左侧独有；add = 右侧独有。
+/// 一段连续同类型的行。eq = 两侧（按忽略正则掩码后）相同；del = 左侧独有；add = 右侧独有。
 /// eq 段只带起点行号（渲染器按序展开）；del/add 段带行文本。
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +63,10 @@ pub struct TextSegment {
     /// 右侧行号起点（1 基）；del 段为 None
     pub right_start: Option<u64>,
     pub lines: Vec<String>,
+    /// v0.46 忽略正则生效时 eq 段的右侧行原文（比较按掩码判定相同，展示保留各自原文，
+    /// 典型如日志时间戳不同、正文一致）；None = 无忽略规则，前端直接复用 lines
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right_lines: Option<Vec<String>>,
 }
 
 /// 文本比较结果。
@@ -352,6 +357,35 @@ pub fn encode_lines(lines: &[String], eol: &str, encoding: Option<&str>) -> Resu
     }
 }
 
+/// v0.46 忽略正则：编译用户输入的掩码模式（日志时间戳 / UUID 等比较噪声）。
+/// 非法模式按 CODE|中文详情 契约报错（前端 terr 剥码展示，l10n errors 包随后跟进）。
+pub fn compile_ignore_patterns(patterns: &[String]) -> Result<Vec<Regex>, String> {
+    patterns
+        .iter()
+        .map(|p| Regex::new(p).map_err(|e| format!("BAD_REGEX|忽略正则无效：{p}（{e}）")))
+        .collect()
+}
+
+/// v0.46 忽略正则掩码：逐行删除匹配片段，产出「比较文本」（行数不变，展示仍用原文）。
+/// 典型场景：日志行仅时间戳不同 → 掩码后完全一致，按 eq 对齐而非整段红绿。
+pub fn mask_lines(lines: &[String], res: &[Regex]) -> Vec<String> {
+    if res.is_empty() {
+        return lines.to_vec();
+    }
+    lines
+        .iter()
+        .map(|l| {
+            let mut s = l.clone();
+            for re in res {
+                if re.is_match(&s) {
+                    s = re.replace_all(&s, "").into_owned();
+                }
+            }
+            s
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Op {
     Eq,
@@ -439,8 +473,15 @@ fn backtrack(trace: &[Vec<isize>], n: isize, m: isize, offset: isize) -> Vec<Op>
     ops
 }
 
-/// 推入一段连续同类型行（与前一正在生长的同类型段合并；行号起点为该类型侧的首行号）
-fn seg_eq(segs: &mut Vec<TextSegment>, lines: Vec<String>, la: &mut u64, rb: &mut u64) {
+/// 推入一段连续同类型行（与前一正在生长的同类型段合并；行号起点为该类型侧的首行号）。
+/// right_lines：忽略正则生效时 eq 段的右侧行原文（与 lines 等长、同下标对应）。
+fn seg_eq(
+    segs: &mut Vec<TextSegment>,
+    lines: Vec<String>,
+    right_lines: Option<Vec<String>>,
+    la: &mut u64,
+    rb: &mut u64,
+) {
     if lines.is_empty() {
         return;
     }
@@ -449,12 +490,18 @@ fn seg_eq(segs: &mut Vec<TextSegment>, lines: Vec<String>, la: &mut u64, rb: &mu
     *la += lines.len() as u64;
     *rb += lines.len() as u64;
     match segs.last_mut() {
-        Some(s) if s.kind == "eq" => s.lines.extend(lines),
+        Some(s) if s.kind == "eq" => {
+            s.lines.extend(lines);
+            if let Some(rl) = right_lines {
+                s.right_lines.get_or_insert_with(Vec::new).extend(rl);
+            }
+        }
         _ => segs.push(TextSegment {
             kind: "eq".into(),
             left_start: Some(start_l),
             right_start: Some(start_r),
             lines,
+            right_lines,
         }),
     }
 }
@@ -472,6 +519,7 @@ fn seg_del_run(segs: &mut Vec<TextSegment>, lines: Vec<String>, la: &mut u64) {
             left_start: Some(start),
             right_start: None,
             lines,
+            right_lines: None,
         }),
     }
 }
@@ -489,6 +537,7 @@ fn seg_add_run(segs: &mut Vec<TextSegment>, lines: Vec<String>, rb: &mut u64) {
             left_start: None,
             right_start: Some(start),
             lines,
+            right_lines: None,
         }),
     }
 }
@@ -622,19 +671,35 @@ fn loose_ops(ia: &[u64], ib: &[u64]) -> (Vec<Op>, bool) {
 
 /// 行级 diff 主入口：产出段序列与 coarse 标记。行号均为 1 基。
 pub fn diff_segments(a: &[String], b: &[String]) -> (Vec<TextSegment>, bool) {
+    diff_segments_cmp(a, b, a, b)
+}
+
+/// 行级 diff（忽略正则版，v0.46）：比较用 ca/cb（已按用户规则掩码），展示用 a/b（原文）。
+/// 两侧数组按下标一一对应（掩码不改行数）；「相同」以掩码后文本判定，eq 段携带
+/// 右侧行原文（right_lines）供双栏各自展示。行号均为 1 基。
+pub fn diff_segments_cmp(
+    a: &[String],
+    b: &[String],
+    ca: &[String],
+    cb: &[String],
+) -> (Vec<TextSegment>, bool) {
+    debug_assert_eq!(a.len(), ca.len());
+    debug_assert_eq!(b.len(), cb.len());
     let n = a.len();
     let m = b.len();
-    // 1) 公共前后缀
+    // 掩码是否生效（比较与展示数组不同源时 eq 段需带右侧行原文）
+    let masked = ca.as_ptr() != a.as_ptr() || cb.as_ptr() != b.as_ptr();
+    // 1) 公共前后缀（按比较文本判定）
     let mut pre = 0usize;
-    while pre < n && pre < m && a[pre] == b[pre] {
+    while pre < n && pre < m && ca[pre] == cb[pre] {
         pre += 1;
     }
     let mut suf = 0usize;
-    while suf < n - pre && suf < m - pre && a[n - 1 - suf] == b[m - 1 - suf] {
+    while suf < n - pre && suf < m - pre && ca[n - 1 - suf] == cb[m - 1 - suf] {
         suf += 1;
     }
-    let mid_a = &a[pre..n - suf];
-    let mid_b = &b[pre..m - suf];
+    let mid_a = &ca[pre..n - suf];
+    let mid_b = &cb[pre..m - suf];
 
     // 2) 中段对齐：行内容 → 紧凑 id（精确相等，无哈希碰撞）
     let mut ids: HashMap<String, u64> = HashMap::new();
@@ -668,11 +733,19 @@ pub fn diff_segments(a: &[String], b: &[String]) -> (Vec<TextSegment>, bool) {
     };
 
     // 3) 全序展开：pre 公共段 + 中段 + suf 公共段。中段按连续同类型 op 批量成段
-    //    （每段一次 Vec 分配，而非每行一次——大文件相同行占绝大多数，这是主要开销）
+    //    （每段一次 Vec 分配，而非每行一次——大文件相同行占绝大多数，这是主要开销）。
+    //    行文本取展示数组（原文），掩码只决定 eq/del/add 的判定
+    let eq_right = |s: usize, e: usize| if masked { Some(b[s..e].to_vec()) } else { None };
     let mut segs: Vec<TextSegment> = Vec::new();
     let mut la: u64 = 0;
     let mut rb: u64 = 0;
-    seg_eq(&mut segs, a[..pre].to_vec(), &mut la, &mut rb);
+    seg_eq(
+        &mut segs,
+        a[..pre].to_vec(),
+        eq_right(0, pre),
+        &mut la,
+        &mut rb,
+    );
     let mut i = 0usize;
     while i < mid_ops.len() {
         let op = mid_ops[i];
@@ -684,7 +757,9 @@ pub fn diff_segments(a: &[String], b: &[String]) -> (Vec<TextSegment>, bool) {
         match op {
             Op::Eq => {
                 let s = la as usize;
-                seg_eq(&mut segs, a[s..s + count].to_vec(), &mut la, &mut rb);
+                let e = s + count;
+                let right = eq_right(rb as usize, rb as usize + count);
+                seg_eq(&mut segs, a[s..e].to_vec(), right, &mut la, &mut rb);
             }
             Op::Del => {
                 let lines = a[la as usize..la as usize + count].to_vec();
@@ -696,7 +771,14 @@ pub fn diff_segments(a: &[String], b: &[String]) -> (Vec<TextSegment>, bool) {
             }
         }
     }
-    seg_eq(&mut segs, a[n - suf..n].to_vec(), &mut la, &mut rb);
+    let s = n - suf;
+    seg_eq(
+        &mut segs,
+        a[s..n].to_vec(),
+        eq_right(m - suf, m),
+        &mut la,
+        &mut rb,
+    );
     (segs, coarse)
 }
 
@@ -920,6 +1002,53 @@ mod tests {
         assert!(coarse);
         // 预算耗尽前已产出的部分仍是对齐结果（含对齐上的 X 行），非全盘无 eq
         assert!(segs.iter().any(|s| s.kind == "eq"));
+    }
+
+    #[test]
+    fn ignore_regex_masks_timestamps_to_eq() {
+        // v0.46：日志时间戳掩码——比较按掩码文本判定 same/eq，eq 段带右侧行原文
+        let a = lines(&["2026-11-11 10:00:00.001 INFO worker started", "shared line"]);
+        let b = lines(&["2026-11-11 10:00:05.789 INFO worker started", "shared line"]);
+        let res = compile_ignore_patterns(&[r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?".to_string()]).unwrap();
+        let ca = mask_lines(&a, &res);
+        let cb = mask_lines(&b, &res);
+        let (segs, coarse) = diff_segments_cmp(&a, &b, &ca, &cb);
+        assert!(!coarse);
+        assert_eq!(kinds(&segs), vec!["eq"]);
+        assert_eq!(segment_stats(&segs), (0, 0, true));
+        // eq 段展示保留各自原文（时间戳不同的行不再互相覆盖展示）
+        assert_eq!(segs[0].lines[0], "2026-11-11 10:00:00.001 INFO worker started");
+        assert_eq!(
+            segs[0].right_lines.as_ref().unwrap()[0],
+            "2026-11-11 10:00:05.789 INFO worker started"
+        );
+        // 无掩码路径同一输入恢复 1:1 差异，且不携带 right_lines
+        let (segs2, _) = diff_segments(&a, &b);
+        assert_eq!(kinds(&segs2), vec!["del", "add", "eq"]);
+        assert!(segs2.iter().all(|s| s.right_lines.is_none()));
+    }
+
+    #[test]
+    fn ignore_regex_invalid_pattern_yields_bad_regex_code() {
+        let err = compile_ignore_patterns(&["(unclosed".to_string()]).unwrap_err();
+        assert!(err.starts_with("BAD_REGEX|"), "{err}");
+    }
+
+    #[test]
+    fn ignore_regex_masked_diff_keeps_original_text_in_del_add() {
+        // 掩码只影响判定：真差异行（正文不同）的 del/add 仍携带原文
+        let a = lines(&["2026-11-11 10:00:00 INFO start", "do A", "2026-11-11 10:00:01 INFO end"]);
+        let b = lines(&["2026-11-11 10:00:09 INFO start", "do B", "2026-11-11 10:00:11 INFO end"]);
+        let res = compile_ignore_patterns(&[r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}".to_string()]).unwrap();
+        let ca = mask_lines(&a, &res);
+        let cb = mask_lines(&b, &res);
+        let (segs, coarse) = diff_segments_cmp(&a, &b, &ca, &cb);
+        assert!(!coarse);
+        assert_eq!(kinds(&segs), vec!["eq", "del", "add", "eq"]);
+        assert_eq!(segs[1].lines, lines(&["do A"]));
+        assert_eq!(segs[2].lines, lines(&["do B"]));
+        assert_eq!(segs[0].right_lines.as_ref().unwrap()[0], "2026-11-11 10:00:09 INFO start");
+        assert_eq!(segs[3].right_lines.as_ref().unwrap()[0], "2026-11-11 10:00:11 INFO end");
     }
 
     #[test]

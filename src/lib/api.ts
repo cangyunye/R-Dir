@@ -572,12 +572,21 @@ export const cancelDiff = (id: string) => invoke<void>("cancel_diff", { id });
 
 // ---- v0.19 文本比较 ----
 
-/** 任意两侧（本地/SFTP/HTTP）的行级文本比较；encoding 为 WhatWG 标签（gbk/big5/…，缺省 UTF-8），两侧同时应用 */
-export const diffTextFiles = (left: string, right: string, encoding?: string) =>
+/**
+ * 任意两侧（本地/SFTP/HTTP）的行级文本比较；encoding 为 WhatWG 标签（gbk/big5/…，缺省 UTF-8），两侧同时应用。
+ * ignorePatterns（v0.46）：忽略正则列表，匹配片段比较时掩码（展示保留原文），日志时间戳等噪声行据此按 eq 对齐。
+ */
+export const diffTextFiles = (
+  left: string,
+  right: string,
+  encoding?: string,
+  ignorePatterns?: string[],
+) =>
   invoke<import("./types").TextDiffOutcome>("diff_text_files", {
     left,
     right,
     encoding: encoding && encoding !== "utf-8" ? encoding : null,
+    ignorePatterns: ignorePatterns && ignorePatterns.length > 0 ? ignorePatterns : null,
   });
 
 /** 读取文本文件内容（.patch/.diff 解析用；支持 SFTP/HTTP 路径） */

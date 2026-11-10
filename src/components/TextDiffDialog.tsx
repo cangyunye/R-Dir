@@ -29,6 +29,7 @@ import { useModalLayer } from "@/hooks/useModalLayer";
 import { useT } from "@/lib/LanguageProvider";
 import { terr } from "@/lib/i18n";
 import { isTopModalLayer } from "@/lib/modal-stack";
+import { loadDiffIgnorePatterns, saveDiffIgnorePatterns } from "@/lib/persist";
 
 /** 文本比较的来源：任意两侧文件 / 粘贴的 diff 文本 / .patch 文件 */
 export type TextDiffSource =
@@ -47,6 +48,19 @@ interface Section {
 /** 与 FileList 的虚拟滚动解耦：diff 行高独立（含表头/间隙统一行高） */
 const ROW_H = 24;
 const BUFFER = 8;
+/** v0.46 忽略正则预设（Rust regex 语法，无环视）：常见日志时间戳 / UUID——掩码后正文一致的时间序列日志按 eq 对齐 */
+const DIFF_IGNORE_PRESETS: { label: string; pattern: string }[] = [
+  {
+    label: "日志时间戳",
+    pattern:
+      "\\d{4}[-/]\\d{2}[-/]\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d{1,9})?(?:Z|[+-]\\d{2}:?\\d{2})?|\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d{1,9})?",
+  },
+  {
+    label: "UUID",
+    pattern:
+      "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+  },
+];
 /** 行号槽宽度（左右各一列，中轴恰好在容器 50% 处） */
 const GUTTER = 48;
 
@@ -212,6 +226,33 @@ export function TextDiffDialog({
   const [viewport, setViewport] = useState({ w: 1200, h: 400 });
   /** v0.21.1 编码切换（仅 files 模式；切换后两侧同时按新编码重新比较） */
   const [encoding, setEncoding] = useState("utf-8");
+  // ---- v0.46 忽略正则（仅 files 模式）：比较时掩码、展示保留原文；\n 分隔，跨重启持久化 ----
+  const [ignoreText, setIgnoreText] = useState(() => loadDiffIgnorePatterns().join("\n"));
+  const [ignoreOpen, setIgnoreOpen] = useState(false);
+  const [ignoreDraft, setIgnoreDraft] = useState("");
+  const ignorePatterns = useMemo(
+    () => ignoreText.split("\n").map((s) => s.trim()).filter(Boolean),
+    [ignoreText],
+  );
+  /** JS 侧掩码（编辑后局部重建 rediffRegion 用；全量 diff 以后端 Rust regex 为准）：
+      JS 不支持的模式逐条跳过（罕见，Rust 合法 / JS 非法的语法差异） */
+  const maskFn = useMemo(() => {
+    if (ignorePatterns.length === 0) return undefined;
+    const res: RegExp[] = [];
+    for (const p of ignorePatterns) {
+      try {
+        res.push(new RegExp(p, "g"));
+      } catch {
+        /* 该条在局部重建中不生效；后端全量 diff 仍按完整规则掩码 */
+      }
+    }
+    if (res.length === 0) return undefined;
+    return (s: string) => {
+      let out = s;
+      for (const re of res) out = out.replace(re, "");
+      return out;
+    };
+  }, [ignorePatterns]);
   /** 两侧行尾格式（files 模式，来自后端 TextSide.eol；保存时按原格式回写） */
   const [eols, setEols] = useState<{ left?: string; right?: string }>({});
   // ---- v0.34 编辑模型：files 模式下两侧全量行数组（下标 = 行号-1）+ 脏标记 ----
@@ -256,7 +297,7 @@ export function TextDiffDialog({
       if (!preserveScroll) setScrollTop(0);
       try {
         if (source.kind === "files") {
-          const out = await diffTextFiles(source.left, source.right, encoding);
+          const out = await diffTextFiles(source.left, source.right, encoding, ignorePatterns);
           if (!alive()) return;
           const rows = rowsFromSegments(out.segments);
           setSections([
@@ -316,7 +357,7 @@ export function TextDiffDialog({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [source, encoding, t],
+    [source, encoding, ignoreText, t],
   );
 
   useEffect(() => {
@@ -538,6 +579,7 @@ export function TextDiffDialog({
       ed.side === "left" ? lines : sideLines.left,
       ed.side === "right" ? lines : sideLines.right,
       { [ed.side]: { start: line.no - 1, removed: 1, inserted: 1 } },
+      maskFn,
     );
     applyEdit(ed.side, lines, newRows);
   };
@@ -556,6 +598,7 @@ export function TextDiffDialog({
       side === "left" ? lines : sideLines.left,
       side === "right" ? lines : sideLines.right,
       { [side]: { start: cur.no - 1, removed: 1, inserted: 0 } },
+      maskFn,
     );
     applyEdit(side, lines, newRows);
   };
@@ -581,6 +624,7 @@ export function TextDiffDialog({
       side === "left" ? lines : sideLines.left,
       side === "right" ? lines : sideLines.right,
       { [side]: { start: count, removed: 0, inserted: 1 } },
+      maskFn,
     );
     applyEdit(side, lines, newRows);
     // 直接进入新行编辑：区域重建后该侧行号为 count（1 基）的行即新行
@@ -630,6 +674,7 @@ export function TextDiffDialog({
           inserted: srcLines.length,
         },
       },
+      maskFn,
     );
     applyEdit(dst, lines, newRows);
   };
@@ -713,6 +758,25 @@ export function TextDiffDialog({
       confirmActionRef.current = () => setEncoding(enc);
     } else {
       setEncoding(enc);
+    }
+  };
+
+  /** v0.46 应用忽略正则（清除 = 空文本）：重读持久化并重新比较；有未保存修改先确认 */
+  const applyIgnoreText = (text: string) => {
+    const commit = () => {
+      setIgnoreText(text);
+      saveDiffIgnorePatterns(text.split("\n").map((s) => s.trim()).filter(Boolean));
+      setIgnoreOpen(false);
+    };
+    if (anyDirty) {
+      setConfirmReq({
+        title: t("修改忽略正则将丢弃未保存的修改"),
+        message: t("忽略正则会按新规则重新比较两侧文件，未保存的编辑（含已应用的补丁）将被丢弃。"),
+        confirmLabel: t("丢弃并应用"),
+      });
+      confirmActionRef.current = commit;
+    } else {
+      commit();
     }
   };
 
@@ -945,6 +1009,29 @@ export function TextDiffDialog({
             {" "}
             <span className="text-destructive">−{stats.deletions}</span>
           </span>
+          {source.kind === "files" && (
+            <button
+              onClick={() => {
+                setIgnoreDraft(ignoreText);
+                setIgnoreOpen((v) => !v);
+              }}
+              disabled={loading}
+              title={t("比较时忽略匹配的文本（如日志时间戳），每行一条正则")}
+              className={cn(
+                "flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 disabled:opacity-50",
+                ignorePatterns.length > 0
+                  ? "bg-accent text-accent-foreground"
+                  : "hover:bg-accent hover:text-foreground",
+              )}
+            >
+              {t("忽略正则")}
+              {ignorePatterns.length > 0 && (
+                <span className="rounded bg-primary/15 px-1 text-[10px] tabular-nums">
+                  {ignorePatterns.length}
+                </span>
+              )}
+            </button>
+          )}
           <button
             onClick={() => setOnlyDiff((v) => !v)}
             disabled={stats.additions + stats.deletions === 0}
@@ -957,6 +1044,48 @@ export function TextDiffDialog({
             {t("只看差异")}
           </button>
         </div>
+        {filesMode && ignoreOpen && (
+          <div className="border-b px-4 py-2 text-[11px]">
+            <div className="mb-1 text-muted-foreground">
+              {t("比较时忽略匹配的文本（每行一条正则，同时应用于两侧）；应用后重新比较")}
+            </div>
+            <textarea
+              value={ignoreDraft}
+              onChange={(e) => setIgnoreDraft(e.target.value)}
+              rows={3}
+              spellCheck={false}
+              placeholder={t("例如：\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")}
+              className="w-full resize-y rounded border bg-transparent px-2 py-1 font-mono text-[11px] outline-none focus:ring-1 focus:ring-primary/50"
+            />
+            <div className="mt-1.5 flex items-center gap-1.5">
+              {DIFF_IGNORE_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  onClick={() =>
+                    setIgnoreDraft((d) => (d.trim() ? `${d.trimEnd()}\n${p.pattern}` : p.pattern))
+                  }
+                  title={p.pattern}
+                  className="rounded border px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground"
+                >
+                  + {t(p.label)}
+                </button>
+              ))}
+              <span className="flex-1" />
+              <button
+                onClick={() => setIgnoreOpen(false)}
+                className="rounded px-2 py-0.5 hover:bg-accent hover:text-foreground"
+              >
+                {t("取消")}
+              </button>
+              <button
+                onClick={() => applyIgnoreText(ignoreDraft)}
+                className="rounded border bg-primary/10 px-2 py-0.5 hover:bg-primary/20"
+              >
+                {t("应用")}
+              </button>
+            </div>
+          </div>
+        )}
         {coarse && (
           <div className="border-b bg-amber-500/5 px-4 py-1 text-[11px] text-amber-600 dark:text-amber-500">
             {t("差异过大，已按整块替换粗略显示（未做行级对齐）")}

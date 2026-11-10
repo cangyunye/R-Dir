@@ -880,7 +880,23 @@ async fn c_diff_text_files(ctx: &WebCtx, args: &Value) -> Result<Value, String> 
     let left: String = arg(args, "left")?;
     let right: String = arg(args, "right")?;
     let encoding: Option<String> = opt_arg(args, "encoding")?;
-    val(crate::diff_text_files_core(&ctx.state, left, right, encoding).await)
+    // v0.46 忽略正则（可选字符串数组）：与 GUI 命令同一掩码语义
+    let ignore_patterns: Option<Vec<String>> = args
+        .get("ignorePatterns")
+        .map(|v| match v {
+            Value::Null => Ok(Vec::new()),
+            Value::Array(a) => a
+                .iter()
+                .map(|x| {
+                    x.as_str().map(String::from).ok_or_else(|| {
+                        format!("ARG_TYPE|ignorePatterns 应为字符串数组：{}", x)
+                    })
+                })
+                .collect(),
+            other => Err(format!("ARG_TYPE|ignorePatterns 应为字符串数组：{other}")),
+        })
+        .transpose()?;
+    val(crate::diff_text_files_core(&ctx.state, left, right, encoding, ignore_patterns).await)
 }
 
 async fn c_read_text_file(ctx: &WebCtx, args: &Value) -> Result<Value, String> {

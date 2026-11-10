@@ -365,12 +365,14 @@ export interface TextSide {
   eol?: "lf" | "crlf" | "mixed" | "none";
 }
 
-/** 一段连续同类型行：eq 相同 / del 左侧独有 / add 右侧独有；行号 1 基 */
+/** 一段连续同类型行：eq（按忽略正则掩码后）相同 / del 左侧独有 / add 右侧独有；行号 1 基 */
 export interface TextSegment {
   kind: "eq" | "del" | "add";
   leftStart: number | null;
   rightStart: number | null;
   lines: string[];
+  /** v0.46 忽略正则生效时 eq 段的右侧行原文（掩码判定相同、展示保留各自原文）；缺省复用 lines */
+  rightLines?: string[];
 }
 
 export interface TextDiffOutcome {
@@ -380,7 +382,7 @@ export interface TextDiffOutcome {
   additions: number;
   deletions: number;
   same: boolean;
-  /** 中段过大退化为整块替换（未做行级对齐） */
+  /** 重对齐预算耗尽 / 几乎无共同行，退化为整块替换（未做行级对齐） */
   coarse: boolean;
 }
 

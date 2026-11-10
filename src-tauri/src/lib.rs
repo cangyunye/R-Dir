@@ -1181,14 +1181,17 @@ async fn resolve_text_side(
 
 /// v0.19 文本比较：任意两侧（本地 / SFTP / HTTP）的行级 diff。
 /// encoding：None/utf-8 之外的 WhatWG 标签（gbk / big5 / shift_jis …）按指定编码解码（v0.21.1）。
+/// ignore_patterns（v0.46）：忽略正则（每行一条），匹配片段在比较时掩码（展示保留原文），
+/// 日志时间戳等噪声行据此按 eq 对齐；非法模式按 BAD_REGEX 码报错。
 #[tauri::command]
 async fn diff_text_files(
     state: tauri::State<'_, AppState>,
     left: String,
     right: String,
     encoding: Option<String>,
+    ignore_patterns: Option<Vec<String>>,
 ) -> Result<text_diff::TextDiffOutcome, String> {
-    diff_text_files_core(&state, left, right, encoding).await
+    diff_text_files_core(&state, left, right, encoding, ignore_patterns).await
 }
 
 /// diff_text_files 核心（GUI 命令与 web 桥共用）
@@ -1197,7 +1200,13 @@ pub(crate) async fn diff_text_files_core(
     left: String,
     right: String,
     encoding: Option<String>,
+    ignore_patterns: Option<Vec<String>>,
 ) -> Result<text_diff::TextDiffOutcome, String> {
+    // 忽略正则先编译（失败快速返回，不启动文件读取）
+    let ignores = match ignore_patterns.as_deref() {
+        Some(p) if !p.is_empty() => text_diff::compile_ignore_patterns(p)?,
+        _ => Vec::new(),
+    };
     let (llocal, ltemp) = resolve_text_side(&state, &left)
         .await
         .map_err(|e| format!("左侧准备失败：{e}"))?;
@@ -1212,7 +1221,13 @@ pub(crate) async fn diff_text_files_core(
             let (rt, rlossy, rbytes) = text_diff::read_local_text(std::path::Path::new(&rlocal), enc)?;
             let la = text_diff::split_lines(&lt);
             let rb = text_diff::split_lines(&rt);
-            let (segments, coarse) = text_diff::diff_segments(&la, &rb);
+            let (segments, coarse) = if ignores.is_empty() {
+                text_diff::diff_segments(&la, &rb)
+            } else {
+                let ca = text_diff::mask_lines(&la, &ignores);
+                let cb = text_diff::mask_lines(&rb, &ignores);
+                text_diff::diff_segments_cmp(&la, &rb, &ca, &cb)
+            };
             let (additions, deletions, same) = text_diff::segment_stats(&segments);
             Ok(text_diff::TextDiffOutcome {
                 left: text_diff::TextSide {
