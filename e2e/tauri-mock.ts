@@ -560,6 +560,56 @@ export async function installTauriMock(page: Page): Promise<void> {
         FS[parent].push({ name, size: 0 });
         return `${parent}/${name}`;
       },
+      // ---- v0.46 快捷方式创建：记录调用 + 落盘到虚拟 FS（同级 / HOME/Desktop） ----
+      create_shortcuts: (a) => {
+        const paths = (a.paths as string[]) ?? [];
+        const toDesktop = !!a.toDesktop;
+        const calls = (window as unknown as { __RDIR_E2E_MOCK__?: { shortcutCalls: unknown[] } }).__RDIR_E2E_MOCK__
+          ?.shortcutCalls;
+        const created: string[] = [];
+        for (const p of paths) {
+          const target = p.split("/").filter(Boolean).pop() ?? p;
+          const dir = toDesktop ? `${HOME}/Desktop` : p.slice(0, p.lastIndexOf("/")) || "/";
+          FS[dir] = FS[dir] ?? [];
+          const base = target.replace(/\.[^.]+$/, "");
+          let name = toDesktop ? `${base}.lnk` : `${target} 链接`;
+          let n = 2;
+          while (FS[dir].some((f) => f.name === name)) name = toDesktop ? `${base} (${n}).lnk` : `${target} 链接 ${n++}`;
+          FS[dir].push({ name, size: 0 });
+          created.push(`${dir}/${name}`);
+        }
+        calls?.push({ paths, toDesktop });
+        return { created };
+      },
+      // ---- v0.46 系统集成（注册表右键）：可变 mock 状态，验证开关交互 ----
+      shell_integration_status: () =>
+        (window as unknown as { __RDIR_SHELL_STATUS__?: unknown }).__RDIR_SHELL_STATUS__ ?? {
+          supported: true,
+          directory: false,
+          background: false,
+          files: false,
+        },
+      shell_integration_register: () => {
+        (window as unknown as { __RDIR_SHELL_STATUS__?: unknown }).__RDIR_SHELL_STATUS__ = {
+          supported: true,
+          directory: true,
+          background: true,
+          files: true,
+        };
+        return null;
+      },
+      shell_integration_unregister: () => {
+        (window as unknown as { __RDIR_SHELL_STATUS__?: unknown }).__RDIR_SHELL_STATUS__ = {
+          supported: true,
+          directory: false,
+          background: false,
+          files: false,
+        };
+        return null;
+      },
+      // ---- v0.46 冷启动路径（桌面端才有值；mock 可经 __RDIR_LAUNCH_PATHS__ 注入） ----
+      launch_paths_take: () =>
+        (window as unknown as { __RDIR_LAUNCH_PATHS__?: unknown[] }).__RDIR_LAUNCH_PATHS__ ?? [],
       stat_entry: (a) => {
         const p = String(a.path);
         const name = p.split("/").filter(Boolean).pop() ?? p;
@@ -924,6 +974,8 @@ export async function installTauriMock(page: Page): Promise<void> {
       mode?: string;
       password: string | null;
     }[] = [];
+    /** v0.46 create_shortcuts 调用记录（快捷链接组回归用） */
+    const shortcutCalls: { paths: string[]; toDesktop: boolean }[] = [];
 
     const internals = {
       invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
@@ -988,7 +1040,7 @@ export async function installTauriMock(page: Page): Promise<void> {
       }
       return origFetch ? origFetch(input, init) : Promise.reject(new Error("fetch unavailable"));
     }) as typeof window.fetch;
-    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, relays, sftpSetGroup, sftpConnects, copyPlans, movePlans, compressCalls, extractCalls, servers: SFTP_SERVERS };
+    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, relays, sftpSetGroup, sftpConnects, copyPlans, movePlans, compressCalls, extractCalls, shortcutCalls, servers: SFTP_SERVERS };
   });
 }
 
