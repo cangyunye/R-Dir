@@ -4,12 +4,27 @@ import type { FileEntry } from "@/lib/types";
 import { formatSize, formatTime } from "@/lib/format";
 import { fileKindClass } from "@/components/FileIcon";
 import { useT } from "@/lib/LanguageProvider";
+import { cn } from "@/lib/utils";
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({
+  label,
+  value,
+  className,
+  valueClassName,
+  title,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+  valueClassName?: string;
+  title?: string;
+}) {
   return (
-    <span className="flex items-center gap-1.5 whitespace-nowrap">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="text-foreground">{value}</span>
+    <span className={cn("flex items-center gap-1.5 whitespace-nowrap", className)}>
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className={cn("text-foreground", valueClassName)} title={title}>
+        {value}
+      </span>
     </span>
   );
 }
@@ -30,7 +45,7 @@ export const PropertiesBar = memo(function PropertiesBar({
   const t = useT();
 
   return (
-    <div className="flex h-8 shrink-0 items-center gap-4 overflow-x-auto border-t bg-sidebar px-3 text-xs select-none">
+    <div className="flex h-8 shrink-0 items-center gap-4 overflow-x-auto border-t bg-sidebar px-3 text-xs select-none [scrollbar-width:none]">
       {selectedEntries.length === 1 ? (
         (() => {
           const e = selectedEntries[0];
@@ -41,7 +56,15 @@ export const PropertiesBar = memo(function PropertiesBar({
               : t("文件");
           return (
             <>
-              <Row label={t("名称")} value={e.name} />
+              {/* v0.44.0 名称至多占属性栏 40% 并截断（悬停看全名）：长文件名不再把
+                  类型/大小等后续字段挤出分屏窄窗格 */}
+              <Row
+                label={t("名称")}
+                value={e.name}
+                className="min-w-0 max-w-[40%]"
+                valueClassName="truncate"
+                title={e.name}
+              />
               <Row label={t("类型")} value={kind} />
               <Row
                 label={t("大小")}

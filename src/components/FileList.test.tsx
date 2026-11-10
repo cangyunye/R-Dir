@@ -3,6 +3,7 @@ import { render, fireEvent, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { FileList, qjWindowStart, QJ_MAX_ROWS } from "./FileList";
 import type { FileEntry } from "@/lib/types";
+import { getNameColumnWidth, resetNameColumnWidth, setNameColumnWidth } from "@/lib/columns";
 
 type FileListProps = ComponentProps<typeof FileList>;
 
@@ -560,5 +561,56 @@ describe("FileList 重命名行滚动定位（v0.35 新建文件/文件夹后可
       renaming: { paneId: 0, path: "/mock/dir/新建文件夹", name: "新建文件夹" },
     });
     expect(utils.body.scrollTop).toBe(0);
+  });
+});
+
+describe("名称列宽（v0.44.0 分屏可收缩 + zoom 换算）", () => {
+  afterEach(() => resetNameColumnWidth());
+
+  /** 表头网格 = 名称列分隔线所在单元格的父节点 */
+  const headerOf = (container: HTMLElement) =>
+    container.querySelector("[data-name-col-resize]")!.parentElement!.parentElement as HTMLElement;
+
+  it("自动列宽：名称占剩余空间（minmax(0, 1fr)），其余列定宽", () => {
+    const { container } = renderList();
+    expect(headerOf(container).getAttribute("style")).toContain(
+      "minmax(0, 1fr) 84px 132px 80px 88px",
+    );
+  });
+
+  it("拖过的固定列宽改为 minmax(0, W)：窄窗格名称列先收缩，大小/时间等列不被挤出", () => {
+    setNameColumnWidth(600);
+    const { container, body } = renderList();
+    const expected = "minmax(0, 600px) 84px 132px 80px minmax(88px, 1fr)";
+    expect(headerOf(container).getAttribute("style")).toContain(expected);
+    // 行与表头同一套轨道，列对齐
+    const row = body.querySelector("[data-path]") as HTMLElement;
+    expect(row.getAttribute("style")).toContain(expected);
+  });
+
+  it("拖拽按 rect/offsetWidth 把视觉位移换算回布局像素（Chromium/WebView2 zoom 不再放大列宽）", () => {
+    const proto = Element.prototype as unknown as Record<string, unknown>;
+    const saved = { set: proto.setPointerCapture, rel: proto.releasePointerCapture };
+    proto.setPointerCapture = vi.fn();
+    proto.releasePointerCapture = vi.fn();
+    try {
+      const { container } = renderList();
+      const handle = container.querySelector("[data-name-col-resize]") as HTMLElement;
+      const cell = handle.parentElement as HTMLElement;
+      // 布局宽 400（offsetWidth），根 zoom 1.154 下视觉宽 461.6（getBoundingClientRect）
+      const zoom = 1.154;
+      Object.defineProperty(cell, "offsetWidth", { configurable: true, value: 400 });
+      cell.getBoundingClientRect = () =>
+        ({ x: 0, y: 0, top: 0, left: 0, right: 400 * zoom, bottom: 28, width: 400 * zoom, height: 28, toJSON() {} }) as DOMRect;
+      // jsdom 无 PointerEvent：派发同名 MouseEvent（带 clientX），React 照常合成 onPointer*
+      handle.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 500 }));
+      // 视觉右移 115.4px = 布局 100px
+      handle.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 500 + 100 * zoom }));
+      expect(getNameColumnWidth()).toBe(500);
+      handle.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 500 + 100 * zoom }));
+    } finally {
+      proto.setPointerCapture = saved.set;
+      proto.releasePointerCapture = saved.rel;
+    }
   });
 });

@@ -86,6 +86,9 @@ pub struct AppState {
     pub cmd_cache: std::sync::Arc<std::sync::Mutex<cmdrun::ExecCache>>,
     /// v0.23 应用退出守卫：前端确认对话框放行后置位，下一次 ExitRequested 不再拦截
     pub exit_allowed: std::sync::atomic::AtomicBool,
+    /// v0.44.0 本次会话用过的远程临时根目录（SFTP 打开下载 / 中转时登记）：
+    /// 退出时清理各根目录下的 sftp/ 子树（自定义根目录只在前端，故由后端按实际使用记住）
+    pub temp_roots: remote_temp::TempRoots,
     /// 窗口分享管理器（v0.7，feature = "share"）
     #[cfg(feature = "share")]
     pub share: share::ShareState,
@@ -1394,6 +1397,50 @@ fn emit_sftp_transfer_end(
     progress::emit(sink, &p);
 }
 
+/// SFTP 递归传输的进度回调（下载 / 上传 / v0.44.0 中转两段共用）：
+/// 取消旗标置位即返回 false 中止；Start / EntryDone 帧立即上报，字节帧限频。
+#[cfg(feature = "sftp")]
+fn sftp_xfer_progress(
+    sink: EventSink,
+    phase: &'static str,
+    id: String,
+    label: String,
+    total_files: usize,
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> impl FnMut(sftp::XferEvent) -> bool + Send {
+    let mut throttle = progress::Throttle::new();
+    let mut done_files = 0usize;
+    let mut cur_label = label;
+    move |ev| {
+        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        let mut p = progress::TransferProgress::start(phase, &cur_label, total_files);
+        p.id = Some(id.clone());
+        match ev {
+            sftp::XferEvent::Start(l) => {
+                cur_label = l;
+                throttle.reset();
+            }
+            sftp::XferEvent::Bytes(done, total) => {
+                // 中间帧限频；Start 帧与 EntryDone 帧立即可见
+                if throttle.ready() {
+                    p.file_done = done;
+                    p.file_total = total;
+                    p.done_files = done_files;
+                    progress::emit(&sink, &p);
+                }
+                return true;
+            }
+            sftp::XferEvent::EntryDone => done_files += 1,
+        }
+        p.label = cur_label.clone();
+        p.done_files = done_files;
+        progress::emit(&sink, &p);
+        true
+    }
+}
+
 /// 下载远程文件到临时目录，返回本地路径（供打开）
 #[cfg(feature = "sftp")]
 #[tauri::command]
@@ -1415,7 +1462,11 @@ pub(crate) async fn sftp_download_core(
     local_dir: Option<String>,
 ) -> Result<String, String> {
     ensure_plugin(&state, "sftp")?;
-    let temp_dir = remote_temp::resolve_temp_dir(local_dir.as_deref());
+    // v0.44.0 按服务器分类：<临时根>/sftp/<host>/<文件名>（不同服务器同名文件不再互相覆盖）；
+    // 先登记根目录，失败/半截下载也会在退出时被清理
+    let root = remote_temp::resolve_temp_dir(local_dir.as_deref());
+    state.temp_roots.register(&root);
+    let temp_dir = remote_temp::sftp_host_dir(&root, &sftp::host_of(&path)?);
     let name = transfer_label(&path, "下载中…");
     let pool = state.sftp_pool.lock().await;
     let mut throttle = progress::Throttle::new();
@@ -1469,39 +1520,9 @@ pub(crate) async fn sftp_download_to_core(
             return Err(e);
         }
     };
-    let mut throttle = progress::Throttle::new();
-    let mut done_files = 0usize;
-    let mut cur_label = label.clone();
-    let id_task = id.clone();
-    let sink_task = sink.clone();
-    let result = sftp::download_to(&pool, &local_dir, &path, overwrite.unwrap_or(false), &mut move |ev| {
-        if flag.load(std::sync::atomic::Ordering::Relaxed) {
-            return false;
-        }
-        let mut p = progress::TransferProgress::start("download", &cur_label, plan.files);
-        p.id = Some(id_task.clone());
-        match ev {
-            sftp::XferEvent::Start(l) => {
-                cur_label = l;
-                throttle.reset();
-            }
-            sftp::XferEvent::Bytes(done, total) => {
-                if throttle.ready() {
-                    p.file_done = done;
-                    p.file_total = total;
-                    p.done_files = done_files;
-                    progress::emit(&sink_task, &p);
-                }
-                return true;
-            }
-            sftp::XferEvent::EntryDone => done_files += 1,
-        }
-        p.label = cur_label.clone();
-        p.done_files = done_files;
-        progress::emit(&sink_task, &p);
-        true
-    })
-    .await;
+    let mut cb = sftp_xfer_progress(sink.clone(), "download", id.clone(), label, plan.files, flag);
+    let result =
+        sftp::download_to(&pool, &local_dir, &path, overwrite.unwrap_or(false), &mut cb).await;
     state.transfer_cancels.lock().unwrap().remove(&id);
     emit_sftp_transfer_end(&sink, "download", plan.files, &result);
     result
@@ -1537,42 +1558,268 @@ pub(crate) async fn sftp_upload_core(
     let plan = sftp::upload_plan(&local).unwrap_or(sftp::TransferPlan { files: 1, bytes: 0 });
     let (id, flag) = register_transfer_cancel(&state, "sftp:");
     let pool = state.sftp_pool.lock().await;
-    let mut throttle = progress::Throttle::new();
-    let mut done_files = 0usize;
-    let mut cur_label = label.clone();
-    let id_task = id.clone();
-    let sink_task = sink.clone();
-    let result = sftp::upload_path(&pool, &local, &dest, &name, &mut move |ev| {
-        if flag.load(std::sync::atomic::Ordering::Relaxed) {
-            return false;
-        }
-        let mut p = progress::TransferProgress::start("upload", &cur_label, plan.files);
-        p.id = Some(id_task.clone());
-        match ev {
-            sftp::XferEvent::Start(l) => {
-                cur_label = l;
-                throttle.reset();
-            }
-            sftp::XferEvent::Bytes(done, total) => {
-                // 中间帧限频；Start 帧与 EntryDone 帧立即可见
-                if throttle.ready() {
-                    p.file_done = done;
-                    p.file_total = total;
-                    p.done_files = done_files;
-                    progress::emit(&sink_task, &p);
-                }
-                return true;
-            }
-            sftp::XferEvent::EntryDone => done_files += 1,
-        }
-        p.label = cur_label.clone();
-        p.done_files = done_files;
-        progress::emit(&sink_task, &p);
-        true
-    })
-    .await;
+    let mut cb = sftp_xfer_progress(sink.clone(), "upload", id.clone(), label, plan.files, flag);
+    let result = sftp::upload_path(&pool, &local, &dest, &name, &mut cb).await;
     state.transfer_cancels.lock().unwrap().remove(&id);
     emit_sftp_transfer_end(&sink, "upload", plan.files, &result);
+    result
+}
+
+/// v0.44.0 SFTP↔SFTP 中转传输（粘贴/拖拽 远程→远程：同服务器跨目录或跨服务器）。
+/// 按源条目与两侧会话分流（见 sftp_relay_inner）：跨会话常规文件走**内存流式管道**
+/// （A 滑动窗口读 → 有界 channel → B 滑动窗口写，不落盘）；目录 / 符号链接 / 同会话
+/// 走临时目录暂存（`<临时根>/sftp/<源host>/relay-<pid>-<序号>/`，Preserve 名称模式）。
+/// 一个取消 id 对全程生效，进度阶段按通道为 upload（流式）或 download→upload（暂存），
+/// 结束只发一次 done 帧。顶层同名覆盖语义同本地→远程上传：拖拽经前端覆盖确认，粘贴静默覆盖。
+#[cfg(feature = "sftp")]
+#[tauri::command]
+async fn sftp_relay(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    src: String,
+    dest_dir: String,
+    name: String,
+    local_dir: Option<String>,
+) -> Result<String, String> {
+    sftp_relay_core(&state, &EventSink::from(&app), src, dest_dir, name, local_dir).await
+}
+
+/// sftp_relay 核心（GUI 命令与 web 桥共用）
+#[cfg(feature = "sftp")]
+pub(crate) async fn sftp_relay_core(
+    state: &AppState,
+    sink: &EventSink,
+    src: String,
+    dest_dir: String,
+    name: String,
+    local_dir: Option<String>,
+) -> Result<String, String> {
+    ensure_plugin(state, "sftp")?;
+    let root = remote_temp::resolve_temp_dir(local_dir.as_deref());
+    state.temp_roots.register(&root);
+    let (id, flag) = register_transfer_cancel(state, "sftp:");
+    let result = sftp_relay_inner(state, sink, &src, &dest_dir, &name, &root, &id, &flag).await;
+    state.transfer_cancels.lock().unwrap().remove(&id);
+    result
+}
+
+/// 中转路径分流（v0.44.0）：解析两侧 authority 后按「源条目类型 × 会话」选通道——
+/// - **流式管道**（跨会话的常规文件）：A 端滑动窗口 READ → 有界 channel → B 端滑动窗口
+///   WRITE，内存占用 O(窗口)，吞吐 = max(A, B) 链路极限；B 端先写暂存名、完成后
+///   覆盖改名，失败/取消删暂存，目标不留半成品。
+/// - **临时目录暂存**（目录 / 符号链接 / 源目标同一会话）：递归下载 → 递归上传，
+///   B 端零风险但占盘且时间为两段之和。同一会话流式会因读写共抢一把会话锁互等，必须回退。
+#[cfg(feature = "sftp")]
+#[allow(clippy::too_many_arguments)]
+async fn sftp_relay_inner(
+    state: &AppState,
+    sink: &EventSink,
+    src: &str,
+    dest_dir: &str,
+    name: &str,
+    root: &std::path::Path,
+    id: &str,
+    flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<String, String> {
+    let (src_authority, src_remote) = sftp::parse_sftp_path(src)?;
+    let (su, sh, sp) = sftp::parse_authority(&src_authority)?;
+    let src_key = sftp::pool_key(&su, &sh, sp);
+    let (dst_authority, dst_dir_remote) = sftp::parse_sftp_path(dest_dir)?;
+    let (du, dh, dp) = sftp::parse_authority(&dst_authority)?;
+    let dst_key = sftp::pool_key(&du, &dh, dp);
+
+    let attrs = {
+        let pool = state.sftp_pool.lock().await;
+        let sess = sftp::get_session(&pool, &src_key).await?;
+        let mut g = sess.lock().await;
+        g.stat(&src_remote).await?
+    };
+    if !attrs.is_dir && !attrs.is_symlink && src_key != dst_key {
+        return sftp_relay_stream(
+            state,
+            sink,
+            &src_key,
+            &dst_key,
+            &src_remote,
+            &dst_authority,
+            &dst_dir_remote,
+            name,
+            attrs.size,
+            id,
+            flag,
+        )
+        .await;
+    }
+    sftp_relay_staged(state, sink, src, dest_dir, name, root, id, flag).await
+}
+
+/// 流式中转：单文件跨会话（v0.44.0）。整程持有会话池锁；A/B 两半经 join! 并发驱动，
+/// 各自独占本会话锁（分流保证 src_key ≠ dst_key，无死锁）。
+#[cfg(feature = "sftp")]
+#[allow(clippy::too_many_arguments)]
+async fn sftp_relay_stream(
+    state: &AppState,
+    sink: &EventSink,
+    src_key: &str,
+    dst_key: &str,
+    src_remote: &str,
+    dst_authority: &str,
+    dst_dir_remote: &str,
+    name: &str,
+    total: u64,
+    id: &str,
+    flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<String, String> {
+    let pool = state.sftp_pool.lock().await;
+    let src_sess = sftp::get_session(&pool, src_key).await?;
+    let dst_sess = sftp::get_session(&pool, dst_key).await?;
+    let final_path = sftp::join_remote(dst_dir_remote, name);
+    // B 端暂存名：传完覆盖改名落地，失败/取消删除——目标端不留半成品；
+    // pid+序号防并发同名中转互踩。进程崩溃可能在目标端残留 .part 文件（可手动删除），
+    // 退出清理只覆盖本地暂存目录，远端无从打扫。
+    let partial = format!("{final_path}.rdir-{}.part", remote_temp::relay_suffix());
+    let (tx, rx) = tokio::sync::mpsc::channel(sftp::RELAY_WINDOW);
+
+    // A 端：滑动窗口读 → channel。不报进度（进度以 B 端确认字节为准——落到目标的才算数）。
+    let flag_r = flag.clone();
+    let reader = async {
+        let mut g = src_sess.lock().await;
+        g.download_pipe(src_remote, total, tx, |_done, _total| {
+            !flag_r.load(std::sync::atomic::Ordering::Relaxed)
+        })
+        .await
+    };
+    // B 端：channel → 滑动窗口写。进度帧 = 已确认字节（与 upload 同语义：确认才算完成）
+    let mut throttle = progress::Throttle::new();
+    let sink_w = sink.clone();
+    let id_w = id.to_string();
+    let name_w = name.to_string();
+    let flag_w = flag.clone();
+    let dst_sess_w = dst_sess.clone();
+    let partial_w = partial.clone();
+    let writer = async move {
+        let mut g = dst_sess_w.lock().await;
+        g.upload_pipe(&partial_w, total, rx, move |acked, t| {
+            if flag_w.load(std::sync::atomic::Ordering::Relaxed) {
+                return false;
+            }
+            if throttle.ready() {
+                let mut p = progress::TransferProgress::start("upload", &name_w, 1);
+                p.id = Some(id_w.clone());
+                p.file_done = acked;
+                p.file_total = t;
+                progress::emit(&sink_w, &p);
+            }
+            true
+        })
+        .await
+    };
+    let (r, w) = tokio::join!(reader, writer);
+    drop(pool);
+    // 改名落地；任一半失败（含取消）删 B 端暂存。源端只读、无需清理。
+    let result = match (r, w) {
+        (Ok(delivered), Ok(acked)) if delivered == acked && delivered == total => {
+            let mut g = dst_sess.lock().await;
+            match g.rename_over(&partial, &final_path).await {
+                Ok(()) => Ok(format!("sftp://{dst_authority}{final_path}")),
+                Err(e) => Err(e),
+            }
+        }
+        (Err(e), _) => Err(e),
+        (_, Err(e)) => Err(e),
+        _ => Err("中转数据不完整：源端交付与目标端确认字节数不一致".into()),
+    };
+    if result.is_err() {
+        let mut g = dst_sess.lock().await;
+        let _ = g.remove(&partial).await;
+    }
+    emit_sftp_transfer_end(sink, "upload", 1, &result);
+    result
+}
+
+/// 暂存中转：目录 / 符号链接 / 同会话（v0.44.0 前的唯一通道）。两段共用一个取消 id；
+/// 整程持有会话池锁（源与目标同一会话时先下后上，不会互等死锁）。
+#[cfg(feature = "sftp")]
+#[allow(clippy::too_many_arguments)]
+async fn sftp_relay_staged(
+    state: &AppState,
+    sink: &EventSink,
+    src: &str,
+    dest_dir: &str,
+    name: &str,
+    root: &std::path::Path,
+    id: &str,
+    flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<String, String> {
+    let stage = remote_temp::relay_stage_dir(root, &sftp::host_of(src)?);
+    // pid 复用恰好撞上崩溃残留的同名暂存目录：先清掉，避免旧内容被并入上传
+    remote_temp::remove_tree_best_effort(&stage);
+    std::fs::create_dir_all(&stage).map_err(|e| format!("创建临时目录失败：{e}"))?;
+    let result = sftp_relay_staged_run(state, sink, src, dest_dir, name, &stage, id, flag).await;
+    // 暂存用完即删；host 目录变空则一并移除（仍有打开下载的文件时删除失败、原样保留）
+    remote_temp::remove_tree_best_effort(&stage);
+    if let Some(host_dir) = stage.parent() {
+        let _ = std::fs::remove_dir(host_dir);
+    }
+    result
+}
+
+/// 中转两段：先下后上顺序执行
+#[cfg(feature = "sftp")]
+#[allow(clippy::too_many_arguments)]
+async fn sftp_relay_staged_run(
+    state: &AppState,
+    sink: &EventSink,
+    src: &str,
+    dest_dir: &str,
+    name: &str,
+    stage: &std::path::Path,
+    id: &str,
+    flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<String, String> {
+    let pool = state.sftp_pool.lock().await;
+    // 计划阶段：遍历远程源树统计文件数（期间响应取消；尚未出进度，失败直接返回）
+    let plan = sftp::download_plan(&pool, src, flag).await?;
+    let mut cb = sftp_xfer_progress(
+        sink.clone(),
+        "download",
+        id.to_string(),
+        transfer_label(src, "下载中…"),
+        plan.files,
+        flag.clone(),
+    );
+    let staged = match sftp::download_to_named(
+        &pool,
+        &stage.to_string_lossy(),
+        src,
+        true,
+        sftp::NameMode::Preserve,
+        &mut cb,
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            let r: Result<String, String> = Err(e);
+            emit_sftp_transfer_end(sink, "download", plan.files, &r);
+            return r;
+        }
+    };
+    // 上传段分母按暂存树重新统计（下载中远端变化时以实际落盘为准）
+    let up_plan = sftp::upload_plan(&staged).unwrap_or(sftp::TransferPlan {
+        files: plan.files,
+        bytes: plan.bytes,
+    });
+    let mut cb = sftp_xfer_progress(
+        sink.clone(),
+        "upload",
+        id.to_string(),
+        transfer_label(name, "上传中…"),
+        up_plan.files,
+        flag.clone(),
+    );
+    let result = sftp::upload_path(&pool, &staged, dest_dir, name, &mut cb).await;
+    emit_sftp_transfer_end(sink, "upload", up_plan.files, &result);
     result
 }
 
@@ -2563,6 +2810,9 @@ pub fn run() {
         sftp_download_to,
         #[cfg(feature = "sftp")]
         sftp_upload,
+        // v0.44.0 SFTP↔SFTP 经临时目录中转
+        #[cfg(feature = "sftp")]
+        sftp_relay,
         #[cfg(feature = "sftp")]
         sftp_mkdir,
         #[cfg(feature = "sftp")]
@@ -2698,6 +2948,12 @@ pub fn run() {
                 }
                 // v0.7：应用退出时停止所有分享服务
                 tauri::RunEvent::Exit => {
+                    // v0.44.0 清理本次会话用过的远程临时根目录下的 sftp/ 子树（SFTP 打开下载 +
+                    // 中转残留）；尽力删除，被外部程序占用的文件跳过（下次退出再清）。
+                    // 所有正常退出路径（⌘Q / 窗口关闭 / 退出确认）最终都经过这里，无需前端参与
+                    if let Some(state) = _app_handle.try_state::<AppState>() {
+                        state.temp_roots.cleanup_all();
+                    }
                     #[cfg(feature = "share")]
                     {
                         if let Some(share_state) = _app_handle.try_state::<share::ShareState>() {

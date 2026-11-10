@@ -328,6 +328,12 @@ export const sftpDownloadTo = (localDir: string, path: string, overwrite = false
 export const sftpUpload = (local: string, dest: string, name: string) =>
   invoke<string>("sftp_upload", { local, dest, name });
 
+/** v0.44.0 SFTP↔SFTP 中转（同服务器跨目录或跨服务器）：后端先下载到远程临时目录的
+ *  sftp/<源host>/relay-*（名称保真），再上传到 destDir/name，暂存用完即删；
+ *  进度/取消与上传下载同构（一个 sftp: 取消 id 覆盖两段），返回目标远程 URL */
+export const sftpRelay = (src: string, destDir: string, name: string) =>
+  invoke<string>("sftp_relay", { src, destDir, name, localDir: loadRemoteTempDir() || null });
+
 export const sftpMkdir = (dir: string, name: string) =>
   invoke<string>("sftp_mkdir", { dir, name });
 

@@ -144,6 +144,8 @@ export function Sidebar({
   onToggleCollapsed,
   collapseShortcut = "",
   onCollapsedServerHint,
+  remoteTempPath,
+  onOpenRemoteTemp,
 }: {
   quickAccess: QuickAccessItem[];
   volumes: VolumeInfo[];
@@ -197,6 +199,10 @@ export function Sidebar({
   collapseShortcut?: string;
   /** 收缩态点击远程服务器：App 弹「展开后查看」提示 */
   onCollapsedServerHint?: () => void;
+  /** v0.44.0 生效的远程临时目录路径（null = 后端不可用，不渲染入口） */
+  remoteTempPath?: string | null;
+  /** 打开远程临时目录（App 先确保目录存在再导航） */
+  onOpenRemoteTemp?: (path: string) => void;
 }) {
   const copyPath = onCopyPath ?? ((p: string) => navigator.clipboard?.writeText(p).catch(() => {}));
   const t = useT();
@@ -647,6 +653,29 @@ export function Sidebar({
                   </div>
                 );
               })}
+            </div>
+          )}
+          {/* v0.44.0 远程临时目录固定入口：不占用户自定义快捷访问名额，路径随设置变化；
+              打开远程文件 / SFTP 中转的临时文件都在这里，可随时查看与手动清理 */}
+          {remoteTempPath && onOpenRemoteTemp && (
+            <div className="mt-1 border-t pt-1">
+              <button
+                onClick={() => onOpenRemoteTemp(remoteTempPath)}
+                onAuxClick={(e) =>
+                  e.button === 1 && (e.preventDefault(), onMiddleOpen(remoteTempPath))
+                }
+                title={collapsed ? `${t("远程临时目录")}\n${remoteTempPath}` : remoteTempPath}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded py-1.5 text-left text-xs",
+                  collapsed ? "justify-center" : "px-2",
+                  isActive(currentPath, remoteTempPath)
+                    ? "bg-accent text-accent-foreground"
+                    : "text-foreground hover:bg-muted",
+                )}
+              >
+                <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+                {!collapsed && <span className="min-w-0 truncate">{t("远程临时目录")}</span>}
+              </button>
             </div>
           )}
         </div>

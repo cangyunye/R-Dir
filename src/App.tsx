@@ -616,6 +616,17 @@ export default function App() {
   const [uiFontFamily, setUiFontFamily] = useState<string>(() => loadUiFontFamily());
   /** v0.37 远程打开临时目录（空串 = 后端默认 <系统临时目录>/r-dir-remote） */
   const [remoteTempDir, setRemoteTempDir] = useState<string>(() => loadRemoteTempDir());
+  /** v0.44.0 生效的远程临时目录路径（侧边栏固定入口用；设置更改后跟随刷新） */
+  const [remoteTempPath, setRemoteTempPath] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    remoteTempInfo()
+      .then((i) => alive && setRemoteTempPath(i.path))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [remoteTempDir]);
   /** v0.8.5 开屏飞鸟：React mount 后短暂显示，800ms 后淡出 */
   const [splashVisible, setSplashVisible] = useState(true);
   const [splashFading, setSplashFading] = useState(false);
@@ -3181,6 +3192,15 @@ useEffect(() => {
       ),
     [showInfo],
   );
+  /** v0.44.0 打开远程临时目录（侧边栏固定入口）：目录可能尚未创建（从未打开过远程
+   *  文件 / 从未中转）——先确保存在（已存在报 EXISTS 忽略）再导航 */
+  const openRemoteTemp = useCallback(
+    async (path: string) => {
+      await createDir(parentPath(path), basename(path)).catch(() => {});
+      navigate(path);
+    },
+    [navigate],
+  );
   /** 自定义快捷访问（持久化）；上限 10 个（v0.28.0），加满后提醒 */
   const [customQuick, setCustomQuick] = useState<string[]>(() => loadCustomQuick());
   const toggleQuick = useCallback(
@@ -5286,6 +5306,8 @@ useEffect(() => {
           onToggleCollapsed={toggleSidebar}
           collapseShortcut={formatBinding(bindingOf(ACTIONS.find((a) => a.id === "toggleSidebar")!))}
           onCollapsedServerHint={collapsedServerHint}
+          remoteTempPath={remoteTempPath}
+          onOpenRemoteTemp={(p) => void openRemoteTemp(p)}
         />
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">

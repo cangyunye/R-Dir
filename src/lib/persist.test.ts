@@ -29,6 +29,8 @@ import {
   UI_FONT_MAX,
   loadShowExtensions,
   saveShowExtensions,
+  loadSidebarCollapsed,
+  saveSidebarCollapsed,
   mergeDiskPrefs,
   loadPrefsFromDisk,
   saveCustomQuick,
@@ -283,6 +285,18 @@ describe("显示文件扩展名开关", () => {
     saveShowExtensions(false);
     saveShowExtensions(true);
     expect(loadShowExtensions()).toBe(true);
+  });
+});
+
+describe("侧边栏收缩（v0.44.0 图标栏，跨重启保留）", () => {
+  it("默认展开", () => {
+    expect(loadSidebarCollapsed()).toBe(false);
+  });
+  it("保存收缩后读回收缩，再展开读回展开", () => {
+    saveSidebarCollapsed(true);
+    expect(loadSidebarCollapsed()).toBe(true);
+    saveSidebarCollapsed(false);
+    expect(loadSidebarCollapsed()).toBe(false);
   });
 });
 

@@ -299,6 +299,16 @@ describe("openFavorites 收藏夹快捷键", () => {
     expect(findConflicts("mod+b", "openFavorites")).toEqual([]);
   });
 
+  it("v0.44.0 侧边栏收放：默认两键位 mod+e，与现有全部动作无冲突", () => {
+    const a = ACTIONS.find((x) => x.id === "toggleSidebar");
+    expect(a).toBeTruthy();
+    expect(a!.win).toBe("mod+e");
+    expect(a!.mac).toBe("mod+e");
+    expect(findConflicts("mod+e", "toggleSidebar")).toEqual([]);
+    const e = { key: "e", ctrlKey: true, altKey: false, shiftKey: false, metaKey: false } as KeyboardEvent;
+    expect(findAction(keyEventString(e))?.id).toBe("toggleSidebar");
+  });
+
   it("findAction 能从 Ctrl+B 事件解析到 openFavorites", () => {
     const e = {
       key: "b",

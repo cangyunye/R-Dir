@@ -159,3 +159,35 @@ describe("AppMenu 菜单项点击", () => {
     expect(screen.getByRole("menuitem", { name: /^设置/ })).toBeTruthy();
   });
 });
+
+describe("标题栏侧边栏收放按钮（v0.44.0）", () => {
+  it("未提供 onToggleSidebar 时不渲染", () => {
+    render(<AppMenu {...makeActions()} />);
+    expect(screen.queryByTestId("sidebar-app-toggle")).toBeNull();
+  });
+
+  it("展开态：提示收起并附快捷键，点击触发切换", () => {
+    const onToggleSidebar = vi.fn();
+    render(
+      <AppMenu
+        {...makeActions({ onToggleSidebar, sidebarCollapsed: false, sidebarShortcut: "Ctrl+E" })}
+      />,
+    );
+    const btn = screen.getByTestId("sidebar-app-toggle");
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    expect(btn.title).toBe("收起侧边栏（Ctrl+E）");
+    fireEvent.click(btn);
+    expect(onToggleSidebar).toHaveBeenCalledTimes(1);
+  });
+
+  it("收缩态：提示展开", () => {
+    render(
+      <AppMenu
+        {...makeActions({ onToggleSidebar: () => {}, sidebarCollapsed: true, sidebarShortcut: "⌘E" })}
+      />,
+    );
+    const btn = screen.getByTestId("sidebar-app-toggle");
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    expect(btn.title).toBe("展开侧边栏（⌘E）");
+  });
+});

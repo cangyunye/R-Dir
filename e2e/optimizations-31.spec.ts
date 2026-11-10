@@ -259,7 +259,8 @@ test.describe("31D. 远程文件打开与临时目录", () => {
         ).__RDIR_E2E_MOCK__,
     );
     expect(mock.sftpDownloads).toEqual(["sftp://u@127.0.0.1:22/remote/deploy.sh"]);
-    expect(mock.opened).toEqual(["/tmp/r-dir-remote/deploy.sh"]);
+    // v0.44.0 SFTP 打开文件按服务器分类：<临时根>/sftp/<host>/<文件名>
+    expect(mock.opened).toEqual(["/tmp/r-dir-remote/sftp/127.0.0.1/deploy.sh"]);
   });
 
   test("侧边栏远程服务器分组名右键 → 清理远程临时文件，提示释放量", async ({ page }) => {

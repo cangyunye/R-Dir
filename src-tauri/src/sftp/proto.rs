@@ -16,6 +16,8 @@ pub const RMDIR: u8 = 15;
 pub const REALPATH: u8 = 16;
 pub const STAT: u8 = 17;
 pub const RENAME: u8 = 18;
+/// 扩展请求（v3+，posix-rename@openssh.com 等）
+pub const EXTENDED: u8 = 200;
 
 // 回复类型
 pub const VERSION: u8 = 2;

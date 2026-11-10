@@ -7,6 +7,8 @@ pub mod proto;
 pub mod servers;
 pub mod session;
 
+pub use session::RELAY_WINDOW;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -57,6 +59,12 @@ pub fn parse_authority(authority: &str) -> Result<(String, String, u16), String>
 /// 会话池 key
 pub fn pool_key(user: &str, host: &str, port: u16) -> String {
     format!("{user}@{host}:{port}")
+}
+
+/// sftp:// 路径 → 主机名（远程临时目录按服务器分类 `sftp/<host>/` 用）
+pub fn host_of(path: &str) -> Result<String, String> {
+    let (authority, _remote) = parse_sftp_path(path)?;
+    parse_authority(&authority).map(|(_user, host, _port)| host)
 }
 
 /// 连接配置 → ServerConfig（供 SftpSession::connect）
@@ -402,6 +410,17 @@ fn upload_dir_boxed<'a>(
     })
 }
 
+/// 顶层落盘文件名策略（v0.44.0）：
+/// - `Sanitized`：各平台安全的保守名（空格/括号/中文标点等 → `_`），
+///   粘贴/拖拽 远程→本地 的既有行为，磁盘布局历史可预期。
+/// - `Preserve`：仅替换本地文件系统存不下的字符（[`crate::remote_temp::local_safe_name`]），
+///   名称尽量原样落盘——SFTP↔SFTP 中转的上传回程要保持源文件名（含子文件）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum NameMode {
+    Sanitized,
+    Preserve,
+}
+
 /// 下载远程路径（文件或目录）到指定本地目录（粘贴/拖拽 远程→本地）。
 /// overwrite=false：顶层同名自动加 " (n)" 后缀（粘贴的既有行为）；
 /// overwrite=true：直接覆盖同名文件/并入同名目录（拖拽经用户覆盖确认后使用，v0.22.0）。
@@ -414,6 +433,26 @@ pub async fn download_to(
     overwrite: bool,
     cb: XferCb<'_>,
 ) -> Result<String, String> {
+    download_to_named(
+        pool,
+        local_dir,
+        path,
+        overwrite,
+        NameMode::Sanitized,
+        cb,
+    )
+    .await
+}
+
+/// [`download_to`] 的文件名策略版（v0.44.0 SFTP↔SFTP 中转用 Preserve 模式）
+pub async fn download_to_named(
+    pool: &SessionPool,
+    local_dir: &str,
+    path: &str,
+    overwrite: bool,
+    mode: NameMode,
+    cb: XferCb<'_>,
+) -> Result<String, String> {
     let (authority, remote) = parse_sftp_path(path)?;
     let (user, host, port) = parse_authority(&authority)?;
     let key = pool_key(&user, &host, port);
@@ -422,19 +461,22 @@ pub async fn download_to(
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "download".into());
-    let safe = sanitize_name(&name);
-    let mut dest = PathBuf::from(local_dir).join(&safe);
+    let top = match mode {
+        NameMode::Sanitized => sanitize_name(&name),
+        NameMode::Preserve => crate::remote_temp::local_safe_name(&name),
+    };
+    let mut dest = PathBuf::from(local_dir).join(&top);
     // 顶层同名冲突：追加 " (1)"、" (2)"…（overwrite 时直接覆盖/并入）
     let mut n = 1;
     while dest.exists() && !overwrite {
-        dest = PathBuf::from(local_dir).join(format!("{} ({})", safe, n));
+        dest = PathBuf::from(local_dir).join(format!("{} ({})", top, n));
         n += 1;
     }
     let mut g = sess.lock().await;
     let a = g.stat(&remote).await?;
     if a.is_dir {
         std::fs::create_dir_all(&dest).map_err(|e| format!("创建本地目录失败：{e}"))?;
-        download_dir_boxed(&mut g, &remote, &dest, cb).await?;
+        download_dir_boxed(&mut g, &remote, &dest, mode, cb).await?;
     } else {
         if !cb(XferEvent::Start(name)) {
             return Err(crate::ERR_CANCELLED.into());
@@ -449,23 +491,29 @@ pub async fn download_to(
 }
 
 /// 递归下载远程目录到已存在的本地目录（dest 必须已由调用方建好）。
-/// 每段名称经 sanitize_name 保证各平台合法（远端名可能含 Windows 保留字符）。
+/// 名称按 mode：Sanitized=保守清洗（粘贴/拖拽既有行为）；Preserve=仅替换本地
+/// 非法字符（中转场景，上传回程保持源文件名——远端名含 Windows 保留字符时，
+/// Windows 本地暂存仍会被改写，属本地暂存的固有限制）。
 fn download_dir_boxed<'a>(
     g: &'a mut session::SftpSession,
     remote: &'a str,
     dest: &'a Path,
+    mode: NameMode,
     cb: XferCb<'a>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
     Box::pin(async move {
         let entries = g.list_dir(remote).await?;
         for (name, attrs) in entries {
-            let safe = sanitize_name(&name);
+            let safe = match mode {
+                NameMode::Sanitized => sanitize_name(&name),
+                NameMode::Preserve => crate::remote_temp::local_safe_name(&name),
+            };
             let dest_child = dest.join(&safe);
             let remote_child = join_remote(remote, &name);
             if attrs.is_dir {
                 std::fs::create_dir_all(&dest_child)
                     .map_err(|e| format!("创建本地目录失败：{e}"))?;
-                download_dir_boxed(g, &remote_child, &dest_child, &mut *cb).await?;
+                download_dir_boxed(g, &remote_child, &dest_child, mode, &mut *cb).await?;
             } else {
                 if !cb(XferEvent::Start(name)) {
                     return Err(crate::ERR_CANCELLED.into());
@@ -682,6 +730,16 @@ mod tests {
         assert!(upload_plan("/nonexistent/rdir/definitely-missing").is_err());
     }
 
+    /// v0.44.0 临时目录按服务器分类用：从 sftp:// 路径取主机名（端口/用户/远程路径不影响）
+    #[test]
+    fn host_of_extracts_host() {
+        assert_eq!(host_of("sftp://root@10.0.0.5:2222/var/log").unwrap(), "10.0.0.5");
+        assert_eq!(host_of("sftp://me@example.com/").unwrap(), "example.com");
+        assert_eq!(host_of("sftp://me@example.com").unwrap(), "example.com");
+        assert!(host_of("/local/path").is_err());
+        assert!(host_of("sftp://nouser/").is_err());
+    }
+
     /// ---- v0.28.1 SFTP 流水线上传：真实链路集成验证（本机 sshd；不可用时静默跳过） ----
 
     /// 探测本机 sshd + 免密公钥是否可用（CI / 无 sshd 环境返回 false 跳过用例）
@@ -765,6 +823,283 @@ mod tests {
             // 清理
             let _ = g.remove(&remote).await;
             let _ = std::fs::remove_dir_all(&dir);
+        });
+    }
+
+    /// v0.44.0 流式中转链路（本机 sshd；不可用时静默跳过）：
+    /// download_pipe（读窗口）→ channel → upload_pipe（写窗口）→ rename_over 落地；
+    /// 双会话（同机两条独立 SSH 连接，等价跨服务器场景）：多 chunk 内容对账、
+    /// 覆盖改名（目标已存在）、取消删 B 端暂存。
+    #[test]
+    fn sftp_relay_stream_roundtrip_overwrite_and_cancel() {
+        if !localhost_sshd_available() {
+            eprintln!("[skip] 本机 sshd 不可用，跳过流式中转集成用例");
+            return;
+        }
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        let mk_cfg = |name: &str| session::ServerConfig {
+            name: name.into(),
+            host: "127.0.0.1".into(),
+            port: 22,
+            user: user.clone(),
+            auth: session::AuthMethod::PublicKey { key_path: String::new(), passphrase: None },
+            root: None,
+            save_secret: false,
+        };
+        let rt = tokio::runtime::Runtime::new().expect("async runtime");
+        rt.block_on(async {
+            let mut s1 = match session::SftpSession::connect(&mk_cfg("a")).await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[skip] SFTP 连接失败（{e}），跳过集成用例");
+                    return;
+                }
+            };
+            let mut s2 = match session::SftpSession::connect(&mk_cfg("b")).await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[skip] 第二条 SFTP 连接失败（{e}），跳过集成用例");
+                    return;
+                }
+            };
+            let base = format!("/tmp/rdir-relay-stream-{}", std::process::id());
+            let src = format!("{base}/src.bin");
+            let final_path = format!("{base}/dst.bin");
+            let partial = format!("{final_path}.rdir-test.part");
+            for d in [&base] {
+                s1.mkdir(d).await.unwrap();
+            }
+            // 300KB 源文件 = 2 个整 chunk + 1 个短 chunk；伪随机可复现
+            let size = 300 * 1024usize;
+            let data: Vec<u8> = (0..size).map(|i| (i * 31 % 251) as u8).collect();
+            let local = std::env::temp_dir().join(format!("rdir-relay-stream-src-{}", std::process::id()));
+            std::fs::write(&local, &data).unwrap();
+            s1.upload(&local, &src, |_, _| true).await.expect("备源");
+
+            let s1 = std::sync::Arc::new(tokio::sync::Mutex::new(s1));
+            let s2 = std::sync::Arc::new(tokio::sync::Mutex::new(s2));
+
+            // 1) 流式往返：交付 = 确认 = 总长，改名落地后内容逐字节对账
+            {
+                let (tx, rx) = tokio::sync::mpsc::channel(session::RELAY_WINDOW);
+                let r = {
+                    let g = s1.clone();
+                    let src = src.clone();
+                    async move { g.lock().await.download_pipe(&src, size as u64, tx, |_, _| true).await }
+                };
+                let w = {
+                    let g = s2.clone();
+                    let partial = partial.clone();
+                    async move { g.lock().await.upload_pipe(&partial, size as u64, rx, |_, _| true).await }
+                };
+                let (delivered, acked) = tokio::join!(r, w);
+                assert_eq!(delivered.unwrap(), size as u64, "A 端交付字节数");
+                assert_eq!(acked.unwrap(), size as u64, "B 端确认字节数");
+                s2.lock().await.rename_over(&partial, &final_path).await.expect("覆盖改名落地");
+                let back = std::env::temp_dir().join(format!("rdir-relay-stream-back-{}", std::process::id()));
+                s2.lock().await.download(&final_path, &back, |_, _| true).await.expect("回读");
+                assert_eq!(std::fs::read(&back).unwrap(), data, "流式中转内容一致");
+                let _ = std::fs::remove_file(&back);
+            }
+
+            // 2) 覆盖：目标已存在时流式 + rename_over 再跑一轮（写入期旧文件仍在，
+            //    改名瞬间原子替换——posix-rename 扩展；OpenSSH 不支持时回退删+改名）
+            {
+                let (tx, rx) = tokio::sync::mpsc::channel(session::RELAY_WINDOW);
+                let r = {
+                    let g = s1.clone();
+                    let src = src.clone();
+                    async move { g.lock().await.download_pipe(&src, size as u64, tx, |_, _| true).await }
+                };
+                let w = {
+                    let g = s2.clone();
+                    let partial = partial.clone();
+                    async move { g.lock().await.upload_pipe(&partial, size as u64, rx, |_, _| true).await }
+                };
+                let (delivered, acked) = tokio::join!(r, w);
+                assert_eq!(delivered.unwrap(), size as u64);
+                assert_eq!(acked.unwrap(), size as u64);
+                s2.lock().await.rename_over(&partial, &final_path).await.expect("二次覆盖改名");
+                assert!(
+                    s2.lock().await.stat(&partial).await.is_err(),
+                    "暂存名应已消失"
+                );
+            }
+
+            // 3) 取消：旗标预置 → 首个数据即中止；B 端暂存按编排层语义清理
+            {
+                let (tx, rx) = tokio::sync::mpsc::channel(session::RELAY_WINDOW);
+                let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+                let r = {
+                    let g = s1.clone();
+                    let src = src.clone();
+                    let f = flag.clone();
+                    async move {
+                        g.lock()
+                            .await
+                            .download_pipe(&src, size as u64, tx, |_, _| {
+                                !f.load(std::sync::atomic::Ordering::Relaxed)
+                            })
+                            .await
+                    }
+                };
+                let w = {
+                    let g = s2.clone();
+                    let partial = partial.clone();
+                    async move { g.lock().await.upload_pipe(&partial, size as u64, rx, |_, _| true).await }
+                };
+                let (r, _w) = tokio::join!(r, w);
+                let err = r.expect_err("取消应报错");
+                assert!(crate::is_cancelled(&err), "取消错误：{err}");
+                let partial_exists = s2.lock().await.stat(&partial).await.is_ok();
+                if partial_exists {
+                    let _ = s2.lock().await.remove(&partial).await;
+                }
+            }
+
+            // 清理
+            {
+                let mut g = s2.lock().await;
+                let _ = g.remove(&final_path).await;
+                let _ = g.remove(&src).await;
+                let _ = g.rmdir(&base).await;
+            }
+            s1.lock().await.close().await;
+            s2.lock().await.close().await;
+            let _ = std::fs::remove_file(&local);
+        });
+    }
+
+    /// v0.44.0 SFTP↔SFTP 中转链路（本机 sshd；不可用时静默跳过）：
+    /// Preserve 下载（含目录、空格名）→ 暂存树文件名保真 → 上传回程内容对账；
+    /// 同机场景（源=目标服务器）照常工作，不依赖多台服务器。
+    #[test]
+    fn sftp_relay_pipeline_roundtrip() {
+        if !localhost_sshd_available() {
+            eprintln!("[skip] 本机 sshd 不可用，跳过 SFTP 中转集成用例");
+            return;
+        }
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        let cfg = session::ServerConfig {
+            name: "it".into(),
+            host: "127.0.0.1".into(),
+            port: 22,
+            user: user.clone(),
+            auth: session::AuthMethod::PublicKey { key_path: String::new(), passphrase: None },
+            root: None,
+            save_secret: false,
+        };
+        let rt = tokio::runtime::Runtime::new().expect("async runtime");
+        rt.block_on(async {
+            let mut g = match session::SftpSession::connect(&cfg).await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[skip] SFTP 连接失败（{e}），跳过集成用例");
+                    return;
+                }
+            };
+            let tag = std::process::id();
+            // 远端源树：带空格的目录名 + 空格/括号/中文文件名 + 子目录（Preserve 不得清洗）
+            let base = format!("/tmp/rdir-relay-it-{tag}");
+            let src_dir = format!("{base}/src dir");
+            let sub_dir = format!("{src_dir}/sub dir");
+            let dest_dir = format!("{base}/dest");
+            for d in [&base, &src_dir, &sub_dir, &dest_dir] {
+                g.mkdir(d).await.expect("建远端目录");
+            }
+            let local_src = std::env::temp_dir().join(format!("rdir-relay-it-src-{tag}"));
+            std::fs::create_dir_all(&local_src).unwrap();
+            std::fs::write(local_src.join("top"), [7u8; 4096]).unwrap();
+            std::fs::write(local_src.join("nested"), "nested").unwrap();
+            g.upload(&local_src.join("top"), &format!("{src_dir}/报告 (终).bin"), |_, _| true)
+                .await
+                .expect("备源文件");
+            g.upload(&local_src.join("nested"), &format!("{sub_dir}/n.txt"), |_, _| true)
+                .await
+                .expect("备源文件");
+
+            let key = pool_key(&user, "127.0.0.1", 22);
+            let mut pool = pool::SessionPool::default();
+            pool.put(&key, g);
+            let authority = format!("{user}@127.0.0.1");
+
+            // 中转暂存目录：<root>/sftp/127.0.0.1/relay-<pid>-<序号>
+            let root = std::env::temp_dir().join(format!("rdir-relay-it-root-{tag}"));
+            let stage = crate::remote_temp::relay_stage_dir(&root, "127.0.0.1");
+            std::fs::create_dir_all(&stage).unwrap();
+
+            // 下载段：Preserve 模式，目录名与子文件名原样落盘
+            let downloaded = download_to_named(
+                &pool,
+                stage.to_str().unwrap(),
+                &format!("sftp://{authority}{src_dir}"),
+                true,
+                NameMode::Preserve,
+                &mut |_ev: XferEvent| true,
+            )
+            .await
+            .expect("下载段成功");
+            let staged = stage.join("src dir");
+            assert_eq!(std::path::PathBuf::from(&downloaded), staged);
+            assert_eq!(std::fs::read(staged.join("报告 (终).bin")).unwrap(), vec![7u8; 4096]);
+            assert_eq!(std::fs::read(staged.join("sub dir").join("n.txt")).unwrap(), b"nested");
+
+            // 上传段：传回同机另一目录（同一会话先下后上，不死锁）
+            let uploaded = upload_path(
+                &pool,
+                &downloaded,
+                &format!("sftp://{authority}{dest_dir}"),
+                "src dir",
+                &mut |_ev: XferEvent| true,
+            )
+            .await
+            .expect("上传段成功");
+            assert_eq!(uploaded, format!("sftp://{authority}{dest_dir}/src dir"));
+
+            let sess = get_session(&pool, &key).await.unwrap();
+            let mut g = sess.lock().await;
+            let names = |v: Vec<(String, proto::SftpAttrs)>| {
+                let mut n: Vec<String> = v.into_iter().map(|(n, _)| n).collect();
+                n.sort();
+                n
+            };
+            assert_eq!(
+                names(g.list_dir(&format!("{dest_dir}/src dir")).await.unwrap()),
+                vec!["sub dir".to_string(), "报告 (终).bin".to_string()],
+                "目标端文件名与源一致"
+            );
+            assert_eq!(
+                names(g.list_dir(&format!("{dest_dir}/src dir/sub dir")).await.unwrap()),
+                vec!["n.txt".to_string()]
+            );
+
+            // 清理：远端两棵树 + 本地暂存与备料
+            for f in [
+                format!("{dest_dir}/src dir/sub dir/n.txt"),
+                format!("{dest_dir}/src dir/报告 (终).bin"),
+                format!("{sub_dir}/n.txt"),
+                format!("{src_dir}/报告 (终).bin"),
+            ] {
+                let _ = g.remove(&f).await;
+            }
+            for d in [
+                format!("{dest_dir}/src dir/sub dir"),
+                format!("{dest_dir}/src dir"),
+                dest_dir.clone(),
+                sub_dir.clone(),
+                src_dir.clone(),
+                base.clone(),
+            ] {
+                let _ = g.rmdir(&d).await;
+            }
+            drop(g);
+            assert_eq!(
+                crate::remote_temp::remove_tree_best_effort(&root),
+                4096 + 6,
+                "暂存树释放量对账"
+            );
+            assert!(!root.exists());
+            let _ = std::fs::remove_dir_all(&local_src);
         });
     }
 }

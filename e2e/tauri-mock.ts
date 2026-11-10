@@ -100,6 +100,8 @@ export async function installTauriMock(page: Page): Promise<void> {
         { name: "deploy.sh", size: 512 },
         { name: "logs", dir: true },
       ],
+      // v0.44.0 SFTP↔SFTP 中转用例：可进入的空子目录（粘贴落点）
+      "sftp://u@127.0.0.1:22/remote/logs": [],
     };
 
     const NOW = 1_700_000_000_000;
@@ -786,11 +788,25 @@ export async function installTauriMock(page: Page): Promise<void> {
       }),
       remote_temp_clear: () => 3 * 1024 * 1024,
       // ---- v0.31 双击打开远程文件：记录下载并回确定性临时路径（断言 open_path 落点） ----
+      // v0.44.0 按服务器分类：<临时根>/sftp/<host>/<文件名>（对齐后端 sftp_host_dir）
       sftp_download: (a) => {
         const p = String(a.path);
         const name = p.split("/").filter(Boolean).pop() ?? "download";
+        const host = (p.replace(/^sftp:\/\//, "").split("/")[0].split("@").pop() ?? "")
+          .replace(/:\d+$/, "");
         sftpDownloads.push(p);
-        return `${a.localDir ? String(a.localDir) : "/tmp/r-dir-remote"}/${name}`;
+        return `${a.localDir ? String(a.localDir) : "/tmp/r-dir-remote"}/sftp/${host}/${name}`;
+      },
+      // ---- v0.44.0 SFTP↔SFTP 中转：写目标虚拟 FS（顶层同名覆盖，同 sftp_upload）并记录 ----
+      sftp_relay: (a) => {
+        const src = String(a.src ?? "");
+        const destDir = String(a.destDir ?? "");
+        const name = String(a.name ?? "");
+        relays.push({ src, destDir, name, localDir: a.localDir == null ? null : String(a.localDir) });
+        const dir = destDir.replace(/\/+$/, "") || destDir;
+        FS[dir] = FS[dir] ?? [];
+        if (!FS[dir].some((f) => f.name === name)) FS[dir].push({ name, size: 42 });
+        return `${dir}/${name}`;
       },
       share_list: () => [],
       plugin: () => null,
@@ -856,6 +872,8 @@ export async function installTauriMock(page: Page): Promise<void> {
     const sftpImport: { filePath: string; hasKey: boolean }[] = [];
     /** v0.31 双击打开远程文件的下载记录 */
     const sftpDownloads: string[] = [];
+    /** v0.44.0 SFTP↔SFTP 中转调用记录 */
+    const relays: { src: string; destDir: string; name: string; localDir: string | null }[] = [];
     /** v0.31 服务器分组整理与连接调用记录（断言「保存」不连接） */
     const sftpSetGroup: { ids: string[]; group: string }[] = [];
     const sftpConnects: string[] = [];
@@ -939,7 +957,7 @@ export async function installTauriMock(page: Page): Promise<void> {
       }
       return origFetch ? origFetch(input, init) : Promise.reject(new Error("fetch unavailable"));
     }) as typeof window.fetch;
-    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, sftpSetGroup, sftpConnects, copyPlans, movePlans, compressCalls, extractCalls, servers: SFTP_SERVERS };
+    (window as unknown as Record<string, unknown>).__RDIR_E2E_MOCK__ = { HOME, FS, opened, winCmds, runCmds, listDirCalls, uploads, downloads, sftpExport, sftpImport, sftpDownloads, relays, sftpSetGroup, sftpConnects, copyPlans, movePlans, compressCalls, extractCalls, servers: SFTP_SERVERS };
   });
 }
 

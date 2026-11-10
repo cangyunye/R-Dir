@@ -213,6 +213,21 @@ function PaneHead({
   const synthRef = useRef(false);
   const dragEv = (type: string, dt: DataTransfer, x?: number, y?: number) =>
     new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y });
+  /** v0.44.0 面包屑溢出时贴右显示：分屏窄窗格里优先保留当前目录名（尾段），
+   *  路径变化或窗格宽度变化时把容器滚到末尾（overflow-hidden 仍可程序滚动） */
+  const crumbsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = crumbsRef.current;
+    if (!el) return;
+    const toEnd = () => {
+      el.scrollLeft = el.scrollWidth;
+    };
+    toEnd();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(toEnd);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [path]);
   return (
     <ContextMenu
       onOpenChange={(open) => {
@@ -294,7 +309,7 @@ function PaneHead({
             );
           }}
         >
-          <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
+          <div ref={crumbsRef} className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
             {segs.map((s, i) => (
               <Fragment key={`${s.target}:${i}`}>
                 {i > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/60" />}
@@ -310,7 +325,8 @@ function PaneHead({
                       : "hover:text-foreground",
                   )}
                 >
-                  <span className="max-w-40 truncate">{s.label}</span>
+                  {/* v0.44.0 block：非 flex 按钮内的行内 span 上 max-width 不生效，长段从不截断 */}
+                  <span className="block max-w-40 truncate">{s.label}</span>
                 </button>
               </Fragment>
             ))}

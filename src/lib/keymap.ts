@@ -78,6 +78,8 @@ export const ACTIONS: KeyAction[] = [
   A({ id: "toggleSyncResults", label: "同步比对结果（开关）", group: "视图 / 全局", win: "mod+shift+x", mac: "mod+shift+x" }),
   // v0.28 预览栏（设置 → 预览 总开关默认关，开启后空格开/收起）
   A({ id: "togglePreview", label: "预览栏（展开 / 收起）", group: "视图 / 全局", win: "space", mac: "space" }),
+  // v0.44.0 左侧导航栏：展开 ⇄ 收起为图标栏（mod+b 已归收藏夹，取两键位 mod+e）
+  A({ id: "toggleSidebar", label: "侧边栏（展开 / 收起）", group: "视图 / 全局", win: "mod+e", mac: "mod+e" }),
   A({ id: "toggleBrowse", label: "图文浏览模式", group: "视图 / 全局", win: "mod+shift+e", mac: "mod+shift+e" }),
   // v0.39 主题调色盘：未打开时打开，已打开时在"展开 / 收回墙内"间切换（草稿保留，方便全宽审视界面）
   A({ id: "toggleThemeStudio", label: "主题调色盘（展开 / 收回）", group: "视图 / 全局", win: "mod+alt+p", mac: "mod+alt+p" }),

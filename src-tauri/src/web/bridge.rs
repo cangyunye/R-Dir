@@ -80,6 +80,8 @@ const WRITE_COMMANDS: &[&str] = &[
     // 远端写 / 落用户指定本地目录
     "sftp_download_to",
     "sftp_upload",
+    // v0.44.0 SFTP↔SFTP 中转：写目标远端
+    "sftp_relay",
     "sftp_mkdir",
     "sftp_create_file",
     "sftp_delete",
@@ -722,6 +724,15 @@ async fn c_sftp_upload(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
 }
 
 #[cfg(feature = "sftp")]
+async fn c_sftp_relay(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let src: String = arg(args, "src")?;
+    let dest_dir: String = arg(args, "destDir")?;
+    let name: String = arg(args, "name")?;
+    let local_dir: Option<String> = opt_arg(args, "localDir")?;
+    val(crate::sftp_relay_core(&ctx.state, &ctx.sink, src, dest_dir, name, local_dir).await)
+}
+
+#[cfg(feature = "sftp")]
 async fn c_sftp_mkdir(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let dir: String = arg(args, "dir")?;
     let name: String = arg(args, "name")?;
@@ -1046,6 +1057,7 @@ web_commands! {
     "sftp_download" => c_sftp_download,
     "sftp_download_to" => c_sftp_download_to,
     "sftp_upload" => c_sftp_upload,
+    "sftp_relay" => c_sftp_relay,
     "sftp_mkdir" => c_sftp_mkdir,
     "sftp_create_file" => c_sftp_create_file,
     "sftp_delete" => c_sftp_delete,
@@ -1176,6 +1188,7 @@ mod tests {
             "sftp_list_servers",
             "sftp_connect",
             "sftp_upload",
+            "sftp_relay",
             "sftp_download_to",
             "diff_dirs",
             "diff_text_files",
@@ -1199,6 +1212,7 @@ mod tests {
         assert!(!WRITE_COMMANDS.contains(&"diff_dirs"));
         for w in [
             "sftp_upload",
+            "sftp_relay",
             "sftp_delete",
             "sftp_rename",
             "sftp_mkdir",

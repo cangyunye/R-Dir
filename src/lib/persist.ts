@@ -549,6 +549,25 @@ export function saveShowExtensions(v: boolean): void {
   }
 }
 
+// ---- v0.44.0 左侧导航栏收缩为图标栏（默认展开；跨重启保留） ----
+const SIDEBAR_COLLAPSED_KEY = "rfm.sidebar-collapsed";
+
+export function loadSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveSidebarCollapsed(v: boolean): void {
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
+
 // ---- v0.18 差异比对偏好（层级 / 大小写 / mtime 容差） ----
 const DIFF_LEVEL_KEY = "rfm.diff-level";
 const DIFF_CASE_KEY = "rfm.diff-case-sensitive";

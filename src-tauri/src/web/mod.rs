@@ -80,6 +80,8 @@ pub async fn serve(mut state: crate::AppState, options: WebOptions) -> Result<()
         read_only: options.read_only,
     });
 
+    // v0.44.0 停机后清理 SFTP 远程临时文件（与 GUI RunEvent::Exit 同口径）
+    let exit_ctx = ctx.clone();
     let app = Router::new()
         .route("/api/invoke", post(invoke_handler))
         .route("/api/events", get(events_handler))
@@ -96,13 +98,16 @@ pub async fn serve(mut state: crate::AppState, options: WebOptions) -> Result<()
     let listener = tokio::net::TcpListener::bind(options.listen)
         .await
         .map_err(|e| format!("端口绑定失败 {}: {e}", options.listen))?;
-    axum::serve(listener, app)
+    let served = axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
             eprintln!("[rdir-web] 收到退出信号，停止服务");
         })
         .await
-        .map_err(|e| format!("服务运行中断：{e}"))
+        .map_err(|e| format!("服务运行中断：{e}"));
+    // 本会话用过的临时根目录下 sftp/ 子树（打开下载 + 中转残留）尽力删除
+    exit_ctx.state.temp_roots.cleanup_all();
+    served
 }
 
 // ==================== 鉴权 ====================

@@ -7,11 +7,17 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
+use tokio::sync::mpsc;
+
 use russh::client;
 use russh_keys::key::PublicKey;
 use russh::{Channel, ChannelMsg};
 
 use super::proto::{self, Buf, SftpAttrs};
+
+/// v0.44.0 流式中转的在途读请求数（download_pipe 读窗口，channel 容量同值 = 天然背压）：
+/// 16 × 128KB ≈ 2MB 在途数据；比写窗口（32）保守——读响应包更大，服务端并发余量未知
+pub const RELAY_WINDOW: usize = 16;
 
 /// 认证方式
 #[derive(Debug, Clone)]
@@ -382,6 +388,187 @@ impl SftpSession {
         Ok(acked)
     }
 
+    /// v0.44.0 流式读取远程文件到 channel（SFTP↔SFTP 中转的 A 端）。
+    /// **流水线并发读**：镜像 [`Self::upload`] 的窗口模式——至多 [`RELAY_WINDOW`] 个
+    /// READ 在途、按 request-id 对账（应答可乱序，按显式 offset 交付，消费方按
+    /// offset 写即可，无需保序）。offset 不越过调用方传入的 stat 总长。
+    /// cb(done, total)：已交付字节 / 远程文件总字节，返回 false 中止
+    /// （关闭句柄，返回「已取消」）；channel 关闭（消费方退出）同样中止。
+    /// 返回实际交付的总字节数。
+    pub async fn download_pipe(
+        &mut self,
+        remote: &str,
+        total: u64,
+        tx: mpsc::Sender<(u64, Vec<u8>)>,
+        mut cb: impl FnMut(u64, u64) -> bool,
+    ) -> Result<u64, String> {
+        /// 单包载荷：与 upload 一致（128KB，OpenSSH 单包上限 256KB 的一半）
+        const CHUNK: usize = 128 * 1024;
+
+        let (_ty, body) = self
+            .request(proto::OPEN, |b| {
+                b.str(remote);
+                b.u32(proto::FXF_READ);
+                b.u32(0); // attrs: 无
+            })
+            .await?;
+        let handle = read_handle(&body)?;
+        let mut offset = 0u64; // 已发出的读偏移
+        let mut delivered = 0u64; // 已交付字节（进度）
+        let mut eof_early = false; // 服务端提前 EOF（读请求落在 EOF 上）
+        let mut cancel = false;
+        let mut in_flight: std::collections::VecDeque<(u32, u64)> =
+            std::collections::VecDeque::new(); // (request-id, 读偏移)
+        while offset < total && !eof_early || !in_flight.is_empty() {
+            if offset < total && !eof_early && in_flight.len() < RELAY_WINDOW {
+                let id = self.next_id();
+                let mut b = Buf::new();
+                b.u8(proto::READ);
+                b.u32(id);
+                b.str(&handle);
+                b.u64(offset);
+                b.u32(CHUNK as u32);
+                self.send_packet(&b.finalize()).await?;
+                in_flight.push_back((id, offset));
+                offset += CHUNK as u64;
+                continue; // 先把窗口填满，再收应答
+            }
+            // 窗口已满（或已发完）：收一个应答并按 id 对账（应答顺序不保证）
+            let (ty, id, body) = self.receive_packet_id().await?;
+            let Some(pos) = in_flight.iter().position(|(i, _)| *i == id) else {
+                return Err("read 应答 id 不匹配".into());
+            };
+            let (_, req_offset) = in_flight.remove(pos).unwrap();
+            match ty {
+                proto::DATA => {
+                    let mut r = proto::Reader::new(&body);
+                    r.u32()?; // data 长度前缀
+                    let data = body[r.pos..].to_vec();
+                    let got = data.len() as u64;
+                    delivered += got;
+                    if tx.send((req_offset, data)).await.is_err() {
+                        // 消费方（B 端写）已退出：中止读，错误交由消费方传递
+                        self.request(proto::CLOSE, |b| b.str(&handle)).await?;
+                        return Err(crate::ERR_CANCELLED.into());
+                    }
+                    // 短读防御：SFTP READ 以请求 offset 定位，短读不推进文件位置；
+                    // offset 已按整块乐观前移，短读会在流里留洞——从实得位置补发一个
+                    // READ（got==0 视作 EOF 停发；每轮至少交付 1 字节，不会空转）。
+                    // OpenSSH 只在 EOF 处短读（其后跟 STATUS），此分支常规不触发。
+                    if got == 0 {
+                        eof_early = true;
+                    } else if got < CHUNK as u64 && req_offset + got < offset {
+                        let id = self.next_id();
+                        let mut b = Buf::new();
+                        b.u8(proto::READ);
+                        b.u32(id);
+                        b.str(&handle);
+                        b.u64(req_offset + got);
+                        b.u32(CHUNK as u32);
+                        self.send_packet(&b.finalize()).await?;
+                        in_flight.push_back((id, req_offset + got));
+                    }
+                    if !cancel && !cb(delivered, total) {
+                        cancel = true;
+                        eof_early = true;
+                        offset = total; // 停发新请求，排空在途后关闭
+                    }
+                }
+                proto::STATUS => {
+                    // EOF（code 0/1）= 读请求落在文件尾（含短读防御的补发请求越过 EOF）：
+                    // 正常收尾，停发后续；其余为真实错误
+                    let mut r = proto::Reader::new(&body);
+                    let code = r.u32()?;
+                    if code != 0 && code != proto::err::EOF {
+                        self.request(proto::CLOSE, |b| b.str(&handle)).await?;
+                        return Err(proto::err_str(
+                            code,
+                            &proto::parse_status(&body)?.unwrap_or_default(),
+                        ));
+                    }
+                    eof_early = true;
+                }
+                _ => return Err("read 意外回复".into()),
+            }
+        }
+        self.request(proto::CLOSE, |b| b.str(&handle)).await?;
+        if cancel {
+            return Err(crate::ERR_CANCELLED.into());
+        }
+        Ok(delivered)
+    }
+
+    /// v0.44.0 从 channel 流式写入远程文件（SFTP↔SFTP 中转的 B 端）。
+    /// 复用 [`Self::upload`] 的滑动窗口写（WINDOW 个在途写、乱序对账、128KB 包）；
+    /// chunk 由调用方经 channel 送达（(offset, data)，按显式偏移写，无需保序）。
+    /// channel 关闭且在途写排空后 CLOSE。返回已确认字节数。
+    /// cb(done, total)：已确认字节 / 预期总字节；返回 false 中止
+    /// （排空在途应答后关闭句柄并删除远端半成品，返回「已取消」）。
+    pub async fn upload_pipe(
+        &mut self,
+        remote: &str,
+        total: u64,
+        mut rx: mpsc::Receiver<(u64, Vec<u8>)>,
+        mut cb: impl FnMut(u64, u64) -> bool,
+    ) -> Result<u64, String> {
+        let (_ty, body) = self
+            .request(proto::OPEN, |b| {
+                b.str(remote);
+                b.u32(proto::FXF_WRITE | proto::FXF_CREAT | proto::FXF_TRUNC);
+                b.u32(proto::ATTR_PERMISSIONS);
+                b.u32(proto::DEFAULT_FILE_PERM);
+            })
+            .await?;
+        let handle = read_handle(&body)?;
+        let mut acked = 0u64; // 已确认字节（进度）
+        let mut closed = false; // channel 已关闭（读端结束）
+        let mut cancel = false;
+        let mut in_flight: std::collections::VecDeque<(u32, usize)> =
+            std::collections::VecDeque::new(); // (request-id, 字节)
+        while !closed || !in_flight.is_empty() {
+            if !closed && in_flight.len() < RELAY_WINDOW {
+                match rx.recv().await {
+                    Some((offset, data)) => {
+                        let id = self.next_id();
+                        let mut b = Buf::new();
+                        b.u8(proto::WRITE);
+                        b.u32(id);
+                        b.str(&handle);
+                        b.u64(offset);
+                        b.u32(data.len() as u32);
+                        b.raw(&data);
+                        self.send_packet(&b.finalize()).await?;
+                        in_flight.push_back((id, data.len()));
+                    }
+                    None => closed = true,
+                }
+                continue; // 先把窗口填满，再收应答
+            }
+            let (ty, id, body) = self.receive_packet_id().await?;
+            let Some(pos) = in_flight.iter().position(|(i, _)| *i == id) else {
+                return Err("write 应答 id 不匹配".into());
+            };
+            let (_, n) = in_flight.remove(pos).unwrap();
+            if ty != proto::STATUS {
+                return Err("write 意外回复".into());
+            }
+            if let Some(msg) = proto::parse_status(&body)? {
+                return Err(msg);
+            }
+            acked += n as u64;
+            if !cancel && !cb(acked, total) {
+                cancel = true;
+                closed = true;
+            }
+        }
+        self.request(proto::CLOSE, |b| b.str(&handle)).await?;
+        if cancel {
+            let _ = self.remove(remote).await;
+            return Err(crate::ERR_CANCELLED.into());
+        }
+        Ok(acked)
+    }
+
     /// 新建空文件（open write+creat 后立即关闭）
     pub async fn touch(&mut self, path: &str) -> Result<(), String> {
         let (_ty, body) = self
@@ -452,6 +639,41 @@ impl SftpSession {
         })
         .await?;
         Ok(())
+    }
+
+    /// v0.44.0 覆盖式重命名（SFTP↔SFTP 中转收尾：暂存名 → 正式名）。
+    /// 优先 `posix-rename@openssh.com` 扩展——目标已存在时原子覆盖（OpenSSH 系均支持，
+    /// 普通 RENAME 在 OpenSSH 上遇已存在目标会报 FAILURE）；服务器不支持该扩展
+    /// （STATUS OP_UNSUPPORTED）时回退「删目标 + 普通 RENAME」（覆盖语义已由调用方
+    /// 确认，非原子但等效）。
+    pub async fn rename_over(&mut self, old: &str, new: &str) -> Result<(), String> {
+        let id = self.next_id();
+        let mut b = Buf::new();
+        b.u8(proto::EXTENDED);
+        b.u32(id);
+        b.str("posix-rename@openssh.com");
+        b.str(old);
+        b.str(new);
+        self.send_packet(&b.finalize()).await?;
+        let (ty, body) = self.receive_packet().await?;
+        if ty == proto::STATUS {
+            let mut r = proto::Reader::new(&body);
+            let code = r.u32()?;
+            if code == 0 {
+                return Ok(());
+            }
+            if code == proto::err::OP_UNSUPPORTED
+                // 个别非 OpenSSH 服务器对未知扩展名回 FAILURE 而非 OP_UNSUPPORTED：
+                // 同样走回退（真正的权限错误会在回退的删/改名中再次暴露）
+                || code == proto::err::FAILURE
+            {
+                // 回退：删目标再普通改名（目标不存在时顺序无损）
+                let _ = self.remove(new).await;
+                return self.rename(old, new).await;
+            }
+            return Err(proto::parse_status(&body)?.unwrap_or_default());
+        }
+        Err("rename 意外回复".into())
     }
 
     /// 断开
