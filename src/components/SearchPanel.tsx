@@ -40,6 +40,12 @@ function extensionOf(path: string): string {
   return name.slice(idx + 1).toLowerCase();
 }
 
+/** 路径去掉末段后的目录部分（含尾分隔符；无分隔符 → 空串） */
+function dirOf(path: string): string {
+  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return i < 0 ? "" : path.slice(0, i + 1);
+}
+
 /** 通配符转整名匹配正则：* → .*、? → .，其余转义（fd --glob 的前端等价，用于当前层过滤） */
 function globToRegExp(glob: string, caseSensitive: boolean): RegExp {
   let src = "";
@@ -562,7 +568,7 @@ export function SearchPanel({
       }}
     >
     <div
-      className="flex h-[70vh] max-h-[620px] w-[640px] max-w-[92vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
+      className="flex h-[70vh] max-h-[620px] w-[760px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
     >
       {/* 标题 + 关闭（冻结的搜索目标目录随面板展示） */}
       <div className="flex shrink-0 items-center gap-1.5 border-b px-3 py-2">
@@ -780,9 +786,19 @@ export function SearchPanel({
                         onRename={(p, name) => setRenaming({ path: p, name })}
                         renaming={renamingForRow(h.path)}
                       >
-                        <span className="flex w-full items-center gap-2 px-2.5 py-1.5 text-xs">
-                          <FileIcon entry={fe} size={14} className="shrink-0" />
-                          <span className="truncate">{h.path}</span>
+                        <span className="block w-full px-2.5 py-1">
+                          <span className="flex items-center gap-1.5 text-xs">
+                            <FileIcon entry={fe} size={13} className="shrink-0" />
+                            <span className="truncate font-medium">
+                              <Highlight text={h.name} query={query.trim()} />
+                            </span>
+                          </span>
+                          {/* 所在目录（暗色小字）：全盘路径动辄上百字符，文件名才是主语 */}
+                          {dirOf(h.path) && (
+                            <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground/70">
+                              {dirOf(h.path)}
+                            </span>
+                          )}
                         </span>
                       </ResultRow>
                     );
@@ -844,9 +860,21 @@ export function SearchPanel({
                         onRename={(p, name) => setRenaming({ path: p, name })}
                         renaming={renamingForRow(e.path)}
                       >
-                        <span className="flex w-full items-center gap-2 px-2.5 py-1.5 text-xs">
-                          <FileIcon entry={fe} size={14} className="shrink-0" />
-                          <span className="truncate">{e.rel_path}</span>
+                        <span className="block w-full px-2.5 py-1">
+                          <span className="flex items-center gap-1.5 text-xs">
+                            <FileIcon entry={fe} size={13} className="shrink-0" />
+                            <span className="truncate font-medium">
+                              <Highlight text={fe.name} query={query.trim()} />
+                            </span>
+                          </span>
+                          {(() => {
+                            const dir = e.rel_path.slice(0, e.rel_path.length - fe.name.length);
+                            return dir ? (
+                              <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground/70">
+                                {dir}
+                              </span>
+                            ) : null;
+                          })()}
                         </span>
                       </ResultRow>
                     );
