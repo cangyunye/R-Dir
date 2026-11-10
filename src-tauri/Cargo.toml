@@ -4,6 +4,9 @@ version = "0.44.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+# 双 bin 消歧：dev/tauri CLI 的裸 `cargo run` 默认跑主程序（否则要在歧义报错里
+# 手选；rdir-web 经 required-features + 显式 --bin 使用，不受影响）
+default-run = "R-Dir"
 
 # NFS 插件 crate：客户端本体 + 伴生进程二进制（rdir-nfs，发行时不随主程序打包）
 [workspace]
