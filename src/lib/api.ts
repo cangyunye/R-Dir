@@ -258,7 +258,10 @@ export const extractArchive = async (
   return outcome;
 };
 
-/** 内容搜索（默认字面量关键词；includeHidden 含 `.` 开头项，useRegex 按正则解析；maxDepth 限递归层数，null 不限） */
+/**
+ * 内容搜索（默认字面量关键词；includeHidden 含 `.` 开头项，useRegex 按正则解析；
+ * maxDepth 限递归层数，null 不限；excludeGlobs 为 vscode 风格排除模式，目录命中整棵剪枝）
+ */
 export const searchContent = (
   query: string,
   dir: string,
@@ -267,6 +270,7 @@ export const searchContent = (
   includeHidden: boolean,
   useRegex: boolean,
   maxDepth: number | null = null,
+  excludeGlobs: string[] = [],
 ) =>
   invoke<SearchMatch[]>("search_content", {
     query,
@@ -276,6 +280,7 @@ export const searchContent = (
     includeHidden,
     useRegex,
     maxDepth,
+    excludeGlobs,
   });
 
 /** fd 快速文件检索（glob=true 通配符否则正则；显式大小写开关；递归） */

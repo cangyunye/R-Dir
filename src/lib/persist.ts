@@ -388,6 +388,30 @@ export function saveSearchMaxDepth(depth: number | null): void {
   }
 }
 
+// ---- v0.46 内容搜索排除（vscode 风格 glob 原文，逗号/换行分隔） ----
+const SEARCH_EXCLUDE_KEY = "rfm.search-exclude";
+
+/** 内容搜索排除模式原文（空串 = 无排除；仅内容 tab 使用） */
+export function loadSearchExclude(): string {
+  try {
+    return localStorage.getItem(SEARCH_EXCLUDE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveSearchExclude(text: string): void {
+  try {
+    if (text) {
+      localStorage.setItem(SEARCH_EXCLUDE_KEY, text);
+    } else {
+      localStorage.removeItem(SEARCH_EXCLUDE_KEY);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 // ---- v0.47 搜索面板全屏化（仅面板内生效的布局偏好） ----
 const SEARCH_FULLSCREEN_KEY = "rfm.search-fullscreen";
 

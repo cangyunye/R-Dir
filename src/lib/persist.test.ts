@@ -17,6 +17,8 @@ import {
   loadShareAllowParent,
   loadSearchMaxDepth,
   saveSearchMaxDepth,
+  loadSearchExclude,
+  saveSearchExclude,
   loadUiFontFamily,
   saveUiFontFamily,
   saveUiFontFamilyCustom,
@@ -182,6 +184,22 @@ describe("搜索深度", () => {
     expect(loadSearchMaxDepth()).toBe(null);
     localStorage.setItem("rfm.search-depth", "abc");
     expect(loadSearchMaxDepth()).toBe(null);
+  });
+});
+
+describe("内容搜索排除（v0.46）", () => {
+  it("默认空串", () => {
+    expect(loadSearchExclude()).toBe("");
+  });
+  it("保存后原样读回（逗号/换行原文）", () => {
+    saveSearchExclude("**/node_modules/**, **/dist/**\n*.log");
+    expect(loadSearchExclude()).toBe("**/node_modules/**, **/dist/**\n*.log");
+  });
+  it("空串落盘后移除键", () => {
+    saveSearchExclude("**/dist/**");
+    saveSearchExclude("");
+    expect(loadSearchExclude()).toBe("");
+    expect(localStorage.getItem("rfm.search-exclude")).toBe(null);
   });
 });
 

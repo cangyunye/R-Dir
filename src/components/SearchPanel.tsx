@@ -1,21 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Check,
   Clipboard,
   Crosshair,
   ExternalLink,
   FileSearch,
+  FileX,
   FolderSearch,
+  Layers,
   Loader2,
   Maximize2,
   Minimize2,
   Pencil,
+  Search,
   SearchX,
   X,
   Zap,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -32,7 +42,14 @@ import { isSftpPath, isNfsPath } from "@/lib/sftp-path";
 import { useT } from "@/lib/LanguageProvider";
 import { terr } from "@/lib/i18n";
 import { isMac } from "@/lib/keymap";
-import { loadSearchFullscreen, loadSearchMaxDepth, saveSearchFullscreen, saveSearchMaxDepth } from "@/lib/persist";
+import {
+  loadSearchExclude,
+  loadSearchFullscreen,
+  loadSearchMaxDepth,
+  saveSearchExclude,
+  saveSearchFullscreen,
+  saveSearchMaxDepth,
+} from "@/lib/persist";
 import type { FileEntry, FindEntry, IndexHit, IndexStatusView, SearchMatch } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -125,27 +142,73 @@ function ToggleChip({
   );
 }
 
-/** 深度下拉：递归搜索层数上限（fd 与内容递归共用持久化值）；哨兵 0 = 不限 */
+/** 深度下拉：递归搜索层数上限（fd 与内容递归共用持久化值）；哨兵 0 = 不限。
+ * v0.46 由原生 select 改为下拉菜单 chip（IntelliJ 式筛选钮），选中项带 ✓。 */
 function DepthSelect({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
   const t = useT();
+  const options = [1, 2, 3, 5, 10] as const;
   return (
-    <select
-      value={value ?? 0}
-      onChange={(e) => {
-        const n = Number(e.target.value);
-        onChange(n === 0 ? null : n);
-      }}
-      aria-label={t("搜索深度")}
-      title={t("递归层数上限（不限 = 一直递归到底）")}
-      className="h-6 shrink-0 cursor-pointer rounded-md border border-border bg-transparent px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-    >
-      <option value={1}>1</option>
-      <option value={2}>2</option>
-      <option value={3}>3</option>
-      <option value={5}>5</option>
-      <option value={10}>10</option>
-      <option value={0}>{t("不限")}</option>
-    </select>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={t("搜索深度")}
+          title={t("递归层数上限（不限 = 一直递归到底）")}
+          className={cn(
+            "flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition-colors",
+            value == null
+              ? "border-border bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground"
+              : "border-sky-500/60 bg-sky-500/10 text-sky-600 dark:text-sky-400",
+          )}
+        >
+          <Layers className="h-3 w-3" />
+          {value == null ? t("深度不限") : t("深度 {n} 层", { n: value })}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-32">
+        {options.map((n) => (
+          <DropdownMenuItem key={n} onSelect={() => onChange(n)}>
+            <Check className={cn("h-3.5 w-3.5", n === value ? "opacity-100" : "opacity-0")} />
+            {t("深度 {n} 层", { n })}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => onChange(null)}>
+          <Check className={cn("h-3.5 w-3.5", value == null ? "opacity-100" : "opacity-0")} />
+          {t("不限")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** 主输入容器（v0.46 IntelliJ 式）：左侧引导图标 + 无边框输入 + 聚焦外圈；onClear 清空按钮 */
+function SearchField({
+  icon,
+  onClear,
+  input,
+}: {
+  icon: ReactNode;
+  onClear?: () => void;
+  input: ReactNode;
+}) {
+  const t = useT();
+  return (
+    <div className="flex h-9 items-center gap-2 rounded-lg border border-input bg-muted/40 px-2.5 transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/30">
+      {icon}
+      {input}
+      {onClear && (
+        <button
+          type="button"
+          onClick={onClear}
+          title={t("清空")}
+          aria-label={t("清空")}
+          className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -435,6 +498,15 @@ export function SearchPanel({
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [cHidden, setCHidden] = useState(false);
   const [cRegex, setCRegex] = useState(false);
+  // v0.46 vscode 风格排除（`**/node_modules/**, **/dist/**`，逗号/换行分隔），随面板持久化
+  const [cExclude, setCExclude] = useState(() => loadSearchExclude());
+  const excludeGlobs = useMemo(
+    () => cExclude.split(/[,\n]/).map((s) => s.trim()).filter(Boolean),
+    [cExclude],
+  );
+  useEffect(() => {
+    saveSearchExclude(cExclude);
+  }, [cExclude]);
   const [cResults, setCResults] = useState<SearchMatch[]>([]);
   const [cLoading, setCLoading] = useState(false);
   const [cError, setCError] = useState<string | null>(null);
@@ -568,7 +640,7 @@ export function SearchPanel({
     const seq = ++cSeq.current;
     cTimer.current = window.setTimeout(async () => {
       try {
-        const res = await searchContent(q, dir, recursive, caseSensitive, cHidden, cRegex, maxDepth);
+        const res = await searchContent(q, dir, recursive, caseSensitive, cHidden, cRegex, maxDepth, excludeGlobs);
         if (seq !== cSeq.current) return;
         setCResults(res);
       } catch (e) {
@@ -582,7 +654,7 @@ export function SearchPanel({
     return () => {
       if (cTimer.current) window.clearTimeout(cTimer.current);
     };
-  }, [cQuery, dir, recursive, caseSensitive, cHidden, cRegex, maxDepth]);
+  }, [cQuery, dir, recursive, caseSensitive, cHidden, cRegex, maxDepth, excludeGlobs]);
 
   return (
     // v0.29.0 模态框化：原右侧 256px 停靠栏在递归检索时 rel_path 截断严重，
@@ -640,25 +712,31 @@ export function SearchPanel({
         <div className="space-y-1.5 p-2">
           {mode === "name" ? (
             <>
-              <Input
-                ref={nameInputRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={
-                  idxEnabled
-                    ? nameMode === "glob"
-                      ? t("全盘索引检索（通配符整名，如 *.rs）…")
-                      : t("全盘索引检索（输入文件名片段，瞬时返回）…")
-                    : fdEnabled
-                      ? nameMode === "glob"
-                        ? t("检索文件（fd 通配符，如 *.rs）…")
-                        : t("检索文件（fd 正则）…")
-                      : t("搜索当前层文件名…")
+              <SearchField
+                icon={<Search className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                onClear={query ? () => setQuery("") : undefined}
+                input={
+                  <input
+                    ref={nameInputRef}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={
+                      idxEnabled
+                        ? nameMode === "glob"
+                          ? t("全盘索引检索（通配符整名，如 *.rs）…")
+                          : t("全盘索引检索（输入文件名片段，瞬时返回）…")
+                        : fdEnabled
+                          ? nameMode === "glob"
+                            ? t("检索文件（fd 通配符，如 *.rs）…")
+                            : t("检索文件（fd 正则）…")
+                          : t("搜索当前层文件名…")
+                    }
+                    className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
+                    autoFocus
+                  />
                 }
-                className="h-7 text-xs"
-                autoFocus
               />
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <ToggleChip
                   on={fdEnabled}
                   color="blue"
@@ -734,15 +812,44 @@ export function SearchPanel({
             </>
           ) : (
             <>
-              <Input
-                ref={contentInputRef}
-                value={cQuery}
-                onChange={(e) => setCQuery(e.target.value)}
-                placeholder={cRegex ? t("搜索文件内容（正则）…") : t("搜索文件内容…")}
-                className="h-7 text-xs"
-                autoFocus
+              <SearchField
+                icon={<Search className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                onClear={cQuery ? () => setCQuery("") : undefined}
+                input={
+                  <input
+                    ref={contentInputRef}
+                    value={cQuery}
+                    onChange={(e) => setCQuery(e.target.value)}
+                    placeholder={cRegex ? t("搜索文件内容（正则）…") : t("搜索文件内容…")}
+                    className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
+                    autoFocus
+                  />
+                }
               />
-              <div className="flex items-center gap-1.5">
+              {/* v0.46 排除的文件（vscode 风格 glob，逗号/换行分隔；目录命中整棵剪枝） */}
+              <div className="flex h-8 items-center gap-2 rounded-lg border border-dashed border-input px-2.5 transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/30">
+                <FileX className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                <span className="shrink-0 text-[11px] text-muted-foreground/80">{t("排除的文件")}</span>
+                <input
+                  value={cExclude}
+                  onChange={(e) => setCExclude(e.target.value)}
+                  placeholder={t("如 **/node_modules/**, **/dist/**")}
+                  aria-label={t("排除的文件")}
+                  className="h-full min-w-0 flex-1 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground/50"
+                />
+                {cExclude && (
+                  <button
+                    type="button"
+                    onClick={() => setCExclude("")}
+                    title={t("清空")}
+                    aria-label={t("清空")}
+                    className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
                 <ToggleChip
                   on={recursive}
                   color="blue"

@@ -14,11 +14,13 @@
 //! - `recursive = false` 时只搜当前目录的直接子文件（默认，用户明确要求）；
 //! - `max_depth` 限制递归层数（None = 不限；Some(1) = 只搜当前层，与 walkdir
 //!   语义对齐：根目录第 0 层、直接子项第 1 层）；
+//! - `exclude_globs`（v0.46）vscode 风格排除（`**/node_modules/**` 等），目录整棵剪枝；
 //! - 不跟随目录符号链接（`entry.file_type()` 判定，防止环；对齐 find 的
 //!   `follow_links(false)`）；
 //! - 单行最多保留 `MAX_LINE_CHARS` 字符。
 
 use crate::text_diff::{decode_auto, NonUtf8};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::Serialize;
 use std::fs;
@@ -42,6 +44,53 @@ pub struct SearchMatch {
     pub line: String,
 }
 
+/// 将 vscode 风格排除模式（`**/node_modules/**, **/dist/**`，逗号/换行分隔）编译为
+/// [`GlobSet`]；无有效模式时返回 None（走无排除的快路径）。
+///
+/// 语义对齐 vscode search.exclude：
+/// - 不含 `/` 的模式（`node_modules`、`*.log`）按「任意层级同名匹配」处理；
+/// - 含 `/` 的模式按相对搜索根的路径匹配（`**/` 前缀即任意层级）；
+/// - `dir/**` 额外生成 `dir` 本体，目录命中即整棵剪枝（vscode 中该模式等价排除全部子内容）；
+/// - `literal_separator(true)`：`*` 不跨路径段，跨段必须写 `**`。
+pub(crate) fn build_exclude_set(patterns: &[String], case_sensitive: bool) -> Option<GlobSet> {
+    let mut builder = GlobSetBuilder::new();
+    let mut count = 0usize;
+    for raw in patterns {
+        for part in raw.split([',', '\n']) {
+            let trimmed = part.trim().replace('\\', "/");
+            let p = trimmed.strip_prefix('/').unwrap_or(&trimmed);
+            if p.is_empty() || p == "/" {
+                continue;
+            }
+            let mut add = |g: &str| {
+                if let Ok(glob) = GlobBuilder::new(g)
+                    .literal_separator(true)
+                    .case_insensitive(!case_sensitive)
+                    .build()
+                {
+                    builder.add(glob);
+                    count += 1;
+                }
+            };
+            add(p);
+            // `dir/**` → 目录本体也命中，walk 遇到即可整棵跳过
+            if let Some(base) = p.strip_suffix("/**") {
+                add(base);
+            }
+            // 无 `/` → 任意层级同名；`**/x` → 根层级兜底（零路径段语义）
+            if !p.contains('/') {
+                add(&format!("**/{p}"));
+            } else if let Some(rest) = p.strip_prefix("**/") {
+                add(rest);
+            }
+        }
+    }
+    if count == 0 {
+        return None;
+    }
+    builder.build().ok()
+}
+
 pub fn search_content(
     query: &str,
     dir: &str,
@@ -50,6 +99,7 @@ pub fn search_content(
     include_hidden: bool,
     use_regex: bool,
     max_depth: Option<usize>,
+    exclude_globs: &[String],
 ) -> Result<Vec<SearchMatch>, String> {
     let root = Path::new(dir);
     if !root.is_dir() {
@@ -79,6 +129,7 @@ pub fn search_content(
 
     let mut out = Vec::new();
     let mut total = 0usize;
+    let excludes = build_exclude_set(exclude_globs, case_sensitive);
     walk(
         &root,
         &root,
@@ -86,6 +137,7 @@ pub fn search_content(
         include_hidden,
         max_depth,
         &re,
+        excludes.as_ref(),
         &mut out,
         &mut total,
         1,
@@ -102,6 +154,7 @@ fn walk(
     include_hidden: bool,
     max_depth: Option<usize>,
     re: &Regex,
+    excludes: Option<&GlobSet>,
     out: &mut Vec<SearchMatch>,
     total: &mut usize,
     depth: usize,
@@ -125,6 +178,13 @@ fn walk(
         // entry.file_type() 不跟随符号链接（is_dir 对符号链接为 false），
         // 目录符号链接按文件处理（read 失败自然跳过），杜绝符号链接环
         let is_dir = matches!(entry.file_type(), Ok(ft) if ft.is_dir());
+        // vscode 风格排除：按相对路径匹配，目录命中整棵剪枝（含 `dir/**` 的本体兜底）
+        if let Some(gs) = excludes {
+            let rel = rel_path(&path, root);
+            if gs.is_match(&rel) {
+                continue;
+            }
+        }
         if is_dir {
             // 子目录内文件在第 depth+1 层，达到上限就不再进入
             if recursive && max_depth.map_or(true, |m| depth + 1 <= m) {
@@ -135,6 +195,7 @@ fn walk(
                     include_hidden,
                     max_depth,
                     re,
+                    excludes,
                     out,
                     total,
                     depth + 1,
@@ -258,7 +319,7 @@ mod tests {
         std::fs::write(sub.join("big.log"), "x".repeat(5 * 1024 * 1024)).unwrap();
 
         // 非递归：只命中 a.txt 的一行
-        let hits = search_content("hello", root.to_str().unwrap(), false, false, false, false, None).unwrap();
+        let hits = search_content("hello", root.to_str().unwrap(), false, false, false, false, None, &[]).unwrap();
         assert!(hits.iter().any(|m| m.rel_path == "a.txt" && m.line_number == 1));
         assert!(!hits.iter().any(|m| m.rel_path == "sub/c.md"), "非递归不应进入子目录");
         assert!(!hits.iter().any(|m| m.rel_path == ".hidden.txt"), "应跳过隐藏文件");
@@ -266,33 +327,33 @@ mod tests {
         assert!(!hits.iter().any(|m| m.rel_path == "big.log"), "应跳过超大文件");
 
         // 递归：命中 c.md
-        let hits = search_content("hello", root.to_str().unwrap(), true, false, false, false, None).unwrap();
+        let hits = search_content("hello", root.to_str().unwrap(), true, false, false, false, None, &[]).unwrap();
         assert!(hits.iter().any(|m| m.rel_path == "sub/c.md"));
 
         // 大小写不敏感命中 Hello；敏感时不命中
-        assert!(search_content("HELLO", root.to_str().unwrap(), false, false, false, false, None)
+        assert!(search_content("HELLO", root.to_str().unwrap(), false, false, false, false, None, &[])
             .unwrap()
             .iter()
             .any(|m| m.rel_path == "a.txt"));
-        assert!(!search_content("HELLO", root.to_str().unwrap(), false, true, false, false, None)
+        assert!(!search_content("HELLO", root.to_str().unwrap(), false, true, false, false, None, &[])
             .unwrap()
             .iter()
             .any(|m| m.rel_path == "a.txt"));
 
         // include_hidden：命中 .hidden.txt
-        let hits = search_content("hidden", root.to_str().unwrap(), false, false, true, false, None).unwrap();
+        let hits = search_content("hidden", root.to_str().unwrap(), false, false, true, false, None, &[]).unwrap();
         assert!(hits.iter().any(|m| m.rel_path == ".hidden.txt"), "应包含隐藏文件");
 
         // use_regex：正则 hel+o 命中 hello；字面量模式下 hel+o 无命中
-        assert!(search_content(r"hel+o", root.to_str().unwrap(), false, false, false, true, None)
+        assert!(search_content(r"hel+o", root.to_str().unwrap(), false, false, false, true, None, &[])
             .unwrap()
             .iter()
             .any(|m| m.rel_path == "a.txt"));
-        assert!(search_content(r"hel+o", root.to_str().unwrap(), false, false, false, false, None)
+        assert!(search_content(r"hel+o", root.to_str().unwrap(), false, false, false, false, None, &[])
             .unwrap()
             .is_empty());
         // 正则语法错误返回 Err（UI 显示错误提示）
-        assert!(search_content("(unclosed", root.to_str().unwrap(), false, false, false, true, None).is_err());
+        assert!(search_content("(unclosed", root.to_str().unwrap(), false, false, false, true, None, &[]).is_err());
 
         std::fs::remove_dir_all(&root).ok();
     }
@@ -311,7 +372,7 @@ mod tests {
         std::fs::write(deep.join("c.txt"), "hello\n").unwrap();
         let dir = root.to_str().unwrap();
         let paths = |d: Option<usize>| -> Vec<String> {
-            let mut v: Vec<String> = search_content("hello", dir, true, false, false, false, d)
+            let mut v: Vec<String> = search_content("hello", dir, true, false, false, false, d, &[])
                 .unwrap()
                 .into_iter()
                 .map(|m| m.rel_path)
@@ -346,7 +407,7 @@ mod tests {
 
         let dir = root.to_str().unwrap();
         let hits = |q: &str, re: bool| -> Vec<(String, usize)> {
-            let mut v: Vec<_> = search_content(q, dir, false, false, false, re, None)
+            let mut v: Vec<_> = search_content(q, dir, false, false, false, re, None, &[])
                 .unwrap()
                 .into_iter()
                 .map(|m| (m.rel_path, m.line_number))
@@ -363,6 +424,74 @@ mod tests {
         // UTF-8 BOM 已去除：行首锚定命中第 1 行
         assert_eq!(hits("^第一行", true), vec![at("bom.txt", 1), at("gbk.txt", 1), at("utf16le.txt", 1)]);
         assert!(hits("繁體", false).is_empty());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// v0.46 vscode 风格排除：`**/node_modules/**` 整目录剪枝、无 `/` 同名任意层级、
+    /// `*.log` 按扩展名、`dir/**` 本体兜底、大小写跟随搜索开关、逗号/换行混排
+    #[test]
+    fn search_exclude_globs() {
+        let root = std::env::temp_dir().join("rfm_search_exclude_test");
+        let _ = std::fs::remove_dir_all(&root);
+        let nm = root.join("node_modules").join("pkg");
+        let dist = root.join("dist");
+        let logs = root.join("keep").join("logs");
+        std::fs::create_dir_all(&nm).unwrap();
+        std::fs::create_dir_all(&dist).unwrap();
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(root.join("a.txt"), "hello\n").unwrap();
+        std::fs::write(root.join("b.log"), "hello\n").unwrap();
+        std::fs::write(nm.join("dep.js"), "hello\n").unwrap();
+        std::fs::write(dist.join("out.js"), "hello\n").unwrap();
+        std::fs::write(logs.join("run.log"), "hello\n").unwrap();
+        let nested = root.join("sub").join("Node_Modules");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("x.js"), "hello\n").unwrap();
+        let dir = root.to_str().unwrap();
+        let paths = |excl: &[&str]| -> Vec<String> {
+            let pats: Vec<String> = excl.iter().map(|s| s.to_string()).collect();
+            let mut v: Vec<String> = search_content("hello", dir, true, false, false, false, None, &pats)
+                .unwrap()
+                .into_iter()
+                .map(|m| m.rel_path)
+                .collect();
+            v.sort();
+            v
+        };
+        // 无排除 → 全部 6 个文件命中
+        assert_eq!(paths(&[]).len(), 6);
+        // vscode 经典：**/node_modules/** 整目录剪枝（根层级本体 + 子层级 + 大小写不敏感）
+        assert_eq!(
+            paths(&["**/node_modules/**"]),
+            vec!["a.txt", "b.log", "dist/out.js", "keep/logs/run.log"]
+        );
+        // 无 `/` 的目录名 → 任意层级同名剪枝
+        assert_eq!(
+            paths(&["dist"]),
+            vec!["a.txt", "b.log", "keep/logs/run.log", "node_modules/pkg/dep.js", "sub/Node_Modules/x.js"]
+        );
+        // 扩展名模式：*.log 排除所有层级
+        assert_eq!(paths(&["*.log"]), vec!["a.txt", "dist/out.js", "node_modules/pkg/dep.js", "sub/Node_Modules/x.js"]);
+        // `keep/**` 本体兜底：整棵 keep 剪掉
+        assert_eq!(
+            paths(&["keep/**"]),
+            vec!["a.txt", "b.log", "dist/out.js", "node_modules/pkg/dep.js", "sub/Node_Modules/x.js"]
+        );
+        // 相对根的精确路径
+        assert_eq!(
+            paths(&["dist/out.js"]),
+            vec!["a.txt", "b.log", "keep/logs/run.log", "node_modules/pkg/dep.js", "sub/Node_Modules/x.js"]
+        );
+        // 逗号 + 换行混排、空段；`node_modules/**` 带 `/` 属根相对语义，深层 Node_Modules 不受影响
+        assert_eq!(paths(&["node_modules/**, dist/**\n *.log ,"]), vec!["a.txt", "sub/Node_Modules/x.js"]);
+        // 大小写敏感时 Node_Modules 不被 node_modules 命中
+        let pats: Vec<String> = vec!["**/node_modules/**".into()];
+        let hits = search_content("hello", dir, true, true, false, false, None, &pats).unwrap();
+        assert!(hits.iter().any(|m| m.rel_path == "sub/Node_Modules/x.js"));
+        // 非递归也生效（当前层文件按相对路径匹配）
+        let hits = search_content("hello", dir, false, false, false, false, None, &["*.log".to_string()]).unwrap();
+        assert!(hits.iter().all(|m| m.rel_path != "b.log"));
 
         std::fs::remove_dir_all(&root).ok();
     }
