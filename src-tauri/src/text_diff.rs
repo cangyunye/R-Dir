@@ -4,20 +4,34 @@
 //! 轻量策略（与目录级 diff.rs 的定位互补，这里比的是**内容行**）：
 //! 1. 去公共前后缀（O(n)，覆盖绝大多数真实改动）；
 //! 2. 中段较小时走 Myers O(ND) 精确对齐（带编辑距离上限，防恶意/全量改写卡死）；
-//! 3. 超限退化为「整块替换」（coarse，一侧全删 + 一侧全增），不保证行对齐。
+//! 3. 中段过大 / 编辑距离超限 → 贪心重对齐（v0.45）：失配处小窗搜索「≥3 连续相同行」的
+//!    最近重同步点，大位移纯插入/纯删除单独识别——大文件散布改动（XML 数据文件的主要
+//!    痛点）不再从首处差异起整段红绿；
+//! 4. 重对齐预算耗尽 / 几乎无共同行 → 退化为「整块替换」（coarse，一侧全删 + 一侧全增），
+//!    不保证行对齐（界面出粗略显示提示）。
 //!
 //! 行语义：\r\n 与 \n 归一；「结尾有无换行符」视为相同（轻量简化，git 语义会标记）。
 
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// 单文件文本读取上限
 pub const MAX_TEXT_BYTES: u64 = 8 * 1024 * 1024;
-/// 中段（去公共前后缀后）单侧行数上限：超过直接粗略对齐，不进 Myers
+/// 中段（去公共前后缀后）单侧行数上限：超过不进 Myers，走贪心重对齐
 const MAX_MID_LINES: usize = 1500;
-/// Myers 编辑距离上限：超过退化为整块替换
+/// Myers 编辑距离上限：超过转贪心重对齐
 const MAX_D: usize = 800;
+/// 贪心重对齐：重同步要求 ≥ RESYNC_RUN 行连续相同（防重复行误锚到噪声位置）
+const RESYNC_RUN: usize = 3;
+/// 贪心重对齐：重同步小窗，di + dj 搜索上限（覆盖散布单行改动 / 短段替换）
+const RESYNC_MAX_SUM: usize = 48;
+/// 贪心重对齐：大位移窗口，整块纯插入 / 纯删除的单侧搜索上限（行）
+const RESYNC_BIG_WIN: usize = 8192;
+/// 贪心重对齐比较预算：耗尽后剩余整块替换（coarse），最坏耗时可控
+const RESYNC_WORK_CAP: u64 = 20_000_000;
+/// 中段共同行（按位置计）低于此数视为几乎整段重写，跳过重对齐直接整块替换
+const RESYNC_MIN_COMMON: usize = 16;
 
 /// 参与比较的一侧文件信息。
 #[derive(Clone, Debug, Serialize)]
@@ -61,7 +75,7 @@ pub struct TextDiffOutcome {
     pub deletions: usize,
     /// 完全相同
     pub same: bool,
-    /// 中段过大 / 编辑距离超限，退化为整块替换（未做行级对齐）
+    /// 贪心重对齐预算耗尽 / 几乎无共同行，剩余整块替换（未做行级对齐）
     pub coarse: bool,
 }
 
@@ -479,6 +493,133 @@ fn seg_add_run(segs: &mut Vec<TextSegment>, lines: Vec<String>, rb: &mut u64) {
     }
 }
 
+/// ia[x..] 与 ib[y..] 是否有 ≥ RESYNC_RUN 行连续相同（id 相等即行内容相等；越界即否）
+fn run_eq(ia: &[u64], ib: &[u64], x: usize, y: usize) -> bool {
+    x + RESYNC_RUN <= ia.len()
+        && y + RESYNC_RUN <= ib.len()
+        && (0..RESYNC_RUN).all(|t| ia[x + t] == ib[y + t])
+}
+
+/// 小窗重同步：按 di+dj 递增找首个「两侧各偏移 (di,dj) 后 ≥ RESYNC_RUN 行连续相同」的点，
+/// 返回 (di, dj)。只认重新对齐处（散布改动 / 短段替换的最近共同锚），预算按试过的
+/// 候选 × RESYNC_RUN 扣减，耗尽返回 None。
+fn resync_small(ia: &[u64], ib: &[u64], i: usize, j: usize, work: &mut u64) -> Option<(usize, usize)> {
+    let (max_di, max_dj) = (
+        (ia.len() - i).min(RESYNC_MAX_SUM),
+        (ib.len() - j).min(RESYNC_MAX_SUM),
+    );
+    for s in 1..=RESYNC_MAX_SUM {
+        let mut tried = 0usize;
+        let mut hit: Option<(usize, usize)> = None;
+        for di in 0..=s.min(max_di) {
+            let dj = s - di;
+            if dj > max_dj {
+                continue;
+            }
+            tried += 1;
+            if run_eq(ia, ib, i + di, j + dj) {
+                hit = Some((di, dj));
+                break;
+            }
+        }
+        *work = work.saturating_sub(tried as u64 * RESYNC_RUN as u64);
+        if hit.is_some() || *work == 0 {
+            return hit;
+        }
+    }
+    None
+}
+
+/// 大位移重同步：小窗搜不到时的兜底，识别整块纯插入（di=0，b 前进 dj 行后重新对齐）
+/// 与整块纯删除（dj=0）。数千行的块级增删一次命中，未命中按预算返回 None。
+fn resync_big(ia: &[u64], ib: &[u64], i: usize, j: usize, work: &mut u64) -> Option<(usize, usize)> {
+    for dj in 1..=(ib.len() - j).min(RESYNC_BIG_WIN) {
+        *work = work.saturating_sub(RESYNC_RUN as u64);
+        if run_eq(ia, ib, i, j + dj) {
+            return Some((0, dj));
+        }
+        if *work == 0 {
+            return None;
+        }
+    }
+    for di in 1..=(ia.len() - i).min(RESYNC_BIG_WIN) {
+        *work = work.saturating_sub(RESYNC_RUN as u64);
+        if run_eq(ia, ib, i + di, j) {
+            return Some((di, 0));
+        }
+        if *work == 0 {
+            return None;
+        }
+    }
+    None
+}
+
+/// 贪心重对齐（v0.45）：Myers 超限（中段过大 / 编辑距离超限）后的次优对齐层。
+/// 逐行扫描：相同走 eq；失配处先小窗找最近重同步点，再试大位移纯增删，仍未中按
+/// 1:1 del+add 步进（渲染为一对红绿行）继续找后续对齐点。任一侧耗尽即纯 del/add 排空。
+/// 比较预算耗尽 → 剩余整块替换并返回 false（界面照旧出 coarse 提示）。
+/// eq 行由紧凑 id 相等保证内容相同，恒不误标；对齐质量次优（非最小编辑脚本）但恒有效。
+fn loose_ops(ia: &[u64], ib: &[u64]) -> (Vec<Op>, bool) {
+    let (n, m) = (ia.len(), ib.len());
+    // 预检：两侧都有内容但共同行过少 = 几乎整段重写，逐行搜索无收益，直接整块替换
+    if n > 0 && m > 0 {
+        let mut seen: HashSet<u64> = HashSet::with_capacity(n);
+        seen.extend(ia.iter().copied());
+        if ib.iter().filter(|id| seen.contains(id)).count() < RESYNC_MIN_COMMON {
+            let mut ops: Vec<Op> = Vec::with_capacity(n + m);
+            ops.extend(std::iter::repeat(Op::Del).take(n));
+            ops.extend(std::iter::repeat(Op::Add).take(m));
+            return (ops, false);
+        }
+    }
+    let mut ops: Vec<Op> = Vec::with_capacity(n + m);
+    let mut work = RESYNC_WORK_CAP;
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < n || j < m {
+        if i < n && j < m {
+            if ia[i] == ib[j] {
+                ops.push(Op::Eq);
+                i += 1;
+                j += 1;
+                continue;
+            }
+            // 重同步：任一命中都会推进至少一行，不成环
+            let hit = resync_small(ia, ib, i, j, &mut work)
+                .or_else(|| resync_big(ia, ib, i, j, &mut work));
+            match hit {
+                Some((di, dj)) => {
+                    ops.extend(std::iter::repeat(Op::Del).take(di));
+                    ops.extend(std::iter::repeat(Op::Add).take(dj));
+                    i += di;
+                    j += dj;
+                }
+                None => {
+                    // 彻底失配：1:1 步进（一对红绿行），后续位置可能重新对齐
+                    ops.push(Op::Del);
+                    ops.push(Op::Add);
+                    i += 1;
+                    j += 1;
+                }
+            }
+            if work == 0 {
+                break; // 预算耗尽：剩余整块替换
+            }
+        } else if i < n {
+            ops.push(Op::Del);
+            i += 1;
+        } else {
+            ops.push(Op::Add);
+            j += 1;
+        }
+    }
+    let complete = i >= n && j >= m;
+    if !complete {
+        ops.extend(std::iter::repeat(Op::Del).take(n - i));
+        ops.extend(std::iter::repeat(Op::Add).take(m - j));
+    }
+    (ops, complete)
+}
+
 /// 行级 diff 主入口：产出段序列与 coarse 标记。行号均为 1 基。
 pub fn diff_segments(a: &[String], b: &[String]) -> (Vec<TextSegment>, bool) {
     let n = a.len();
@@ -496,33 +637,35 @@ pub fn diff_segments(a: &[String], b: &[String]) -> (Vec<TextSegment>, bool) {
     let mid_b = &b[pre..m - suf];
 
     // 2) 中段对齐：行内容 → 紧凑 id（精确相等，无哈希碰撞）
-    let ops: Option<Vec<Op>> = if mid_a.len().max(mid_b.len()) > MAX_MID_LINES {
-        None
-    } else {
-        let mut ids: HashMap<String, u64> = HashMap::new();
-        let mut next: u64 = 0;
-        let ia: Vec<u64> = mid_a
+    let mut ids: HashMap<String, u64> = HashMap::new();
+    let mut next: u64 = 0;
+    let mut to_ids = |lines: &[String]| -> Vec<u64> {
+        lines
             .iter()
-            .map(|l| *ids.entry(l.clone()).or_insert_with(|| {
-                next += 1;
-                next
-            }))
-            .collect();
-        let ib: Vec<u64> = mid_b
-            .iter()
-            .map(|l| *ids.entry(l.clone()).or_insert_with(|| {
-                next += 1;
-                next
-            }))
-            .collect();
-        myers_ops(&ia, &ib, MAX_D)
+            .map(|l| {
+                *ids.entry(l.clone()).or_insert_with(|| {
+                    next += 1;
+                    next
+                })
+            })
+            .collect()
     };
-    let coarse = ops.is_none();
-    let mid_ops = ops.unwrap_or_else(|| {
-        let mut v: Vec<Op> = mid_a.iter().map(|_| Op::Del).collect();
-        v.extend(mid_b.iter().map(|_| Op::Add));
-        v
-    });
+    let ia = to_ids(mid_a);
+    let ib = to_ids(mid_b);
+    // Myers：中段不大时精确对齐；中段过大 / 编辑距离超限 → 贪心重对齐（loose_ops），
+    // 其预算耗尽或几乎无共同行才整块替换（coarse）——大文件散布改动不再整段红绿
+    let myers = if mid_a.len().max(mid_b.len()) <= MAX_MID_LINES {
+        myers_ops(&ia, &ib, MAX_D)
+    } else {
+        None
+    };
+    let (mid_ops, coarse) = match myers {
+        Some(ops) => (ops, false),
+        None => {
+            let (ops, complete) = loose_ops(&ia, &ib);
+            (ops, !complete)
+        }
+    };
 
     // 3) 全序展开：pre 公共段 + 中段 + suf 公共段。中段按连续同类型 op 批量成段
     //    （每段一次 Vec 分配，而非每行一次——大文件相同行占绝大多数，这是主要开销）
@@ -682,6 +825,101 @@ mod tests {
         let (segs, coarse) = diff_segments(&a, &b);
         assert!(coarse);
         assert_eq!(kinds(&segs), vec!["del", "add"]);
+    }
+
+    #[test]
+    fn resync_aligns_distant_changes_in_large_files() {
+        // v0.45 回归（XML 报告场景）：两处差异相距 1800 行（中段 > MAX_MID_LINES），
+        // 修复前从首处差异起整段 coarse 红绿（含两侧完全相同的行），现恢复行级对齐
+        let base: Vec<String> = (0..2200)
+            .map(|i| format!("<entry id=\"{i}\" value=\"{}\"/>", i * 7 % 100))
+            .collect();
+        let mut a = base.clone();
+        let mut b = base.clone();
+        a[99] = "<!-- marker A -->".into();
+        b[99] = "<!-- marker B -->".into();
+        a[1899] = "<entry id=\"0\" note=\"left\"/>".into();
+        b[1899] = "<entry id=\"0\" note=\"right\"/>".into();
+        let (segs, coarse) = diff_segments(&a, &b);
+        assert!(!coarse);
+        assert_eq!(kinds(&segs), vec!["eq", "del", "add", "eq", "del", "add", "eq"]);
+        assert_eq!(segment_stats(&segs), (2, 2, false));
+    }
+
+    #[test]
+    fn resync_aligns_dense_scattered_changes() {
+        // v0.45 回归：500 处散布单行改动（每 5 行一处），重对齐到 1:1 del/add 而非整块
+        let a: Vec<String> = (0..2500).map(|i| format!("line {i}")).collect();
+        let mut b = a.clone();
+        for i in (0..2500).step_by(5) {
+            b[i] = format!("line {i} changed");
+        }
+        let (segs, coarse) = diff_segments(&a, &b);
+        assert!(!coarse);
+        assert_eq!(segment_stats(&segs), (500, 500, false));
+        // 每个差异段都收敛到单行（不再有动辄上千行的整块 del/add）
+        let max_block = segs
+            .iter()
+            .filter(|s| s.kind != "eq")
+            .map(|s| s.lines.len())
+            .max()
+            .unwrap();
+        assert_eq!(max_block, 1);
+    }
+
+    #[test]
+    fn resync_pure_insertion_beyond_mid_cap() {
+        // v0.45 回归：中段一次性插入 1600 行（> MAX_MID_LINES）——修复前整块替换红绿，
+        // 现识别为纯插入块（单侧排空无需搜索）
+        let shared: Vec<String> = (0..1200).map(|i| format!("shared {i}")).collect();
+        let mut a = shared.clone();
+        let mut b: Vec<String> = Vec::new();
+        b.extend(shared[..600].iter().cloned());
+        b.extend((0..1600).map(|i| format!("inserted {i}")));
+        b.extend(shared[600..].iter().cloned());
+        let (segs, coarse) = diff_segments(&a, &b);
+        assert!(!coarse);
+        assert_eq!(kinds(&segs), vec!["eq", "add", "eq"]);
+        assert_eq!(segment_stats(&segs), (1600, 0, false));
+    }
+
+    #[test]
+    fn resync_big_shift_finds_distant_anchor() {
+        // 大位移识别：失配处小窗搜不到，a 侧当前 3 连行在 b 侧 1600 行外重新出现
+        //（前面隔着一大段纯插入）→ 命中 add×1600 而非逐行 1:1 步进
+        let mut a: Vec<String> = (0..50).map(|i| format!("shared {i}")).collect();
+        a.extend((0..3).map(|i| format!("left-only {i}")));
+        a.extend((50..100).map(|i| format!("shared {i}")));
+        let mut b: Vec<String> = (0..1600).map(|i| format!("inserted {i}")).collect();
+        b.extend((0..100).map(|i| format!("shared {i}")));
+        let (segs, coarse) = diff_segments(&a, &b);
+        assert!(!coarse);
+        // 尾部 shared50..99 为公共后缀，末尾多一段 eq；left-only 3 行为纯删除
+        assert_eq!(kinds(&segs), vec!["add", "eq", "del", "eq"]);
+        assert_eq!(segment_stats(&segs), (1600, 3, false));
+    }
+
+    #[test]
+    fn resync_budget_exhaustion_still_coarse() {
+        // 兜底不破：共同行够多（每百行一个 X）但 3 连相同行永不存在 → 搜索全部落空，
+        // 预算耗尽后剩余整块替换，coarse=true（界面粗略显示提示保留）
+        let mk = |tag: &str| -> Vec<String> {
+            (0..4000)
+                .map(|i| {
+                    if i % 100 == 0 {
+                        "X".to_string()
+                    } else {
+                        format!("{tag}{i}")
+                    }
+                })
+                .collect()
+        };
+        let a = mk("A");
+        let b = mk("B");
+        let (segs, coarse) = diff_segments(&a, &b);
+        assert!(coarse);
+        // 预算耗尽前已产出的部分仍是对齐结果（含对齐上的 X 行），非全盘无 eq
+        assert!(segs.iter().any(|s| s.kind == "eq"));
     }
 
     #[test]
