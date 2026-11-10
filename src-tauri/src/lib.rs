@@ -32,6 +32,8 @@ mod smb;
 mod opener;
 pub mod paths;
 mod plugins;
+mod shellint;
+mod shortcut;
 mod http_autoindex;
 #[cfg(feature = "share")]
 mod share;
@@ -168,6 +170,38 @@ fn collect_path_args<I: IntoIterator<Item = String>>(args: I) -> Vec<OpenPathEnt
 fn launch_paths_take(state: tauri::State<'_, LaunchPaths>) -> Vec<OpenPathEntry> {
     state.pulled.store(true, std::sync::atomic::Ordering::Relaxed);
     std::mem::take(&mut *state.pending.lock().unwrap())
+}
+
+/// v0.46 外壳右键集成状态（Explorer 三处动词键；非 Windows 恒为不支持）
+#[tauri::command]
+fn shell_integration_status() -> shellint::ShellIntegrationStatus {
+    shellint::status()
+}
+
+/// 注册 Explorer 右键「用 R-Dir 打开」（HKCU 免管理员；label 随前端语言）
+#[tauri::command]
+fn shell_integration_register(label: String) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    shellint::register(&exe.to_string_lossy(), &label)
+}
+
+/// 注销 Explorer 右键集成
+#[tauri::command]
+fn shell_integration_unregister() -> Result<(), String> {
+    shellint::unregister()
+}
+
+/// v0.46 创建快捷方式（快捷链接右键组）：Windows `.lnk` / unix 符号链接；
+/// toDesktop 落桌面否则同级；linkSuffix 供 unix 命名随前端语言（如「链接」）
+#[tauri::command]
+async fn create_shortcuts(
+    paths: Vec<String>,
+    to_desktop: bool,
+    link_suffix: String,
+) -> Result<shortcut::ShortcutOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || shortcut::create_shortcuts(&paths, to_desktop, &link_suffix))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // ==================== 后端能力抽象（v0.18 同步比对） ====================
@@ -2986,6 +3020,10 @@ pub fn run() {
         search_content,
         find_files,
         launch_paths_take,
+        shell_integration_status,
+        shell_integration_register,
+        shell_integration_unregister,
+        create_shortcuts,
         index_status,
         index_search,
         index_rebuild,

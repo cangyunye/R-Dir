@@ -54,7 +54,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { MenuGroup } from "@/components/MenuGroup";
-import type { FileTags, TagDef, TagNames } from "@/lib/persist";
+import type { FileTags, MenuConfig, TagDef, TagNames } from "@/lib/persist";
 import type { LinkSide } from "@/lib/sync-link";
 import type { OpenerItem, ShellItem, GitToolItem } from "@/lib/openerApi";
 
@@ -182,6 +182,8 @@ export function IconGrid({
   onSyncDiff,
   onCompress,
   onExtract,
+  onCreateShortcuts,
+  menuCfg,
   onProperties,
   onPropertiesDir,
   onDiff,
@@ -283,6 +285,10 @@ export function IconGrid({
   onCompress: (paths: string[], format: "zip" | "tar" | "tgz") => void;
   /** v0.32 解压压缩包：here=智能落点 / folder=归档名文件夹 / choose=自选目录 */
   onExtract: (paths: string[], mode: "here" | "folder" | "choose") => void;
+  /** v0.46 快捷链接组：创建快捷方式（toDesktop=false 同级） / 发送到桌面 */
+  onCreateShortcuts: (paths: string[], toDesktop: boolean) => void;
+  /** v0.46 右键菜单显隐配置（设置 → 右键菜单） */
+  menuCfg?: MenuConfig;
   onProperties: (entries: FileEntry[]) => void;
   onPropertiesDir: (dir: string) => void;
   onDiff: () => void;
@@ -942,6 +948,8 @@ export function IconGrid({
                         onShareDir={onShareDir}
                         onCompress={onCompress}
                         onExtract={onExtract}
+                onCreateShortcuts={onCreateShortcuts}
+                menuCfg={menuCfg}
                         onCopy={onCopy}
                         onCut={onCut}
                         onRename={onRename}

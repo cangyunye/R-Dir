@@ -111,6 +111,8 @@ objc2-uniform-type-identifiers = { version = "0.3", features = ["UTType"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = "5"
+# v0.46 资源管理器右键集成：HKCU Software\Classes 动词键读写（免管理员）
+winreg = "0.55"
 # 原生拖出（拖到浏览器上传/资源管理器）：OLE DoDragDrop + Shell 数据对象（CF_HDROP）
 # windows-core 直接依赖：#[implement] 宏展开的代码引用 windows_core 路径
 windows = { version = "0.62", features = [

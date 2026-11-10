@@ -412,6 +412,49 @@ export function saveSearchExclude(text: string): void {
   }
 }
 
+// ---- v0.46 右键菜单显隐配置（通用窗口模式文件右键；缺省全显，「快捷链接」默认隐藏） ----
+const MENU_CONFIG_KEY = "rfm.menu-config";
+
+/** 可配置的右键菜单组：id → 是否显示。未配置的 id 一律视为显示（向后兼容）。 */
+export const DEFAULT_MENU_CONFIG: Record<string, boolean> = {
+  vscode: true, // 用 Visual Studio Code 打开
+  openWith: true, // 打开方式
+  terminal: true, // 在此处打开终端
+  git: true, // Git 打开
+  share: true, // 分享此目录
+  compress: true, // 压缩为
+  extract: true, // 解压
+  compare: true, // 比较
+  tags: true, // 标签
+  quickAccess: true, // 添加到快捷访问
+  quickLinks: false, // 快捷链接（创建快捷方式 / 发送到桌面）：默认不显示
+};
+
+export type MenuConfig = Record<string, boolean>;
+
+/** 右键菜单显隐配置（落盘值与默认表合并；非法值回退默认） */
+export function loadMenuConfig(): MenuConfig {
+  try {
+    const raw = localStorage.getItem(MENU_CONFIG_KEY);
+    if (!raw) return { ...DEFAULT_MENU_CONFIG };
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ...DEFAULT_MENU_CONFIG };
+    }
+    return { ...DEFAULT_MENU_CONFIG, ...(parsed as MenuConfig) };
+  } catch {
+    return { ...DEFAULT_MENU_CONFIG };
+  }
+}
+
+export function saveMenuConfig(cfg: MenuConfig): void {
+  try {
+    localStorage.setItem(MENU_CONFIG_KEY, JSON.stringify(cfg));
+  } catch {
+    /* ignore */
+  }
+}
+
 // ---- v0.47 搜索面板全屏化（仅面板内生效的布局偏好） ----
 const SEARCH_FULLSCREEN_KEY = "rfm.search-fullscreen";
 

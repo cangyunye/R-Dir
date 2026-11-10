@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  v0.46 Finder 集成（与 Tauri 默认 Info.plist 合并，bundle.macOS.infoPlist 指向本文件）：
+
+  - CFBundleDocumentTypes：声明可打开「任意文件」与「文件夹」→ 文件右键
+    「打开方式 → R-Dir」、文件夹/文件拖到 Dock 图标；送达走 odoc Apple event，
+    由 RunEvent::Opened 转发进运行中实例（新标签打开）。
+  - LSMinimumSystemVersion 等系统字段由 Tauri 生成，不在此重复。
+-->
+<plist version="1.0">
+  <dict>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleTypeName</key>
+        <string>Folder</string>
+        <key>CFBundleTypeRole</key>
+        <string>Viewer</string>
+        <key>LSItemContentTypes</key>
+        <array>
+          <string>public.folder</string>
+          <string>public.directory</string>
+        </array>
+      </dict>
+      <dict>
+        <key>CFBundleTypeName</key>
+        <string>All Files</string>
+        <key>CFBundleTypeRole</key>
+        <string>Viewer</string>
+        <key>LSItemContentTypes</key>
+        <array>
+          <string>public.data</string>
+          <string>public.content</string>
+        </array>
+      </dict>
+    </array>
+  </dict>
+</plist>

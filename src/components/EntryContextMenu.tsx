@@ -22,6 +22,7 @@ import {
   ExternalLink,
   Info,
   ListTree,
+  MonitorDown,
   Pencil,
   Plus,
   RefreshCw,
@@ -37,7 +38,7 @@ import {
   Link2,
 } from "lucide-react";
 import type { FileEntry } from "@/lib/types";
-import type { FileTags, TagNames } from "@/lib/persist";
+import type { FileTags, MenuConfig, TagNames } from "@/lib/persist";
 import { TAG_DEFS, tagLabel, type TagDef } from "@/lib/persist";
 import type { OpenerItem, ShellItem, GitToolItem, QuickToolItem } from "@/lib/openerApi";
 import { isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
@@ -165,6 +166,8 @@ export interface EntryMenuProps {
   tags?: TagDef[];
   tagNames: TagNames;
   customQuick: string[];
+  /** v0.46 右键菜单显隐配置（设置 → 右键菜单；缺省 undefined = 全显） */
+  menuCfg?: MenuConfig;
   compareBase?: { path: string; name: string } | null;
   renaming: RenameState | null;
   canUndo: boolean;
@@ -180,6 +183,8 @@ export interface EntryMenuProps {
   onCompress: (paths: string[], format: "zip" | "tar" | "tgz") => void;
   /** v0.32 解压压缩包：here=智能落点 / folder=归档名文件夹 / choose=自选目录 */
   onExtract: (paths: string[], mode: "here" | "folder" | "choose") => void;
+  /** v0.46 快捷链接组：创建快捷方式（toDesktop=false 同级） / 发送到桌面 */
+  onCreateShortcuts: (paths: string[], toDesktop: boolean) => void;
   onCopy: (paths: string[]) => void;
   onCut: (paths: string[]) => void;
   onRename: (entry: FileEntry) => void;
@@ -223,6 +228,7 @@ export function EntryContextMenuContent({
   tags: tagsProp,
   tagNames,
   customQuick,
+  menuCfg,
   compareBase,
   renaming,
   canUndo,
@@ -236,6 +242,7 @@ export function EntryContextMenuContent({
   onShareDir,
   onCompress,
   onExtract,
+  onCreateShortcuts,
   onCopy,
   onCut,
   onRename,
@@ -266,6 +273,10 @@ export function EntryContextMenuContent({
   const markSuppressRefocus = () => {
     suppressRefocusRef.current = true;
   };
+  // v0.46 右键菜单显隐（设置 → 右键菜单）：未配置的 id 一律显示；「快捷链接」默认隐藏
+  const show = (id: string) => menuCfg?.[id] ?? true;
+  // 快捷链接仅本地路径（.lnk / 符号链接落在本地磁盘）
+  const quickLinksOk = !isSftpPath(entry.path) && !isNfsPath(entry.path) && !isHttpPath(entry.path);
   return (
     <ContextMenuContent
       className="min-w-48"
@@ -293,7 +304,7 @@ export function EntryContextMenuContent({
       <ContextMenuItem onClick={() => onOpen(entry)}>
         <FolderInput className="mr-2 h-4 w-4" /> {t("打开")}
       </ContextMenuItem>
-      {pluginOpener && !vscodeInQuick && (
+      {show("vscode") && pluginOpener && !vscodeInQuick && (
         // v0.29.0 内置直启：文件=VSCode 打开该文件，目录=作为工作区打开；未安装置灰
         <ContextMenuItem
           disabled={!vscodeDetected}
@@ -305,7 +316,7 @@ export function EntryContextMenuContent({
           )}
         </ContextMenuItem>
       )}
-      {!entry.is_dir && pluginOpener && (
+      {show("openWith") && !entry.is_dir && pluginOpener && (
         <MenuGroup
           id="openWith"
           label={t("打开方式")}
@@ -334,7 +345,7 @@ export function EntryContextMenuContent({
           </ContextMenuItem>
         </MenuGroup>
       )}
-      {entry.is_dir && pluginTerminal && (
+      {show("terminal") && entry.is_dir && pluginTerminal && (
         <MenuGroup
           id="terminal"
           label={t("在此处打开终端")}
@@ -354,7 +365,7 @@ export function EntryContextMenuContent({
           ))}
         </MenuGroup>
       )}
-      {entry.is_dir && pluginTerminal && (
+      {show("git") && entry.is_dir && pluginTerminal && (
         // v0.29.0「Git 打开」：Git Bash / Git GUI / 常见 GUI 客户端（探测到才可点）
         <MenuGroup
           id="git"
@@ -381,7 +392,7 @@ export function EntryContextMenuContent({
           )}
         </MenuGroup>
       )}
-      {entry.is_dir && (
+      {show("share") && entry.is_dir && (
         <>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={() => onShareDir(entry.path)}>
@@ -398,24 +409,26 @@ export function EntryContextMenuContent({
         <FilePlus2 className="mr-2 h-4 w-4" /> {t("新建文本文件")}
       </ContextMenuItem>
       <ContextMenuSeparator />
-      <MenuGroup
-        id="compress"
-        label={t("压缩为")}
-        icon={<FileArchive className="mr-2 h-4 w-4" />}
-        expanded={expandedMenu === "compress"}
-        onToggle={onToggleGroup}
-      >
-        <ContextMenuItem onClick={() => onCompress(targets, "zip")}>
-          <FileArchive className="mr-2 h-4 w-4" /> zip
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => onCompress(targets, "tar")}>
-          <FileArchive className="mr-2 h-4 w-4" /> {t("tar（仅打包）")}
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => onCompress(targets, "tgz")}>
-          <FileArchive className="mr-2 h-4 w-4" /> {t("tgz（tar + gzip）")}
-        </ContextMenuItem>
-      </MenuGroup>
-      {!entry.is_dir && isArchiveExt(entry.extension) && (
+      {show("compress") && (
+        <MenuGroup
+          id="compress"
+          label={t("压缩为")}
+          icon={<FileArchive className="mr-2 h-4 w-4" />}
+          expanded={expandedMenu === "compress"}
+          onToggle={onToggleGroup}
+        >
+          <ContextMenuItem onClick={() => onCompress(targets, "zip")}>
+            <FileArchive className="mr-2 h-4 w-4" /> zip
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onCompress(targets, "tar")}>
+            <FileArchive className="mr-2 h-4 w-4" /> {t("tar（仅打包）")}
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onCompress(targets, "tgz")}>
+            <FileArchive className="mr-2 h-4 w-4" /> {t("tgz（tar + gzip）")}
+          </ContextMenuItem>
+        </MenuGroup>
+      )}
+      {!entry.is_dir && isArchiveExt(entry.extension) && show("extract") && (
         // v0.32 解压折叠组（仅压缩包文件）：智能落点 / 归档名文件夹 / 自选目录
         <MenuGroup
           id="extract"
@@ -429,6 +442,23 @@ export function EntryContextMenuContent({
             {t("解压到 {name}/", { name: entry.name.replace(/\.[^.]+$/, "") })}
           </ContextMenuItem>
           <ContextMenuItem onClick={() => onExtract(targets, "choose")}>{t("解压到…")}</ContextMenuItem>
+        </MenuGroup>
+      )}
+      {show("quickLinks") && quickLinksOk && (
+        // v0.46 快捷链接组（默认隐藏，设置 → 右键菜单开启）：创建快捷方式（同级）/ 发送到桌面
+        <MenuGroup
+          id="quickLinks"
+          label={t("快捷链接")}
+          icon={<Link2 className="mr-2 h-4 w-4" />}
+          expanded={expandedMenu === "quickLinks"}
+          onToggle={onToggleGroup}
+        >
+          <ContextMenuItem onClick={() => onCreateShortcuts(targets, false)}>
+            <Link2 className="mr-2 h-4 w-4" /> {t("创建快捷方式")}
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onCreateShortcuts(targets, true)}>
+            <MonitorDown className="mr-2 h-4 w-4" /> {t("发送到桌面")}
+          </ContextMenuItem>
         </MenuGroup>
       )}
       <ContextMenuSeparator />
@@ -458,7 +488,7 @@ export function EntryContextMenuContent({
       <ContextMenuItem onClick={() => onCopyPath(entry.path)}>
         <Clipboard className="mr-2 h-4 w-4" /> {t("复制路径")}
       </ContextMenuItem>
-      {!entry.is_dir && (onSetCompareBase || onCompareWithBase || onComparePick) && (
+      {!entry.is_dir && (onSetCompareBase || onCompareWithBase || onComparePick) && show("compare") && (
         <MenuGroup
           id="compare"
           label={t("比较")}
@@ -496,28 +526,32 @@ export function EntryContextMenuContent({
         </MenuGroup>
       )}
       <ContextMenuSeparator />
-      <MenuGroup
-        id="tags"
-        label={t("标签")}
-        icon={<TagIcon className="mr-2 h-4 w-4" />}
-        expanded={expandedMenu === "tags"}
-        onToggle={onToggleGroup}
-      >
-        {(tagsProp ?? TAG_DEFS).map((tag) => {
-          const checked = (fileTags[entry.path] ?? []).includes(tag.id);
-          return (
-            <ContextMenuItem key={tag.id} onSelect={() => onToggleTag(entry.path, tag.id)}>
-              <span className="mr-2 h-3 w-3 rounded-full" style={{ background: tag.color }} />
-              {tagLabel(tag, tagNames)}
-              {checked && <Check className="ml-auto h-3.5 w-3.5" />}
-            </ContextMenuItem>
-          );
-        })}
-      </MenuGroup>
-      <ContextMenuItem onClick={() => onToggleQuick(entry.path)}>
-        <Star className="mr-2 h-4 w-4" />
-        {customQuick.includes(entry.path) ? t("从快捷访问移除") : t("添加到快捷访问")}
-      </ContextMenuItem>
+      {show("tags") && (
+        <MenuGroup
+          id="tags"
+          label={t("标签")}
+          icon={<TagIcon className="mr-2 h-4 w-4" />}
+          expanded={expandedMenu === "tags"}
+          onToggle={onToggleGroup}
+        >
+          {(tagsProp ?? TAG_DEFS).map((tag) => {
+            const checked = (fileTags[entry.path] ?? []).includes(tag.id);
+            return (
+              <ContextMenuItem key={tag.id} onSelect={() => onToggleTag(entry.path, tag.id)}>
+                <span className="mr-2 h-3 w-3 rounded-full" style={{ background: tag.color }} />
+                {tagLabel(tag, tagNames)}
+                {checked && <Check className="ml-auto h-3.5 w-3.5" />}
+              </ContextMenuItem>
+            );
+          })}
+        </MenuGroup>
+      )}
+      {show("quickAccess") && (
+        <ContextMenuItem onClick={() => onToggleQuick(entry.path)}>
+          <Star className="mr-2 h-4 w-4" />
+          {customQuick.includes(entry.path) ? t("从快捷访问移除") : t("添加到快捷访问")}
+        </ContextMenuItem>
+      )}
       {footerExtras}
       <ContextMenuItem onClick={onRefresh}>
         <RefreshCw className="mr-2 h-4 w-4" /> {t("刷新")}

@@ -75,6 +75,8 @@ const WRITE_COMMANDS: &[&str] = &[
     "restore_from_trash",
     "create_dir",
     "create_file",
+    // v0.46 快捷方式创建（.lnk / 符号链接落盘）
+    "create_shortcuts",
     "compress_items",
     "extract_archive",
     // 远端写 / 落用户指定本地目录
@@ -945,6 +947,33 @@ async fn c_launch_paths_take(_ctx: &WebCtx, _args: &Value) -> Result<Value, Stri
     Ok(Value::Array(vec![]))
 }
 
+/// v0.46 外壳右键集成（Windows 注册表）：web 模式无浏览器右键集成语义
+async fn c_shell_integration_status(_ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    serde_json::to_value(crate::shellint::status()).map_err(|e| e.to_string())
+}
+
+async fn c_shell_integration_register(_ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    Err("WEB_UNSUPPORTED|web 模式不支持系统右键集成".into())
+}
+
+async fn c_shell_integration_unregister(_ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    Err("WEB_UNSUPPORTED|web 模式不支持系统右键集成".into())
+}
+
+/// v0.46 快捷方式创建（服务端本地磁盘真实落盘）
+async fn c_create_shortcuts(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    if ctx.read_only {
+        return Err("READ_ONLY|只读模式禁止写入".into());
+    }
+    let paths: Vec<String> = opt_arg(args, "paths")?.unwrap_or_default();
+    let to_desktop: bool = opt_arg(args, "toDesktop")?.unwrap_or(false);
+    let link_suffix: String = opt_arg(args, "linkSuffix")?.unwrap_or_else(|| "链接".into());
+    tokio::task::spawn_blocking(move || crate::shortcut::create_shortcuts(&paths, to_desktop, &link_suffix))
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+}
+
 async fn c_index_search(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let query: String = arg(args, "query")?;
     let case_sensitive: bool = arg(args, "caseSensitive")?;
@@ -1145,6 +1174,10 @@ web_commands! {
     "find_files" => c_find_files,
     "index_status" => c_index_status,
     "launch_paths_take" => c_launch_paths_take,
+    "shell_integration_status" => c_shell_integration_status,
+    "shell_integration_register" => c_shell_integration_register,
+    "shell_integration_unregister" => c_shell_integration_unregister,
+    "create_shortcuts" => c_create_shortcuts,
     "index_search" => c_index_search,
     "index_rebuild" => c_index_rebuild,
     "index_get_config" => c_index_get_config,

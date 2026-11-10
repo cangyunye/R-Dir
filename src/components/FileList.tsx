@@ -18,7 +18,7 @@ import {
 import { RenameInput } from "@/components/RenameInput";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { TAG_DEFS, tagLabel, type FileTags, type TagDef, type TagNames } from "@/lib/persist";
+import { TAG_DEFS, tagLabel, type FileTags, type MenuConfig, type TagDef, type TagNames } from "@/lib/persist";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { OpenerItem, ShellItem, GitToolItem, QuickToolItem } from "@/lib/openerApi";
 import { ROW_HEIGHT, visibleRange } from "@/lib/virtual-scroll";
@@ -140,6 +140,8 @@ export function FileList({
   onForward,
   onCompress,
   onExtract,
+  onCreateShortcuts,
+  menuCfg,
   onProperties,
   onPropertiesDir,
   onDiff,
@@ -243,6 +245,10 @@ export function FileList({
   onCompress: (paths: string[], format: "zip" | "tar" | "tgz") => void;
   /** v0.32 解压压缩包：here=智能落点 / folder=归档名文件夹 / choose=自选目录 */
   onExtract: (paths: string[], mode: "here" | "folder" | "choose") => void;
+  /** v0.46 快捷链接组：创建快捷方式（toDesktop=false 同级） / 发送到桌面 */
+  onCreateShortcuts: (paths: string[], toDesktop: boolean) => void;
+  /** v0.46 右键菜单显隐配置（设置 → 右键菜单） */
+  menuCfg?: MenuConfig;
   /** v0.16 右键「属性」：对选中条目显示属性（目录递归统计大小） */
   onProperties: (entries: FileEntry[]) => void;
   /** v0.17 空白处右键「属性（当前目录）」：统计 currentDir，与选中项无关 */
@@ -1096,6 +1102,8 @@ export function FileList({
                 onShareDir={onShareDir}
                 onCompress={onCompress}
                 onExtract={onExtract}
+                onCreateShortcuts={onCreateShortcuts}
+                menuCfg={menuCfg}
                 onCopy={onCopy}
                 onCut={onCut}
                 onRename={onRename}

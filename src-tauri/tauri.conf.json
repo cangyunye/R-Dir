@@ -43,7 +43,13 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "infoPlist": "./Info.plist"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "./nsis/hooks.nsi"
+      }
     }
   }
 }

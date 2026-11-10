@@ -217,6 +217,35 @@ export const createFile = async (parent: string, name: string) => {
   return created;
 };
 
+/** 快捷方式创建结果：实际生成的快捷方式路径（v0.46） */
+export interface ShortcutOutcome {
+  created: string[];
+}
+
+/** v0.46 创建快捷方式（Windows .lnk / unix 符号链接）；toDesktop 落桌面否则同级 */
+export const createShortcuts = async (paths: string[], toDesktop: boolean, linkSuffix: string) => {
+  const outcome = await invoke<ShortcutOutcome>("create_shortcuts", { paths, toDesktop, linkSuffix });
+  noteSelfMutatedDirs(outcome.created.map(parentOfPath));
+  return outcome;
+};
+
+/** v0.46 系统集成（Explorer/Finder 右键）状态：仅 Windows 有运行时注册能力 */
+export interface ShellIntegrationStatusView {
+  supported: boolean;
+  directory: boolean;
+  background: boolean;
+  files: boolean;
+}
+
+export const shellIntegrationStatus = () => invoke<ShellIntegrationStatusView>("shell_integration_status");
+
+/** 注册 Explorer 右键「用 R-Dir 打开」（HKCU 免管理员；label 随前端语言） */
+export const shellIntegrationRegister = (label: string) =>
+  invoke<void>("shell_integration_register", { label });
+
+/** 注销 Explorer 右键集成 */
+export const shellIntegrationUnregister = () => invoke<void>("shell_integration_unregister");
+
 /** 压缩选中条目到 target_dir（zip / tar / tgz，仅打包）；返回生成文件路径 */
 export const compressItems = async (
   paths: string[],

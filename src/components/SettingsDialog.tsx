@@ -10,7 +10,9 @@ import {
   HardDrive,
   Info,
   Keyboard,
+  List,
   Monitor,
+  MonitorSmartphone,
   Moon,
   Palette,
   Plus,
@@ -48,6 +50,13 @@ import { normalizeExts } from "@/lib/openers";
 import { formatSize } from "@/lib/format";
 import { remoteTempInfo, type RemoteTempInfo } from "@/lib/api";
 import {
+  shellIntegrationRegister,
+  shellIntegrationStatus,
+  shellIntegrationUnregister,
+  type ShellIntegrationStatusView,
+} from "@/lib/api";
+import type { MenuConfig } from "@/lib/persist";
+import {
   indexGetConfig,
   indexRebuild,
   indexSetConfig,
@@ -69,7 +78,7 @@ import { useT } from "@/lib/LanguageProvider";
 import type { Language } from "@/lib/i18n";
 
 /** 设置分区标识（左栏导航 + 右栏锚点共用） */
-export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "favorites" | "share" | "remoteTemp" | "index" | "plugins" | "about";
+export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "contextMenu" | "favorites" | "share" | "remoteTemp" | "integration" | "index" | "plugins" | "about";
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
   { id: "appearance", label: "外观", icon: <Sun className="h-4 w-4" /> },
@@ -77,12 +86,29 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
   { id: "keys", label: "快捷键", icon: <Keyboard className="h-4 w-4" /> },
   { id: "openers", label: "打开方式", icon: <ExternalLink className="h-4 w-4" /> },
   { id: "quickTools", label: "常用工具", icon: <Wrench className="h-4 w-4" /> },
+  { id: "contextMenu", label: "右键菜单", icon: <List className="h-4 w-4" /> },
   { id: "favorites", label: "收藏夹", icon: <Star className="h-4 w-4" /> },
   { id: "share", label: "分享", icon: <Share2 className="h-4 w-4" /> },
   { id: "remoteTemp", label: "远程临时", icon: <HardDrive className="h-4 w-4" /> },
+  { id: "integration", label: "系统集成", icon: <MonitorSmartphone className="h-4 w-4" /> },
   { id: "index", label: "全盘索引", icon: <Database className="h-4 w-4" /> },
   { id: "plugins", label: "插件", icon: <Puzzle className="h-4 w-4" /> },
   { id: "about", label: "关于", icon: <Info className="h-4 w-4" /> },
+];
+
+/** v0.46 右键菜单可配置组（与 persist.DEFAULT_MENU_CONFIG 的 id 对应；label 走 t()） */
+const CONTEXT_MENU_ITEMS: { id: string; label: string }[] = [
+  { id: "vscode", label: "用 Visual Studio Code 打开" },
+  { id: "openWith", label: "打开方式" },
+  { id: "terminal", label: "在此处打开终端" },
+  { id: "git", label: "Git 打开" },
+  { id: "share", label: "分享此目录…" },
+  { id: "compress", label: "压缩为" },
+  { id: "extract", label: "解压" },
+  { id: "quickLinks", label: "快捷链接（创建快捷方式 / 发送到桌面）" },
+  { id: "compare", label: "比较" },
+  { id: "tags", label: "标签" },
+  { id: "quickAccess", label: "添加到快捷访问" },
 ];
 
 /**
@@ -135,6 +161,8 @@ export function SettingsDialog({
   onRemoveQuickTool,
   onMoveQuickTool,
   onSetQuickToolArgs,
+  menuCfg,
+  onMenuCfgChange,
   remoteTempDir,
   onRemoteTempDirChange,
   onCleanRemoteTemp,
@@ -197,6 +225,9 @@ export function SettingsDialog({
   onMoveQuickTool: (id: string, up: boolean) => void;
   /** v0.31.1 启动参数串（占位符 {path} / {dir} / $pwd / {name}；空 = 默认行为） */
   onSetQuickToolArgs?: (id: string, args: string) => void;
+  /** v0.46 右键菜单显隐配置（通用窗口模式文件右键；缺省 = 全部显示除快捷链接） */
+  menuCfg?: MenuConfig;
+  onMenuCfgChange?: (cfg: MenuConfig) => void;
   /** v0.37 远程打开临时目录（空串 = 后端默认 <系统临时目录>/r-dir-remote） */
   remoteTempDir: string;
   onRemoteTempDirChange: (dir: string) => void;
@@ -297,6 +328,38 @@ export function SettingsDialog({
   useEffect(() => {
     if (open) refreshRemoteTempUsage();
   }, [open, remoteTempDir, refreshRemoteTempUsage]);
+
+  // v0.46 系统集成：Explorer 右键注册状态（仅 Windows 有意义；开关打开期间拉取）
+  const [shellStatus, setShellStatus] = useState<ShellIntegrationStatusView | null>(null);
+  const [shellBusy, setShellBusy] = useState(false);
+  const [shellMsg, setShellMsg] = useState<string | null>(null);
+  const refreshShellStatus = useCallback(() => {
+    shellIntegrationStatus()
+      .then(setShellStatus)
+      .catch(() => setShellStatus(null));
+  }, []);
+  useEffect(() => {
+    if (open) refreshShellStatus();
+  }, [open, shellBusy, refreshShellStatus]);
+  const handleShellToggle = useCallback(async () => {
+    if (!shellStatus?.supported || shellBusy) return;
+    const registered = shellStatus.directory && shellStatus.background && shellStatus.files;
+    setShellBusy(true);
+    setShellMsg(null);
+    try {
+      if (registered) {
+        await shellIntegrationUnregister();
+        setShellMsg(t("已注销资源管理器右键集成"));
+      } else {
+        await shellIntegrationRegister(t("用 R-Dir 打开"));
+        setShellMsg(t("已注册：目录 / 目录空白处 / 文件右键「用 R-Dir 打开」"));
+      }
+    } catch (e) {
+      setShellMsg(String(e));
+    } finally {
+      setShellBusy(false);
+    }
+  }, [shellStatus, shellBusy, t]);
 
   // v0.45 全盘索引：打开设置期间每 2s 轮询状态（顺带在后端同步插件开关）+ 首次拉取配置
   useEffect(() => {
@@ -1208,6 +1271,41 @@ export function SettingsDialog({
                 )}
             </div>
 
+            {/* v0.46 右键菜单显隐（通用窗口模式文件右键；「快捷链接」默认关闭） */}
+            <div
+              ref={(el) => { sectionRefs.current.contextMenu = el; }}
+              data-settings-section="contextMenu"
+              className="scroll-mt-3 mb-6"
+            >
+                <div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("右键菜单显示项")}</div>
+                  <div className="overflow-hidden rounded-md border bg-card">
+                    {CONTEXT_MENU_ITEMS.map((item, i) => {
+                      const on = menuCfg?.[item.id] ?? true;
+                      return (
+                        <label
+                          key={item.id}
+                          role="switch"
+                          aria-checked={on}
+                          aria-label={t(item.label)}
+                          className={cn(
+                            "flex cursor-pointer items-center justify-between gap-3 px-3 py-2.5 text-xs",
+                            i > 0 && "border-t",
+                          )}
+                          onClick={() => onMenuCfgChange?.({ ...menuCfg, [item.id]: !on })}
+                        >
+                          <span>{t(item.label)}</span>
+                          <SwitchVisual checked={on} />
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    {t("关闭不常用的菜单组，让文件右键菜单更清爽；「快捷链接」（创建快捷方式 / 发送到桌面）默认关闭，打开后仅对本地路径生效。")}
+                  </p>
+                </div>
+            </div>
+
             <div
               ref={(el) => { sectionRefs.current.favorites = el; }}
               data-settings-section="favorites"
@@ -1364,6 +1462,60 @@ export function SettingsDialog({
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     {t("SFTP 文件按服务器分目录存放（sftp/主机名），也用于 SFTP 之间互传的中转，程序退出时自动清理。")}
                   </p>
+                </div>
+            </div>
+
+            {/* v0.46 系统集成：资源管理器右键「用 R-Dir 打开」（Windows）；macOS 走打包期声明 */}
+            <div
+              ref={(el) => { sectionRefs.current.integration = el; }}
+              data-settings-section="integration"
+              className="scroll-mt-3 mb-6"
+            >
+                <div>
+                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("系统集成")}</div>
+                  <div className="overflow-hidden rounded-md border bg-card">
+                    {shellStatus?.supported ? (
+                      <>
+                        <label
+                          role="switch"
+                          aria-checked={shellStatus.directory && shellStatus.background && shellStatus.files}
+                          className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2.5 text-xs"
+                          onClick={() => void handleShellToggle()}
+                        >
+                          <span>
+                            {t("资源管理器右键「用 R-Dir 打开」")}
+                            {shellBusy && <span className="ml-1 text-[10px] text-muted-foreground">{t("处理中…")}</span>}
+                          </span>
+                          <SwitchVisual
+                            checked={shellStatus.directory && shellStatus.background && shellStatus.files}
+                          />
+                        </label>
+                        <div className="border-t px-3 py-2.5 text-[11px] text-muted-foreground">
+                          {[
+                            ["directory", t("目录")],
+                            ["background", t("目录空白处")],
+                            ["files", t("任意文件")],
+                          ]
+                            .map(([key, label]) =>
+                              shellStatus[key as "directory" | "background" | "files"]
+                                ? `✓ ${label}`
+                                : `○ ${label}`,
+                            )
+                            .join(" · ")}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="px-3 py-2.5 text-xs text-muted-foreground">
+                        {t("当前平台无需运行时注册。")}
+                      </div>
+                    )}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    {shellStatus?.supported
+                      ? t("注册后：右键目录 / 目录空白处「用 R-Dir 打开」直达该目录；右键文件在已运行的 R-Dir 里新建标签并定位。写入当前用户注册表（HKCU），无需管理员；已打开的窗口重新生效无需重启。")
+                      : t("macOS：文件右键「打开方式 → R-Dir」、目录 / 文件拖到 Dock 图标，即可在 R-Dir 中打开（已运行则新建标签）。Windows 安装版安装时自动注册，此处可随时开关。")}
+                  </p>
+                  {shellMsg && <p className="mt-1 text-[11px] text-foreground">{shellMsg}</p>}
                 </div>
             </div>
 

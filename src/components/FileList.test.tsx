@@ -96,6 +96,7 @@ function makeProps(overrides: Partial<FileListProps> = {}) {
     onForward: noop,
     onCompress: noop,
     onExtract: noop,
+    onCreateShortcuts: noop,
     onProperties: noop,
     onPropertiesDir: noop,
     onDiff: noop,

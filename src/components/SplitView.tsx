@@ -17,7 +17,7 @@ import { canNativeDragOut } from "@/lib/native-drag";
 import { splitPathSegments } from "@/lib/path-segments";
 import type { IconSize, PaneNode, PaneState, SplitDir, ViewMode } from "@/lib/types";
 import type { IconPositionMap } from "@/lib/api";
-import type { EntryAliases, FileTags, TagDef } from "@/lib/persist";
+import type { EntryAliases, FileTags, MenuConfig, TagDef } from "@/lib/persist";
 import { FileList, type RenameState } from "@/components/FileList";
 import { useT } from "@/lib/LanguageProvider";
 import { IconGrid } from "@/components/IconGrid";
@@ -128,6 +128,10 @@ export interface PaneHandlers {
   onCompress: (paneId: number, paths: string[], format: "zip" | "tar" | "tgz") => void;
   /** v0.32 解压压缩包：here=智能落点 / folder=归档名文件夹 / choose=自选目录 */
   onExtract: (paneId: number, paths: string[], mode: "here" | "folder" | "choose") => void;
+  /** v0.46 快捷链接组：创建快捷方式（toDesktop=false 同级） / 发送到桌面 */
+  onCreateShortcuts: (paths: string[], toDesktop: boolean) => void;
+  /** v0.46 右键菜单显隐配置（设置 → 右键菜单；通用窗口模式文件右键） */
+  menuCfg: MenuConfig;
   /** v0.16 右键「属性」 */
   onProperties: (entries: FileEntry[]) => void;
   /** v0.17 空白处右键「属性（当前目录）」 */
@@ -639,6 +643,8 @@ const PaneView = memo(function PaneView({
         onForward={h.onForward}
         onCompress={(paths, fmt) => h.onCompress(pane.id, paths, fmt)}
         onExtract={(paths, mode) => h.onExtract(pane.id, paths, mode)}
+        onCreateShortcuts={h.onCreateShortcuts}
+        menuCfg={h.menuCfg}
         onProperties={h.onProperties}
         onPropertiesDir={h.onPropertiesDir}
         onDiff={h.onDiff}
@@ -726,6 +732,8 @@ const PaneView = memo(function PaneView({
             onSyncDiff={h.onSyncDiff}
             onCompress={(paths, fmt) => h.onCompress(pane.id, paths, fmt)}
             onExtract={(paths, mode) => h.onExtract(pane.id, paths, mode)}
+            onCreateShortcuts={h.onCreateShortcuts}
+            menuCfg={h.menuCfg}
             onProperties={h.onProperties}
             onPropertiesDir={h.onPropertiesDir}
             onDiff={h.onDiff}

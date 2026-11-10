@@ -135,6 +135,7 @@ import {
   compressItems,
   extractArchive,
   launchPathsTake,
+  createShortcuts,
 } from "@/lib/api";
 import { isArchiveExt } from "@/lib/filekind";
 import { ConnectDialog } from "@/components/ConnectDialog";
@@ -214,6 +215,9 @@ import {
   remapPrefixedPath,
   loadEntryAliases,
   saveEntryAliases,
+  loadMenuConfig,
+  saveMenuConfig,
+  type MenuConfig,
   loadRemoteTempDir,
   saveRemoteTempDir,
   entryDisplayName,
@@ -3279,6 +3283,31 @@ useEffect(() => {
     },
     [showError],
   );
+  /** v0.46 右键菜单显隐配置（通用窗口模式文件右键；快捷链接默认隐藏，设置 → 右键菜单） */
+  const [menuCfg, setMenuCfg] = useState<MenuConfig>(() => loadMenuConfig());
+  const updateMenuCfg = useCallback((next: MenuConfig) => {
+    setMenuCfg(next);
+    saveMenuConfig(next);
+  }, []);
+  /** v0.46 快捷链接：创建快捷方式（同级）/ 发送到桌面；完成后刷新落点目录的窗格 */
+  const doCreateShortcuts = useCallback(
+    (paths: string[], toDesktop: boolean) => {
+      createShortcuts(paths, toDesktop, t("链接"))
+        .then((res) => {
+          const dirs = new Set<string>();
+          for (const c of res.created) dirs.add(parentPath(c));
+          for (const d of dirs) {
+            tabs
+              .flatMap((tb) => Object.values(tb.panes))
+              .filter((p) => p.path === d)
+              .forEach((p) => refreshPane(p.id));
+          }
+          showInfo(t("已创建 {n} 个快捷方式", { n: res.created.length }));
+        })
+        .catch((e) => showError(terr(String(e))));
+    },
+    [t, tabs, refreshPane, showInfo, showError],
+  );
   /** v0.31.1 条目显示别名（只读后端条目在标签视图/快捷访问里的"改名"落点，持久化） */
   const [entryAliases, setEntryAliases] = useState<EntryAliases>(() => loadEntryAliases());
   const setEntryAlias = useCallback((path: string, label: string) => {
@@ -5060,6 +5089,8 @@ useEffect(() => {
     onForward: goForward,
     onCompress: (paneId, paths, fmt) => void doCompress(paneId, paths, fmt),
     onExtract: (paneId, paths, mode) => void doExtract(paneId, paths, mode),
+    onCreateShortcuts: doCreateShortcuts,
+    menuCfg,
     onProperties: (list) => setPropertiesEntries(list),
     onPropertiesDir: (dir) => {
       // 空白处右键：统计当前目录本身（不受地址栏选中路径影响）
@@ -5615,6 +5646,8 @@ useEffect(() => {
         onRemoveQuickTool={handleRemoveQuickTool}
         onMoveQuickTool={handleMoveQuickTool}
         onSetQuickToolArgs={handleSetQuickToolArgs}
+        menuCfg={menuCfg}
+        onMenuCfgChange={updateMenuCfg}
         remoteTempDir={remoteTempDir}
         onRemoteTempDirChange={(d) => {
           saveRemoteTempDir(d);
