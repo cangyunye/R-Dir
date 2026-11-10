@@ -62,7 +62,10 @@ fn default_true() -> bool {
 
 /// 列出内置插件。`#[cfg(feature = "sftp")]` 编译期拔出的插件不出现（面板干净）。
 pub fn builtin_plugins(enabled_map: &HashMap<String, bool>, nfs_installed: bool) -> Vec<PluginInfo> {
-    let enabled = |id: &str| enabled_map.get(id).copied().unwrap_or(true);
+    // 面板展示与 plugin_enabled 门禁必须同源（default_enabled）——
+    // 此前这里硬编码 unwrap_or(true)，默认关闭的插件（全盘索引）在面板上
+    // 显示已开启而实际是关的，首次点击反而发出「关闭」指令
+    let enabled = |id: &str| enabled_map.get(id).copied().unwrap_or_else(|| default_enabled(id));
     // 内嵌 nfs 构建不消费该参数（external 条目仅在 nfs-sidecar 构建下出现）
     let _ = nfs_installed;
     let mut v = Vec::new();
@@ -308,5 +311,49 @@ pub fn to_file(state: &PluginState) -> PluginStateFile {
             .filter(|(id, enabled)| *enabled != default_enabled(id))
             .map(|(id, enabled)| (id, PluginEntry { enabled }))
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// v0.47 回归：面板清单（builtin_plugins）与真实门禁（plugin_enabled）必须
+    /// 同源 default_enabled——此前清单侧硬编码默认全开，默认关闭的「全盘索引」
+    /// 在面板显示已开启而实际是关的（视觉与行为颠倒，首次点击发出的是关闭指令）
+    #[test]
+    fn panel_matches_gate_for_default_off_plugin() {
+        let map = HashMap::new(); // 空表 = 全默认（无 plugins.json 覆盖）
+        let list = builtin_plugins(&map, false);
+        let idx = list.iter().find(|p| p.id == "index-search").expect("index-search 应在清单");
+        assert!(!idx.enabled, "面板默认态应与 default_enabled 一致（关）");
+        let state = PluginState::default();
+        assert!(!plugin_enabled(&state, "index-search"), "门禁默认值应与面板一致");
+        // 其余插件默认开：两侧同样一致
+        let sftp = list.iter().find(|p| p.id == "sftp").expect("sftp 应在清单");
+        assert!(sftp.enabled);
+        assert!(plugin_enabled(&state, "sftp"));
+    }
+
+    /// 开启默认关闭的插件 → to_file 落盘记录；再关回默认值 → 记录消失（噪音过滤）
+    #[test]
+    fn toggle_persists_non_default_and_filters_default() {
+        let state = PluginState::default();
+        set_enabled(&state, "index-search", true);
+        let file = to_file(&state);
+        assert_eq!(file.plugins.get("index-search").map(|e| e.enabled), Some(true), "非默认开启必须落盘");
+        // 面板显示随 map 翻转（显式 true → 开）
+        let map = state.enabled.lock().unwrap().clone();
+        let list = builtin_plugins(&map, false);
+        let idx = list.iter().find(|p| p.id == "index-search").unwrap();
+        assert!(idx.enabled);
+        // 关回默认值 → 落盘记录消失（噪音过滤）；面板显示随显式 false（关）
+        set_enabled(&state, "index-search", false);
+        let file = to_file(&state);
+        assert!(file.plugins.get("index-search").is_none(), "默认值不落盘（噪音过滤）");
+        let map = state.enabled.lock().unwrap().clone();
+        let list = builtin_plugins(&map, false);
+        let idx = list.iter().find(|p| p.id == "index-search").unwrap();
+        assert!(!idx.enabled, "显式 false 面板应显示关");
     }
 }
