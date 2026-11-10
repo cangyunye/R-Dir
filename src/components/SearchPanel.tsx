@@ -678,7 +678,9 @@ export function SearchPanel({
                     ? [
                         idxStatus.phase === "building"
                           ? t("索引构建中（已索引 {n} 项）", { n: idxStatus.entries })
-                          : t("已索引 {n} 项", { n: idxStatus.entries }),
+                          : idxStatus.phase === "disabled"
+                            ? t("索引未启用（设置 → 插件 → 全盘索引搜索）")
+                            : t("已索引 {n} 项", { n: idxStatus.entries }),
                       ]
                     : []),
                 ].join(" · ")}
