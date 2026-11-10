@@ -55,6 +55,10 @@ fn now_ms() -> i64 {
 
 // ==================== 配置 ====================
 
+/// 配置文件版本。升级默认排除清单等「老配置拿不到新默认值」的变此时递增，
+/// load_config 检测到旧版本即迁移（默认项并集，用户自定义不动）。
+const CONFIG_VERSION: u32 = 2;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct IndexConfigFile {
     #[serde(default)]
@@ -67,6 +71,9 @@ pub struct IndexConfigFile {
     /// 实时监视开关（notify 内核事件；失败自动降级为仅例行扫描）
     #[serde(default = "default_true")]
     pub watch_enabled: bool,
+    /// 配置版本（缺省 = v0.45 时代的旧文件，load 时迁移）
+    #[serde(default)]
+    pub config_version: u32,
 }
 
 fn default_rescan_secs() -> u64 {
@@ -83,6 +90,7 @@ impl Default for IndexConfigFile {
             exclusions: Vec::new(),
             rescan_interval_secs: DEFAULT_RESCAN_SECS,
             watch_enabled: true,
+            config_version: CONFIG_VERSION,
         }
     }
 }
@@ -108,51 +116,87 @@ pub fn default_roots() -> Vec<String> {
     }
 }
 
-/// 默认排除清单：系统目录 / 回收站 / 卷挂载点（防 /Volumes 下的重复索引与网络卷）
+/// 默认排除清单：系统目录 / 临时目录 / 垃圾箱 / 回收站 / 卷挂载点
+/// （防 /Volumes 下的重复索引与网络卷；临时目录与垃圾箱属高频 churn 区，
+/// 索引它们只会白耗构建与内存）。
 pub fn default_exclusions() -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    // 各平台通用：用户临时目录（mac = /var/folders/... 即 /private 之下已覆盖，
+    // 显式列出以兼容自定义 TMPDIR；win = %TEMP%；linux = /tmp 系）
+    let tmp = std::env::temp_dir().to_string_lossy().into_owned();
+    if !tmp.is_empty() {
+        v.push(tmp);
+    }
     #[cfg(target_os = "macos")]
     {
-        vec![
+        v.extend([
             "/System".to_string(),
             "/private".to_string(),
             "/Volumes".to_string(),
             "/dev".to_string(),
-        ]
+        ]);
+        // 垃圾箱（外置卷的 .Trashes 已被 /Volumes 覆盖）
+        if let Some(home) = dirs::home_dir() {
+            v.push(home.join(".Trash").to_string_lossy().into_owned());
+        }
     }
     #[cfg(target_os = "windows")]
     {
-        crate::volumes::list_volumes()
+        // 垃圾箱 + 系统卷信息 + Windows\Temp，逐固定盘
+        for v0 in crate::volumes::list_volumes()
             .into_iter()
             .filter(|v| v.kind == "fixed")
-            .flat_map(|v| {
-                let p = v.path.trim_end_matches(['\\', '/']).to_string();
-                vec![
-                    format!("{p}\\$Recycle.Bin"),
-                    format!("{p}\\System Volume Information"),
-                ]
-            })
-            .collect()
+        {
+            let p = v0.path.trim_end_matches(['\\', '/']).to_string();
+            v.extend([
+                format!("{p}\\$Recycle.Bin"),
+                format!("{p}\\System Volume Information"),
+                format!("{p}\\Windows\\Temp"),
+            ]);
+        }
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        Vec::new()
+        if let Some(home) = dirs::home_dir() {
+            v.push(home.join(".Trash").to_string_lossy().into_owned());
+            v.push(home.join(".cache").to_string_lossy().into_owned());
+        }
     }
+    v
 }
 
-/// 载入配置；文件缺失或 roots 为空时落一份默认值（首次启动即写盘，设置分区可见）
+/// 载入配置。
+/// - 文件缺失或 roots 为空：落一份全默认值（首次启动即写盘，设置分区可见）；
+/// - 旧版本文件（config_version < 当前）：把新版默认排除项**并集**进用户清单
+///   （临时目录/垃圾箱等系统目录是「几乎没人想索引」的，用户自定义项原样保留），
+///   回写为新版本——根清单不动（用户「仅扫描哪些目录」的选择不受影响）。
 pub fn load_config(config_dir: &Path) -> IndexConfigFile {
     let path = config_dir.join(INDEX_CONFIG_FILE);
     let loaded: Option<IndexConfigFile> = crate::json_store::read_json(&path, "读索引配置失败", "解析索引配置失败")
         .ok()
         .flatten();
     match loaded {
-        Some(cfg) if !cfg.roots.is_empty() => cfg,
+        Some(mut cfg) if !cfg.roots.is_empty() => {
+            if cfg.config_version < CONFIG_VERSION {
+                let mut merged = default_exclusions();
+                for e in std::mem::take(&mut cfg.exclusions) {
+                    if !merged.contains(&e) {
+                        merged.push(e);
+                    }
+                }
+                cfg.exclusions = merged;
+                cfg.config_version = CONFIG_VERSION;
+                save_config(config_dir, &cfg).ok();
+            }
+            cfg
+        }
         _ => {
             let cfg = IndexConfigFile {
                 roots: default_roots(),
                 exclusions: default_exclusions(),
                 rescan_interval_secs: DEFAULT_RESCAN_SECS,
                 watch_enabled: true,
+                config_version: CONFIG_VERSION,
             };
             save_config(config_dir, &cfg).ok();
             cfg
@@ -297,7 +341,8 @@ impl Indexer {
         }
     }
 
-    /// 查询（构建中返回空结果，前端据 status 显示「索引构建中」）
+    /// 查询（构建中返回空结果，前端据 status 显示「索引构建中」）。
+    /// `show_hidden = false` 过滤 `.` 开头条目（与 fd/当前层隐藏灯同语义）
     pub fn query(
         &self,
         query: &str,
@@ -305,6 +350,7 @@ impl Indexer {
         glob: bool,
         regex: bool,
         is_dir: Option<bool>,
+        show_hidden: bool,
     ) -> Result<Vec<IndexHit>, String> {
         let mode = if glob {
             MatchMode::Glob
@@ -316,7 +362,7 @@ impl Indexer {
         let st = self.state.read().unwrap().clone();
         match st.as_ref() {
             None => Ok(Vec::new()),
-            Some(s) => s.query(query, mode, case_sensitive, is_dir),
+            Some(s) => s.query(query, mode, case_sensitive, is_dir, show_hidden),
         }
     }
 
@@ -350,6 +396,7 @@ impl Indexer {
                 exclusions: exclusions.clone(),
                 rescan_interval_secs: interval,
                 watch_enabled,
+                config_version: CONFIG_VERSION,
             },
         )?;
         *self.cfg.lock().unwrap() = IndexConfigFile {
@@ -357,6 +404,7 @@ impl Indexer {
             exclusions,
             rescan_interval_secs: interval,
             watch_enabled,
+            config_version: CONFIG_VERSION,
         };
         Ok(())
     }
@@ -557,12 +605,13 @@ pub fn search_checked(
     glob: bool,
     regex: bool,
     is_dir: Option<bool>,
+    show_hidden: bool,
 ) -> Result<Vec<IndexHit>, String> {
     if !plugins::plugin_enabled(plugins_state, "index-search") {
         return Err("INDEX_DISABLED|全盘索引未启用：请在 设置 → 插件 中开启".into());
     }
     indexer.sync_enabled(plugins_state);
-    indexer.query(query, case_sensitive, glob, regex, is_dir)
+    indexer.query(query, case_sensitive, glob, regex, is_dir, show_hidden)
 }
 
 #[cfg(test)]
@@ -588,7 +637,8 @@ mod tests {
         assert!(should_rescan(false, 0, 10_000, 3_000, 600, None));
     }
 
-    /// 配置 serde default 兼容：旧版 index.json（缺新字段）读入即得默认值
+    /// 配置 serde default 兼容：旧版 index.json（缺新字段）读入即得默认值，
+    /// 且触发排除清单迁移（新版默认项并集进旧清单，用户项保留）
     #[test]
     fn config_defaults_for_legacy_file() {
         let dir = std::env::temp_dir().join(format!("rdir_indexer_cfg_{}", std::process::id()));
@@ -596,13 +646,43 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join(INDEX_CONFIG_FILE),
-            r#"{"roots":["/tmp/x"],"exclusions":[]}"#,
+            r#"{"roots":["/tmp/x"],"exclusions":["/my/custom-excl"]}"#,
         )
         .unwrap();
         let cfg = load_config(&dir);
         assert_eq!(cfg.roots, vec!["/tmp/x".to_string()]);
         assert_eq!(cfg.rescan_interval_secs, DEFAULT_RESCAN_SECS);
         assert!(cfg.watch_enabled);
+        // 迁移：用户自定义项 + 平台默认项并集，版本号推到当前
+        assert_eq!(cfg.config_version, CONFIG_VERSION);
+        assert!(cfg.exclusions.contains(&"/my/custom-excl".to_string()), "用户自定义排除项保留");
+        for d in default_exclusions() {
+            assert!(cfg.exclusions.contains(&d), "新默认排除项 {d} 应并入");
+        }
+        // 回读：迁移结果已落盘，二次加载幂等（不再变化）
+        let cfg2 = load_config(&dir);
+        assert_eq!(cfg.exclusions, cfg2.exclusions);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 当前版本配置不再触发迁移（用户从排除清单删掉默认项应能生效）
+    #[test]
+    fn config_current_version_respected() {
+        let dir = std::env::temp_dir().join(format!("rdir_indexer_cur_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        save_config(&dir, &IndexConfigFile {
+            roots: vec!["/tmp/x".into()],
+            exclusions: vec!["/only-this".into()],
+            rescan_interval_secs: 60,
+            watch_enabled: false,
+            config_version: CONFIG_VERSION,
+        })
+        .unwrap();
+        let cfg = load_config(&dir);
+        assert_eq!(cfg.exclusions, vec!["/only-this".to_string()], "当前版本不做默认项并集");
+        assert_eq!(cfg.rescan_interval_secs, 60);
+        assert!(!cfg.watch_enabled);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -624,6 +704,7 @@ mod tests {
             exclusions: vec![],
             rescan_interval_secs: 0, // 关例行：本测试只验事件驱动路径
             watch_enabled: true,
+            config_version: CONFIG_VERSION,
         })
         .unwrap();
         let idx = Indexer::new(cfg_dir.clone(), true, 50, 200);
@@ -645,7 +726,7 @@ mod tests {
         std::fs::write(root.join("外部新增.txt"), "x").unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let hits = idx.query("外部新增", false, false, false, None).unwrap();
+            let hits = idx.query("外部新增", false, false, false, None, false).unwrap();
             if hits.len() == 1 {
                 break;
             }
@@ -659,7 +740,7 @@ mod tests {
         std::fs::write(sub.join("深层.txt"), "y").unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let hits = idx.query("深层", false, false, false, None).unwrap();
+            let hits = idx.query("深层", false, false, false, None, false).unwrap();
             if hits.len() == 1 {
                 break;
             }
@@ -671,7 +752,7 @@ mod tests {
         std::fs::remove_file(root.join("外部新增.txt")).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let hits = idx.query("外部新增", false, false, false, None).unwrap();
+            let hits = idx.query("外部新增", false, false, false, None, false).unwrap();
             if hits.is_empty() {
                 break;
             }

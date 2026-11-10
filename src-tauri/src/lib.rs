@@ -2707,7 +2707,8 @@ async fn index_status(
     Ok(ix.status())
 }
 
-/// 全盘索引搜索（gram 交集亚毫秒级；regex/glob 模式线性扫描较重，spawn_blocking 包裹）
+/// 全盘索引搜索（gram 交集亚毫秒级；regex/glob 模式线性扫描较重，spawn_blocking 包裹；
+/// show_hidden=false 过滤 `.` 开头条目，与 fd/当前层隐藏灯同语义）
 #[tauri::command]
 async fn index_search(
     app: tauri::AppHandle,
@@ -2717,6 +2718,7 @@ async fn index_search(
     glob: bool,
     regex: bool,
     is_dir: Option<bool>,
+    show_hidden: Option<bool>,
 ) -> Result<Vec<indexer::IndexHit>, String> {
     let ix = indexer::ensure(
         &paths::config_dir(&app)?,
@@ -2724,11 +2726,12 @@ async fn index_search(
     );
     // spawn_blocking 需要 owned 数据：插件开关表克隆一份（同 web 桥的处理）
     let enabled_map = state.plugins.enabled.lock().unwrap().clone();
+    let show_hidden = show_hidden.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         let ps = plugins::PluginState {
             enabled: std::sync::Mutex::new(enabled_map),
         };
-        indexer::search_checked(&ps, &ix, &query, case_sensitive, glob, regex, is_dir)
+        indexer::search_checked(&ps, &ix, &query, case_sensitive, glob, regex, is_dir, show_hidden)
     })
     .await
     .map_err(|e| e.to_string())?

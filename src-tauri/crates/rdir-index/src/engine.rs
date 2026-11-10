@@ -149,12 +149,15 @@ impl EngineState {
 
     /// 查询。`case_sensitive` 对 Contains 生效；Glob/Regex 自带大小写语义。
     /// gram 层恒为不区分大小写（归一在 add/query 两侧一致完成）。
+    /// `show_hidden = false` 时过滤文件名 `.` 开头的条目（与 fd / 当前层
+    /// 「隐藏灯」同一语义）；索引本体始终全量收录，过滤只在查询出口做。
     pub fn query(
         &self,
         query: &str,
         mode: MatchMode,
         case_sensitive: bool,
         is_dir: Option<bool>,
+        show_hidden: bool,
     ) -> Result<Vec<IndexHit>, String> {
         let q = query.trim();
         if q.is_empty() {
@@ -177,6 +180,9 @@ impl EngineState {
                         }
                     }
                     let name = self.name_of(m);
+                    if !show_hidden && name.starts_with('.') {
+                        continue;
+                    }
                     let matched = if case_sensitive {
                         name.contains(q)
                     } else {
@@ -196,12 +202,31 @@ impl EngineState {
                     .build()
                     .map_err(|e| e.to_string())?
                     .compile_matcher();
-                self.scan_linear(|name| gm.is_match(name), is_dir, &mut hits);
+                let test = |name: &str| gm.is_match(name);
+                // `*.rs` / `read*me.txt` 类通配：`*`/`?` 切出的字面量段必现 → gram 预筛
+                match self.prefilter(literal_runs(q, &['*', '?'], &['[', ']', '{', '}', '\\'])) {
+                    Some(cands) => self.scan_ids(cands.into_iter(), &test, is_dir, show_hidden, &mut hits),
+                    None => self.scan_linear(&test, is_dir, show_hidden, &mut hits),
+                }
             }
             MatchMode::Regex => {
                 let pattern = if case_sensitive { q.to_string() } else { format!("(?i){q}") };
                 let re = Regex::new(&pattern).map_err(|e| e.to_string())?;
-                self.scan_linear(|name| re.is_match(name), is_dir, &mut hits);
+                let test = |name: &str| re.is_match(name);
+                // 简单正则（仅字面量 + `.` 任意单符 + `^`/`$` 锚，如 `main.rs`、
+                // `^package.json$`）：按 `.` 切出的字面量段必现 → gram 预筛，
+                // 让 UI 默认的正则模式也吃满索引速度；含分支/量词/字符类等
+                // 复杂结构（字面量变可选）→ 放弃预筛走全量线性扫描
+                let body = q.strip_prefix('^').unwrap_or(q);
+                let body = body.strip_suffix('$').unwrap_or(body);
+                match self.prefilter(literal_runs(
+                    body,
+                    &['.'],
+                    &['\\', '|', '?', '*', '+', '(', ')', '[', ']', '{', '}', '^', '$'],
+                )) {
+                    Some(cands) => self.scan_ids(cands.into_iter(), &test, is_dir, show_hidden, &mut hits),
+                    None => self.scan_linear(&test, is_dir, show_hidden, &mut hits),
+                }
             }
         }
         // 结果按路径排序（≤MAX_HITS 条，代价可忽略）
@@ -210,20 +235,63 @@ impl EngineState {
     }
 
     /// glob/regex 的全量线性扫描（重量级模式，命中即攒，攒够即停）
-    fn scan_linear(&self, test: impl Fn(&str) -> bool, is_dir: Option<bool>, hits: &mut Vec<u32>) {
-        for (id, m) in self.meta.iter().enumerate() {
+    fn scan_linear(
+        &self,
+        test: impl Fn(&str) -> bool,
+        is_dir: Option<bool>,
+        show_hidden: bool,
+        hits: &mut Vec<u32>,
+    ) {
+        self.scan_ids(0..self.meta.len() as u32, test, is_dir, show_hidden, hits);
+    }
+
+    /// 对候选 id 流做统一校验（is_dir/隐藏过滤 + 模式匹配），攒够 MAX_HITS 即停
+    fn scan_ids(
+        &self,
+        ids: impl Iterator<Item = u32>,
+        test: impl Fn(&str) -> bool,
+        is_dir: Option<bool>,
+        show_hidden: bool,
+        hits: &mut Vec<u32>,
+    ) {
+        for id in ids {
+            let m = &self.meta[id as usize];
             if let Some(d) = is_dir {
                 if m.is_dir != d {
                     continue;
                 }
             }
-            if test(self.name_of(m)) {
-                hits.push(id as u32);
+            let name = self.name_of(m);
+            if !show_hidden && name.starts_with('.') {
+                continue;
+            }
+            if test(name) {
+                hits.push(id);
                 if hits.len() >= MAX_HITS {
                     return;
                 }
             }
         }
+    }
+
+    /// 字面量段 gram 预筛：各段的候选做段间交集。任一段无候选 ⇒ 必无结果
+    /// （Some(空)）；无一段 ≥2 字符（无 gram 可用）⇒ None（回退全量扫描）。
+    /// 不截断（usize::MAX）：预筛结果直接决定命中范围，截断会引入漏配。
+    fn prefilter(&self, runs: Option<Vec<&str>>) -> Option<Vec<u32>> {
+        let mut acc: Option<Vec<u32>> = None;
+        for r in runs? {
+            let Some(c) = self.grams.candidates_cap(r, usize::MAX) else {
+                continue; // <2 字符的段无 gram，不参与约束
+            };
+            acc = Some(match acc {
+                None => c,
+                Some(a) => crate::grams::intersect(&a, &c),
+            });
+            if acc.as_ref().map_or(false, |v| v.is_empty()) {
+                break;
+            }
+        }
+        acc
     }
 
     /// 单字（<2 字符）查询回退：全量名字扫描。needle 只会是 0/1 个字符——
@@ -481,6 +549,22 @@ fn ci_contains_char(hay: &str, c: char) -> bool {
     lower_chars(hay).any(|h| h == c)
 }
 
+/// 提取模式中的「必现字面量段」（供 gram 预筛）：`wildcards` 是分隔元字符
+/// （匹配任意内容，段与段之间被它们隔开），出现 `forbidden` 中任一字符即放弃
+/// ——分支/量词/字符类/转义会让字面量变成可选或改变含义，预筛不再安全。
+/// 匹配文本必然依次包含每个段（ gram 候选取段间交集即安全的超集）。
+fn literal_runs<'a>(pattern: &'a str, wildcards: &[char], forbidden: &[char]) -> Option<Vec<&'a str>> {
+    if pattern.chars().any(|c| forbidden.contains(&c)) {
+        return None;
+    }
+    Some(
+        pattern
+            .split(|c| wildcards.contains(&c))
+            .filter(|s| !s.is_empty())
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,25 +594,25 @@ mod tests {
             raw("/data/src/lib/子目录文档.docx", false),
         ]);
         // 子串（不区分大小写）
-        let hits = st.query("readme", MatchMode::Contains, false, None).unwrap();
+        let hits = st.query("readme", MatchMode::Contains, false, None, false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "/data/Readme.md");
-        let hits = st.query("MAIN", MatchMode::Contains, false, None).unwrap();
+        let hits = st.query("MAIN", MatchMode::Contains, false, None, false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name, "main.rs");
         // 中文 2 字查询
-        let hits = st.query("读取", MatchMode::Contains, false, None).unwrap();
+        let hits = st.query("读取", MatchMode::Contains, false, None, false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name, "读取我.md");
         // 大小写敏感
-        assert_eq!(st.query("Readme", MatchMode::Contains, true, None).unwrap().len(), 1);
-        assert!(st.query("readme", MatchMode::Contains, true, None).unwrap().is_empty());
+        assert_eq!(st.query("Readme", MatchMode::Contains, true, None, false).unwrap().len(), 1);
+        assert!(st.query("readme", MatchMode::Contains, true, None, false).unwrap().is_empty());
         // is_dir 过滤
-        let hits = st.query("lib", MatchMode::Contains, false, Some(true)).unwrap();
+        let hits = st.query("lib", MatchMode::Contains, false, Some(true), false).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].is_dir);
         // 结果按路径排序
-        let hits = st.query(".md", MatchMode::Contains, false, None).unwrap();
+        let hits = st.query(".md", MatchMode::Contains, false, None, false).unwrap();
         let paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
         let mut sorted = paths.clone();
         sorted.sort_unstable();
@@ -538,12 +622,92 @@ mod tests {
     #[test]
     fn single_char_fallback() {
         let st = state_with(vec![raw("/a/x.txt", false), raw("/b/y.log", false), raw("/c/z", false)]);
-        let hits = st.query("z", MatchMode::Contains, false, None).unwrap();
+        let hits = st.query("z", MatchMode::Contains, false, None, false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "/c/z");
-        let hits = st.query("X", MatchMode::Contains, false, None).unwrap();
+        let hits = st.query("X", MatchMode::Contains, false, None, false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "/a/x.txt");
+    }
+
+    /// 隐藏过滤（show_hidden=false 滤掉 `.` 开头文件名；索引本体恒全量收录，
+    /// 过滤只在查询出口做；glob/正则线性扫描路径同样生效）
+    #[test]
+    fn hidden_filter() {
+        let st = state_with(vec![
+            raw("/a/visible.txt", false),
+            raw("/a/.hidden.txt", false),
+            raw("/a/.hidir", true),
+            raw("/a/h.log", false),
+        ]);
+        // Contains：默认跳过隐藏（可见名中无 "hid" 子串 → 0），开启后命中两个隐藏项
+        let hits = st.query("hid", MatchMode::Contains, false, None, false).unwrap();
+        assert_eq!(hits.len(), 0);
+        let hits = st.query("hid", MatchMode::Contains, false, None, true).unwrap();
+        assert_eq!(hits.len(), 2);
+        // glob / 正则线性扫描同样过滤
+        let hits = st.query("*.txt", MatchMode::Glob, false, None, false).unwrap();
+        assert_eq!(hits.len(), 1);
+        let hits = st.query("*.txt", MatchMode::Glob, false, None, true).unwrap();
+        assert_eq!(hits.len(), 2);
+        let hits = st.query(r"id", MatchMode::Regex, false, None, false).unwrap();
+        assert_eq!(hits.len(), 0);
+        let hits = st.query(r"id", MatchMode::Regex, false, None, true).unwrap();
+        assert_eq!(hits.len(), 2);
+    }
+
+    /// 字面量段提取的安全边界：白名单通配符切段；禁用字符（分支/量词/字符类/
+    /// 转义）出现即放弃预筛
+    #[test]
+    fn literal_runs_safety() {
+        fn rr(p: &str) -> Option<Vec<&str>> {
+            literal_runs(p, &['.'], &['\\', '|', '?', '*', '+', '(', ')', '[', ']', '{', '}', '^', '$'])
+        }
+        fn gr(p: &str) -> Option<Vec<&str>> {
+            literal_runs(p, &['*', '?'], &['[', ']', '{', '}', '\\'])
+        }
+        assert_eq!(rr("main.rs"), Some(vec!["main", "rs"]));
+        // 锚字符在本层即禁用（引擎侧先剥 `^`/`$` 再调用，见 prefilter_equivalence）
+        assert_eq!(rr("^package.json$"), None);
+        assert_eq!(rr("package.json"), Some(vec!["package", "json"]));
+        assert_eq!(rr("a|b"), None, "分支让字面量可选，必须放弃");
+        assert_eq!(rr("ab+"), None, "量词让字面量可选，必须放弃");
+        assert_eq!(rr(r"\d+x"), None, "转义改变字面量含义，必须放弃");
+        assert_eq!(gr("*.rs"), Some(vec![".rs"]));
+        assert_eq!(gr("read*me?.txt"), Some(vec!["read", "me", ".txt"]));
+        assert_eq!(gr("a[b]c"), None);
+    }
+
+    /// 预筛路径与全量线性扫描的结果等价性（正则点号通配 / glob 星号跨段）：
+    /// 预筛只做超集收敛 + 原样校验，结果集合必须完全一致
+    #[test]
+    fn prefilter_equivalence() {
+        let st = state_with(vec![
+            raw("/d/main.rs", false),
+            raw("/d/mainXrs", false), // 正则 `.` 的任意符命中，字面量段仍都在
+            raw("/d/main.rs.bak", false),
+            raw("/d/other.txt", false),
+            raw("/d/.main.rs", false),
+            raw("/d/read-me.txt", false),
+        ]);
+        // 正则转义点号：含 `\` → 预筛放弃走线性，仅字面 `main.rs` 命中
+        let hits = st.query(r"main\.rs", MatchMode::Regex, false, None, true).unwrap();
+        let paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+        assert_eq!(paths, vec!["/d/.main.rs", "/d/main.rs", "/d/main.rs.bak"]);
+        // 正则裸点号：预筛段 ["main","rs"]，`.` 匹配任意——多命中 mainXrs
+        let hits = st.query(r"main.rs", MatchMode::Regex, false, None, true).unwrap();
+        let paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+        assert_eq!(paths, vec!["/d/.main.rs", "/d/main.rs", "/d/main.rs.bak", "/d/mainXrs"]);
+        // glob `*.rs`：预筛段 [".rs"]，`*` 跨段；尾缀 `.rs`：.bak/mainXrs 不符
+        let hits = st.query("*.rs", MatchMode::Glob, false, None, true).unwrap();
+        let paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+        assert_eq!(paths, vec!["/d/.main.rs", "/d/main.rs"]);
+        let hits = st.query("*.rs", MatchMode::Glob, false, None, false).unwrap();
+        let paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+        assert_eq!(paths, vec!["/d/main.rs"]);
+        // 无字面量段的模式（`?` 全程）：预筛 None 回退线性，结果一致
+        let hits = st.query("main??s", MatchMode::Glob, false, None, true).unwrap();
+        assert_eq!(hits.len(), 2); // main.rs / mainXrs（? 单符，.bak/.txt 结尾不符）
     }
 
     #[test]
@@ -553,14 +717,14 @@ mod tests {
             raw("/d/b.txt", false),
             raw("/d/子目录.rs", false),
         ]);
-        let hits = st.query("*.rs", MatchMode::Glob, false, None).unwrap();
+        let hits = st.query("*.rs", MatchMode::Glob, false, None, false).unwrap();
         assert_eq!(hits.len(), 2);
         // glob 无通配 = 整名相等
-        assert_eq!(st.query("a.rs", MatchMode::Glob, false, None).unwrap().len(), 1);
-        assert!(st.query("a", MatchMode::Glob, false, None).unwrap().is_empty());
-        let hits = st.query(r"\.txt$", MatchMode::Regex, false, None).unwrap();
+        assert_eq!(st.query("a.rs", MatchMode::Glob, false, None, false).unwrap().len(), 1);
+        assert!(st.query("a", MatchMode::Glob, false, None, false).unwrap().is_empty());
+        let hits = st.query(r"\.txt$", MatchMode::Regex, false, None, false).unwrap();
         assert_eq!(hits.len(), 1);
-        assert!(st.query("(unclosed", MatchMode::Regex, false, None).is_err());
+        assert!(st.query("(unclosed", MatchMode::Regex, false, None, false).is_err());
     }
 
     #[test]
@@ -625,7 +789,7 @@ mod tests {
         assert!(st2.exact_lookup(b.join("new.txt").to_str().unwrap()).is_some());
 
         // 查询仍正常
-        let hits = st2.query("second", MatchMode::Contains, false, None).unwrap();
+        let hits = st2.query("second", MatchMode::Contains, false, None, false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name, "second.log");
 

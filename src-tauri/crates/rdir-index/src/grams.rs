@@ -42,18 +42,20 @@ impl GramIndex {
     /// - 返回 `None`：查询词不足 2 字符，无 gram 可用——调用方走全量扫描回退；
     /// - 返回 `Some(空)`：存在 gram 但索引里没有——必无结果，可直接返回；
     /// - `cap`：候选截断上限。截断只会丢候选（精度由调用方的原名校验兜底），
-    ///   不会引入假结果。
+    ///   不会引入假结果；预筛场景传 `usize::MAX` 即不截断（多段交集要求完整）。
     pub fn candidates_cap(&self, query: &str, cap: usize) -> Option<Vec<u32>> {
         let chars: Vec<char> = lower_chars(query).collect();
         if chars.len() < 2 {
             return None;
         }
-        let mut lists: Vec<&Vec<u32>> = chars
-            .windows(2)
-            .filter_map(|w| self.map.get(&(w[0], w[1])))
-            .collect();
-        if lists.is_empty() {
-            return Some(Vec::new());
+        let mut lists: Vec<&Vec<u32>> = Vec::with_capacity(chars.len() - 1);
+        for w in chars.windows(2) {
+            match self.map.get(&(w[0], w[1])) {
+                Some(l) => lists.push(l),
+                // 索引中不存在的 gram ⇒ 任何名字都不含它 ⇒ 必无结果
+                // （此前 filter_map 跳过会返回超集，白白多验一轮；直接短路）
+                None => return Some(Vec::new()),
+            }
         }
         // 从最短的 posting 开始交，尽早收敛/触发截断
         lists.sort_by_key(|l| l.len());
@@ -75,8 +77,9 @@ impl GramIndex {
     }
 }
 
-/// 升序有序列表双指针交集（O(a+b)，无哈希、无分配放大、cache 友好）
-fn intersect(a: &[u32], b: &[u32]) -> Vec<u32> {
+/// 升序有序列表双指针交集（O(a+b)，无哈希、无分配放大、cache 友好）。
+/// 供引擎做多段字面量预筛的段间交集（crate 内可见）。
+pub(crate) fn intersect(a: &[u32], b: &[u32]) -> Vec<u32> {
     let (mut i, mut j) = (0usize, 0usize);
     let mut out = Vec::with_capacity(a.len().min(b.len()));
     while i < a.len() && j < b.len() {

@@ -99,7 +99,7 @@ mod tests {
         assert_eq!(loaded.len(), st.len());
         assert_eq!(loaded.roots_fp, 99);
         assert_eq!(loaded.root_mtimes, vec![333]);
-        let hits = loaded.query("alpha", MatchMode::Contains, false, None).unwrap();
+        let hits = loaded.query("alpha", MatchMode::Contains, false, None, false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "/x/alpha.txt");
         assert_eq!(hits[0].size, 3);

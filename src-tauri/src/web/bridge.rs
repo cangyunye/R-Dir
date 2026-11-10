@@ -944,6 +944,7 @@ async fn c_index_search(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let glob: bool = arg(args, "glob")?;
     let regex: bool = arg(args, "regex")?;
     let is_dir: Option<bool> = opt_arg(args, "isDir")?;
+    let show_hidden: bool = opt_arg(args, "showHidden")?.unwrap_or(false);
     let ix = index_with_ctx(ctx);
     // spawn_blocking 需要owned 数据：插件开关表克隆一份（PluginState.enabled 是 pub 字段）
     let enabled_map = ctx.state.plugins.enabled.lock().unwrap().clone();
@@ -951,7 +952,7 @@ async fn c_index_search(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
         let ps = crate::plugins::PluginState {
             enabled: std::sync::Mutex::new(enabled_map),
         };
-        crate::indexer::search_checked(&ps, &ix, &query, case_sensitive, glob, regex, is_dir)
+        crate::indexer::search_checked(&ps, &ix, &query, case_sensitive, glob, regex, is_dir, show_hidden)
     })
     .await
     .map_err(|e| e.to_string())?

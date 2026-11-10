@@ -31,7 +31,7 @@ fn main() {
 
     for q in queries {
         let t1 = Instant::now();
-        let hits = st.query(q, MatchMode::Contains, false, None).unwrap();
+        let hits = st.query(q, MatchMode::Contains, false, None, false).unwrap();
         println!("查询 {:?}: {} 命中（截 500），{:?}", q, hits.len(), t1.elapsed());
     }
 

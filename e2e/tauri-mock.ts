@@ -390,9 +390,11 @@ export async function installTauriMock(page: Page): Promise<void> {
       }),
       index_search: (a) => {
         const q = String(a.query).toLowerCase();
+        const showHidden = !!a.showHidden;
         const out: { path: string; name: string; is_dir: boolean; size: number; mtime: number }[] = [];
         for (const dir of Object.keys(FS)) {
           for (const f of FS[dir] ?? []) {
+            if (!showHidden && f.name.startsWith(".")) continue;
             if (f.name.toLowerCase().includes(q)) {
               out.push({ path: `${dir}/${f.name}`, name: f.name, is_dir: !!f.dir, size: 1, mtime: 0 });
               if (out.length >= 500) return out;

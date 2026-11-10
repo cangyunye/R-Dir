@@ -486,7 +486,7 @@ export function SearchPanel({
     const seq = ++idxSeq.current;
     idxTimer.current = window.setTimeout(async () => {
       try {
-        const res = await indexSearch(q, nameCase, nameMode === "glob", nameMode === "regex", null);
+        const res = await indexSearch(q, nameCase, nameMode === "glob", nameMode === "regex", null, nameHidden);
         if (seq !== idxSeq.current) return;
         setIdxResults(res);
       } catch (e) {
@@ -500,7 +500,7 @@ export function SearchPanel({
     return () => {
       if (idxTimer.current) window.clearTimeout(idxTimer.current);
     };
-  }, [query, idxEnabled, nameCase, nameMode]);
+  }, [query, idxEnabled, nameCase, nameMode, nameHidden]);
 
   // 全盘灯钮点亮时轮询索引状态（构建中提示「已索引 n 项」；顺带在后端同步插件开关）
   useEffect(() => {
@@ -670,7 +670,7 @@ export function SearchPanel({
                   nameMode === "glob" ? t("通配符") : t("正则"),
                   nameHidden ? t("含隐藏") : t("跳过隐藏"),
                   nameCase ? t("区分大小写") : t("不区分大小写"),
-                  fdEnabled ? t("尊重 .gitignore") : t("共 {n} 项", { n: entries.length }),
+                  fdEnabled ? t("尊重 .gitignore") : idxEnabled ? t("范围：全部索引卷") : t("共 {n} 项", { n: entries.length }),
                   ...(fdEnabled
                     ? [maxDepth == null ? t("深度不限") : t("深度：{n} 层", { n: maxDepth })]
                     : []),

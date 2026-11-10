@@ -294,13 +294,14 @@ export const findFiles = (
 /** 索引状态轮询（顺带在后端同步插件开关） */
 export const indexStatus = () => invoke<IndexStatusView>("index_status");
 
-/** 全盘索引检索（子串/通配/正则按文件名整段匹配；结果上限 500） */
+/** 全盘索引检索（子串/通配/正则按文件名整段匹配；showHidden=false 过滤 `.` 开头项；结果上限 500） */
 export const indexSearch = (
   query: string,
   caseSensitive: boolean,
   glob: boolean,
   regex: boolean,
   isDir: boolean | null = null,
+  showHidden = false,
 ) =>
   invoke<IndexHit[]>("index_search", {
     query,
@@ -308,6 +309,7 @@ export const indexSearch = (
     glob,
     regex,
     isDir,
+    showHidden,
   });
 
 /** 手动全量重建（后台线程 ≤2s 内响应，构建期间旧索引继续可查） */
