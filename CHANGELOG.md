@@ -5,6 +5,18 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.46.0 (2026-11-11)
+
+- **搜索框 IntelliJ 式美化 + 深度下拉 chip 化**：文件名 / 内容两 tab 的搜索输入行升级为主输入容器——左侧 Search 引导图标 + 无边框输入（`h-9 text-sm`，替代原 `h-7 text-xs`）+ 聚焦外圈（`focus-within` ring）+ 非空清空钮；深度控制（v0.45 引入）由原生 `<select>` 改为下拉菜单 chip（Layers 图标 +「深度 {n} 层 / 深度不限」，选中项 ✓，非不限态 sky 高亮，与灯钮行同高），两 tab 共用 `rfm.search-depth` 持久化不变；灯钮行 `flex-wrap` 适配窄面板。既有 e2e 占位符锚点（「搜索当前层文件名…」等）全部保留。
+- **内容搜索 vscode 风格排除（「排除的文件」输入框）**：内容 tab 搜索框下方新增虚线边框排除输入框（FileX 图标 +「排除的文件」前缀标签，vscode 语义），逗号 / 换行分隔多模式，`rfm.search-exclude` 持久化；后端 `search_content` 新增 `excludeGlobs` 参数（GUI 命令 / web 桥 / api.ts 三路接线），`globset`（既有依赖）编译 `GlobSet` 对相对路径匹配、**目录命中整棵剪枝**。模式语义对齐 vscode search.exclude：不含 `/` 的模式（`node_modules`、`*.log`）按任意层级同名匹配；含 `/` 的按相对搜索根匹配（`**/` 前缀即任意层级）；`dir/**` 额外生成 `dir` 本体兜底（遇到目录即整棵跳过）；`literal_separator(true)` 保证 `*` 不跨路径段；大小写跟随内容搜索的 Aa 灯。cargo 测试 +6 用例（node_modules 剪枝 / 大小写敏感切换 / 混排分隔符 / 根相对语义）。
+- **系统右键集成（安装版注册到 Explorer / Finder）**：
+  - **路径转发管线**：新增 `tauri-plugin-single-instance`（三平台，二次启动聚焦主窗并转发 argv；macOS 走 Unix socket 单例）；macOS Finder 打开走 `RunEvent::Opened`（odoc Apple event，冷启动与运行中均送达，与二次进程转发互补不重复）；冷启动 argv（Explorer 右键 / CLI / Finder Open With）入队 `LaunchPaths`，前端首启 `launch_paths_take` 拉取（带路径启动按参数开标签并跳过会话恢复），运行中经 `open://paths` 事件推送——目录直达新标签，文件开父目录新标签并选中（复用粘贴定位的 pendingSelect 机制）；`pulled` 标志防「入队兜底 + 事件推送」双通道重复。
+  - **Windows**：`shellint.rs` 读写 HKCU `Software\Classes` 三处 `OpenWithRDir` 动词键（目录 / 目录空白处 / 任意文件，命令 `"R-Dir.exe" "%V"`/`"%1"`，winreg 免管理员）；NSIS `installerHooks`（`nsis/hooks.nsi`）安装时自动注册、卸载时清理；应用内「设置 → 系统集成」总开关随时注册 / 注销（label 随前端语言），分项状态行如实显示。便携版 / 手动开关与安装版注册同键位互认。
+  - **macOS**：`Info.plist`（`bundle.macOS.infoPlist` 合并）声明文件夹（`public.folder`）与任意文件（`public.data`/`public.content`）文档类型——文件右键「打开方式 → R-Dir」、目录 / 文件拖 Dock 图标均以 odoc 送达运行中实例新建标签。
+- **快捷链接右键组 + 右键配置模块**：新增 `shortcut.rs`——Windows 生成 `.lnk`（WScript.Shell 经 PowerShell 调用，与 compress.rs 的系统命令策略一致），macOS / Linux 生成符号链接（绝对目标）；重名自动序号避让（`xxx 链接 2` / `xxx (2).lnk`），unix 命名后缀随前端语言。右键菜单新增「快捷链接」折叠组（创建快捷方式 = 同级落点 / 发送到桌面 = 桌面落点，仅本地路径，**默认不显示**）。配套**右键配置模块**：`rfm.menu-config` 持久化 + 「设置 → 右键菜单」分区 11 组开关（VSCode / 打开方式 / 终端 / Git / 分享 / 压缩为 / 解压 / 快捷链接 / 比较 / 标签 / 添加到快捷访问），通用窗口模式文件右键按配置显隐，未配置的组一律显示（向后兼容）；关闭不常用菜单组即可给右键菜单瘦身。
+- **i18n**：新词条（「排除的文件」「快捷链接」「创建快捷方式」「发送到桌面」「右键菜单显示项」「系统集成」等）中文原文即 key，暂回退中文；zh-Hant 等 5 包由 R-Dir-L10n 仓库随后补齐（下版统一 bump 依赖）。
+- 测试：cargo +9（search 排除 6 例 / 快捷方式命名避让与符号链接真实创建 2 例 / shellint 状态序列化）；vitest +3（`rfm.search-exclude` 读写、`rfm.menu-config` 合并回退）；e2e +3（快捷链接默认隐藏 → 设置开关 → 创建 / 发送桌面落盘断言、压缩组关闭显隐；tauri-mock 新增 `create_shortcuts` / `shell_integration_*` / `launch_paths_take` 桩）；全量 cargo 259 / vitest 770 / e2e 219 全绿；web 桥同步接线（`launch_paths_take` 空实现、`shell_integration_*` 明确降级、`create_shortcuts` 服务端真实落盘并入 WRITE_COMMANDS 只读门禁）。
+
 ## v0.45.0 (2026-11-11)
 
 - **全盘索引搜索引擎（Everything 级瞬时文件名检索，新 workspace crate `crates/rdir-index`）**：字符级 2-gram 倒排索引（按字符不按字节——中文文件名 UTF-8 一字 3 字节，按字节切会产生乱码索引；2 字中文查询恰好两个 gram 交集全覆盖）+ 打包路径 arena（全部路径连续单块 UTF-8 buffer，条目只记 offset/len，零每串堆分配）+ 查询流水线（posting 按 len 升序 pairwise 双指针交集 O(a+b) → 候选截 1 万 → 原名精确校验 → 路径排序截 500）；单字查询回退全量名字字节扫描（免建 1-gram 省一半倒排内存）；持久化为 bincode 快照原子落盘（tmp+rename，版本/roots 指纹不符即弃用重建，启动 <1s 恢复）。并发模型：`EngineState` 不可变整体换入 `RwLock<Arc<Option<…>>>`，查询 clone Arc 即释锁，构建期间旧索引继续可查。实机 68 万条目：全量构建 3.2s、常驻 226MB、查询 4–400µs、增量重扫零磁盘成本 6ms（`cargo run -p rdir-index --release --example bench -- <目录> [查询词...]` 可复测）。

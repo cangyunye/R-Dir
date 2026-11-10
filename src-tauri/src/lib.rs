@@ -3169,8 +3169,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
-        // v0.46 单实例：二次启动聚焦主窗并转发路径（Explorer 右键「用 R-Dir 打开」入口）。
-        // macOS 系统自带单实例，插件在其上为 no-op；Finder 打开经下方 RunEvent::Opened 转发
+        // v0.46 单实例：二次启动聚焦主窗并转发路径（Explorer 右键 / CLI 双开；macOS 走
+        // Unix socket 单例）。Finder 的 odoc 打开不经二次进程，走下方 RunEvent::Opened
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
