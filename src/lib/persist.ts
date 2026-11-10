@@ -388,6 +388,26 @@ export function saveSearchMaxDepth(depth: number | null): void {
   }
 }
 
+// ---- v0.47 搜索面板全屏化（仅面板内生效的布局偏好） ----
+const SEARCH_FULLSCREEN_KEY = "rfm.search-fullscreen";
+
+/** 搜索面板是否全屏化（默认 false；⌘↩/Ctrl+↩ 或标题栏按钮切换） */
+export function loadSearchFullscreen(): boolean {
+  try {
+    return localStorage.getItem(SEARCH_FULLSCREEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveSearchFullscreen(v: boolean): void {
+  try {
+    localStorage.setItem(SEARCH_FULLSCREEN_KEY, v ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
+
 // ---- v0.8 界面字体大小（整体缩放等效，13px = 100%，范围 10–18） ----
 const UI_FONT_KEY = "rfm.ui-font";
 

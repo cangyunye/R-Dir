@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Clipboard,
   Crosshair,
@@ -6,6 +6,8 @@ import {
   FileSearch,
   FolderSearch,
   Loader2,
+  Maximize2,
+  Minimize2,
   Pencil,
   SearchX,
   X,
@@ -29,7 +31,8 @@ import { findFiles, indexSearch, indexStatus, renameEntry, searchContent } from 
 import { isSftpPath, isNfsPath } from "@/lib/sftp-path";
 import { useT } from "@/lib/LanguageProvider";
 import { terr } from "@/lib/i18n";
-import { loadSearchMaxDepth, saveSearchMaxDepth } from "@/lib/persist";
+import { isMac } from "@/lib/keymap";
+import { loadSearchFullscreen, loadSearchMaxDepth, saveSearchFullscreen, saveSearchMaxDepth } from "@/lib/persist";
 import type { FileEntry, FindEntry, IndexHit, IndexStatusView, SearchMatch } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -301,6 +304,14 @@ export function SearchPanel({
   const [selected, setSelected] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
+  // v0.47 全屏化（⌘↩ / Ctrl+↩ 或标题栏按钮；仅面板打开期间有意义，布局偏好持久化）
+  const [full, setFull] = useState(() => loadSearchFullscreen());
+  const toggleFull = useCallback(() => {
+    setFull((v) => {
+      saveSearchFullscreen(!v);
+      return !v;
+    });
+  }, []);
 
   // 搜索结果行内重命名（本地路径）
   const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null);
@@ -314,6 +325,22 @@ export function SearchPanel({
   // IME 组合中的 Esc 是取消候选词，不关面板。
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // ⌘↩ / Ctrl+↩ 全屏化切换：面板自身的 document 捕获监听，仅在面板为顶层弹层
+      // 时生效（弹层打开期间全局 keymap 分发本就暂停，天然零冲突；重命名输入中让位）
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        if (renaming || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+        if (!isTopModalLayer("searchPanel")) return;
+        if (
+          document.querySelector(
+            '[data-slot="context-menu-content"],[data-slot="dropdown-menu-content"],[data-radix-popper-content-wrapper]',
+          )
+        )
+          return;
+        e.preventDefault();
+        e.stopPropagation();
+        toggleFull();
+        return;
+      }
       if (e.key !== "Escape" || e.defaultPrevented || renaming) return;
       if (e.isComposing || e.keyCode === 229) return;
       if (!isTopModalLayer("searchPanel")) return;
@@ -327,7 +354,7 @@ export function SearchPanel({
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [renaming, onClose]);
+  }, [renaming, onClose, toggleFull]);
   /** rel_path 尾段改名（当前层 results 由窗格 entries 派生，不走这里） */
   const withNewTail = (rel: string, oldName: string, newName: string) =>
     rel.endsWith(oldName) ? rel.slice(0, rel.length - oldName.length) + newName : rel;
@@ -568,7 +595,11 @@ export function SearchPanel({
       }}
     >
     <div
-      className="flex h-[70vh] max-h-[620px] w-[760px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
+      className={
+        full
+          ? "flex h-[94vh] w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
+          : "flex h-[70vh] max-h-[620px] w-[760px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
+      }
     >
       {/* 标题 + 关闭（冻结的搜索目标目录随面板展示） */}
       <div className="flex shrink-0 items-center gap-1.5 border-b px-3 py-2">
@@ -580,6 +611,15 @@ export function SearchPanel({
         >
           {dir}
         </span>
+        <button
+          type="button"
+          onClick={toggleFull}
+          title={t("切换全屏（{key}）", { key: isMac ? "⌘↩" : "Ctrl+↩" })}
+          aria-pressed={full}
+          className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          {full ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+        </button>
         <button
           type="button"
           onClick={onClose}
