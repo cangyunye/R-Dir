@@ -3218,7 +3218,10 @@ pub fn run() {
         .run(|_app_handle, event| {
             match event {
                 // v0.46 macOS Finder 打开（odoc Apple event）：冷启动与运行中都会送达；
-                // Windows/Linux 无此事件。file:// URL 统一转本地路径
+                // Windows/Linux 无此事件。file:// URL 统一转本地路径。
+                // cfg 门控：Opened 变体本身仅 macOS 存在，Windows 侧 match 它直接编译失败
+                // （v0.46.0 Windows CI 因此失败，见 release.yml publish job 前置条件）
+                #[cfg(target_os = "macos")]
                 tauri::RunEvent::Opened { urls } => {
                     forward_open_paths(
                         _app_handle,
