@@ -100,7 +100,9 @@ pub struct AppState {
 // ==================== 系统打开转发（v0.46 Explorer/Finder 右键集成） ====================
 
 /// 一条待打开的路径：is_dir 决定前端开目录标签还是「父目录标签 + 选中」
+/// （camelCase 直出前端，与同批 ShellIntegrationStatus/ShortcutOutcome 一致）
 #[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenPathEntry {
     pub path: String,
     pub is_dir: bool,
@@ -1990,6 +1992,20 @@ async fn sftp_rename(
     sftp::rename_entry(&pool, &path, &new_name).await
 }
 
+/// 远程移动（剪切粘贴到同一台服务器：服务器端一次 rename_over，不走中转）
+#[cfg(feature = "sftp")]
+#[tauri::command]
+async fn sftp_move_entry(
+    state: tauri::State<'_, AppState>,
+    src: String,
+    dest_dir: String,
+    name: String,
+) -> Result<String, String> {
+    ensure_plugin(&state, "sftp")?;
+    let pool = state.sftp_pool.lock().await;
+    sftp::move_entry(&pool, &src, &dest_dir, &name).await
+}
+
 // ==================== NFS 插件命令（v0.40 无条件编译；InProcess/伴生插件由 NfsHandle 分发，事件/取消与 SFTP 同构） ====================
 
 /// 下载 NFS 文件到临时目录，返回本地路径（供打开）
@@ -2876,14 +2892,20 @@ async fn index_get_config(
     Ok(ix.get_config())
 }
 
-/// 索引配置写入：落盘 index.json（roots/排除清单/例行间隔 0=仅事件/实时监视开关）；
-/// 指纹与选项变化由后台线程检测后自动生效（重建/重建监视器）
+/// 索引配置写入：落盘 index.json（roots/排除清单/名字级排除/隐藏开关/文件类型
+/// 模式/例行间隔 0=仅事件/实时监视开关）；指纹与选项变化由后台线程检测后自动
+/// 生效（重建/重建监视器）
 #[tauri::command]
 async fn index_set_config(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     roots: Vec<String>,
     exclusions: Vec<String>,
+    name_exclusions: Vec<String>,
+    index_hidden: bool,
+    file_mode: String,
+    exclude_exts: Vec<String>,
+    include_exts: Vec<String>,
     rescan_interval_secs: u64,
     watch_enabled: bool,
 ) -> Result<(), String> {
@@ -2891,7 +2913,17 @@ async fn index_set_config(
         &paths::config_dir(&app)?,
         plugins::plugin_enabled(&state.plugins, "index-search"),
     );
-    ix.set_config(roots, exclusions, rescan_interval_secs, watch_enabled)
+    ix.set_config(
+        roots,
+        exclusions,
+        name_exclusions,
+        index_hidden,
+        file_mode,
+        exclude_exts,
+        include_exts,
+        rescan_interval_secs,
+        watch_enabled,
+    )
 }
 
 /// Windows：显式设置进程 AppUserModelID，让任务栏把 R-Dir 当作独立应用
@@ -3062,6 +3094,7 @@ pub fn run() {
         sftp_delete,
         #[cfg(feature = "sftp")]
         sftp_rename,
+        sftp_move_entry,
         // v0.31 服务器清单导出/导入 + 远程打开临时目录管理
         #[cfg(feature = "sftp")]
         sftp_export_servers,

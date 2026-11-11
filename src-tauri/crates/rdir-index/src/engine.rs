@@ -22,7 +22,7 @@
 use crate::arena::{name_offset, EntryMeta, PathArena};
 use crate::grams::{lower_chars, GramIndex};
 use crate::walk::{mtime_ms, walk_all, Exclusions, RawEntry};
-use crate::{roots_fingerprint, sep_of};
+use crate::sep_of;
 use globset::GlobBuilder;
 use regex::Regex;
 use serde::Serialize;
@@ -103,9 +103,11 @@ impl EngineState {
         state
     }
 
-    /// 全量枚举 + 构建；返回 (状态, 枚举期跳过的错误数——权限/消失等)
-    pub fn build_full(roots: &[String], exclusions: &Exclusions) -> (EngineState, u64) {
-        let fp = roots_fingerprint(roots, &exclusions.dirs);
+    /// 全量枚举 + 构建；返回 (状态, 枚举期跳过的错误数——权限/消失等)。
+    /// `fp` 由调用方按快照指纹口径传入（`roots_fingerprint`），可与遍历用的
+    /// 生效排除解耦：如 env 推导排除只作用于遍历过滤、不入指纹，
+    /// 快照因此可跨启动环境（终端/Finder）复用。
+    pub fn build_full(roots: &[String], exclusions: &Exclusions, fp: u64) -> (EngineState, u64) {
         let (entries, root_mtimes, errs) = walk_all(roots, exclusions);
         (EngineState::build(entries, fp, root_mtimes), errs)
     }
@@ -150,7 +152,9 @@ impl EngineState {
     /// 查询。`case_sensitive` 对 Contains 生效；Glob/Regex 自带大小写语义。
     /// gram 层恒为不区分大小写（归一在 add/query 两侧一致完成）。
     /// `show_hidden = false` 时过滤文件名 `.` 开头的条目（与 fd / 当前层
-    /// 「隐藏灯」同一语义）；索引本体始终全量收录，过滤只在查询出口做。
+    /// 「隐藏灯」同一语义）；注意这与索引期的隐藏/文件类型过滤（设置 →
+    /// 全盘索引配置，见 `Exclusions`）相互独立——被索引期过滤掉的条目
+    /// 天然查不到，查询期过滤只在出口做。
     pub fn query(
         &self,
         query: &str,
@@ -368,15 +372,15 @@ impl EngineState {
 
     /// 增量重扫：只重新枚举 mtime 变更的目录，未变目录的直接子项从索引直出。
     /// 无任何变化时返回 `None`（调用方免重建，零成本轮询）。
-    /// roots/排除清单配置变化时自动退化为全量重建。
+    /// roots/排除清单配置变化（`fp` 由调用方按指纹口径传入）时自动退化为全量重建。
     pub fn rescan(
         old: &EngineState,
         roots: &[String],
         exclusions: &Exclusions,
+        fp: u64,
     ) -> Option<EngineState> {
-        let fp = roots_fingerprint(roots, &exclusions.dirs);
         if fp != old.roots_fp {
-            return Some(EngineState::build_full(roots, exclusions).0);
+            return Some(EngineState::build_full(roots, exclusions, fp).0);
         }
         let mut out = RescanCollector::default();
         let mut root_mtimes = Vec::with_capacity(roots.len());
@@ -460,7 +464,19 @@ impl RescanCollector {
             if exclusions.is_excluded(&path) {
                 continue;
             }
+            // 隐藏过滤（与全量遍历同语义；目录不收录即整棵不再下探）
+            if !exclusions.hidden && Exclusions::is_hidden_path(&path) {
+                continue;
+            }
             let Ok(ft) = entry.file_type() else { continue };
+            // 名字级排除只剪目录（同名文件不误伤）
+            if ft.is_dir() && exclusions.name_excluded(&path) {
+                continue;
+            }
+            // 文件类型过滤（目录不受影响）
+            if !ft.is_dir() && !exclusions.is_file_allowed(&path) {
+                continue;
+            }
             let Ok(md) = entry.metadata() else { continue };
             let path_str = path.to_string_lossy().into_owned();
             if ft.is_dir() {
@@ -568,6 +584,7 @@ fn literal_runs<'a>(pattern: &'a str, wildcards: &[char], forbidden: &[char]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::roots_fingerprint;
 
     fn raw(path: &str, is_dir: bool) -> RawEntry {
         RawEntry {
@@ -763,17 +780,18 @@ mod tests {
 
         let roots = vec![root.to_str().unwrap().to_string()];
         let excl = Exclusions::default();
-        let st0 = EngineState::build_full(&roots, &excl).0;
+        let fp = roots_fingerprint(&roots, &excl);
+        let st0 = EngineState::build_full(&roots, &excl, fp).0;
         // 根自身不收录：a、b、top.txt、deep.txt = 4 条
         assert_eq!(st0.len(), 4);
 
         // 无变化：None，零重建
-        assert!(EngineState::rescan(&st0, &roots, &excl).is_none());
+        assert!(EngineState::rescan(&st0, &roots, &excl, fp).is_none());
 
         // 深层新增（root mtime 不变，a/b 变）
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(b.join("new.txt"), "n").unwrap();
-        let st1 = EngineState::rescan(&st0, &roots, &excl).expect("应检测到变更");
+        let st1 = EngineState::rescan(&st0, &roots, &excl, fp).expect("应检测到变更");
         assert!(st1.exact_lookup(b.join("new.txt").to_str().unwrap()).is_some());
         assert!(st1.exact_lookup(b.join("deep.txt").to_str().unwrap()).is_some());
         assert!(st1.exact_lookup(&root.join("top.txt").to_string_lossy()).is_some());
@@ -782,7 +800,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(root.join("second.log"), "s").unwrap();
         std::fs::remove_file(b.join("deep.txt")).unwrap();
-        let st2 = EngineState::rescan(&st1, &roots, &excl).expect("应检测到变更");
+        let st2 = EngineState::rescan(&st1, &roots, &excl, fp).expect("应检测到变更");
         assert!(st2.exact_lookup(&root.join("second.log").to_string_lossy()).is_some());
         assert!(st2.exact_lookup(b.join("deep.txt").to_str().unwrap()).is_none());
         // 未动过的子树内容保持
@@ -807,11 +825,12 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         let roots = vec![root.to_str().unwrap().to_string()];
         let excl = Exclusions::default();
-        let st0 = EngineState::build_full(&roots, &excl).0;
+        let fp = roots_fingerprint(&roots, &excl);
+        let st0 = EngineState::build_full(&roots, &excl, fp).0;
 
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(deep.join("fresh.txt"), "f").unwrap();
-        let st1 = EngineState::rescan(&st0, &roots, &excl).expect("深层变更必须被检出");
+        let st1 = EngineState::rescan(&st0, &roots, &excl, fp).expect("深层变更必须被检出");
         assert!(st1.exact_lookup(deep.join("fresh.txt").to_str().unwrap()).is_some());
         std::fs::remove_dir_all(&root).ok();
     }
@@ -827,13 +846,14 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         let roots = vec![root.to_str().unwrap().to_string()];
         let excl = Exclusions::default();
-        let st0 = EngineState::build_full(&roots, &excl).0;
+        let fp = roots_fingerprint(&roots, &excl);
+        let st0 = EngineState::build_full(&roots, &excl, fp).0;
         assert!(st0.exact_lookup(&root.to_string_lossy()).is_none(), "根不收录");
         assert!(st0.exact_lookup(sub.to_str().unwrap()).is_some(), "嵌套目录收录");
 
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(sub.join("g.txt"), "g").unwrap();
-        let st1 = EngineState::rescan(&st0, &roots, &excl).expect("变更");
+        let st1 = EngineState::rescan(&st0, &roots, &excl, fp).expect("变更");
         assert!(st1.exact_lookup(&root.to_string_lossy()).is_none(), "增量后根仍不收录");
         assert!(st1.exact_lookup(sub.to_str().unwrap()).is_some());
         std::fs::remove_dir_all(&root).ok();

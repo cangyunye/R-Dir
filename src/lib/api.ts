@@ -314,7 +314,7 @@ export const searchContent = (
 
 /** v0.46 启动路径拉取（冷启动 argv / macOS odoc；仅桌面端有值，拉取即清空） */
 export const launchPathsTake = () =>
-  invoke<{ path: string; is_dir: boolean }[]>("launch_paths_take");
+  invoke<{ path: string; isDir: boolean }[]>("launch_paths_take");
 
 /** fd 快速文件检索（glob=true 通配符否则正则；显式大小写开关；递归） */
 export const findFiles = (
@@ -360,9 +360,25 @@ export const indexGetConfig = () => invoke<IndexConfigFile>("index_get_config");
 export const indexSetConfig = (
   roots: string[],
   exclusions: string[],
+  nameExclusions: string[],
+  indexHidden: boolean,
+  fileMode: IndexConfigFile["fileMode"],
+  excludeExts: string[],
+  includeExts: string[],
   rescanIntervalSecs: number,
   watchEnabled: boolean,
-) => invoke<void>("index_set_config", { roots, exclusions, rescanIntervalSecs, watchEnabled });
+) =>
+  invoke<void>("index_set_config", {
+    roots,
+    exclusions,
+    nameExclusions,
+    indexHidden,
+    fileMode,
+    excludeExts,
+    includeExts,
+    rescanIntervalSecs,
+    watchEnabled,
+  });
 
 // ==================== SFTP 远程服务器 ====================
 
@@ -425,6 +441,10 @@ export const sftpDelete = (paths: string[]) =>
 
 export const sftpRename = (path: string, newName: string) =>
   invoke<string>("sftp_rename", { path, newName });
+
+/** 同服务器剪切粘贴：服务器端一次 rename（posix-rename 覆盖语义），不走中转 */
+export const sftpMove = (src: string, destDir: string, name: string) =>
+  invoke<string>("sftp_move_entry", { src, destDir, name });
 
 // ---- v0.39 NFS 插件命令（事件/取消与 SFTP 同构；连接在导航时自动建立，无服务器管理） ----
 

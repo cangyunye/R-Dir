@@ -64,25 +64,26 @@ mod imp {
     }
 
     pub fn register(exe: &str, label: &str) -> Result<(), String> {
+        // 错误契约：统一产出 `SHELLINT_FAILED|详情`（前端 terr() 按码翻译）
         if label.trim().is_empty() {
-            return Err("标签为空".into());
+            return Err("SHELLINT_FAILED|标签为空".into());
         }
         let root = hkcu();
         for (path, arg) in VERB_KEYS {
             let key = root
                 .create_subkey(path)
-                .map_err(|e| format!("{}: {e}", path))?
+                .map_err(|e| format!("SHELLINT_FAILED|{}: {e}", path))?
                 .0;
             key.set_value("", &label)
-                .map_err(|e| format!("{} 默认值: {e}", path))?;
+                .map_err(|e| format!("SHELLINT_FAILED|{} 默认值: {e}", path))?;
             key.set_value("Icon", &exe)
-                .map_err(|e| format!("{} Icon: {e}", path))?;
+                .map_err(|e| format!("SHELLINT_FAILED|{} Icon: {e}", path))?;
             let cmd = key
                 .create_subkey("command")
-                .map_err(|e| format!("{}\\command: {e}", path))?
+                .map_err(|e| format!("SHELLINT_FAILED|{}\\command: {e}", path))?
                 .0;
             cmd.set_value("", &format!("\"{}\" \"{}\"", exe, arg))
-                .map_err(|e| format!("{}\\command 默认值: {e}", path))?;
+                .map_err(|e| format!("SHELLINT_FAILED|{}\\command 默认值: {e}", path))?;
         }
         Ok(())
     }
@@ -111,11 +112,11 @@ mod imp {
     }
 
     pub fn register(_exe: &str, _label: &str) -> Result<(), String> {
-        Err("当前平台无需运行时注册（macOS 经 Info.plist 打包期声明，Linux 暂未实现）".into())
+        Err("SHELLINT_FAILED|当前平台无需运行时注册（macOS 经 Info.plist 打包期声明，Linux 暂未实现）".into())
     }
 
     pub fn unregister() -> Result<(), String> {
-        Err("当前平台无需运行时注销".into())
+        Err("SHELLINT_FAILED|当前平台无需运行时注销".into())
     }
 }
 

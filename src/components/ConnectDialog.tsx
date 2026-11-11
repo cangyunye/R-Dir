@@ -28,6 +28,8 @@ export interface SftpConnectInitial {
  * - 保存/解密密码需要 master-key：未设置或未输入时调 onNeedMasterKey
  *   （由 App 层弹出主密钥框；设置成功后自动重试连接）
  * - v0.31「保存」：只写清单不连接、不导航（改分组/改名等整理场景）
+ * - v0.46 覆盖确认：身份即 user@host:port，提交撞到已有条目（且非编辑当前
+ *   这台）时先经 confirmOverwrite 确认，取消则不动清单
  */
 export function ConnectDialog({
   open,
@@ -37,6 +39,8 @@ export function ConnectDialog({
   onSaveOnly,
   onClose,
   onConnected,
+  servers,
+  confirmOverwrite,
 }: {
   open: boolean;
   initial?: SftpConnectInitial | null;
@@ -48,6 +52,10 @@ export function ConnectDialog({
   onSaveOnly?: (config: SftpServerConfig) => Promise<void>;
   onClose: () => void;
   onConnected: (server: SftpServerConfig, view: SftpServerView) => void;
+  /** 当前服务器清单（撞名检查用） */
+  servers?: SftpServerView[];
+  /** 提交将覆盖已有服务器配置时弹确认（返回 false = 取消提交）；缺省不检查 */
+  confirmOverwrite?: (existing: SftpServerView) => Promise<boolean>;
 }) {
   const [host, setHost] = useState("");
   const [port, setPort] = useState(22);
@@ -105,10 +113,23 @@ export function ConnectDialog({
     };
   }, [host, port, user, name, group, root, authMode, password, savePassword, keyPath, passphrase, savePassphrase]);
 
+  /** 覆盖检查：派生 id（user@host:port）命中已有条目且非编辑当前这台时，
+   *  经 confirmOverwrite 确认；返回 false = 用户取消，提交中止 */
+  const checkOverwrite = useCallback(
+    async (cfg: SftpServerConfig): Promise<boolean> => {
+      if (!servers || !confirmOverwrite) return true;
+      const existing = servers.find((s) => s.id === cfg.id && s.id !== initial?.id);
+      if (!existing) return true;
+      return confirmOverwrite(existing);
+    },
+    [servers, confirmOverwrite, initial],
+  );
+
   const submit = useCallback(
     async (config?: SftpServerConfig) => {
       const cfg = config ?? buildConfig();
       if (!cfg) return;
+      if (!(await checkOverwrite(cfg))) return;
       setLoading(true);
       setError("");
       try {
@@ -126,7 +147,7 @@ export function ConnectDialog({
         setLoading(false);
       }
     },
-    [buildConfig, onConnected, onClose, onNeedMasterKey],
+    [buildConfig, checkOverwrite, onConnected, onClose, onNeedMasterKey],
   );
 
   /** v0.31 仅保存：写清单后关闭，不发起连接、不切换目录 */
@@ -134,6 +155,7 @@ export function ConnectDialog({
     if (!onSaveOnly) return;
     const cfg = buildConfig();
     if (!cfg) return;
+    if (!(await checkOverwrite(cfg))) return;
     setLoading(true);
     setError("");
     try {
@@ -143,7 +165,7 @@ export function ConnectDialog({
       setError(String(e));
       setLoading(false);
     }
-  }, [buildConfig, onSaveOnly, onClose]);
+  }, [buildConfig, checkOverwrite, onSaveOnly, onClose]);
 
   if (!open) return null;
 

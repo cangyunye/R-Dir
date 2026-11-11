@@ -22,21 +22,27 @@ pub use arena::{name_offset, EntryMeta, PathArena};
 pub use engine::{EngineState, IndexHit, MatchMode, MAX_HITS};
 pub use grams::GramIndex;
 pub use snapshot::{load_snapshot, save_snapshot, Snapshot, SNAPSHOT_VERSION};
-pub use walk::{mtime_ms, walk_all, Exclusions, RawEntry};
+pub use walk::{mtime_ms, normalize_exts, walk_all, Exclusions, FileFilter, RawEntry};
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// roots + 排除清单的指纹：快照加载后校验，配置变了才全量重建。
-/// 排序后哈希（等价集合同一指纹）。
-pub fn roots_fingerprint(roots: &[String], exclusions: &[String]) -> u64 {
+/// 排序后哈希（等价集合同一指纹）；路径排除、名字排除、隐藏开关与
+/// 文件类型过滤都计入。
+pub fn roots_fingerprint(roots: &[String], excl: &Exclusions) -> u64 {
     let mut sorted_roots: Vec<&str> = roots.iter().map(|s| s.as_str()).collect();
     sorted_roots.sort_unstable();
-    let mut sorted_excl: Vec<&str> = exclusions.iter().map(|s| s.as_str()).collect();
-    sorted_excl.sort_unstable();
+    let mut sorted_dirs: Vec<&str> = excl.dirs.iter().map(|s| s.as_str()).collect();
+    sorted_dirs.sort_unstable();
+    let mut sorted_names: Vec<&str> = excl.names.iter().map(|s| s.as_str()).collect();
+    sorted_names.sort_unstable();
     let mut h = DefaultHasher::new();
     sorted_roots.hash(&mut h);
-    sorted_excl.hash(&mut h);
+    sorted_dirs.hash(&mut h);
+    sorted_names.hash(&mut h);
+    excl.hidden.hash(&mut h);
+    excl.files.hash(&mut h);
     h.finish()
 }
 
@@ -56,11 +62,31 @@ mod tests {
 
     #[test]
     fn fingerprint_order_insensitive() {
-        let a = roots_fingerprint(&["/a".into(), "/b".into()], &["/x".into()]);
-        let b = roots_fingerprint(&["/b".into(), "/a".into()], &["/x".into()]);
+        let mk = |dirs: &[&str], names: &[&str]| Exclusions {
+            dirs: dirs.iter().map(|s| s.to_string()).collect(),
+            names: names.iter().map(|s| s.to_string()).collect(),
+            ..Exclusions::default()
+        };
+        let a = roots_fingerprint(&["/a".into(), "/b".into()], &mk(&["/x"], &[]));
+        let b = roots_fingerprint(&["/b".into(), "/a".into()], &mk(&["/x"], &[]));
         assert_eq!(a, b);
-        let c = roots_fingerprint(&["/a".into(), "/b".into()], &[]);
+        let c = roots_fingerprint(&["/a".into(), "/b".into()], &mk(&[], &[]));
         assert_ne!(a, c);
+        // 名字排除也计入指纹
+        let d = roots_fingerprint(&["/a".into(), "/b".into()], &mk(&["/x"], &["node_modules"]));
+        assert_ne!(a, d);
+        // 隐藏开关与文件类型过滤计入指纹
+        let base = roots_fingerprint(&["/a".into()], &mk(&[], &[]));
+        let no_hidden = roots_fingerprint(
+            &["/a".into()],
+            &Exclusions { hidden: false, ..mk(&[], &[]) },
+        );
+        assert_ne!(base, no_hidden);
+        let incl = roots_fingerprint(
+            &["/a".into()],
+            &Exclusions { files: FileFilter::Include(vec!["md".into()]), ..mk(&[], &[]) },
+        );
+        assert_ne!(base, incl);
     }
 
     #[test]

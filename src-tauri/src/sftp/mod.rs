@@ -594,6 +594,28 @@ pub async fn rename_entry(pool: &SessionPool, old_path: &str, new_name: &str) ->
     Ok(format!("sftp://{authority}{new_remote}"))
 }
 
+/// 远程移动（剪切粘贴到同一台服务器）：src 移动到 dest_dir/name。同一会话内
+/// 一次 `rename_over`（posix-rename@openssh.com）完成——目标存在 = 原子覆盖
+/// 替换，不存在 = 纯移动；不支持该扩展的服务器在 session 层内部回退
+/// 「删目标 + 普通 rename」。不经临时目录中转（中转见 sftp_relay_staged）。
+/// 源与目标必须同服务器（pool_key 归一比较，端口缺省与显式 22 视为同一台）。
+pub async fn move_entry(pool: &SessionPool, src: &str, dest_dir: &str, name: &str) -> Result<String, String> {
+    let (src_authority, src_remote) = parse_sftp_path(src)?;
+    let (src_user, src_host, src_port) = parse_authority(&src_authority)?;
+    let src_key = pool_key(&src_user, &src_host, src_port);
+    let (dst_authority, dst_dir_remote) = parse_sftp_path(dest_dir)?;
+    let (dst_user, dst_host, dst_port) = parse_authority(&dst_authority)?;
+    let dst_key = pool_key(&dst_user, &dst_host, dst_port);
+    if src_key != dst_key {
+        return Err("跨服务器移动不支持：请用复制粘贴走中转".into());
+    }
+    let sess = get_session(pool, &src_key).await?;
+    let new_remote = join_remote(&dst_dir_remote, name);
+    let mut g = sess.lock().await;
+    g.rename_over(&src_remote, &new_remote).await?;
+    Ok(format!("sftp://{dst_authority}{new_remote}"))
+}
+
 fn sanitize_name(name: &str) -> String {
     let mut s = String::with_capacity(name.len());
     for c in name.chars() {
@@ -1099,6 +1121,159 @@ mod tests {
                 "暂存树释放量对账"
             );
             assert!(!root.exists());
+            let _ = std::fs::remove_dir_all(&local_src);
+        });
+    }
+
+    /// 同服务器剪切粘贴的 move_entry（本机 sshd；不可用时静默跳过）：
+    /// 文件跨目录移动（旧路径消失、内容保留）→ 撞名覆盖（rename_over 内容替换）
+    /// → 目录整棵移动（旧根消失、子项可查）→ 跨服务器拒绝。
+    #[test]
+    fn sftp_move_entry_roundtrip() {
+        if !localhost_sshd_available() {
+            eprintln!("[skip] 本机 sshd 不可用，跳过 SFTP 移动集成用例");
+            return;
+        }
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        let cfg = session::ServerConfig {
+            name: "it".into(),
+            host: "127.0.0.1".into(),
+            port: 22,
+            user: user.clone(),
+            auth: session::AuthMethod::PublicKey { key_path: String::new(), passphrase: None },
+            root: None,
+            save_secret: false,
+        };
+        let rt = tokio::runtime::Runtime::new().expect("async runtime");
+        rt.block_on(async {
+            let mut g = match session::SftpSession::connect(&cfg).await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[skip] SFTP 连接失败（{e}），跳过集成用例");
+                    return;
+                }
+            };
+            let tag = std::process::id();
+            let base = format!("/tmp/rdir-move-it-{tag}");
+            let dir_a = format!("{base}/a");
+            let dir_b = format!("{base}/b");
+            let tree = format!("{dir_a}/tree");
+            let tree_sub = format!("{tree}/sub");
+            for d in [&base, &dir_a, &dir_b, &tree, &tree_sub] {
+                g.mkdir(d).await.expect("建远端目录");
+            }
+            let local_src = std::env::temp_dir().join(format!("rdir-move-it-src-{tag}"));
+            std::fs::create_dir_all(&local_src).unwrap();
+            std::fs::write(local_src.join("f"), [7u8; 1024]).unwrap();
+            g.upload(&local_src.join("f"), &format!("{dir_a}/m.txt"), |_, _| true)
+                .await
+                .expect("备源文件");
+            std::fs::write(local_src.join("n"), "nested").unwrap();
+            g.upload(&local_src.join("n"), &format!("{tree_sub}/n.txt"), |_, _| true)
+                .await
+                .expect("备源文件");
+
+            let key = pool_key(&user, "127.0.0.1", 22);
+            let mut pool = pool::SessionPool::default();
+            pool.put(&key, g);
+            let authority = format!("{user}@127.0.0.1");
+
+            // 1) 文件跨目录移动：旧路径消失、新路径内容保留
+            let moved = move_entry(
+                &pool,
+                &format!("sftp://{authority}{dir_a}/m.txt"),
+                &format!("sftp://{authority}{dir_b}"),
+                "m.txt",
+            )
+            .await
+            .expect("文件移动成功");
+            assert_eq!(moved, format!("sftp://{authority}{dir_b}/m.txt"));
+            {
+                let sess = get_session(&pool, &key).await.unwrap();
+                let mut g = sess.lock().await;
+                assert!(g.stat(&format!("{dir_a}/m.txt")).await.is_err(), "旧路径已不存在");
+                assert_eq!(g.stat(&format!("{dir_b}/m.txt")).await.unwrap().size, 1024);
+            }
+
+            // 2) 撞名移动 = rename_over 原子覆盖（内容替换为新源）
+            std::fs::write(local_src.join("f"), [9u8; 10]).unwrap();
+            {
+                let sess = get_session(&pool, &key).await.unwrap();
+                let mut g = sess.lock().await;
+                g.upload(&local_src.join("f"), &format!("{dir_a}/m.txt"), |_, _| true)
+                    .await
+                    .expect("备第二个源");
+            }
+            move_entry(
+                &pool,
+                &format!("sftp://{authority}{dir_a}/m.txt"),
+                &format!("sftp://{authority}{dir_b}"),
+                "m.txt",
+            )
+            .await
+            .expect("覆盖移动成功");
+            {
+                let sess = get_session(&pool, &key).await.unwrap();
+                let mut g = sess.lock().await;
+                assert_eq!(
+                    g.stat(&format!("{dir_b}/m.txt")).await.unwrap().size,
+                    10,
+                    "目标内容被新源替换"
+                );
+            }
+
+            // 3) 目录整棵移动：旧根消失、子项可查（本优化最大收益场景）
+            move_entry(
+                &pool,
+                &format!("sftp://{authority}{tree}"),
+                &format!("sftp://{authority}{dir_b}"),
+                "tree",
+            )
+            .await
+            .expect("目录移动成功");
+            {
+                let sess = get_session(&pool, &key).await.unwrap();
+                let mut g = sess.lock().await;
+                assert!(g.stat(&format!("{dir_a}/tree")).await.is_err(), "旧根已不存在");
+                let names: Vec<String> = g
+                    .list_dir(&format!("{dir_b}/tree/sub"))
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|(n, _)| n)
+                    .collect();
+                assert_eq!(names, vec!["n.txt".to_string()], "子项随整棵树移动");
+            }
+
+            // 4) 跨服务器（不同 pool_key）防御性拒绝
+            let other = move_entry(
+                &pool,
+                &format!("sftp://other@127.0.0.1:22{dir_b}/m.txt"),
+                &format!("sftp://{authority}{dir_b}"),
+                "m.txt",
+            )
+            .await;
+            assert!(other.is_err(), "跨服务器移动必须拒绝");
+
+            // 清理远端
+            let sess = get_session(&pool, &key).await.unwrap();
+            let mut g = sess.lock().await;
+            for f in [
+                format!("{dir_b}/m.txt"),
+                format!("{dir_b}/tree/sub/n.txt"),
+                format!("{dir_a}/m.txt"),
+            ] {
+                let _ = g.remove(&f).await;
+            }
+            for d in [
+                format!("{dir_b}/tree/sub"),
+                format!("{dir_b}/tree"),
+                dir_a.clone(),
+                dir_b.clone(),
+                base.clone(),
+            ] {
+                let _ = g.rmdir(&d).await;
+            }
             let _ = std::fs::remove_dir_all(&local_src);
         });
     }

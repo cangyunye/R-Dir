@@ -216,7 +216,27 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
     setMasterKeyOpen(true);
   }, []);
 
-  /** 侧边栏点击服务器：已连接直达（默认目录）；已保存凭据 → 一键重连；否则弹连接框 */
+  /** 侧边栏右键"编辑"：回填连接框（含 id/root/分组/认证方式）。
+   *  定义在 openServer 之前：其重连失败回退复用本回调（useCallback 依赖数组
+   *  渲染期求值，后置声明会 TDZ 报错）。带 id 预填 → 重提交派生 id 与
+   *  initial.id 相同，ConnectDialog 不误触「覆盖服务器配置」确认。 */
+  const editServer = useCallback(
+    (sv: SftpServerView) => {
+      openConnect({
+        id: sv.id,
+        host: sv.host,
+        port: sv.port,
+        user: sv.user,
+        name: sv.name,
+        root: sv.root ?? "",
+        group: sv.group,
+        auth: sv.auth === "key" ? "publicKey" : "password",
+      });
+    },
+    [openConnect],
+  );
+
+  /** 侧边栏点击服务器：已连接直达（默认目录）；已保存凭据 → 一键重连；否则弹编辑回填连接框 */
   const openServer = useCallback(
     (sv: SftpServerView) => {
       if (connectedRef.current.has(sv.id)) {
@@ -250,16 +270,17 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
               setMasterKeyOpen(true);
               return;
             }
-            // 重连失败（如凭据已失效）→ 回退弹连接框让用户输入
-            openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
+            // 重连失败（如凭据已失效）→ 回退编辑回填连接框让用户输入
+            editServer(sv);
             showError(t("重连失败：{msg}", { msg: String(e) }));
           }
         })();
         return;
       }
-      openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
+      // 无保存凭据：编辑回填（带 id/root/分组），重提交不误触覆盖确认
+      editServer(sv);
     },
-    [navigate, openConnect, showError, handleConnected],
+    [navigate, showError, handleConnected, editServer],
   );
 
   /**
@@ -279,7 +300,8 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
         return false;
       }
       if (!sv.hasSecret) {
-        openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
+        // 编辑回填（带 id/root/分组），重提交不误触覆盖确认
+        editServer(sv);
         return false;
       }
       const cfg: SftpServerConfig = {
@@ -311,29 +333,12 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
           setMasterKeyOpen(true);
           return false;
         }
-        openConnect({ host: sv.host, port: sv.port, user: sv.user, name: sv.name });
+        editServer(sv);
         showError(t("自动连接失败：{msg}", { msg: String(e) }));
         return false;
       }
     },
-    [servers, openConnect, showError, syncConnected],
-  );
-
-  /** 侧边栏右键"编辑"：回填连接框（含 root/分组/认证方式） */
-  const editServer = useCallback(
-    (sv: SftpServerView) => {
-      openConnect({
-        id: sv.id,
-        host: sv.host,
-        port: sv.port,
-        user: sv.user,
-        name: sv.name,
-        root: sv.root ?? "",
-        group: sv.group,
-        auth: sv.auth === "key" ? "publicKey" : "password",
-      });
-    },
-    [openConnect],
+    [servers, showError, syncConnected, editServer],
   );
 
   /** 侧边栏右键"删除服务器配置"（连接不断开） */

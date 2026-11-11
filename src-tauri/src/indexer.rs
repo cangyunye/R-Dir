@@ -19,7 +19,8 @@
 
 use crate::plugins;
 use rdir_index::{
-    load_snapshot, roots_fingerprint, save_snapshot, EngineState, Exclusions, MatchMode, Snapshot,
+    load_snapshot, normalize_exts, roots_fingerprint, save_snapshot, EngineState, Exclusions,
+    FileFilter, MatchMode, Snapshot,
 };
 /// 命令返回类型经本模块透出（lib.rs / bridge 引用 indexer::IndexHit）
 pub use rdir_index::IndexHit;
@@ -57,23 +58,50 @@ fn now_ms() -> i64 {
 
 /// 配置文件版本。升级默认排除清单等「老配置拿不到新默认值」的变此时递增，
 /// load_config 检测到旧版本即迁移（默认项并集，用户自定义不动）。
-const CONFIG_VERSION: u32 = 2;
+/// v3：新增名字级排除 name_exclusions + 默认排除 ~/.ssh ~/.config。
+const CONFIG_VERSION: u32 = 3;
 
+/// 配置在 JSON 里的键名恒为 camelCase（serde rename_all；此前漏加，index_get_config
+/// 一直以 snake_case 直出前端，rescanIntervalSecs/watchEnabled 读取侧静默 undefined，
+/// 直到新代码对 undefined 调 join 才炸掉设置页渲染）。alias 兼容存量磁盘文件：
+/// v0.45/v0.46 写盘的 index.json 是 snake_case（roots/exclusions 键名不变无需 alias）。
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct IndexConfigFile {
     #[serde(default)]
     pub roots: Vec<String>,
     #[serde(default)]
     pub exclusions: Vec<String>,
+    /// 名字级排除（node_modules 等，对任意层级下的同名目录生效；
+    /// serde default 兼容 v3 之前的旧文件）
+    #[serde(default, alias = "name_exclusions")]
+    pub name_exclusions: Vec<String>,
+    /// 是否索引隐藏条目（dot 开头；索引期过滤，缺省 true = 旧行为。
+    /// 改动计入快照指纹 → 自动重建）
+    #[serde(default = "default_true", alias = "index_hidden")]
+    pub index_hidden: bool,
+    /// 文件类型索引模式：all / exclude / include（其余值回落 all）
+    #[serde(default = "default_file_mode", alias = "file_mode")]
+    pub file_mode: String,
+    /// 排除模式的扩展名列表（file_mode=exclude 时生效）
+    #[serde(default, alias = "exclude_exts")]
+    pub exclude_exts: Vec<String>,
+    /// 定向模式的扩展名列表（file_mode=include 时生效）
+    #[serde(default, alias = "include_exts")]
+    pub include_exts: Vec<String>,
     /// 例行重扫间隔秒（默认 600；0 = 仅事件触发，关闭例行重扫）
-    #[serde(default = "default_rescan_secs")]
+    #[serde(default = "default_rescan_secs", alias = "rescan_interval_secs")]
     pub rescan_interval_secs: u64,
     /// 实时监视开关（notify 内核事件；失败自动降级为仅例行扫描）
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", alias = "watch_enabled")]
     pub watch_enabled: bool,
     /// 配置版本（缺省 = v0.45 时代的旧文件，load 时迁移）
-    #[serde(default)]
+    #[serde(default, alias = "config_version")]
     pub config_version: u32,
+}
+
+fn default_file_mode() -> String {
+    "all".to_string()
 }
 
 fn default_rescan_secs() -> u64 {
@@ -88,6 +116,11 @@ impl Default for IndexConfigFile {
         Self {
             roots: Vec::new(),
             exclusions: Vec::new(),
+            name_exclusions: Vec::new(),
+            index_hidden: true,
+            file_mode: default_file_mode(),
+            exclude_exts: Vec::new(),
+            include_exts: Vec::new(),
             rescan_interval_secs: DEFAULT_RESCAN_SECS,
             watch_enabled: true,
             config_version: CONFIG_VERSION,
@@ -116,9 +149,9 @@ pub fn default_roots() -> Vec<String> {
     }
 }
 
-/// 默认排除清单：系统目录 / 临时目录 / 垃圾箱 / 回收站 / 卷挂载点
+/// 默认排除清单：系统目录 / 临时目录 / 垃圾箱 / 回收站 / 卷挂载点 / 敏感目录
 /// （防 /Volumes 下的重复索引与网络卷；临时目录与垃圾箱属高频 churn 区，
-/// 索引它们只会白耗构建与内存）。
+/// 索引它们只会白耗构建与内存；~/.ssh ~/.config 是密钥与凭据，默认不索引）。
 pub fn default_exclusions() -> Vec<String> {
     let mut v: Vec<String> = Vec::new();
     // 各平台通用：用户临时目录（mac = /var/folders/... 即 /private 之下已覆盖，
@@ -126,6 +159,11 @@ pub fn default_exclusions() -> Vec<String> {
     let tmp = std::env::temp_dir().to_string_lossy().into_owned();
     if !tmp.is_empty() {
         v.push(tmp);
+    }
+    // 各平台通用：用户主目录下的敏感目录（密钥/凭据；避免出现在查询结果里）
+    if let Some(home) = dirs::home_dir() {
+        v.push(home.join(".ssh").to_string_lossy().into_owned());
+        v.push(home.join(".config").to_string_lossy().into_owned());
     }
     #[cfg(target_os = "macos")]
     {
@@ -165,11 +203,72 @@ pub fn default_exclusions() -> Vec<String> {
     v
 }
 
+/// 默认名字级排除清单：各语言虚拟环境 / 依赖与构建产物目录（对任意层级生效）。
+/// 这些目录条目量巨大（一个 node_modules 动辄数万条），全量索引会撑爆内存——
+/// 名单对齐仓库 AGENTS.md 的搜索排除口径；用户可在 设置 → 全盘索引 自行增删。
+pub fn default_name_exclusions() -> Vec<String> {
+    [
+        "node_modules",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".git",
+        "target",
+        "dist",
+        "build",
+        ".next",
+        ".turbo",
+        ".cache",
+        ".parcel-cache",
+        "coverage",
+        ".pytest_cache",
+        "playwright-report",
+        "test-results",
+        "e2e-shots",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// 环境变量推导的排除目录（运行时合并生效，不写入配置文件）：各语言工具链的
+/// 环境 / 包缓存目录，变量存在且指向真实目录才纳入。GOPATH 本体是工作区
+/// （源码有索引价值），只排其模块缓存子目录 pkg/mod。
+pub fn env_exclusions() -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    let mut push_dir = |p: String| {
+        let p = p.trim().to_string();
+        if !p.is_empty() && Path::new(&p).is_dir() {
+            v.push(p);
+        }
+    };
+    for key in [
+        "VIRTUAL_ENV",
+        "CONDA_PREFIX",
+        "CARGO_HOME",
+        "GOMODCACHE",
+        "GRADLE_USER_HOME",
+        "PIP_CACHE_DIR",
+        "NVM_DIR",
+    ] {
+        if let Ok(p) = std::env::var(key) {
+            push_dir(p);
+        }
+    }
+    if let Ok(p) = std::env::var("GOPATH") {
+        if let Some(modcache) = Path::new(p.trim()).join("pkg").join("mod").to_str() {
+            push_dir(modcache.to_string());
+        }
+    }
+    v
+}
+
 /// 载入配置。
 /// - 文件缺失或 roots 为空：落一份全默认值（首次启动即写盘，设置分区可见）；
 /// - 旧版本文件（config_version < 当前）：把新版默认排除项**并集**进用户清单
-///   （临时目录/垃圾箱等系统目录是「几乎没人想索引」的，用户自定义项原样保留），
-///   回写为新版本——根清单不动（用户「仅扫描哪些目录」的选择不受影响）。
+///   （临时目录/垃圾箱/敏感目录等系统目录是「几乎没人想索引」的，名字级排除
+///   同理并集；用户自定义项原样保留），回写为新版本——根清单不动
+///   （用户「仅扫描哪些目录」的选择不受影响）。
 pub fn load_config(config_dir: &Path) -> IndexConfigFile {
     let path = config_dir.join(INDEX_CONFIG_FILE);
     let loaded: Option<IndexConfigFile> = crate::json_store::read_json(&path, "读索引配置失败", "解析索引配置失败")
@@ -185,6 +284,13 @@ pub fn load_config(config_dir: &Path) -> IndexConfigFile {
                     }
                 }
                 cfg.exclusions = merged;
+                let mut merged_names = default_name_exclusions();
+                for e in std::mem::take(&mut cfg.name_exclusions) {
+                    if !merged_names.contains(&e) {
+                        merged_names.push(e);
+                    }
+                }
+                cfg.name_exclusions = merged_names;
                 cfg.config_version = CONFIG_VERSION;
                 save_config(config_dir, &cfg).ok();
             }
@@ -194,9 +300,8 @@ pub fn load_config(config_dir: &Path) -> IndexConfigFile {
             let cfg = IndexConfigFile {
                 roots: default_roots(),
                 exclusions: default_exclusions(),
-                rescan_interval_secs: DEFAULT_RESCAN_SECS,
-                watch_enabled: true,
-                config_version: CONFIG_VERSION,
+                name_exclusions: default_name_exclusions(),
+                ..IndexConfigFile::default()
             };
             save_config(config_dir, &cfg).ok();
             cfg
@@ -375,12 +480,19 @@ impl Indexer {
         self.cfg.lock().unwrap().clone()
     }
 
-    /// 更新 roots/排除清单/扫描选项：落盘 + 更新缓存；指纹/选项变化由后台线程
-    /// 每轮检测（监视器随 watch_enabled 与 roots 指纹自动重建，间隔即时生效）
+    /// 更新 roots/排除清单（路径级+名字级）/隐藏开关/文件类型模式/扫描选项：
+    /// 落盘 + 更新缓存；指纹/选项变化由后台线程每轮检测（监视器随
+    /// watch_enabled 与 roots 指纹自动重建，间隔即时生效）
+    #[allow(clippy::too_many_arguments)]
     pub fn set_config(
         &self,
         roots: Vec<String>,
         exclusions: Vec<String>,
+        name_exclusions: Vec<String>,
+        index_hidden: bool,
+        file_mode: String,
+        exclude_exts: Vec<String>,
+        include_exts: Vec<String>,
         rescan_interval_secs: u64,
         watch_enabled: bool,
     ) -> Result<(), String> {
@@ -389,23 +501,28 @@ impl Indexer {
             0 | 60 | 300 | 600 | 1800 => rescan_interval_secs,
             _ => DEFAULT_RESCAN_SECS,
         };
-        save_config(
-            &self.config_dir,
-            &IndexConfigFile {
-                roots: roots.clone(),
-                exclusions: exclusions.clone(),
-                rescan_interval_secs: interval,
-                watch_enabled,
-                config_version: CONFIG_VERSION,
-            },
-        )?;
-        *self.cfg.lock().unwrap() = IndexConfigFile {
-            roots,
-            exclusions,
+        // 模式合法性：仅接受 all/exclude/include，其余回落 all；
+        // 扩展名归一（trim/去点/小写/去空/去重）——列表是配置草稿直传，先清洗
+        let mode = match file_mode.as_str() {
+            "exclude" | "include" => file_mode,
+            _ => "all".to_string(),
+        };
+        let exclude_exts = normalize_exts(&exclude_exts);
+        let include_exts = normalize_exts(&include_exts);
+        let cfg = IndexConfigFile {
+            roots: roots.clone(),
+            exclusions: exclusions.clone(),
+            name_exclusions,
+            index_hidden,
+            file_mode: mode,
+            exclude_exts: exclude_exts.clone(),
+            include_exts,
             rescan_interval_secs: interval,
             watch_enabled,
             config_version: CONFIG_VERSION,
         };
+        save_config(&self.config_dir, &cfg)?;
+        *self.cfg.lock().unwrap() = cfg;
         Ok(())
     }
 
@@ -509,11 +626,36 @@ fn thread_loop(idx: Arc<Indexer>) {
                 watch_sig = None;
                 idx.watch_ok.store(false, Ordering::Relaxed);
             }
+            // 释放已建索引的内存（arena+meta+grams 可达数百 MB）：关闭插件不常驻。
+            // 磁盘快照保留，重开插件时指纹匹配即秒级恢复，无需全量重建。
+            let mut st = idx.state.write().unwrap();
+            if st.as_ref().is_some() {
+                *st = Arc::new(None);
+            }
             continue;
         }
         let cfg = idx.cfg.lock().unwrap().clone();
-        let excl = Exclusions::new(&cfg.exclusions);
-        let fp = roots_fingerprint(&cfg.roots, &cfg.exclusions);
+        // 快照指纹口径 = 配置声明值（不含 env 推导排除）：终端/Finder 等不同
+        // 启动环境的 env 差异不再互相作废快照、触发整库重建。
+        // 生效遍历排除 = 配置排除 + env 推导（虚拟环境/包缓存目录，不落盘）；
+        // 隐藏开关与文件类型模式两份口径一致，任一配置变化 → 快照失效重建。
+        let files = FileFilter::from_config(&cfg.file_mode, &cfg.exclude_exts, &cfg.include_exts);
+        let hidden = cfg.index_hidden;
+        let fp = roots_fingerprint(
+            &cfg.roots,
+            &Exclusions {
+                files: files.clone(),
+                hidden,
+                ..Exclusions::new(&cfg.exclusions, &cfg.name_exclusions)
+            },
+        );
+        let mut excl_dirs = cfg.exclusions.clone();
+        excl_dirs.extend(env_exclusions());
+        let excl = Exclusions {
+            files,
+            hidden,
+            ..Exclusions::new(&excl_dirs, &cfg.name_exclusions)
+        };
 
         let cur = idx.state.read().unwrap().clone();
         match cur.as_ref() {
@@ -532,7 +674,7 @@ fn thread_loop(idx: Arc<Indexer>) {
                         continue;
                     }
                 }
-                let (st, errs) = EngineState::build_full(&cfg.roots, &excl);
+                let (st, errs) = EngineState::build_full(&cfg.roots, &excl, fp);
                 idx.errors.store(errs, Ordering::Relaxed);
                 idx.last_duration_ms.store(t0.elapsed().as_millis() as i64, Ordering::Relaxed);
                 idx.swap(st);
@@ -556,7 +698,7 @@ fn thread_loop(idx: Arc<Indexer>) {
                     // 配置变化 / 手动重建：全量重建（swap 前旧状态继续可查）
                     idx.phase.store(PHASE_BUILDING, Ordering::Relaxed);
                     let t0 = Instant::now();
-                    let (new, errs) = EngineState::build_full(&cfg.roots, &excl);
+                    let (new, errs) = EngineState::build_full(&cfg.roots, &excl, fp);
                     idx.errors.store(errs, Ordering::Relaxed);
                     idx.last_duration_ms.store(t0.elapsed().as_millis() as i64, Ordering::Relaxed);
                     idx.swap(new);
@@ -571,7 +713,7 @@ fn thread_loop(idx: Arc<Indexer>) {
                     last_rescan.map(|t| t.elapsed()),
                 ) {
                     // 事件驱动 / 例行增量：无变化时 rescan 返回 None，零成本
-                    if let Some(new) = EngineState::rescan(st, &cfg.roots, &excl) {
+                    if let Some(new) = EngineState::rescan(st, &cfg.roots, &excl, fp) {
                         idx.swap(new);
                         persist(&idx);
                     }
@@ -659,9 +801,20 @@ mod tests {
         for d in default_exclusions() {
             assert!(cfg.exclusions.contains(&d), "新默认排除项 {d} 应并入");
         }
+        // 名字级排除（v3 新字段，旧文件缺省为空）：默认名单并入
+        assert!(cfg.name_exclusions.contains(&"node_modules".to_string()));
+        for d in default_name_exclusions() {
+            assert!(cfg.name_exclusions.contains(&d), "新默认名字排除 {d} 应并入");
+        }
+        // 隐藏开关/文件类型模式（纯新增字段，serde default 即得，无并集迁移）
+        assert!(cfg.index_hidden, "隐藏开关缺省 = 索引（旧行为）");
+        assert_eq!(cfg.file_mode, "all");
+        assert!(cfg.exclude_exts.is_empty());
+        assert!(cfg.include_exts.is_empty());
         // 回读：迁移结果已落盘，二次加载幂等（不再变化）
         let cfg2 = load_config(&dir);
         assert_eq!(cfg.exclusions, cfg2.exclusions);
+        assert_eq!(cfg.name_exclusions, cfg2.name_exclusions);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -674,6 +827,11 @@ mod tests {
         save_config(&dir, &IndexConfigFile {
             roots: vec!["/tmp/x".into()],
             exclusions: vec!["/only-this".into()],
+            name_exclusions: vec!["my-dep".into()],
+            index_hidden: false,
+            file_mode: "include".into(),
+            exclude_exts: vec!["log".into()],
+            include_exts: vec![".MD".into()],
             rescan_interval_secs: 60,
             watch_enabled: false,
             config_version: CONFIG_VERSION,
@@ -681,8 +839,10 @@ mod tests {
         .unwrap();
         let cfg = load_config(&dir);
         assert_eq!(cfg.exclusions, vec!["/only-this".to_string()], "当前版本不做默认项并集");
-        assert_eq!(cfg.rescan_interval_secs, 60);
-        assert!(!cfg.watch_enabled);
+        assert_eq!(cfg.name_exclusions, vec!["my-dep".to_string()]);
+        assert!(!cfg.index_hidden);
+        assert_eq!(cfg.file_mode, "include");
+        assert_eq!(cfg.exclude_exts, vec!["log".to_string()]);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -702,6 +862,11 @@ mod tests {
         save_config(&cfg_dir, &IndexConfigFile {
             roots: vec![root.to_string_lossy().into_owned()],
             exclusions: vec![],
+            name_exclusions: vec![],
+            index_hidden: true,
+            file_mode: "all".into(),
+            exclude_exts: vec![],
+            include_exts: vec![],
             rescan_interval_secs: 0, // 关例行：本测试只验事件驱动路径
             watch_enabled: true,
             config_version: CONFIG_VERSION,

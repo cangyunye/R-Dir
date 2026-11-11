@@ -5,7 +5,10 @@
 //! - macOS / Linux：符号链接（`std::os::unix::fs::symlink`，绝对目标）；命名
 //!   `{name}{后缀}`（后缀由前端按当前语言传入，如「链接」）。
 //!
-//! 名称冲突按文件系统实际状态自动追加序号（`xxx 链接 2` / `xxx (2).lnk`）。
+//! 名称冲突按文件系统实际状态自动追加序号（`xxx链接 2` / `xxx (2).lnk`）。
+//!
+//! 错误契约：统一产出 `SHORTCUT_FAILED|中文详情`（前端 terr() 按码翻译，
+//! zh 剥码后显示与码化前逐字一致）。
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -58,9 +61,9 @@ fn create_one(target: &Path, dir: &Path, _suffix: &str) -> Result<PathBuf, Strin
     let status = Command::new("powershell")
         .args(["-NoProfile", "-Command", &cmd])
         .status()
-        .map_err(|e| format!("启动 powershell 失败:{e}"))?;
+        .map_err(|e| format!("SHORTCUT_FAILED|启动 powershell 失败:{e}"))?;
     if !status.success() {
-        return Err(format!("创建快捷方式失败：{}", link.display()));
+        return Err(format!("SHORTCUT_FAILED|创建快捷方式失败：{}", link.display()));
     }
     Ok(link)
 }
@@ -74,9 +77,9 @@ fn create_one(target: &Path, dir: &Path, suffix: &str) -> Result<PathBuf, String
     let link = unique_link_path(dir, &format!("{name}{suffix}"), "");
     std::os::unix::fs::symlink(target, &link).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
-            format!("无权限在 {} 创建符号链接", dir.display())
+            format!("SHORTCUT_FAILED|无权限在 {} 创建符号链接", dir.display())
         } else {
-            format!("创建符号链接失败：{e}")
+            format!("SHORTCUT_FAILED|创建符号链接失败：{e}")
         }
     })?;
     Ok(link)
@@ -89,7 +92,7 @@ pub fn create_shortcuts(paths: &[String], to_desktop: bool, suffix: &str) -> Res
         Some(
             dirs::desktop_dir()
                 .or_else(dirs::home_dir)
-                .ok_or_else(|| "无法定位桌面目录".to_string())?,
+                .ok_or_else(|| "SHORTCUT_FAILED|无法定位桌面目录".to_string())?,
         )
     } else {
         None
@@ -98,7 +101,7 @@ pub fn create_shortcuts(paths: &[String], to_desktop: bool, suffix: &str) -> Res
     for p in paths {
         let target = Path::new(p);
         if !target.exists() {
-            return Err(format!("目标不存在：{p}"));
+            return Err(format!("SHORTCUT_FAILED|目标不存在：{p}"));
         }
         let link_dir = desktop.clone().unwrap_or_else(|| {
             target

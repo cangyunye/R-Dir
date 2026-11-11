@@ -62,7 +62,7 @@ import {
   indexSetConfig,
   indexStatus,
 } from "@/lib/api";
-import type { IndexStatusView } from "@/lib/types";
+import type { IndexConfigFile, IndexStatusView } from "@/lib/types";
 import { useModalLayer } from "@/hooks/useModalLayer";
 import { isTopModalLayer } from "@/lib/modal-stack";
 import {
@@ -76,6 +76,7 @@ import {
 } from "@/lib/persist";
 import { useT } from "@/lib/LanguageProvider";
 import type { Language } from "@/lib/i18n";
+import { terr } from "@/lib/i18n";
 
 /** 设置分区标识（左栏导航 + 右栏锚点共用） */
 export type SectionId = "appearance" | "preview" | "keys" | "openers" | "quickTools" | "contextMenu" | "favorites" | "share" | "remoteTemp" | "integration" | "index" | "plugins" | "about";
@@ -252,6 +253,7 @@ export function SettingsDialog({
   const [indexSt, setIndexSt] = useState<IndexStatusView | null>(null);
   const [indexRoots, setIndexRoots] = useState("");
   const [indexExcl, setIndexExcl] = useState("");
+  const [indexNameExcl, setIndexNameExcl] = useState("");
   const [indexDirty, setIndexDirty] = useState(false);
   const [indexSaving, setIndexSaving] = useState(false);
   const [indexSaved, setIndexSaved] = useState(false);
@@ -259,23 +261,50 @@ export function SettingsDialog({
   // roots/排除清单，不携带文本区未保存草稿）；indexSavedCfg 记录最近一次落盘值
   const [indexFreq, setIndexFreq] = useState(600);
   const [indexWatch, setIndexWatch] = useState(true);
-  const [indexSavedCfg, setIndexSavedCfg] = useState<{ roots: string[]; exclusions: string[] }>({ roots: [], exclusions: [] });
-  const applyIndexOptions = useCallback(async (freq: number, watch: boolean) => {
-    try {
-      await indexSetConfig(indexSavedCfg.roots, indexSavedCfg.exclusions, freq, watch);
-      setIndexSaved(true);
-      window.setTimeout(() => setIndexSaved(false), 2000);
-    } catch {
-      /* 保存失败静默（下次轮询状态可见配置未生效） */
-    }
-  }, [indexSavedCfg]);
+  // v0.46 索引隐藏开关（改动即存）+ 文件类型索引模式与扩展名草稿（随「保存」落盘）
+  const [indexHidden, setIndexHidden] = useState(true);
+  const [indexFileMode, setIndexFileMode] = useState<IndexConfigFile["fileMode"]>("all");
+  const [indexExcludeExts, setIndexExcludeExts] = useState("");
+  const [indexIncludeExts, setIndexIncludeExts] = useState("");
+  const [indexSavedCfg, setIndexSavedCfg] = useState<{
+    roots: string[];
+    exclusions: string[];
+    nameExclusions: string[];
+    indexHidden: boolean;
+    fileMode: IndexConfigFile["fileMode"];
+    excludeExts: string[];
+    includeExts: string[];
+  }>({ roots: [], exclusions: [], nameExclusions: [], indexHidden: true, fileMode: "all", excludeExts: [], includeExts: [] });
+  /** 最近落盘值的同步 ref：改动即存的开关（隐藏/频率/监视）同帧连续拨动时，
+   *  state 闭包可能读到陈旧整包而相互覆盖——统一走 ref 取/写最新值 */
+  const indexSavedCfgRef = useRef(indexSavedCfg);
+  const applyIndexOptions = useCallback(
+    async (freq: number, watch: boolean, hidden: boolean) => {
+      try {
+        const c = indexSavedCfgRef.current;
+        await indexSetConfig(c.roots, c.exclusions, c.nameExclusions, hidden, c.fileMode, c.excludeExts, c.includeExts, freq, watch);
+        indexSavedCfgRef.current = { ...c, indexHidden: hidden };
+        setIndexSavedCfg(indexSavedCfgRef.current);
+        setIndexSaved(true);
+        window.setTimeout(() => setIndexSaved(false), 2000);
+      } catch {
+        /* 保存失败静默（下次轮询状态可见配置未生效） */
+      }
+    },
+    [],
+  );
   const handleSaveIndexConfig = useCallback(async () => {
     setIndexSaving(true);
     try {
       const roots = indexRoots.split("\n").map((s) => s.trim()).filter(Boolean);
       const excl = indexExcl.split("\n").map((s) => s.trim()).filter(Boolean);
-      await indexSetConfig(roots, excl, indexFreq, indexWatch);
-      setIndexSavedCfg({ roots, exclusions: excl });
+      const nameExcl = indexNameExcl.split("\n").map((s) => s.trim()).filter(Boolean);
+      const excludeExts = indexExcludeExts.split("\n").map((s) => s.trim()).filter(Boolean);
+      const includeExts = indexIncludeExts.split("\n").map((s) => s.trim()).filter(Boolean);
+      await indexSetConfig(roots, excl, nameExcl, indexHidden, indexFileMode, excludeExts, includeExts, indexFreq, indexWatch);
+      const saved = { roots, exclusions: excl, nameExclusions: nameExcl, indexHidden, fileMode: indexFileMode, excludeExts, includeExts };
+      indexSavedCfgRef.current = saved;
+      setIndexSavedCfg(saved);
       setIndexDirty(false);
       setIndexSaved(true);
       window.setTimeout(() => setIndexSaved(false), 2000);
@@ -283,7 +312,7 @@ export function SettingsDialog({
       /* 保存失败静默（下次轮询状态可见配置未生效） */
     }
     setIndexSaving(false);
-  }, [indexRoots, indexExcl, indexFreq, indexWatch]);
+  }, [indexRoots, indexExcl, indexNameExcl, indexHidden, indexFileMode, indexExcludeExts, indexIncludeExts, indexFreq, indexWatch]);
   /** 添加索引范围目录：系统目录选择对话框，选完追加为草稿新行 */
   const handleAddIndexRoot = useCallback(async () => {
     try {
@@ -299,6 +328,28 @@ export function SettingsDialog({
       /* ignore */
     }
   }, []);
+  // v0.46 文件类型预设（点击并入当前模式的扩展名草稿；label 用字面量 t() 保证可被语言包提取）
+  const indexExtPresets = [
+    { label: t("文档"), exts: ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "md", "txt", "csv", "epub"] },
+    {
+      label: t("代码"),
+      exts: ["ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "c", "cpp", "h", "rb", "php", "swift", "kt", "cs", "sql", "sh", "json", "yaml", "yml", "toml", "html", "css"],
+    },
+    { label: t("图片"), exts: ["jpg", "jpeg", "png", "gif", "webp", "svg", "heic", "bmp"] },
+    { label: t("音视频"), exts: ["mp4", "mov", "mkv", "avi", "mp3", "flac", "wav", "aac"] },
+  ];
+  /** 预设扩展名并入当前模式的草稿（已有项保留，追加缺失项） */
+  const applyExtPreset = useCallback(
+    (exts: string[]) => {
+      const setter = indexFileMode === "exclude" ? setIndexExcludeExts : setIndexIncludeExts;
+      setter((prev) => {
+        const cur = prev.split("\n").map((s) => s.trim()).filter(Boolean);
+        return [...new Set([...cur, ...exts])].join("\n");
+      });
+      setIndexDirty(true);
+    },
+    [indexFileMode],
+  );
   /** 正在录制键位的 actionId（null = 未录制） */
   const [recordingId, setRecordingId] = useState<string | null>(null);
   /** v0.8 分类导航当前分区（由滚动位置反推，用于左栏高亮） */
@@ -355,7 +406,7 @@ export function SettingsDialog({
         setShellMsg(t("已注册：目录 / 目录空白处 / 文件右键「用 R-Dir 打开」"));
       }
     } catch (e) {
-      setShellMsg(String(e));
+      setShellMsg(terr(String(e)));
     } finally {
       setShellBusy(false);
     }
@@ -379,9 +430,16 @@ export function SettingsDialog({
         // 不覆盖编辑中的草稿（仅在为空时填充）；扫描选项直接反映落盘值
         setIndexRoots((prev) => prev || c.roots.join("\n"));
         setIndexExcl((prev) => prev || c.exclusions.join("\n"));
+        setIndexNameExcl((prev) => prev || c.nameExclusions.join("\n"));
+        setIndexExcludeExts((prev) => prev || c.excludeExts.join("\n"));
+        setIndexIncludeExts((prev) => prev || c.includeExts.join("\n"));
+        setIndexHidden(c.indexHidden);
+        setIndexFileMode(c.fileMode);
         setIndexFreq(c.rescanIntervalSecs);
         setIndexWatch(c.watchEnabled);
-        setIndexSavedCfg({ roots: c.roots, exclusions: c.exclusions });
+        const saved = { roots: c.roots, exclusions: c.exclusions, nameExclusions: c.nameExclusions, indexHidden: c.indexHidden, fileMode: c.fileMode, excludeExts: c.excludeExts, includeExts: c.includeExts };
+        indexSavedCfgRef.current = saved;
+        setIndexSavedCfg(saved);
       })
       .catch(() => {});
     return () => {
@@ -1600,7 +1658,7 @@ export function SettingsDialog({
                         onChange={(e) => {
                           const v = Number(e.target.value);
                           setIndexFreq(v);
-                          void applyIndexOptions(v, indexWatch);
+                          void applyIndexOptions(v, indexWatch, indexHidden);
                         }}
                         aria-label={t("例行扫描频率")}
                         title={t("目录未变化时的重扫是零成本 stat；外部变更由实时监视秒级捕获，无需调高频率")}
@@ -1623,12 +1681,87 @@ export function SettingsDialog({
                         onClick={() => {
                           const next = !indexWatch;
                           setIndexWatch(next);
-                          void applyIndexOptions(indexFreq, next);
+                          void applyIndexOptions(indexFreq, next, indexHidden);
                         }}
                         className="flex cursor-pointer"
                       >
                         <SwitchVisual checked={indexWatch} />
                       </button>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
+                      <span>{t("索引隐藏文件与目录（dot 开头）")}</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={indexHidden}
+                        aria-label={t("索引隐藏文件与目录")}
+                        onClick={() => {
+                          const next = !indexHidden;
+                          setIndexHidden(next);
+                          void applyIndexOptions(indexFreq, indexWatch, next);
+                        }}
+                        className="flex cursor-pointer"
+                      >
+                        <SwitchVisual checked={indexHidden} />
+                      </button>
+                    </div>
+                    <div className="border-t px-3 py-2.5">
+                      <div className="mb-1 text-[11px] text-muted-foreground">{t("索引文件类型")}</div>
+                      <div className="flex gap-1">
+                        {(["all", "exclude", "include"] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => {
+                              setIndexFileMode(m);
+                              setIndexDirty(true);
+                            }}
+                            className={`flex-1 rounded border px-2 py-1 text-[11px] transition-colors ${
+                              indexFileMode === m
+                                ? "border-transparent bg-secondary text-secondary-foreground"
+                                : "text-muted-foreground hover:bg-accent"
+                            }`}
+                          >
+                            {m === "all" ? t("全部文件") : m === "exclude" ? t("排除所选类型") : t("仅索引所选类型")}
+                          </button>
+                        ))}
+                      </div>
+                      {indexFileMode !== "all" && (
+                        <label className="mt-2 block">
+                          <span className="mb-1 block text-[11px] text-muted-foreground">
+                            {indexFileMode === "exclude"
+                              ? t("排除的类型（每行一个扩展名，如 log）")
+                              : t("仅索引的类型（每行一个扩展名，如 md；无扩展名文件不会被索引）")}
+                          </span>
+                          <textarea
+                            value={indexFileMode === "exclude" ? indexExcludeExts : indexIncludeExts}
+                            onChange={(e) => {
+                              if (indexFileMode === "exclude") setIndexExcludeExts(e.target.value);
+                              else setIndexIncludeExts(e.target.value);
+                              setIndexDirty(true);
+                            }}
+                            rows={3}
+                            spellCheck={false}
+                            className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
+                          />
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                            {indexExtPresets.map((p) => (
+                              <button
+                                key={p.label}
+                                type="button"
+                                onClick={() => applyExtPreset(p.exts)}
+                                title={p.exts.join(" ")}
+                                className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                              >
+                                {p.label}
+                              </button>
+                            ))}
+                            <span className="text-[10px] text-muted-foreground/70">
+                              {t("扩展名不含点，多级扩展名（如 tar.gz）填最后一段 gz")}
+                            </span>
+                          </div>
+                        </label>
+                      )}
                     </div>
                     <div className="border-t px-3 py-2.5">
                       <div className="mb-1 flex items-center justify-between gap-2">
@@ -1662,6 +1795,21 @@ export function SettingsDialog({
                           value={indexExcl}
                           onChange={(e) => {
                             setIndexExcl(e.target.value);
+                            setIndexDirty(true);
+                          }}
+                          rows={3}
+                          spellCheck={false}
+                          className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
+                        />
+                      </label>
+                      <label className="mt-2 block">
+                        <span className="mb-1 block text-[11px] text-muted-foreground">
+                          {t("排除目录名（每行一个名字，对任意层级下的同名目录生效，如 node_modules）")}
+                        </span>
+                        <textarea
+                          value={indexNameExcl}
+                          onChange={(e) => {
+                            setIndexNameExcl(e.target.value);
                             setIndexDirty(true);
                           }}
                           rows={3}

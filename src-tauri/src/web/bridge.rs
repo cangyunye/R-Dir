@@ -88,6 +88,8 @@ const WRITE_COMMANDS: &[&str] = &[
     "sftp_create_file",
     "sftp_delete",
     "sftp_rename",
+    // v0.46 同服务器剪切粘贴：服务器端一次 rename（不走中转）
+    "sftp_move_entry",
     "write_text_file",
     "http_download_to",
     // 写用户在服务端指定路径（导出类）
@@ -772,6 +774,16 @@ async fn c_sftp_rename(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
 }
 
 #[cfg(feature = "sftp")]
+async fn c_sftp_move_entry(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let src: String = arg(args, "src")?;
+    let dest_dir: String = arg(args, "destDir")?;
+    let name: String = arg(args, "name")?;
+    crate::ensure_plugin(&ctx.state, "sftp")?;
+    let pool = ctx.state.sftp_pool.lock().await;
+    val(crate::sftp::move_entry(&pool, &src, &dest_dir, &name).await)
+}
+
+#[cfg(feature = "sftp")]
 async fn c_sftp_export_servers(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let target: String = arg(args, "target")?;
     let exported_at: String = arg(args, "exportedAt")?;
@@ -828,6 +840,7 @@ sftp_stubs!(
     c_sftp_create_file,
     c_sftp_delete,
     c_sftp_rename,
+    c_sftp_move_entry,
     c_sftp_export_servers,
     c_sftp_import_servers,
 );
@@ -1007,9 +1020,25 @@ async fn c_index_get_config(ctx: &WebCtx, _args: &Value) -> Result<Value, String
 async fn c_index_set_config(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let roots: Vec<String> = arg(args, "roots")?;
     let exclusions: Vec<String> = arg(args, "exclusions")?;
+    // v3/v4 新字段：旧前端不传时按缺省值（设置页保存总是带全量字段）
+    let name_exclusions: Vec<String> = opt_arg(args, "nameExclusions")?.unwrap_or_default();
+    let index_hidden: bool = opt_arg(args, "indexHidden")?.unwrap_or(true);
+    let file_mode: String = opt_arg(args, "fileMode")?.unwrap_or_else(|| "all".to_string());
+    let exclude_exts: Vec<String> = opt_arg(args, "excludeExts")?.unwrap_or_default();
+    let include_exts: Vec<String> = opt_arg(args, "includeExts")?.unwrap_or_default();
     let rescan_interval_secs: u64 = arg(args, "rescanIntervalSecs")?;
     let watch_enabled: bool = arg(args, "watchEnabled")?;
-    index_with_ctx(ctx).set_config(roots, exclusions, rescan_interval_secs, watch_enabled)?;
+    index_with_ctx(ctx).set_config(
+        roots,
+        exclusions,
+        name_exclusions,
+        index_hidden,
+        file_mode,
+        exclude_exts,
+        include_exts,
+        rescan_interval_secs,
+        watch_enabled,
+    )?;
     val(Ok(()))
 }
 
@@ -1162,6 +1191,7 @@ web_commands! {
     "sftp_create_file" => c_sftp_create_file,
     "sftp_delete" => c_sftp_delete,
     "sftp_rename" => c_sftp_rename,
+    "sftp_move_entry" => c_sftp_move_entry,
     "sftp_export_servers" => c_sftp_export_servers,
     "sftp_import_servers" => c_sftp_import_servers,
     // ---- 比对 / 文本 / 搜索 / 杂项 ----
@@ -1327,6 +1357,7 @@ mod tests {
             "sftp_relay",
             "sftp_delete",
             "sftp_rename",
+            "sftp_move_entry",
             "sftp_mkdir",
             "sftp_create_file",
             "sftp_download_to",

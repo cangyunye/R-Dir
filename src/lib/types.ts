@@ -164,6 +164,16 @@ export interface IndexStatusView {
 export interface IndexConfigFile {
   roots: string[];
   exclusions: string[];
+  /** 名字级排除（node_modules 等，对任意层级下的同名目录生效） */
+  nameExclusions: string[];
+  /** 是否索引隐藏条目（dot 开头；索引期过滤，改动触发重建） */
+  indexHidden: boolean;
+  /** 文件类型索引模式：all / exclude / include（定向） */
+  fileMode: "all" | "exclude" | "include";
+  /** 排除模式的扩展名列表（fileMode=exclude 时生效） */
+  excludeExts: string[];
+  /** 定向模式的扩展名列表（fileMode=include 时生效） */
+  includeExts: string[];
   /** 例行重扫间隔秒（默认 600；0 = 仅事件触发） */
   rescanIntervalSecs: number;
   watchEnabled: boolean;

@@ -55,6 +55,7 @@ import type {
   SortDir,
   SortKey,
   SplitDir,
+  SftpServerView,
   TabFavorite,
   TabState,
   ThemeMode,
@@ -113,6 +114,7 @@ import {
   sftpDownload,
   sftpDownloadTo,
   sftpMkdir,
+  sftpMove,
   sftpRename,
   sftpRelay,
   sftpUpload,
@@ -481,6 +483,21 @@ export default function App() {
   const appConfirm = useCallback(
     async (req: AppConfirmRequest) => (await appConfirmChoice(req)) === "confirm",
     [appConfirmChoice],
+  );
+  /** SFTP 服务器配置覆盖确认：新增/改动撞到已有 user@host:port 条目时提示
+   *  （后端保存为整条 upsert，会覆盖显示名/分组等；右键「编辑」同一台不弹） */
+  const confirmSftpServerOverwrite = useCallback(
+    async (existing: SftpServerView) =>
+      appConfirm({
+        title: t("覆盖服务器配置"),
+        message: t("「{id}」已存在（现有名称：{name}），保存将覆盖其显示名、分组等配置", {
+          id: existing.id,
+          name: existing.name,
+        }),
+        confirmLabel: t("覆盖保存"),
+        danger: true,
+      }),
+    [appConfirm, t],
   );
   const settleAppConfirm = useCallback((v: "confirm" | "cancel" | "alt") => {
     setAppConfirmReq(null);
@@ -1834,7 +1851,7 @@ useEffect(() => {
         setFavorites(favs ?? []);
         // v0.46 冷启动路径（安装版右键「用 R-Dir 打开」/ CLI 参数 / Finder Open With）：
         // 带路径启动按参数开标签（目录直达，文件开父目录并选中），跳过会话恢复
-        let launchEntries: { path: string; is_dir: boolean }[] = [];
+        let launchEntries: { path: string; isDir: boolean }[] = [];
         if (isTauri()) {
           try {
             launchEntries = await launchPathsTake();
@@ -1844,8 +1861,8 @@ useEffect(() => {
         }
         if (launchEntries.length > 0) {
           const tabsToOpen = launchEntries.map((ent) => {
-            const dir = ent.is_dir ? ent.path : parentPath(ent.path);
-            if (!ent.is_dir) pendingSelectRef.current = [ent.path];
+            const dir = ent.isDir ? ent.path : parentPath(ent.path);
+            if (!ent.isDir) pendingSelectRef.current = [ent.path];
             return makeTab(dir);
           });
           setTabs(tabsToOpen);
@@ -3501,13 +3518,25 @@ useEffect(() => {
               : nfsUpload(src, dest, basename(src)));
             pasted.push(dest.endsWith("/") ? dest + basename(src) : `${dest}/${basename(src)}`);
           }
+          // 剪切粘贴到同一台服务器：服务器端一次 rename_over（posix-rename）
+          // 直接完成，不经临时目录中转，且 rename 天然删源——剪切语义真生效。
+          // 跨服务器（或复制）仍走中转；authority id 与后端 pool_key 同构。
+          const destId = destIsSftp ? parseSftpAuthority(dest)?.id : undefined;
+          const mvSrcs = new Set(
+            isCut && destId
+              ? relaySrcs.filter((s) => parseSftpAuthority(s)?.id === destId)
+              : [],
+          );
           for (const src of relaySrcs) {
             if (sameDir.includes(src)) continue;
             // 顶层同名语义同本地→远程粘贴：静默覆盖（拖拽才走覆盖确认）
-            pasted.push(await sftpRelay(src, dest, basename(src)));
+            pasted.push(
+              await (mvSrcs.has(src) ? sftpMove(src, dest, basename(src)) : sftpRelay(src, dest, basename(src))),
+            );
           }
-          if (relaySrcs.length > sameDir.length && isCut) {
-            // 远程剪切：与远程→本地一致，按复制处理（不删源）
+          const relayedCount = relaySrcs.filter((s) => !sameDir.includes(s) && !mvSrcs.has(s)).length;
+          if (relayedCount > 0 && isCut) {
+            // 远程剪切（跨服务器部分）：中转按复制处理，不删源
             showError(t("远程剪切暂按复制处理（不删除源文件）"));
           }
         setClipboard(null);
@@ -3647,8 +3676,9 @@ useEffect(() => {
           return;
         }
         // v0.44.0 SFTP → SFTP：经远程临时目录中转（同服务器跨目录 / 跨服务器）。
-        // 远程语义不删源（拖拽的 move 同按复制，与远程↔本地一致）；SFTP 写入为 FXF_TRUNC
-        // 静默覆盖，同本地→远程：先列目标目录，存在同名 → 用户确认后才传
+        // 复制语义不删源；v0.46 同服务器 + Alt=移动 改为服务器端一次 rename（真移动）。
+        // SFTP 写入为 FXF_TRUNC 静默覆盖，同本地→远程：先列目标目录，存在同名 →
+        // 用户确认后才传
         if (srcIsSftp && destIsSftp) {
           // 投放到自身 / 源所在目录 = 无操作（回写同一路径还会因截断写在失败时损坏源）
           const relayPaths = paths.filter(
@@ -3670,8 +3700,15 @@ useEffect(() => {
             });
             if (!ok) return;
           }
+          // Alt=移动 且同一台服务器：服务器端 rename 直接完成（撞名确认已在上面）
+          const destId = parseSftpAuthority(dest)?.id;
+          const movePaths = new Set(
+            op === "move" && destId
+              ? relayPaths.filter((p) => parseSftpAuthority(p)?.id === destId)
+              : [],
+          );
           for (const p of relayPaths) {
-            await sftpRelay(p, dest, basename(p));
+            await (movePaths.has(p) ? sftpMove(p, dest, basename(p)) : sftpRelay(p, dest, basename(p)));
           }
           refreshPanes(refreshIds);
           return;
@@ -5690,6 +5727,8 @@ useEffect(() => {
         onSaveOnly={(cfg) => sftp.saveServerOnly(cfg)}
         onClose={sftp.closeConnect}
         onConnected={sftp.handleConnected}
+        servers={sftp.servers}
+        confirmOverwrite={confirmSftpServerOverwrite}
       />
 
       {/* 主密钥（master-key）：仅内存，用于加密保存的密码 */}

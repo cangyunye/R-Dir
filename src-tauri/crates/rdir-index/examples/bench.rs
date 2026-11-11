@@ -2,7 +2,7 @@
 //!   cargo run -p rdir-index --release --example bench -- <目录> [查询词...]
 //! 输出：全量构建耗时/条目数/内存粗估、各查询词命中数与耗时、增量重扫耗时。
 
-use rdir_index::{EngineState, Exclusions, MatchMode};
+use rdir_index::{roots_fingerprint, EngineState, Exclusions, MatchMode};
 use std::time::Instant;
 
 fn main() {
@@ -13,9 +13,11 @@ fn main() {
     }
     let (roots, queries) = args.split_at(1);
     let roots: Vec<String> = roots.to_vec();
+    let excl = Exclusions::default();
+    let fp = roots_fingerprint(&roots, &excl);
 
     let t0 = Instant::now();
-    let (st, errs) = EngineState::build_full(&roots, &Exclusions::default());
+    let (st, errs) = EngineState::build_full(&roots, &excl, fp);
     println!("全量构建：{} 条目，{} 项跳过，{:?}", st.len(), errs, t0.elapsed());
 
     let arena_mb = st.arena_len() as f64 / 1024.0 / 1024.0;
@@ -36,7 +38,7 @@ fn main() {
     }
 
     let t2 = Instant::now();
-    match EngineState::rescan(&st, &roots, &Exclusions::default()) {
+    match EngineState::rescan(&st, &roots, &excl, fp) {
         None => println!("增量重扫：无变化（零重建），{:?}", t2.elapsed()),
         Some(n) => println!("增量重扫：重建 {} 条，{:?}", n.len(), t2.elapsed()),
     }
