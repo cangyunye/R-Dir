@@ -427,17 +427,27 @@ export function SettingsDialog({
     indexGetConfig()
       .then((c) => {
         if (!alive) return;
-        // 不覆盖编辑中的草稿（仅在为空时填充）；扫描选项直接反映落盘值
+        // 不覆盖编辑中的草稿（仅在为空时填充）；扫描选项直接反映落盘值。
+        // 新字段带 ?? 兜底：旧后端/e2e mock 缺字段时读 undefined 不崩（字符串
+        // 字段回落默认值），设置页保持可开
         setIndexRoots((prev) => prev || c.roots.join("\n"));
         setIndexExcl((prev) => prev || c.exclusions.join("\n"));
-        setIndexNameExcl((prev) => prev || c.nameExclusions.join("\n"));
-        setIndexExcludeExts((prev) => prev || c.excludeExts.join("\n"));
-        setIndexIncludeExts((prev) => prev || c.includeExts.join("\n"));
-        setIndexHidden(c.indexHidden);
-        setIndexFileMode(c.fileMode);
+        setIndexNameExcl((prev) => prev || (c.nameExclusions ?? []).join("\n"));
+        setIndexExcludeExts((prev) => prev || (c.excludeExts ?? []).join("\n"));
+        setIndexIncludeExts((prev) => prev || (c.includeExts ?? []).join("\n"));
+        setIndexHidden(c.indexHidden ?? true);
+        setIndexFileMode(c.fileMode ?? "all");
         setIndexFreq(c.rescanIntervalSecs);
         setIndexWatch(c.watchEnabled);
-        const saved = { roots: c.roots, exclusions: c.exclusions, nameExclusions: c.nameExclusions, indexHidden: c.indexHidden, fileMode: c.fileMode, excludeExts: c.excludeExts, includeExts: c.includeExts };
+        const saved = {
+          roots: c.roots,
+          exclusions: c.exclusions,
+          nameExclusions: c.nameExclusions ?? [],
+          indexHidden: c.indexHidden ?? true,
+          fileMode: c.fileMode ?? "all",
+          excludeExts: c.excludeExts ?? [],
+          includeExts: c.includeExts ?? [],
+        };
         indexSavedCfgRef.current = saved;
         setIndexSavedCfg(saved);
       })

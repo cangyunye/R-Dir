@@ -404,7 +404,18 @@ export async function installTauriMock(page: Page): Promise<void> {
         return out;
       },
       index_rebuild: () => undefined,
-      index_get_config: () => ({ roots: ["/"], exclusions: [], rescanIntervalSecs: 600, watchEnabled: true }),
+      // 与后端 IndexConfigFile（camelCase）字段对齐：缺字段会让设置页读 undefined 崩溃
+      index_get_config: () => ({
+        roots: ["/"],
+        exclusions: [],
+        nameExclusions: [],
+        indexHidden: true,
+        fileMode: "all",
+        excludeExts: [],
+        includeExts: [],
+        rescanIntervalSecs: 600,
+        watchEnabled: true,
+      }),
       index_set_config: () => undefined,
       // 返回数组（真实后端为补全列表；空数组 = 不弹补全下拉）
       complete_path: () => [],
