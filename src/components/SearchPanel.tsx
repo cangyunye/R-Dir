@@ -162,14 +162,14 @@ function DepthSelect({ value, onChange }: { value: number | null; onChange: (v: 
           )}
         >
           <Layers className="h-3 w-3" />
-          {value == null ? t("深度不限") : t("深度 {n} 层", { n: value })}
+          {value == null ? t("深度不限") : t("深度：{n} 层", { n: value })}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-32">
         {options.map((n) => (
           <DropdownMenuItem key={n} onSelect={() => onChange(n)}>
             <Check className={cn("h-3.5 w-3.5", n === value ? "opacity-100" : "opacity-0")} />
-            {t("深度 {n} 层", { n })}
+            {t("深度：{n} 层", { n })}
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
