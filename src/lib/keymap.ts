@@ -41,6 +41,8 @@ export const ACTIONS: KeyAction[] = [
   A({ id: "newFolder", label: "新建文件夹", group: "文件操作", win: "mod+shift+n", mac: "mod+shift+n" }),
   A({ id: "newFile", label: "新建文件", group: "文件操作", win: "mod+alt+n", mac: "mod+alt+n" }),
   A({ id: "copyPath", label: "复制完整路径", group: "文件操作", win: "mod+shift+c", mac: "mod+shift+c" }),
+  // v0.47 选中恰好两个文件时快捷比较（与右键菜单「比较所选两个文件」同路径）
+  A({ id: "compareSelected", label: "比较所选两个文件", group: "文件操作", win: "mod+shift+d", mac: "mod+shift+d" }),
   A({ id: "undo", label: "撤销", group: "文件操作", win: "mod+z", mac: "mod+z" }),
   A({ id: "redo", label: "重做", group: "文件操作", win: "mod+y", mac: "mod+shift+z" }),
   A({ id: "properties", label: "属性栏", group: "文件操作", win: "alt+enter", mac: "mod+i" }),

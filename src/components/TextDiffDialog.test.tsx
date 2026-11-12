@@ -348,7 +348,7 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
     expect(screen.queryByDisplayValue("new")).toBeNull();
   });
 
-  it("v0.46 忽略正则：应用后重新比较并携带模式、跨重启持久化，eq 行展示右侧原文", async () => {
+  it("v0.46 正则忽略：应用后重新比较并携带模式、跨重启持久化，eq 行展示右侧原文", async () => {
     diffTextFiles.mockResolvedValue(
       outcome({
         segments: [
@@ -377,8 +377,8 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
     expect(screen.getByText("2026-01-01 10:00:00 INFO one")).toBeTruthy();
     expect(screen.getByText("2026-01-01 10:00:05 INFO one")).toBeTruthy();
     // 打开编辑器 → 点预设 → 应用 → 重新比较携带模式并落盘
-    fireEvent.click(screen.getByText("忽略正则"));
-    fireEvent.click(screen.getByText("+ 日志时间戳"));
+    fireEvent.click(screen.getByText("正则忽略"));
+    fireEvent.click(screen.getByText("+ 日期时间（2024-01-01 12:00:00）"));
     fireEvent.click(screen.getByText("应用"));
     await waitFor(() =>
       expect(diffTextFiles).toHaveBeenLastCalledWith(
@@ -390,12 +390,12 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
     );
     expect(JSON.parse(localStorage.getItem("rfm.diff-ignore-patterns") ?? "[]")).toHaveLength(1);
     // 按钮进入激活态（含条数徽标），编辑器收起
-    const btn = screen.getByText("忽略正则").closest("button") as HTMLButtonElement;
+    const btn = screen.getByText("正则忽略").closest("button") as HTMLButtonElement;
     expect(btn.className).toContain("bg-accent");
     expect(screen.queryByText("应用")).toBeNull();
   });
 
-  it("v0.46 忽略正则：有未保存修改时应用需确认，确认后生效", async () => {
+  it("v0.46 正则忽略：有未保存修改时应用需确认，确认后生效", async () => {
     render(
       <TextDiffDialog
         source={{ kind: "files", left: "/L/a.log", right: "/R/a.log" }}
@@ -408,13 +408,13 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
     fireEvent.change(screen.getByDisplayValue("new"), { target: { value: "changed" } });
     fireEvent.keyDown(screen.getByDisplayValue("changed"), { key: "Enter" });
     await waitFor(() => expect(screen.getByText("changed")).toBeTruthy());
-    // 应用忽略正则 → 确认弹窗 → 确认后重新比较
-    fireEvent.click(screen.getByText("忽略正则"));
+    // 应用正则忽略 → 确认弹窗 → 确认后重新比较
+    fireEvent.click(screen.getByText("正则忽略"));
     fireEvent.change(screen.getByPlaceholderText(/例如：/), {
       target: { value: "\\d{2}:\\d{2}:\\d{2}" },
     });
     fireEvent.click(screen.getByText("应用"));
-    expect(screen.getByText("修改忽略正则将丢弃未保存的修改")).toBeTruthy();
+    expect(screen.getByText("修改正则忽略将丢弃未保存的修改")).toBeTruthy();
     expect(diffTextFiles).toHaveBeenCalledTimes(1); // 确认前不重比
     fireEvent.click(screen.getByText("丢弃并应用")); // 确认弹窗的确认按钮
     await waitFor(() => expect(diffTextFiles).toHaveBeenCalledTimes(2));
@@ -423,7 +423,7 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
     ]);
   });
 
-  it("v0.46 忽略正则：清除后不再携带模式", async () => {
+  it("v0.46 正则忽略：清除后不再携带模式", async () => {
     localStorage.setItem("rfm.diff-ignore-patterns", JSON.stringify(["\\d{2}:\\d{2}"]));
     render(
       <TextDiffDialog
@@ -436,7 +436,7 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
         "\\d{2}:\\d{2}",
       ]),
     );
-    fireEvent.click(screen.getByText("忽略正则"));
+    fireEvent.click(screen.getByText("正则忽略"));
     // 草稿预填了当前模式：清空后应用即清除
     fireEvent.change(screen.getByPlaceholderText(/例如：/), { target: { value: "" } });
     fireEvent.click(screen.getByText("应用"));
@@ -444,6 +444,83 @@ describe("TextDiffDialog（v0.19 文本比较）", () => {
       expect(diffTextFiles).toHaveBeenLastCalledWith("/L/a.log", "/R/a.log", "utf-8", []),
     );
     expect(localStorage.getItem("rfm.diff-ignore-patterns")).toBeNull();
+  });
+
+  it("v0.47 正则忽略：Epoch 预设注入宽松 Epoch 模式并落盘", async () => {
+    render(
+      <TextDiffDialog
+        source={{ kind: "files", left: "/L/a.log", right: "/R/a.log" }}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("old")).toBeTruthy());
+    fireEvent.click(screen.getByText("正则忽略"));
+    // v0.47 大模态框：预设每行一种格式，示例行内直接可见（无需 ? 展开）
+    expect(screen.getByText("预设（点击追加到左侧）")).toBeTruthy();
+    expect(screen.getByText("2024-01-01 12:00:00.123")).toBeTruthy();
+    expect(screen.getByText("550e8400-e29b-41d4-a716-446655440000")).toBeTruthy();
+    expect(screen.getByText("1718159623（秒）")).toBeTruthy();
+    expect(screen.getByText(/可能误伤恰好 10\/13 位/)).toBeTruthy();
+    // 行首助手带具象示例
+    expect(screen.getByText(/示例：\[2024-01-01 10:00:00\] \[INFO\] 正文/)).toBeTruthy();
+    fireEvent.click(screen.getByText("+ Epoch 时间戳（秒/毫秒）"));
+    fireEvent.click(screen.getByText("应用"));
+    await waitFor(() =>
+      expect(diffTextFiles).toHaveBeenLastCalledWith(
+        "/L/a.log",
+        "/R/a.log",
+        "utf-8",
+        [expect.stringContaining("1[5-9]")],
+      ),
+    );
+    expect(JSON.parse(localStorage.getItem("rfm.diff-ignore-patterns") ?? "[]")).toHaveLength(1);
+  });
+
+  it("v0.47 行首分隔符助手：字面量转义生成锚定前缀正则，应用后携带", async () => {
+    render(
+      <TextDiffDialog
+        source={{ kind: "files", left: "/L/a.log", right: "/R/a.log" }}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("old")).toBeTruthy());
+    fireEvent.click(screen.getByText("正则忽略"));
+    const delimInput = screen.getByPlaceholderText(/分隔符/);
+    fireEvent.change(delimInput, { target: { value: "] " } });
+    fireEvent.click(screen.getByText("+ 插入"));
+    // 字面量转义（空格保留，尾随空格被 \s* 吸收）→ ^.*?\] \s*
+    expect((screen.getByPlaceholderText(/例如：/) as HTMLTextAreaElement).value).toBe(
+      "^.*?\\] \\s*",
+    );
+    // 元字符（.）按字面量转义，第二行追加
+    fireEvent.change(delimInput, { target: { value: "..." } });
+    fireEvent.click(screen.getByText("+ 插入"));
+    expect((screen.getByPlaceholderText(/例如：/) as HTMLTextAreaElement).value).toBe(
+      "^.*?\\] \\s*\n^.*?\\.\\.\\.\\s*",
+    );
+    fireEvent.click(screen.getByText("应用"));
+    await waitFor(() =>
+      expect(diffTextFiles).toHaveBeenLastCalledWith("/L/a.log", "/R/a.log", "utf-8", [
+        "^.*?\\] \\s*",
+        "^.*?\\.\\.\\.\\s*",
+      ]),
+    );
+  });
+
+  it("v0.47 正则忽略模态框：Esc 关闭模态框，比对窗保留", async () => {
+    render(
+      <TextDiffDialog
+        source={{ kind: "files", left: "/L/a.log", right: "/R/a.log" }}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("old")).toBeTruthy());
+    fireEvent.click(screen.getByText("正则忽略"));
+    expect(screen.getByText("预设（点击追加到左侧）")).toBeTruthy();
+    // Esc 只关模态框（栈顶仲裁），比对窗本体不受影响
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("预设（点击追加到左侧）")).toBeNull());
+    expect(screen.getByText("old")).toBeTruthy();
   });
 });
 

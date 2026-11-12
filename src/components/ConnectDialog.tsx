@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { FolderCog, KeyRound, Loader2, Lock, Server, X } from "lucide-react";
+import { FolderCog, FolderOpen, KeyRound, Loader2, Lock, Server, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { sftpConnect } from "@/lib/api";
+import { getHomeDir, sftpConnect } from "@/lib/api";
+import { dialogOpen } from "@/lib/fileDialog";
 import type { MasterKeyStatus, SftpServerConfig, SftpServerView } from "@/lib/types";
 import { useT } from "@/lib/LanguageProvider";
 
@@ -19,6 +20,8 @@ export interface SftpConnectInitial {
   group?: string;
   /** "password" | "publicKey"（编辑回填；缺省视为密码） */
   auth?: "password" | "publicKey";
+  /** 私钥路径（编辑回填；路径非凭据可明文展示，密码/口令不回填） */
+  keyPath?: string;
 }
 
 /**
@@ -81,6 +84,7 @@ export function ConnectDialog({
       setName(initial?.name ?? "");
       setRoot(initial?.root ?? "");
       setGroup(initial?.group ?? "");
+      setKeyPath(initial?.keyPath ?? "");
       setPassword("");
       setPassphrase("");
       setAuthMode(initial?.auth === "publicKey" ? "PublicKey" : "Password");
@@ -88,6 +92,24 @@ export function ConnectDialog({
       setLoading(false);
     }
   }, [open, initial]);
+
+  /** 浏览选择私钥文件：对话框默认落 ~/.ssh（主目录不可得时交给系统对话框自行定位） */
+  const browseKey = useCallback(async () => {
+    let home = "";
+    try {
+      home = await getHomeDir();
+    } catch {
+      /* 取不到主目录则不带 defaultPath */
+    }
+    const base = home.replace(/[\\/]+$/, "");
+    const sep = base.includes("\\") ? "\\" : "/";
+    const picked = await dialogOpen({
+      title: t("选择私钥文件"),
+      multiple: false,
+      defaultPath: base ? `${base}${sep}.ssh` : undefined,
+    });
+    if (typeof picked === "string" && picked) setKeyPath(picked);
+  }, [t]);
 
   const buildConfig = useCallback((): SftpServerConfig | null => {
     if (!host.trim() || !user.trim()) {
@@ -268,14 +290,22 @@ export function ConnectDialog({
             </div>
           ) : (
             <div className="col-span-2 grid gap-2">
-              <label className="grid grid-cols-[70px_1fr] items-center gap-2 text-xs">
+              <div className="grid grid-cols-[70px_1fr_auto] items-center gap-2 text-xs">
                 <span className="text-muted-foreground">{t("私钥")}</span>
                 <Input
                   value={keyPath}
                   onChange={(e) => setKeyPath(e.target.value)}
                   placeholder={t("留空自动探测 ~/.ssh/id_*")}
                 />
-              </label>
+                <button
+                  onClick={() => void browseKey()}
+                  title={t("选择私钥文件")}
+                  aria-label={t("选择私钥文件")}
+                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <FolderOpen className="h-3.5 w-3.5" />
+                </button>
+              </div>
               <label className="grid grid-cols-[70px_1fr] items-center gap-2 text-xs">
                 <span className="text-muted-foreground">{t("口令")}</span>
                 <Input

@@ -557,10 +557,12 @@ fn extract_sys_tar(
     check_cancel: &dyn Fn() -> bool,
 ) -> Result<ExtractOutcome, String> {
     // 第一遍：tar -tf 列条目（libarchive 解析，速度快；不解盘）
-    let list = std::process::Command::new("tar")
-        .arg("-tf")
+    let mut cmd = std::process::Command::new("tar");
+    cmd.arg("-tf")
         .arg(path)
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null());
+    no_window(&mut cmd);
+    let list = cmd
         .output()
         .map_err(|e| format!("启动系统 tar 失败：{e}"))?;
     if !list.status.success() {

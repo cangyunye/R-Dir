@@ -67,10 +67,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # v0.47 起 macOS 只发 Apple Silicon（arm64）——Intel 机用户停留在 v0.46.0
           - platform: macos-latest
             args: "--target aarch64-apple-darwin"
-          - platform: macos-latest
-            args: "--target x86_64-apple-darwin"
           - platform: windows-latest
             # 只出 NSIS（-setup.exe）：Windows 上 MSI 与 NSIS 混装会导致升级时
             # NSIS 去卸载 MSI（msiexec 需要提权）失败并弹「Error launching installer」。
@@ -113,7 +112,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -151,7 +150,8 @@ jobs:
           console.log(`synced app version -> ${v}`);
           NODE
 
-      # releaseDraft: true —— 先建 Draft，三个平台全部成功后由 publish job 统一转正。
+      # releaseDraft: true —— 先建 Draft，两个平台构建（macOS arm64 / Windows x64）
+      # 全部成功后由 publish job 统一转正。
       # 否则第一个完成的 job 就把 release 发布成 Latest，用户会下到缺 Windows/ARM 资产的残缺版。
       - name: Build & release (tauri-action)
         uses: tauri-apps/tauri-action@v0
@@ -177,7 +177,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: >-
-            bundles-${{ matrix.platform == 'windows-latest' && 'windows-x64' || (contains(matrix.args, 'aarch64') && 'macos-aarch64' || 'macos-x64') }}
+            bundles-${{ matrix.platform == 'windows-latest' && 'windows-x64' || 'macos-aarch64' }}
           # 两种布局都要覆盖（v0.41.0 三发实测：`*/release` 只命中交叉编译的
           # target/<triple>/release/bundle，Windows 宿主构建是 target/release/bundle，
           # 中间没有 triple 段，永远匹配不到）；bundle 下还有 nsis/dmg/macos 子目录，
@@ -201,13 +201,13 @@ jobs:
           cd src-tauri
           case "${{ matrix.platform }}" in
             macos-latest)
-              if [ "${{ matrix.args }}" = "--target aarch64-apple-darwin" ]; then TARGET=aarch64-apple-darwin; else TARGET=x86_64-apple-darwin; fi ;;
+              # 显式 --target：macos-latest 为 arm64 runner，宿主原生即 aarch64；
+              # 保留显式声明以防 runner 架构变化（依赖 setup Rust 步骤已装的 targets）
+              TARGET=aarch64-apple-darwin ;;
             windows-latest)
               TARGET=x86_64-pc-windows-msvc ;;
             *) echo "unsupported platform"; exit 1 ;;
           esac
-          # 显式 --target：macos-latest 是 arm64 runner，x64 job 不带 target 会打出
-          # arm64 二进制却被标成 x86_64（交叉编译依赖 setup Rust 步骤已装的 targets）
           cargo build --release -p rdir-nfs --features rdir-nfs/client --bin rdir-nfs --target "$TARGET"
           # 按平台确定性选名（Git Bash 的 [ -f ] 有 MSYS 自动补 .exe 魔法，不可依赖）
           BIN_NAME="rdir-nfs"
@@ -296,7 +296,7 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # 三个平台都成功后才把 Draft 转正；任何平台失败则 release 永远停留在 Draft，用户看不到残缺版本
+  # 两个平台构建（macOS arm64 / Windows x64）都成功后才把 Draft 转正；任何平台失败则 release 永远停留在 Draft，用户看不到残缺版本
   publish:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
@@ -331,9 +331,9 @@ jobs:
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/body.md"
 
       # v0.41 安装包资产门禁：tauri-action 可能静默丢件（见 build job 注释）。
-      # 五个安装包 + 绿色版 zip + web 服务 zip 缺一不可——缺失先从 build
-      # artifacts 兜底补传，补不齐则本 job 失败，Release 停留在 Draft，
-      # 绝不把缺资产的版本发成 Latest。
+      # macOS dmg/app.tar.gz + Windows 安装包/绿色版 zip/web 服务 zip 共五件
+      # 缺一不可——缺失先从 build artifacts 兜底补传，补不齐则本 job 失败，
+      # Release 停留在 Draft，绝不把缺资产的版本发成 Latest。
       - name: Download bundles (repair source)
         uses: actions/download-artifact@v4
         with:
@@ -366,8 +366,6 @@ jobs:
           for a in \
             "R-Dir_${VER}_aarch64.dmg" \
             "R-Dir_aarch64.app.tar.gz" \
-            "R-Dir_${VER}_x64.dmg" \
-            "R-Dir_x64.app.tar.gz" \
             "R-Dir_${VER}_x64-setup.exe" \
             "R-Dir_${VER}_windows_x64_portable.zip" \
             "rdir-web_${VER}_windows_x64.zip"

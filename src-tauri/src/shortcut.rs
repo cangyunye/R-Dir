@@ -48,7 +48,7 @@ fn create_one(target: &Path, dir: &Path, _suffix: &str) -> Result<PathBuf, Strin
         .unwrap_or_else(|| "快捷方式".into());
     let link = unique_link_path(dir, &stem, ".lnk");
     // WScript.Shell：系统原生 .lnk 生成器（smb/nfs 等远程路径已在命令层拦截）
-    let cmd = format!(
+    let cmd_line = format!(
         "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}');$s.TargetPath='{}';$s.WorkingDirectory='{}';$s.Save()",
         link.to_string_lossy().replace('\'', "''"),
         target.to_string_lossy().replace('\'', "''"),
@@ -58,8 +58,15 @@ fn create_one(target: &Path, dir: &Path, _suffix: &str) -> Result<PathBuf, Strin
             .to_string_lossy()
             .replace('\'', "''"),
     );
-    let status = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &cmd])
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-Command", &cmd_line]);
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW：GUI 进程 spawn 控制台程序不闪黑框（与 extract.rs/launch.rs 同口径）
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let status = cmd
         .status()
         .map_err(|e| format!("SHORTCUT_FAILED|启动 powershell 失败:{e}"))?;
     if !status.success() {

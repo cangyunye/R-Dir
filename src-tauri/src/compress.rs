@@ -110,6 +110,13 @@ fn relativize(p: &str, cwd: &Path) -> String {
     }
 }
 
+/// CREATE_NO_WINDOW：GUI 进程 spawn 控制台程序（powershell/tar）不闪黑框（与 extract.rs 同口径）
+#[cfg(target_os = "windows")]
+fn no_window(cmd: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(0x0800_0000);
+}
+
 /// 调系统命令压缩：以目标目录为工作目录、条目用相对路径（v0.22.0 归档相对化）
 #[cfg(target_os = "windows")]
 fn compress_with_system(paths: &[String], out: &Path, format: &str, cwd: &Path) -> Result<(), String> {
@@ -124,14 +131,16 @@ fn compress_with_system(paths: &[String], out: &Path, format: &str, cwd: &Path) 
                 .map(|p| format!("'{}'", p.replace('\'', "''")))
                 .collect::<Vec<_>>()
                 .join(",");
-            let cmd = format!(
+            let cmd_line = format!(
                 "Compress-Archive -Path {} -DestinationPath '{}' -Force",
                 path_list,
                 out_str.replace('\'', "''")
             );
-            let status = Command::new("powershell")
-                .args(&["-NoProfile", "-Command", &cmd])
-                .current_dir(cwd)
+            let mut cmd = Command::new("powershell");
+            cmd.args(&["-NoProfile", "-Command", &cmd_line])
+                .current_dir(cwd);
+            no_window(&mut cmd);
+            let status = cmd
                 .status()
                 .map_err(|e| format!("启动 powershell 失败:{e}"))?;
             if !status.success() {
@@ -147,6 +156,7 @@ fn compress_with_system(paths: &[String], out: &Path, format: &str, cwd: &Path) 
             for p in &items {
                 cmd.arg(p);
             }
+            no_window(&mut cmd);
             let status = cmd.status().map_err(|e| format!("启动 tar 失败：{e}"))?;
             if !status.success() {
                 return Err("tar 命令失败".into());

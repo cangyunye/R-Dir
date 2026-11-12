@@ -362,7 +362,7 @@ pub fn encode_lines(lines: &[String], eol: &str, encoding: Option<&str>) -> Resu
 pub fn compile_ignore_patterns(patterns: &[String]) -> Result<Vec<Regex>, String> {
     patterns
         .iter()
-        .map(|p| Regex::new(p).map_err(|e| format!("BAD_REGEX|忽略正则无效：{p}（{e}）")))
+        .map(|p| Regex::new(p).map_err(|e| format!("BAD_REGEX|正则忽略无效：{p}（{e}）")))
         .collect()
 }
 

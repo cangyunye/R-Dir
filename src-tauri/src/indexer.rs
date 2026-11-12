@@ -59,7 +59,8 @@ fn now_ms() -> i64 {
 /// 配置文件版本。升级默认排除清单等「老配置拿不到新默认值」的变此时递增，
 /// load_config 检测到旧版本即迁移（默认项并集，用户自定义不动）。
 /// v3：新增名字级排除 name_exclusions + 默认排除 ~/.ssh ~/.config。
-const CONFIG_VERSION: u32 = 3;
+/// v4：默认排除名单演进（如 .git）未伴随版本递增，对存量配置再并集一次。
+const CONFIG_VERSION: u32 = 4;
 
 /// 配置在 JSON 里的键名恒为 camelCase（serde rename_all；此前漏加，index_get_config
 /// 一直以 snake_case 直出前端，rescanIntervalSecs/watchEnabled 读取侧静默 undefined，

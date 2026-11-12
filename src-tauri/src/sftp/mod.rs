@@ -645,6 +645,8 @@ pub struct ServerView {
     pub default_remote: String,
     pub group: String,
     pub auth: String,
+    /// 私钥路径（PublicKey 且非空才有值；路径非凭据，明文下发供编辑回填）
+    pub key_path: Option<String>,
     /// 密码/口令已保存
     pub has_secret: bool,
     pub connected: bool,
@@ -690,6 +692,12 @@ pub fn to_view(cfg: &servers::ServerConfigFile, pool: &SessionPool) -> ServerVie
             *save_passphrase && passphrase.as_deref().unwrap_or("").is_empty() == false,
         ),
     };
+    let key_path = match &cfg.auth {
+        servers::AuthConfig::PublicKey { key_path, .. } if !key_path.is_empty() => {
+            Some(key_path.clone())
+        }
+        _ => None,
+    };
     ServerView {
         id: cfg.id.clone(),
         name: cfg.name.clone(),
@@ -700,6 +708,7 @@ pub fn to_view(cfg: &servers::ServerConfigFile, pool: &SessionPool) -> ServerVie
         default_remote: default_remote_for(cfg, pool),
         group: cfg.group.clone(),
         auth,
+        key_path,
         has_secret,
         connected: pool.get(&key).is_some(),
     }
@@ -760,6 +769,46 @@ mod tests {
         assert_eq!(host_of("sftp://me@example.com").unwrap(), "example.com");
         assert!(host_of("/local/path").is_err());
         assert!(host_of("sftp://nouser/").is_err());
+    }
+
+    /// to_view 的 key_path 回填：PublicKey 非空路径明文下发（编辑回填用）、
+    /// 空路径与 Password 恒为 None（凭据字段不外泄）
+    #[test]
+    fn to_view_backfills_key_path() {
+        let pool = SessionPool::default();
+        let cfg = |auth: servers::AuthConfig| servers::ServerConfigFile {
+            id: "u@h:22".into(),
+            name: "测试".into(),
+            host: "h".into(),
+            port: 22,
+            user: "u".into(),
+            root: None,
+            group: String::new(),
+            auth,
+        };
+        let with_key = cfg(servers::AuthConfig::PublicKey {
+            key_path: "~/.ssh/id_ed25519".into(),
+            passphrase: None,
+            save_passphrase: false,
+        });
+        let v = to_view(&with_key, &pool);
+        assert_eq!(v.auth, "key");
+        assert_eq!(v.key_path.as_deref(), Some("~/.ssh/id_ed25519"));
+
+        let empty_key = cfg(servers::AuthConfig::PublicKey {
+            key_path: String::new(),
+            passphrase: None,
+            save_passphrase: false,
+        });
+        assert_eq!(to_view(&empty_key, &pool).key_path, None);
+
+        let with_pwd = cfg(servers::AuthConfig::Password {
+            password: "p".into(),
+            save_password: false,
+        });
+        let v = to_view(&with_pwd, &pool);
+        assert_eq!(v.auth, "password");
+        assert_eq!(v.key_path, None);
     }
 
     /// ---- v0.28.1 SFTP 流水线上传：真实链路集成验证（本机 sshd；不可用时静默跳过） ----

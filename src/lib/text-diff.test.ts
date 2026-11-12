@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildDisplayItems,
   parseUnifiedDiff,
+  prefixIgnorePattern,
   rediffRegion,
   renumberRows,
   rowsFromSegments,
@@ -287,5 +288,41 @@ describe("zipRows / renumberRows / rediffRegion（v0.34 编辑与局部补丁）
     expect(masked.map((r) => r.kind)).toEqual(["eq", "eq"]);
     expect(masked[0].left?.text).toBe("10:00:00 start");
     expect(masked[0].right?.text).toBe("10:00:09 start");
+  });
+});
+
+describe("prefixIgnorePattern", () => {
+  it("普通分隔符生成锚定前缀模式，含其后空白", () => {
+    expect(prefixIgnorePattern("]")).toBe("^.*?\\]\\s*");
+    // 掩码效果：行首到首个分隔符（含尾随空白）被删除
+    const re = new RegExp(prefixIgnorePattern("]")!, "g");
+    expect("[2024-01-01 12:00:00] [INFO] msg".replace(re, "")).toBe("[INFO] msg");
+    // 第二个分隔符出现处不再匹配（lazy + ^ 锚定行首）
+    expect("[A] keep ] here".replace(re, "")).toBe("keep ] here");
+  });
+
+  it("正则元字符分隔符按字面量转义", () => {
+    expect(prefixIgnorePattern("::")).toBe("^.*?::\\s*");
+    // 空格属分隔符语义：" - " 精确停在与正文分界处，而非日期里的 "-"
+    expect(prefixIgnorePattern(" - ")).toBe("^.*? - \\s*");
+    const dash = new RegExp(prefixIgnorePattern(" - ")!, "g");
+    // 行首到 " - "（含）全部忽略，日期里的 "-" 不截断 → 只剩正文
+    expect("2024-01-01 12:00:00 [main] INFO app - message".replace(dash, "")).toBe("message");
+    // 含多类元字符（"."）不破坏模式
+    const dot = prefixIgnorePattern("...")!;
+    expect(dot).toBe("^.*?\\.\\.\\.\\s*");
+    expect("a...b".replace(new RegExp(dot, "g"), "")).toBe("b");
+  });
+
+  it("行内无分隔符的行不受影响", () => {
+    const re = new RegExp(prefixIgnorePattern("] ")!, "g");
+    expect("plain line".replace(re, "")).toBe("plain line");
+  });
+
+  it("严格字面量（空格保留）；空串返回 null", () => {
+    expect(prefixIgnorePattern("] ")).toBe("^.*?\\] \\s*");
+    expect(prefixIgnorePattern("  ] ")).toBe("^.*?  \\] \\s*");
+    expect(prefixIgnorePattern("   ")).toBe("^.*?   \\s*");
+    expect(prefixIgnorePattern("")).toBeNull();
   });
 });

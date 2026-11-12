@@ -214,6 +214,8 @@ export interface SftpServerView {
   defaultRemote: string;
   group: string;
   auth: string;
+  /** 私钥路径（PublicKey 且非空才有值；非凭据字段，供编辑回填） */
+  keyPath?: string | null;
   hasSecret: boolean;
   connected: boolean;
 }

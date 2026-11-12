@@ -1,7 +1,7 @@
 {
   "name": "rust-file-manager",
   "private": true,
-  "version": "0.46.0",
+  "version": "0.47.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@rdir/l10n": "github:cangyunye/R-Dir-L10n#v0.6.2",
+    "@rdir/l10n": "github:cangyunye/R-Dir-L10n#v0.6.3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-opener": "^2",

@@ -231,6 +231,7 @@ export function useSftp({ navigate, patchPane, listDir, showError, showInfo }: U
         root: sv.root ?? "",
         group: sv.group,
         auth: sv.auth === "key" ? "publicKey" : "password",
+        keyPath: sv.keyPath ?? "",
       });
     },
     [openConnect],

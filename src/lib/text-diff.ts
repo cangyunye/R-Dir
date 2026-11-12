@@ -458,3 +458,16 @@ export function parseUnifiedDiff(text: string): PatchSection[] {
   flushHunk();
   return sections.filter((s) => s.rows.length > 0);
 }
+
+/**
+ * v0.47 行首分隔符助手：字面量分隔符 → 「忽略行首到首次出现该分隔符为止」的锚定前缀
+ * 正则（`^.*?<esc>\s*`，含其后空白）。语法取 Rust regex 与 JS RegExp 公共子集；
+ * 每行独立 haystack（`^` 无 m flag），行内不含分隔符的行不匹配、整行照常比较。
+ * 分隔符严格按字面量处理（元字符自动转义，空格属分隔符语义——如 " - " 精确停在与正文
+ * 分界处而非日期里的 "-"；尾随空格被 \s* 吸收），空串返回 null（按钮禁用）。
+ */
+export function prefixIgnorePattern(delim: string): string | null {
+  if (!delim) return null;
+  const esc = delim.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return `^.*?${esc}\\s*`;
+}

@@ -22,6 +22,7 @@ import {
   type DiffRow,
 } from "@/lib/text-diff";
 import { AppConfirmDialog, type AppConfirmRequest } from "@/components/AppConfirmDialog";
+import { IgnorePatternsDialog } from "@/components/IgnorePatternsDialog";
 import { Button } from "@/components/ui/button";
 import { isMac } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
@@ -48,19 +49,6 @@ interface Section {
 /** 与 FileList 的虚拟滚动解耦：diff 行高独立（含表头/间隙统一行高） */
 const ROW_H = 24;
 const BUFFER = 8;
-/** v0.46 忽略正则预设（Rust regex 语法，无环视）：常见日志时间戳 / UUID——掩码后正文一致的时间序列日志按 eq 对齐 */
-const DIFF_IGNORE_PRESETS: { label: string; pattern: string }[] = [
-  {
-    label: "日志时间戳",
-    pattern:
-      "\\d{4}[-/]\\d{2}[-/]\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d{1,9})?(?:Z|[+-]\\d{2}:?\\d{2})?|\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d{1,9})?",
-  },
-  {
-    label: "UUID",
-    pattern:
-      "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-  },
-];
 /** 行号槽宽度（左右各一列，中轴恰好在容器 50% 处） */
 const GUTTER = 48;
 
@@ -196,6 +184,8 @@ function HScrollBar({
  * v0.34：双横向滚动条（联动 + 方向键/滚轮横移，长行不再把对侧挤出屏幕）；
  * 双侧可编辑保存（vimdiff 式）；中轴差异块可一键局部 patch（左→右 / 右→左）；
  * 中轴可拖动调整两栏宽度；「采用左侧/右侧」整份传输（覆盖对侧后统一保存）。
+ * v0.47：「忽略正则」从内嵌面板升级为独立大模态框（IgnorePatternsDialog，
+ * 预设带格式示例、行首分隔符助手），本组件只保留 应用时的确认/重比流程。
  */
 export function TextDiffDialog({
   source,
@@ -226,10 +216,10 @@ export function TextDiffDialog({
   const [viewport, setViewport] = useState({ w: 1200, h: 400 });
   /** v0.21.1 编码切换（仅 files 模式；切换后两侧同时按新编码重新比较） */
   const [encoding, setEncoding] = useState("utf-8");
-  // ---- v0.46 忽略正则（仅 files 模式）：比较时掩码、展示保留原文；\n 分隔，跨重启持久化 ----
+  // ---- v0.46/v0.47 忽略正则（仅 files 模式）：比较时掩码、展示保留原文；\n 分隔，
+  //      跨重启持久化；编辑 UI 为独立大模态框（IgnorePatternsDialog），草稿只在框内 ----
   const [ignoreText, setIgnoreText] = useState(() => loadDiffIgnorePatterns().join("\n"));
   const [ignoreOpen, setIgnoreOpen] = useState(false);
-  const [ignoreDraft, setIgnoreDraft] = useState("");
   const ignorePatterns = useMemo(
     () => ignoreText.split("\n").map((s) => s.trim()).filter(Boolean),
     [ignoreText],
@@ -770,8 +760,8 @@ export function TextDiffDialog({
     };
     if (anyDirty) {
       setConfirmReq({
-        title: t("修改忽略正则将丢弃未保存的修改"),
-        message: t("忽略正则会按新规则重新比较两侧文件，未保存的编辑（含已应用的补丁）将被丢弃。"),
+        title: t("修改正则忽略将丢弃未保存的修改"),
+        message: t("正则忽略会按新规则重新比较两侧文件，未保存的编辑（含已应用的补丁）将被丢弃。"),
         confirmLabel: t("丢弃并应用"),
       });
       confirmActionRef.current = commit;
@@ -1011,10 +1001,7 @@ export function TextDiffDialog({
           </span>
           {source.kind === "files" && (
             <button
-              onClick={() => {
-                setIgnoreDraft(ignoreText);
-                setIgnoreOpen((v) => !v);
-              }}
+              onClick={() => setIgnoreOpen((v) => !v)}
               disabled={loading}
               title={t("比较时忽略匹配的文本（如日志时间戳），每行一条正则")}
               className={cn(
@@ -1024,7 +1011,7 @@ export function TextDiffDialog({
                   : "hover:bg-accent hover:text-foreground",
               )}
             >
-              {t("忽略正则")}
+              {t("正则忽略")}
               {ignorePatterns.length > 0 && (
                 <span className="rounded bg-primary/15 px-1 text-[10px] tabular-nums">
                   {ignorePatterns.length}
@@ -1044,47 +1031,13 @@ export function TextDiffDialog({
             {t("只看差异")}
           </button>
         </div>
+        {/* v0.47 忽略正则编辑：独立大模态框（z-90 叠于本窗之上），草稿/预设/分隔符助手都在框内 */}
         {filesMode && ignoreOpen && (
-          <div className="border-b px-4 py-2 text-[11px]">
-            <div className="mb-1 text-muted-foreground">
-              {t("比较时忽略匹配的文本（每行一条正则，同时应用于两侧）；应用后重新比较")}
-            </div>
-            <textarea
-              value={ignoreDraft}
-              onChange={(e) => setIgnoreDraft(e.target.value)}
-              rows={3}
-              spellCheck={false}
-              placeholder={t("例如：\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")}
-              className="w-full resize-y rounded border bg-transparent px-2 py-1 font-mono text-[11px] outline-none focus:ring-1 focus:ring-primary/50"
-            />
-            <div className="mt-1.5 flex items-center gap-1.5">
-              {DIFF_IGNORE_PRESETS.map((p) => (
-                <button
-                  key={p.label}
-                  onClick={() =>
-                    setIgnoreDraft((d) => (d.trim() ? `${d.trimEnd()}\n${p.pattern}` : p.pattern))
-                  }
-                  title={p.pattern}
-                  className="rounded border px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground"
-                >
-                  + {t(p.label)}
-                </button>
-              ))}
-              <span className="flex-1" />
-              <button
-                onClick={() => setIgnoreOpen(false)}
-                className="rounded px-2 py-0.5 hover:bg-accent hover:text-foreground"
-              >
-                {t("取消")}
-              </button>
-              <button
-                onClick={() => applyIgnoreText(ignoreDraft)}
-                className="rounded border bg-primary/10 px-2 py-0.5 hover:bg-primary/20"
-              >
-                {t("应用")}
-              </button>
-            </div>
-          </div>
+          <IgnorePatternsDialog
+            initialValue={ignoreText}
+            onClose={() => setIgnoreOpen(false)}
+            onApply={applyIgnoreText}
+          />
         )}
         {coarse && (
           <div className="border-b bg-amber-500/5 px-4 py-1 text-[11px] text-amber-600 dark:text-amber-500">

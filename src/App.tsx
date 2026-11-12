@@ -4824,6 +4824,14 @@ useEffect(() => {
     copyPath: () => {
       if (activePane?.selection[0]) copyPath(activePane.selection[0]);
     },
+    // v0.47 快捷比较：恰好选中两个文件时直接打开文本比较（右键「比较所选两个文件」同路径；
+    // 数量不符或含目录时忽略，与菜单项显隐条件一致）
+    compareSelected: () => {
+      const pane = activePane;
+      if (!pane || pane.selection.length !== 2) return;
+      const [a, b] = pane.selection.map((p) => pane.entries.find((x) => x.path === p));
+      if (a && b && !a.is_dir && !b.is_dir) handleCompareSelected([a.path, b.path]);
+    },
     undo: () => void undo(),
     redo: () => void redo(),
     properties: () => setShowProperties((v) => !v),
