@@ -5,6 +5,19 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.47.0 (2026-11-13)
+
+- **文本比较「正则忽略」独立模态框**：v0.46 的内嵌面板（挤在比对窗工具条下、预设放不下）升级为 `IgnorePatternsDialog` 大模态框（1080×600，z-90 叠于比对窗之上、弹层栈仲裁 Esc）——左侧全高正则编辑区（每行一条）+ 行首分隔符助手一行；右侧预设卡片菜单**每行一种格式、匹配示例行内直接可见**（不用悬停猜正则），Epoch 风险提示琥珀色行内注明，超高独立滚动；应用 = 先关框再走原有「未保存修改确认 → 按新规则重比」流程，取消/Esc/点遮罩丢弃草稿（草稿只在框内，不污染已应用规则）；规则仍 `rfm.diff-ignore-patterns` 跨重启持久化。
+- **时间戳预设按格式拆分（7 格式 + UUID）**：v0.46 单一「日志时间戳」大杂烩预设拆为 **日期时间 / 日期 / 时间 / syslog / 紧凑时间 / Epoch / UUID** 七个独立预设——label 直接写明格式形态（如「日期时间（2024-01-01 12:00:00）」），卡片内展示可匹配变体（毫秒 / `Z` 时区 / 非补零 / syslog 双空格补齐等）；Epoch（秒 10 位 2013–2033 / 毫秒 13 位，带 `\b` 词边界）独立 opt-in 并行内注明「可能误伤恰好 10/13 位的普通数字」。
+- **行首分隔符助手（忽略「前面部分」）**：输入字面量分隔符（如 `]`、` - `、`::`）自动转义生成锚定前缀正则 `^.*?<esc>\s*`（忽略行首到首次出现分隔符为止，含其后空白），日志的「时间戳+级别」行首元数据一键忽略、正文对齐；**空格属分隔符语义不做 trim**（` - ` 精确停在与正文分界处，不会被日期里的 `-` 截断）；行内不含分隔符的行不匹配、整行照常比较；生成语法取 Rust regex 与 JS RegExp 公共子集（后端全量掩码与前端局部重建行为一致），Rust 掩码管线零改动（复用 v0.46 `mask_lines`/`diff_segments_cmp`）。
+- **⌘⇧D 快捷比较所选两个文件**：keymap 注册 `compareSelected`（mac ⌘⇧D / win Ctrl+Shift+D），恰好选中两个文件时直接打开文本比较（与右键菜单「比较所选两个文件」同路径；选中含目录或数量不符静默忽略，与菜单显隐条件一致）；命令面板（⌘K）与设置快捷键一览自动收录、可在设置改键。
+- **SFTP 私钥路径明文回填 + 浏览选择**：`ServerView` 新增 `key_path`（PublicKey 且非空才下发——路径非凭据可明文，密码/口令仍不回填）；ConnectDialog 编辑服务器回填私钥路径 + 新增浏览按钮（系统文件对话框默认落 `~/.ssh`，取不到主目录则不带 defaultPath）。
+- **修复：Windows GUI 进程 spawn 控制台程序闪黑框**——快捷链接（shortcut.rs 的 powershell）、压缩（compress.rs 的 powershell/tar）、解压列表（extract.rs 的 tar）三处统一 `CREATE_NO_WINDOW`（0x0800_0000，`#[cfg(target_os = "windows")]` 门控，与 extract.rs 既有口径一致）。
+- **全盘索引默认排除名单 v4**：`CONFIG_VERSION` 3→4——默认排除名单演进对存量配置再并集一次（用户自定义保留、幂等回写），补上 v0.45 迁移机制的漏项（默认名单变化未伴随版本递增时，存量配置吃不到新默认值）。
+- **release 流程：macOS 只发 Apple Silicon（arm64）**——砍掉 x86_64 交叉编译 job（Intel 机用户停留 v0.46.0），publish 资产门禁清单同步收窄；「两平台（macOS arm64 / Windows x64）全部成功才转正、绝不发缺资产 Latest」机制不变。
+- **i18n**：R-Dir-L10n **v0.6.3**（bump `#v0.6.2 → #v0.6.3`）——六包 +24 keys（v0.46 欠账 9 条 + v0.47 模态框批次 6 条 + 预设 label×7 / hint 动态 key，提取脚本 `LITERAL_PROP_FILES` 白名单补 `IgnorePatternsDialog.tsx`）+ `BAD_REGEX` 错误码补齐；措辞「忽略正则」→「正则忽略」（Rust 错误详情 `BAD_REGEX|正则忽略无效：…` 同步改）；check-coverage 六包 1107 strings / 21 errors 全绿。
+- 测试：vitest +7（`prefixIgnorePattern` 转义/掩码/无分隔符行/严格字面量 4 例、Epoch 预设注入落盘、行首助手字面量转义与携带、模态框 Esc 关闭而比对窗保留）；cargo +1（`to_view_backfills_key_path` 私钥回填边界）；全量 cargo / vitest 783 / e2e 由 v0.47.0 tag CI（run #147）全绿验证，macOS arm64 本地同 commit 构建通过。
+
 ## v0.46.0 (2026-11-11)
 
 - **搜索框 IntelliJ 式美化 + 深度下拉 chip 化**：文件名 / 内容两 tab 的搜索输入行升级为主输入容器——左侧 Search 引导图标 + 无边框输入（`h-9 text-sm`，替代原 `h-7 text-xs`）+ 聚焦外圈（`focus-within` ring）+ 非空清空钮；深度控制（v0.45 引入）由原生 `<select>` 改为下拉菜单 chip（Layers 图标 +「深度 {n} 层 / 深度不限」，选中项 ✓，非不限态 sky 高亮，与灯钮行同高），两 tab 共用 `rfm.search-depth` 持久化不变；灯钮行 `flex-wrap` 适配窄面板。既有 e2e 占位符锚点（「搜索当前层文件名…」等）全部保留。
