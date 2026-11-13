@@ -117,6 +117,7 @@ import {
   sftpMove,
   sftpRename,
   sftpRelay,
+  sftpScanConflicts,
   sftpUpload,
   nfsCreateFile,
   nfsDelete,
@@ -144,6 +145,7 @@ import { ConnectDialog } from "@/components/ConnectDialog";
 import { PasswordDialog } from "@/components/PasswordDialog";
 import type { SectionId as SettingsSectionId } from "@/components/SettingsDialog";
 import { ConflictDialog } from "@/components/ConflictDialog";
+import { remoteNamesFromPlan, splitRemoteConflicts } from "@/lib/transfer";
 import { AppConfirmDialog, type AppConfirmRequest } from "@/components/AppConfirmDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
 import { basename, formatSize, isAbsolutePath } from "@/lib/format";
@@ -3512,11 +3514,51 @@ useEffect(() => {
             showError(t("远程复制暂不支持（可拖拽到其他窗格）"));
             if (localSrcs.length === 0 && sameDir.length === relaySrcs.length) return;
           }
+          // 冲突裁决（v0.48）：目标 SFTP 时与本地粘贴同一套语义——先扫描同名冲突，
+          // 顶层条目冲突弹 ConflictDialog 逐条裁决（覆盖/全部覆盖/改名/停止），
+          // 同名目录合并内部的下钻冲突按覆盖处理（对齐本地跨目录复制目录的语义）。
+          // NFS 目标无扫描能力，维持原静默行为。
+          const scanSrcs = destIsSftp
+            ? [...localSrcs, ...relaySrcs.filter((s) => !sameDir.includes(s))]
+            : [];
+          const renameBySrc: Record<string, string> = {};
+          if (scanSrcs.length > 0) {
+            const conflicts = await sftpScanConflicts(scanSrcs, dest);
+            const { topLevel, drilled } = splitRemoteConflicts(conflicts, scanSrcs);
+            // 类型冲突（文件 vs 目录）的「覆盖」先删目标再落盘——对齐本地
+            // apply_file/apply_dir 的覆盖语义；否则远程 OPEN 截断 / mkdir 直接报服务器错误。
+            // 删除统一在裁决之后执行（用户「停止」时不得先动手删目标）
+            const typeClashes = drilled.filter((c) => c.srcKind !== c.destKind);
+            if (topLevel.length > 0) {
+              const decision = await promptConflicts(topLevel);
+              if (!decision) return; // 用户「停止」：保留剪贴板，可换个目录再粘贴
+              Object.assign(renameBySrc, remoteNamesFromPlan(topLevel, decision));
+              for (const c of topLevel) {
+                if (c.srcKind !== c.destKind && decision[c.dest]?.action === "overwrite") {
+                  typeClashes.push(c);
+                }
+              }
+              // 用户自输改名可能撞目标已有条目（建议名保证唯一，自输名不保证）：
+              // 对齐本地「改名目标已存在」的报错时机——传输开始前拦截，避免静默覆盖
+              for (const newName of Object.values(renameBySrc)) {
+                const target = dest.endsWith("/") ? dest + newName : `${dest}/${newName}`;
+                const exists = await statPath(target).then(() => true).catch(() => false);
+                if (exists) {
+                  showError(t("改名目标已存在：{name}", { name: newName }));
+                  return;
+                }
+              }
+            }
+            for (const c of typeClashes) {
+              await sftpDelete([c.dest]);
+            }
+          }
+          const finalName = (src: string) => renameBySrc[src] ?? basename(src);
           for (const src of localSrcs) {
             await (destIsSftp
-              ? sftpUpload(src, dest, basename(src))
+              ? sftpUpload(src, dest, finalName(src))
               : nfsUpload(src, dest, basename(src)));
-            pasted.push(dest.endsWith("/") ? dest + basename(src) : `${dest}/${basename(src)}`);
+            pasted.push(dest.endsWith("/") ? dest + finalName(src) : `${dest}/${finalName(src)}`);
           }
           // 剪切粘贴到同一台服务器：服务器端一次 rename_over（posix-rename）
           // 直接完成，不经临时目录中转，且 rename 天然删源——剪切语义真生效。
@@ -3529,9 +3571,9 @@ useEffect(() => {
           );
           for (const src of relaySrcs) {
             if (sameDir.includes(src)) continue;
-            // 顶层同名语义同本地→远程粘贴：静默覆盖（拖拽才走覆盖确认）
+            // 顶层同名冲突已在上面裁决（改名/覆盖），此处按裁决名落盘
             pasted.push(
-              await (mvSrcs.has(src) ? sftpMove(src, dest, basename(src)) : sftpRelay(src, dest, basename(src))),
+              await (mvSrcs.has(src) ? sftpMove(src, dest, finalName(src)) : sftpRelay(src, dest, finalName(src))),
             );
           }
           const relayedCount = relaySrcs.filter((s) => !sameDir.includes(s) && !mvSrcs.has(s)).length;
@@ -3601,7 +3643,7 @@ useEffect(() => {
         showTransferError(e);
       }
     },
-    [clipboard, activePane, tabs, refreshPane, showError, showTransferError, pushOp, isSftpPath, runTransfer],
+    [clipboard, activePane, tabs, refreshPane, showError, showTransferError, pushOp, isSftpPath, runTransfer, promptConflicts],
   );
   doPasteLatestRef.current = doPasteInner;
 

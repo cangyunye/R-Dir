@@ -616,6 +616,256 @@ pub async fn move_entry(pool: &SessionPool, src: &str, dest_dir: &str, name: &st
     Ok(format!("sftp://{dst_authority}{new_remote}"))
 }
 
+/// 递归下钻深度上限：远程目录软链可成环（list_dir 跟随软链），无限下钻会把
+/// 粘贴前的冲突扫描挂死在网络上。到顶即停（该层不再报冲突，落盘仍按覆盖合并）。
+const SCAN_MAX_DEPTH: usize = 64;
+
+/// 扫描粘贴到远程目录前需用户裁决的同名冲突（与本地 `ops::scan_conflicts` 同构）。
+/// 源条目可为本地路径（本地→远程粘贴）或 sftp:// URL（远程→远程粘贴），目标恒为
+/// sftp:// URL。规则与本地一致：目录 vs 目录视为可合并，递归下钻找文件级冲突；
+/// 其余（文件 vs 文件、文件 vs 目录、目录 vs 文件）均为冲突，逐条返回。
+/// 冲突结构直接复用 [`crate::ops::Conflict`]，前端经同一 ConflictDialog 与裁决
+/// 纯函数处理。dest 字段为 sftp:// 完整 URL（plan 以 dest 为 key 的契约不变）。
+///
+/// 实现注记：目标侧每层一次 list_dir（同名判定 + 类型 + 建议名判重，一次 list
+/// 顶 N 次 stat）；源侧类型探测与子项列举失败时按「文件 / 无子项」处理（对齐
+/// 本地 `scan_into` 的 `if let Ok(rd)` 容错）。会话锁即取即放、绝不嵌套持两把，
+/// 跨服务器扫描不与并发传输反序持锁互等。目标目录不存在/列失败向上传错
+/// （目标侧信息不可靠时无法判定冲突，粘贴本身也必失败）。
+pub async fn scan_conflicts(
+    pool: &SessionPool,
+    paths: &[String],
+    dest: &str,
+) -> Result<Vec<crate::ops::Conflict>, String> {
+    let (dest_authority, dest_dir) = parse_sftp_path(dest)?;
+    let (du, dh, dp) = parse_authority(&dest_authority)?;
+    let dest_key = pool_key(&du, &dh, dp);
+    // 目标目录列表取一次：全部顶层条目的同名判定 / 类型 / 建议名判重共用
+    let entries = remote_list(pool, &dest_key, &dest_dir).await?;
+    let taken: std::collections::HashSet<String> =
+        entries.iter().map(|(n, _)| n.clone()).collect();
+    let mut out = Vec::new();
+    for p in paths {
+        let name = src_base_name(p)?;
+        let Some(dest_is_dir) = entries
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, d)| *d)
+        else {
+            continue; // 目标无同名 → 无冲突
+        };
+        let s_is_dir = src_is_dir(pool, p).await;
+        let dst_remote = join_remote(&dest_dir, &name);
+        if s_is_dir && dest_is_dir {
+            // 顶层同名目录 → 合并语义，下钻找文件级冲突（与本地 scan_into 一致）
+            scan_pair(
+                pool,
+                &dest_key,
+                &dest_authority,
+                p,
+                &dst_remote,
+                &mut out,
+                1,
+            )
+            .await?;
+        } else {
+            push_conflict(
+                &mut out,
+                &dest_authority,
+                p,
+                &name,
+                &dst_remote,
+                s_is_dir,
+                dest_is_dir,
+                &taken,
+            );
+        }
+    }
+    Ok(out)
+}
+
+/// [`scan_conflicts`] 的同名目录下钻递归（Box::pin，模式同 [`upload_dir_boxed`]）。
+/// `src_dir` 为完整源目录（本地路径或 sftp URL），`dst_remote` 为目标侧同名的
+/// 完整远程路径（不含 authority）。
+fn scan_pair<'a>(
+    pool: &'a SessionPool,
+    dest_key: &'a str,
+    dest_authority: &'a str,
+    src_dir: &'a str,
+    dst_remote: &'a str,
+    out: &'a mut Vec<crate::ops::Conflict>,
+    depth: usize,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+    Box::pin(async move {
+        if depth > SCAN_MAX_DEPTH {
+            return Ok(());
+        }
+        // 目标侧列表：子项同名/类型判定 + 建议名判重
+        let entries = remote_list(pool, dest_key, dst_remote).await?;
+        let taken: std::collections::HashSet<String> =
+            entries.iter().map(|(n, _)| n.clone()).collect();
+        for (child_name, child_path, child_is_dir) in src_children(pool, src_dir).await {
+            let Some(dest_child_is_dir) = entries
+                .iter()
+                .find(|(n, _)| *n == child_name)
+                .map(|(_, d)| *d)
+            else {
+                continue; // 目标无同名子项 → 无冲突
+            };
+            let child_dst = join_remote(dst_remote, &child_name);
+            if child_is_dir && dest_child_is_dir {
+                scan_pair(
+                    pool,
+                    dest_key,
+                    dest_authority,
+                    &child_path,
+                    &child_dst,
+                    out,
+                    depth + 1,
+                )
+                .await?;
+            } else {
+                push_conflict(
+                    out,
+                    dest_authority,
+                    &child_path,
+                    &child_name,
+                    &child_dst,
+                    child_is_dir,
+                    dest_child_is_dir,
+                    &taken,
+                );
+            }
+        }
+        Ok(())
+    })
+}
+
+/// 生成一条冲突记录（dest 拼 sftp:// 完整 URL；建议名以目标目录已知名判重）
+#[allow(clippy::too_many_arguments)]
+fn push_conflict(
+    out: &mut Vec<crate::ops::Conflict>,
+    dest_authority: &str,
+    src: &str,
+    name: &str,
+    dst_remote: &str,
+    src_is_dir: bool,
+    dest_is_dir: bool,
+    taken: &std::collections::HashSet<String>,
+) {
+    out.push(crate::ops::Conflict {
+        src: src.to_string(),
+        dest: format!("sftp://{dest_authority}{dst_remote}"),
+        src_kind: if src_is_dir { "dir" } else { "file" }.into(),
+        dest_kind: if dest_is_dir { "dir" } else { "file" }.into(),
+        suggest: suggest_remote_name(name, taken),
+    });
+}
+
+/// 目标侧目录列表 → (名字, 是否目录)。
+async fn remote_list(
+    pool: &SessionPool,
+    key: &str,
+    dir: &str,
+) -> Result<Vec<(String, bool)>, String> {
+    let sess = get_session(pool, key).await?;
+    let mut g = sess.lock().await;
+    let entries = g.list_dir(dir).await?;
+    Ok(entries.into_iter().map(|(n, a)| (n, a.is_dir)).collect())
+}
+
+/// 源条目是否目录：sftp URL → 对应会话 stat（stat 失败按文件，对齐本地
+/// `scan_into` 的 `src.is_dir()` 不可读即 false）；本地路径 → fs metadata。
+async fn src_is_dir(pool: &SessionPool, src: &str) -> bool {
+    if src.starts_with("sftp://") {
+        let Ok((authority, remote)) = parse_sftp_path(src) else {
+            return false;
+        };
+        let Ok((u, h, p)) = parse_authority(&authority) else {
+            return false;
+        };
+        let Ok(sess) = get_session(pool, &pool_key(&u, &h, p)).await else {
+            return false;
+        };
+        let mut g = sess.lock().await;
+        g.stat(&remote).await.map(|a| a.is_dir).unwrap_or(false)
+    } else {
+        std::fs::metadata(src).map(|m| m.is_dir()).unwrap_or(false)
+    }
+}
+
+/// 列源目录子项 → (名字, 完整子路径, 是否目录)。本地路径走 fs，sftp URL 走对应
+/// 会话；列失败返回空（对齐本地 `scan_into` 的容错——子树冲突漏报不阻塞粘贴）。
+async fn src_children(pool: &SessionPool, src: &str) -> Vec<(String, String, bool)> {
+    if src.starts_with("sftp://") {
+        let Ok((authority, remote)) = parse_sftp_path(src) else {
+            return Vec::new();
+        };
+        let Ok((u, h, p)) = parse_authority(&authority) else {
+            return Vec::new();
+        };
+        let Ok(sess) = get_session(pool, &pool_key(&u, &h, p)).await else {
+            return Vec::new();
+        };
+        let mut g = sess.lock().await;
+        match g.list_dir(&remote).await {
+            Ok(entries) => entries
+                .into_iter()
+                .map(|(n, a)| {
+                    let child_remote = join_remote(&remote, &n);
+                    (n, format!("sftp://{authority}{child_remote}"), a.is_dir)
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        let Ok(rd) = std::fs::read_dir(src) else {
+            return Vec::new();
+        };
+        rd.flatten()
+            .filter_map(|e| {
+                let meta = e.metadata().ok()?;
+                let name = e.file_name().to_string_lossy().to_string();
+                Some((name, e.path().to_string_lossy().to_string(), meta.is_dir()))
+            })
+            .collect()
+    }
+}
+
+/// 源路径末段名：sftp URL 取远程路径最后一段，本地路径走 `Path::file_name`。
+fn src_base_name(src: &str) -> Result<String, String> {
+    if src.starts_with("sftp://") {
+        let (_, remote) = parse_sftp_path(src)?;
+        let name = remote
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or("");
+        if name.is_empty() {
+            return Err(format!("非法路径：{src}"));
+        }
+        Ok(name.to_string())
+    } else {
+        Path::new(src)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .ok_or_else(|| format!("非法路径：{src}"))
+    }
+}
+
+/// 目标已存在时生成 `name_1.ext` 式默认改名——契约对齐本地 `ops::suggest_name`
+/// （`name_1.ext` 风格），但远程无文件系统可探测，判重改为查目标目录已知名集合。
+fn suggest_remote_name(name: &str, taken: &std::collections::HashSet<String>) -> String {
+    let (stem, ext) = crate::ops::split_ext(name);
+    for i in 1..10000u32 {
+        let cand = format!("{stem}_{i}{ext}");
+        if !taken.contains(&cand) {
+            return cand;
+        }
+    }
+    name.to_string()
+}
+
 fn sanitize_name(name: &str) -> String {
     let mut s = String::with_capacity(name.len());
     for c in name.chars() {
@@ -1315,6 +1565,191 @@ mod tests {
                 let _ = g.remove(&f).await;
             }
             for d in [
+                format!("{dir_b}/tree/sub"),
+                format!("{dir_b}/tree"),
+                dir_a.clone(),
+                dir_b.clone(),
+                base.clone(),
+            ] {
+                let _ = g.rmdir(&d).await;
+            }
+            let _ = std::fs::remove_dir_all(&local_src);
+        });
+    }
+
+    /// ---- 粘贴冲突扫描（v0.48）：纯函数 + 本机 sshd 集成（不可用时静默跳过） ----
+
+    /// 路径末段/父目录/建议名生成的纯函数契约（对齐本地 ops::suggest_name 风格）
+    #[test]
+    fn scan_pure_helpers() {
+        assert_eq!(src_base_name("sftp://u@h:22/a/b/f.txt").unwrap(), "f.txt");
+        assert_eq!(src_base_name("sftp://u@h:22/a/b/").unwrap(), "b");
+        assert!(src_base_name("sftp://u@h:22/").is_err());
+        assert_eq!(src_base_name("/tmp/x/name.ext").unwrap(), "name.ext");
+        let taken: std::collections::HashSet<String> = ["f_1.txt".to_string()].into();
+        assert_eq!(suggest_remote_name("f.txt", &taken), "f_2.txt");
+        assert_eq!(
+            suggest_remote_name("f.txt", &Default::default()),
+            "f_1.txt"
+        );
+        // 无扩展名（目录）与点开头文件（.bashrc）
+        assert_eq!(
+            suggest_remote_name("tree", &Default::default()),
+            "tree_1"
+        );
+        assert_eq!(
+            suggest_remote_name(".bashrc", &Default::default()),
+            ".bashrc_1"
+        );
+    }
+
+    /// 目标远程同名冲突扫描：文件 vs 文件 / 类型冲突 / 目录合并下钻 / 无同名跳过 /
+    /// 本地源条目混扫（本地→远程粘贴路径）。语义对齐本地 ops::scan_conflicts。
+    #[test]
+    fn sftp_scan_conflicts_roundtrip() {
+        if !localhost_sshd_available() {
+            eprintln!("[skip] 本机 sshd 不可用，跳过 SFTP 冲突扫描集成用例");
+            return;
+        }
+        let user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        let cfg = session::ServerConfig {
+            name: "it".into(),
+            host: "127.0.0.1".into(),
+            port: 22,
+            user: user.clone(),
+            auth: session::AuthMethod::PublicKey { key_path: String::new(), passphrase: None },
+            root: None,
+            save_secret: false,
+        };
+        let rt = tokio::runtime::Runtime::new().expect("async runtime");
+        rt.block_on(async {
+            let mut g = match session::SftpSession::connect(&cfg).await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[skip] SFTP 连接失败（{e}），跳过集成用例");
+                    return;
+                }
+            };
+            let tag = std::process::id();
+            let base = format!("/tmp/rdir-scan-it-{tag}");
+            let dir_a = format!("{base}/a");
+            let dir_b = format!("{base}/b");
+            for d in [
+                &base,
+                &dir_a,
+                &dir_b,
+                &format!("{dir_a}/tree"),
+                &format!("{dir_a}/tree/sub"),
+                &format!("{dir_a}/typeclash"),
+                &format!("{dir_b}/tree"),
+                &format!("{dir_b}/tree/sub"),
+            ] {
+                g.mkdir(d).await.expect("建远端目录");
+            }
+            let local_src = std::env::temp_dir().join(format!("rdir-scan-it-src-{tag}"));
+            let _ = std::fs::remove_dir_all(&local_src);
+            std::fs::create_dir_all(&local_src).unwrap();
+            std::fs::write(local_src.join("f.txt"), "local").unwrap();
+            std::fs::write(local_src.join("localonly.txt"), "unique").unwrap();
+            let seed_local = |name: &str, bytes: &[u8]| {
+                let tmp = local_src.join(format!("seed-{name}"));
+                std::fs::write(&tmp, bytes).unwrap();
+                tmp
+            };
+            g.upload(&seed_local("f", b"remote-src"), &format!("{dir_a}/f.txt"), |_, _| true)
+                .await
+                .expect("备源文件");
+            g.upload(&seed_local("same", b"xx"), &format!("{dir_a}/same.txt"), |_, _| true)
+                .await
+                .expect("备源文件");
+            g.upload(&seed_local("n", b"nested"), &format!("{dir_a}/tree/sub/n.txt"), |_, _| true)
+                .await
+                .expect("备源文件");
+            g.upload(&seed_local("clash", b"d"), &format!("{dir_b}/typeclash"), |_, _| true)
+                .await
+                .expect("备目标文件");
+            g.upload(&seed_local("f2", b"dest"), &format!("{dir_b}/f.txt"), |_, _| true)
+                .await
+                .expect("备目标文件");
+            g.upload(&seed_local("n2", b"dest-n"), &format!("{dir_b}/tree/sub/n.txt"), |_, _| true)
+                .await
+                .expect("备目标文件");
+
+            let key = pool_key(&user, "127.0.0.1", 22);
+            let mut pool = pool::SessionPool::default();
+            pool.put(&key, g);
+            let authority = format!("{user}@127.0.0.1");
+
+            let conflicts = scan_conflicts(
+                &pool,
+                &[
+                    format!("sftp://{authority}{dir_a}/f.txt"),
+                    format!("sftp://{authority}{dir_a}/same.txt"),
+                    format!("sftp://{authority}{dir_a}/tree"),
+                    format!("sftp://{authority}{dir_a}/typeclash"),
+                    local_src.join("f.txt").to_string_lossy().to_string(),
+                    local_src.join("localonly.txt").to_string_lossy().to_string(),
+                ],
+                &format!("sftp://{authority}{dir_b}"),
+            )
+            .await
+            .expect("扫描成功");
+
+            let find = |src_suffix: &str| {
+                conflicts
+                    .iter()
+                    .find(|c| c.src.ends_with(src_suffix))
+                    .unwrap_or_else(|| panic!("缺冲突条目 {src_suffix}: {conflicts:?}"))
+            };
+            // 1) 文件 vs 文件：顶层冲突，建议名 f_1.txt
+            let f = find("a/f.txt");
+            assert_eq!(f.dest, format!("sftp://{authority}{dir_b}/f.txt"));
+            assert_eq!(f.src_kind, "file");
+            assert_eq!(f.dest_kind, "file");
+            assert_eq!(f.suggest, "f_1.txt");
+            // 2) 无同名不报冲突
+            assert!(
+                !conflicts.iter().any(|c| c.src.ends_with("same.txt")),
+                "无同名不应报冲突: {conflicts:?}"
+            );
+            assert!(
+                !conflicts.iter().any(|c| c.src.ends_with("localonly.txt")),
+                "本地无同名不应报冲突: {conflicts:?}"
+            );
+            // 3) 目录合并下钻：tree/ 与 sub/ 合并不报，只有文件级 n.txt 报
+            let n = find("tree/sub/n.txt");
+            assert_eq!(n.dest, format!("sftp://{authority}{dir_b}/tree/sub/n.txt"));
+            assert_eq!(n.suggest, "n_1.txt");
+            assert!(
+                !conflicts.iter().any(|c| c.src.ends_with("/a/tree")),
+                "目录合并本身不报冲突: {conflicts:?}"
+            );
+            // 4) 类型冲突：源目录 vs 目标同名文件
+            let tc = find("a/typeclash");
+            assert_eq!(tc.src_kind, "dir");
+            assert_eq!(tc.dest_kind, "file");
+            assert_eq!(tc.suggest, "typeclash_1");
+            // 本地源文件冲突也在列（共 4 条）
+            assert_eq!(conflicts.len(), 4, "应恰好 4 条冲突: {conflicts:?}");
+            assert!(conflicts.iter().any(|c| c.src == local_src.join("f.txt").to_string_lossy()));
+
+            // 清理远端与本地
+            let sess = get_session(&pool, &key).await.unwrap();
+            let mut g = sess.lock().await;
+            for f in [
+                format!("{dir_a}/f.txt"),
+                format!("{dir_a}/same.txt"),
+                format!("{dir_a}/tree/sub/n.txt"),
+                format!("{dir_b}/f.txt"),
+                format!("{dir_b}/tree/sub/n.txt"),
+                format!("{dir_b}/typeclash"),
+            ] {
+                let _ = g.remove(&f).await;
+            }
+            for d in [
+                format!("{dir_a}/tree/sub"),
+                format!("{dir_a}/tree"),
+                format!("{dir_a}/typeclash"),
                 format!("{dir_b}/tree/sub"),
                 format!("{dir_b}/tree"),
                 dir_a.clone(),

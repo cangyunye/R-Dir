@@ -305,7 +305,8 @@ fn suggest_name(dest: &Path) -> String {
 }
 
 /// 拆分扩展名（最后一个 `.`，且不在开头，兼容 `.bashrc`）。
-fn split_ext(name: &str) -> (String, String) {
+/// pub(crate)：SFTP 冲突扫描的建议名生成复用同一契约（`name_1.ext`）。
+pub(crate) fn split_ext(name: &str) -> (String, String) {
     match name.rfind('.') {
         Some(i) if i > 0 => (name[..i].to_string(), name[i..].to_string()),
         _ => (name.to_string(), String::new()),

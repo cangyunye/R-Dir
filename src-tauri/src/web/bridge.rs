@@ -783,6 +783,16 @@ async fn c_sftp_move_entry(ctx: &WebCtx, args: &Value) -> Result<Value, String> 
     val(crate::sftp::move_entry(&pool, &src, &dest_dir, &name).await)
 }
 
+/// 粘贴到远程前的同名冲突扫描（只读，不写目标；语义同本地 scan_conflicts）
+#[cfg(feature = "sftp")]
+async fn c_sftp_scan_conflicts(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
+    let paths: Vec<String> = arg(args, "paths")?;
+    let dest: String = arg(args, "dest")?;
+    crate::ensure_plugin(&ctx.state, "sftp")?;
+    let pool = ctx.state.sftp_pool.lock().await;
+    val(crate::sftp::scan_conflicts(&pool, &paths, &dest).await)
+}
+
 #[cfg(feature = "sftp")]
 async fn c_sftp_export_servers(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let target: String = arg(args, "target")?;
@@ -841,6 +851,7 @@ sftp_stubs!(
     c_sftp_delete,
     c_sftp_rename,
     c_sftp_move_entry,
+    c_sftp_scan_conflicts,
     c_sftp_export_servers,
     c_sftp_import_servers,
 );
@@ -1208,6 +1219,7 @@ web_commands! {
     "sftp_delete" => c_sftp_delete,
     "sftp_rename" => c_sftp_rename,
     "sftp_move_entry" => c_sftp_move_entry,
+    "sftp_scan_conflicts" => c_sftp_scan_conflicts,
     "sftp_export_servers" => c_sftp_export_servers,
     "sftp_import_servers" => c_sftp_import_servers,
     // ---- 比对 / 文本 / 搜索 / 杂项 ----

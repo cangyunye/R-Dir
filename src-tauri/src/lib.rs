@@ -2021,6 +2021,20 @@ async fn sftp_move_entry(
     sftp::move_entry(&pool, &src, &dest_dir, &name).await
 }
 
+/// 扫描粘贴到远程目录前的同名冲突（源可为本地路径或 sftp URL；语义与本地
+/// scan_conflicts 同构，冲突结构复用 ops::Conflict，前端经同一 ConflictDialog 裁决）。
+#[cfg(feature = "sftp")]
+#[tauri::command]
+async fn sftp_scan_conflicts(
+    state: tauri::State<'_, AppState>,
+    paths: Vec<String>,
+    dest: String,
+) -> Result<Vec<ops::Conflict>, String> {
+    ensure_plugin(&state, "sftp")?;
+    let pool = state.sftp_pool.lock().await;
+    sftp::scan_conflicts(&pool, &paths, &dest).await
+}
+
 // ==================== NFS 插件命令（v0.40 无条件编译；InProcess/伴生插件由 NfsHandle 分发，事件/取消与 SFTP 同构） ====================
 
 /// 下载 NFS 文件到临时目录，返回本地路径（供打开）
@@ -3109,7 +3123,11 @@ pub fn run() {
         sftp_delete,
         #[cfg(feature = "sftp")]
         sftp_rename,
+        #[cfg(feature = "sftp")]
         sftp_move_entry,
+        // 粘贴到远程前的同名冲突扫描（源可为本地路径或 sftp URL）
+        #[cfg(feature = "sftp")]
+        sftp_scan_conflicts,
         // v0.31 服务器清单导出/导入 + 远程打开临时目录管理
         #[cfg(feature = "sftp")]
         sftp_export_servers,

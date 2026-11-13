@@ -49,3 +49,40 @@ export function applyConflictAction(
     stopped: false,
   };
 }
+
+/**
+ * 远程粘贴（目标为 sftp://）冲突扫描结果的分拣（纯函数）：
+ * - 顶层条目冲突（conflict.src 就是粘贴清单里的路径）→ 交 ConflictDialog 逐条裁决；
+ * - 下钻冲突（同名目录合并内部的同名文件，src 在粘贴清单某条目的子树内）→
+ *   按覆盖处理，对齐本地跨目录复制目录「同名内容一律覆盖」的语义。
+ * 判定用精确字符串相等：后端扫描对顶层冲突原样返回输入路径，下钻冲突是其子路径。
+ */
+export function splitRemoteConflicts(
+  conflicts: TransferConflict[],
+  srcs: string[],
+): { topLevel: TransferConflict[]; drilled: TransferConflict[] } {
+  const set = new Set(srcs);
+  const topLevel: TransferConflict[] = [];
+  const drilled: TransferConflict[] = [];
+  for (const c of conflicts) {
+    (set.has(c.src) ? topLevel : drilled).push(c);
+  }
+  return { topLevel, drilled };
+}
+
+/**
+ * 冲突弹窗裁决（plan 以冲突 dest 为 key）折算成每个源条目的落盘名（纯函数）：
+ * rename 裁决取用户输入名，其余保持原名。逐条跳过不存在——弹窗只有
+ * 覆盖/全部覆盖/改名/停止，「停止」由调用方整体中止，不产生 skip。
+ */
+export function remoteNamesFromPlan(
+  topLevel: TransferConflict[],
+  plan: ResolutionPlan,
+): Record<string, string> {
+  const names: Record<string, string> = {};
+  for (const c of topLevel) {
+    const r = plan[c.dest];
+    if (r?.action === "rename") names[c.src] = r.name;
+  }
+  return names;
+}

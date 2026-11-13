@@ -900,6 +900,49 @@ export async function installTauriMock(page: Page): Promise<void> {
         if (!FS[dir].some((f) => f.name === name)) FS[dir].push({ name, size: 42 });
         return `${dir}/${name}`;
       },
+      // ---- v0.48 粘贴到远程前的同名冲突扫描：按虚拟 FS 判同名，目录同名递归下钻
+      // 报文件级冲突（语义对齐后端 sftp::scan_conflicts；源可为 sftp:// 或本地路径）----
+      sftp_scan_conflicts: (a) => {
+        const dest = String(a.dest ?? "").replace(/\/+$/, "");
+        const findIn = (dir: string, name: string) =>
+          (FS[dir] ?? []).find((f) => f.name === name);
+        const kindOf = (path: string): "dir" | "file" => {
+          const name = path.split("/").filter(Boolean).pop() ?? "";
+          const e = findIn(parentOf(path), name);
+          return e?.dir ? "dir" : "file";
+        };
+        const out: {
+          src: string;
+          dest: string;
+          srcKind: "dir" | "file";
+          destKind: "dir" | "file";
+          suggest: string;
+        }[] = [];
+        const scan = (src: string, destDir: string) => {
+          const name = src.split("/").filter(Boolean).pop() ?? "";
+          const e = findIn(destDir, name);
+          if (!e) return;
+          const srcIsDir = kindOf(src) === "dir";
+          if (srcIsDir && e.dir) {
+            // 同名目录合并：递归下钻找文件级冲突
+            for (const child of FS[src] ?? []) scan(`${src}/${child.name}`, `${destDir}/${name}`);
+            return;
+          }
+          // 建议名 `name_1.ext`（扩展名前插序号，对齐后端 ops::split_ext 契约）
+          const dot = name.lastIndexOf(".");
+          const stem = dot > 0 ? name.slice(0, dot) : name;
+          const ext = dot > 0 ? name.slice(dot) : "";
+          out.push({
+            src,
+            dest: `${destDir}/${name}`,
+            srcKind: srcIsDir ? "dir" : "file",
+            destKind: e.dir ? "dir" : "file",
+            suggest: `${stem}_1${ext}`,
+          });
+        };
+        for (const s of (a.paths as string[]) ?? []) scan(String(s), dest);
+        return out;
+      },
       share_list: () => [],
       plugin: () => null,
       // 文件对话框：用例可经 __rdirDialogOpen / __rdirDialogSave 注入返回路径（缺省取消）

@@ -107,6 +107,10 @@ export const moveEntries = async (paths: string[], dest: string) => {
 export const scanConflicts = (paths: string[], dest: string) =>
   invoke<import("./types").TransferConflict[]>("scan_conflicts", { paths, dest });
 
+/** 扫描粘贴到远程目录前的同名冲突（源可为本地路径或 sftp URL；语义同本地 scanConflicts） */
+export const sftpScanConflicts = (paths: string[], dest: string) =>
+  invoke<import("./types").TransferConflict[]>("sftp_scan_conflicts", { paths, dest });
+
 /** v0.28.0 目录复制语义：顶层同名目录重复检测 + `name (2)` 建议名 */
 export interface DirDuplicate {
   src: string;

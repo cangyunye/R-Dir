@@ -197,4 +197,56 @@ test.describe("44C. SFTP↔SFTP 经临时目录中转", () => {
       .toMatchObject({ src: `${REMOTE}/deploy.sh`, destDir: `${REMOTE}/logs`, name: "deploy.sh" });
     await expect(page.locator(`[data-path="${REMOTE}/logs/deploy.sh"]`)).toBeVisible();
   });
+
+  // v0.48 粘贴到远程撞名：与本地粘贴同一套冲突裁决弹窗（覆盖/全部覆盖/改名/停止）
+  test("粘贴到远程撞名 → 冲突弹窗：停止不传 / 改名落新名 / 覆盖重传", async ({ page }) => {
+    await boot(page);
+    await page.getByRole("button", { name: "生产机" }).click();
+    // 先拖一份 deploy.sh 进 logs 作为已存在条目
+    await synthDrag(page, `[data-path="${REMOTE}/deploy.sh"]`, `[data-path="${REMOTE}/logs"]`);
+    await expect
+      .poll(async () => (await relays(page)).length, { timeout: 5000 })
+      .toBe(1);
+
+    const copyDeploy = async () => {
+      await page.getByRole("button", { name: "生产机" }).click();
+      await page.locator(`[data-path="${REMOTE}/deploy.sh"]`).click();
+      await page.keyboard.press(`${MOD}+KeyC`);
+      await page.locator(`[data-path="${REMOTE}/logs"]`).dblclick();
+      await page.locator("[data-filelist-body]").first().click();
+      await page.keyboard.press(`${MOD}+KeyV`);
+    };
+
+    // 顶层同名 → ConflictDialog（第 1/1 项，含建议名回填）
+    await copyDeploy();
+    const dlg = page.locator("[data-conflict-dialog]");
+    await expect(dlg).toBeVisible();
+    await expect(dlg).toContainText("目标已存在同名项目");
+    await expect(dlg).toContainText("deploy.sh");
+    await expect(dlg.locator("input")).toHaveValue("deploy_1.sh");
+
+    // 停止：不传输、剪贴板保留（无需重新复制即可再次粘贴）
+    await dlg.getByRole("button", { name: "停止" }).click();
+    await expect(dlg).not.toBeVisible();
+    expect(await relays(page)).toHaveLength(1);
+
+    // 再粘贴 → 改名（默认建议名 deploy_1.sh）→ 中转按新名落盘
+    await page.keyboard.press(`${MOD}+KeyV`);
+    await expect(dlg).toBeVisible();
+    await dlg.getByRole("button", { name: "改名" }).click();
+    await expect
+      .poll(async () => (await relays(page)).at(-1), { timeout: 5000 })
+      .toMatchObject({ src: `${REMOTE}/deploy.sh`, destDir: `${REMOTE}/logs`, name: "deploy_1.sh" });
+    await expect(page.locator(`[data-path="${REMOTE}/logs/deploy_1.sh"]`)).toBeVisible();
+
+    // 重新复制 → 粘贴 → 覆盖 → 原名重传
+    await copyDeploy();
+    await expect(dlg).toBeVisible();
+    await dlg.getByRole("button", { name: "覆盖", exact: true }).click();
+    await expect
+      .poll(async () => (await relays(page)).at(-1), { timeout: 5000 })
+      .toMatchObject({ src: `${REMOTE}/deploy.sh`, destDir: `${REMOTE}/logs`, name: "deploy.sh" });
+    await expect(dlg).not.toBeVisible();
+    expect(await relays(page)).toHaveLength(3);
+  });
 });

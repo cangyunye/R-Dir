@@ -98,7 +98,8 @@ function ConflictDialogBody({
 
   const pairable = cur.srcKind === "file" && cur.destKind === "file";
 
-  // 只查当前展示条目（本地路径；SFTP 冲突不经此弹窗）。单文件流式哈希在后端
+  // 只查当前展示条目。指纹仅本地路径可得（v0.48 起 SFTP 冲突也走本弹窗：
+  // 远程侧条目后端返回 null 指纹，对应行自动隐藏）。单文件流式哈希在后端
   // spawn_blocking 执行，弹窗期间展示「计算中」，不卡 UI。
   useEffect(() => {
     if (!pairable) return;
