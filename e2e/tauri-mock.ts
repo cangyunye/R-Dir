@@ -99,9 +99,16 @@ export async function installTauriMock(page: Page): Promise<void> {
       "sftp://u@127.0.0.1:22/remote": [
         { name: "deploy.sh", size: 512 },
         { name: "logs", dir: true },
+        { name: "src", dir: true },
+        { name: "dst", dir: true },
       ],
       // v0.44.0 SFTP↔SFTP 中转用例：可进入的空子目录（粘贴落点）
       "sftp://u@127.0.0.1:22/remote/logs": [],
+      // v0.48 目录行冲突用例：src/tree 与 dst/tree 同名（子文件同名不同大小）
+      "sftp://u@127.0.0.1:22/remote/src": [{ name: "tree", dir: true }],
+      "sftp://u@127.0.0.1:22/remote/src/tree": [{ name: "inner.txt", size: 10 }],
+      "sftp://u@127.0.0.1:22/remote/dst": [{ name: "tree", dir: true }],
+      "sftp://u@127.0.0.1:22/remote/dst/tree": [{ name: "inner.txt", size: 12 }],
     };
 
     const NOW = 1_700_000_000_000;
@@ -907,8 +914,9 @@ export async function installTauriMock(page: Page): Promise<void> {
         if (!FS[dir].some((f) => f.name === name)) FS[dir].push({ name, size: 42 });
         return `${dir}/${name}`;
       },
-      // ---- v0.48 粘贴到远程前的同名冲突扫描：按虚拟 FS 判同名，目录同名递归下钻
-      // 报文件级冲突（语义对齐后端 sftp::scan_conflicts；源可为 sftp:// 或本地路径）----
+      // ---- v0.48 粘贴到远程前的同名冲突扫描：按虚拟 FS 判同名；同名目录报一条
+      // 目录行（「覆盖」= 递归合并）并递归下钻报文件级冲突（语义对齐后端
+      // sftp::scan_conflicts；源可为 sftp:// 或本地路径）----
       sftp_scan_conflicts: (a) => {
         const dest = String(a.dest ?? "").replace(/\/+$/, "");
         const findIn = (dir: string, name: string) =>
@@ -925,26 +933,30 @@ export async function installTauriMock(page: Page): Promise<void> {
           destKind: "dir" | "file";
           suggest: string;
         }[] = [];
+        // 建议名 `name_1.ext`（扩展名前插序号，对齐后端 ops::split_ext 契约）
+        const suggestOf = (n: string) => {
+          const dot = n.lastIndexOf(".");
+          const stem = dot > 0 ? n.slice(0, dot) : n;
+          const ext = dot > 0 ? n.slice(dot) : "";
+          return `${stem}_1${ext}`;
+        };
         const scan = (src: string, destDir: string) => {
           const name = src.split("/").filter(Boolean).pop() ?? "";
           const e = findIn(destDir, name);
           if (!e) return;
           const srcIsDir = kindOf(src) === "dir";
           if (srcIsDir && e.dir) {
-            // 同名目录合并：递归下钻找文件级冲突
+            // 同名目录：目录行本身也报（「覆盖」= 递归合并），再递归下钻找文件级冲突
+            out.push({ src, dest: `${destDir}/${name}`, srcKind: "dir", destKind: "dir", suggest: suggestOf(name) });
             for (const child of FS[src] ?? []) scan(`${src}/${child.name}`, `${destDir}/${name}`);
             return;
           }
-          // 建议名 `name_1.ext`（扩展名前插序号，对齐后端 ops::split_ext 契约）
-          const dot = name.lastIndexOf(".");
-          const stem = dot > 0 ? name.slice(0, dot) : name;
-          const ext = dot > 0 ? name.slice(dot) : "";
           out.push({
             src,
             dest: `${destDir}/${name}`,
             srcKind: srcIsDir ? "dir" : "file",
             destKind: e.dir ? "dir" : "file",
-            suggest: `${stem}_1${ext}`,
+            suggest: suggestOf(name),
           });
         };
         for (const s of (a.paths as string[]) ?? []) scan(String(s), dest);

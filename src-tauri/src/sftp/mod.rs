@@ -620,10 +620,13 @@ pub async fn move_entry(pool: &SessionPool, src: &str, dest_dir: &str, name: &st
 /// 粘贴前的冲突扫描挂死在网络上。到顶即停（该层不再报冲突，落盘仍按覆盖合并）。
 const SCAN_MAX_DEPTH: usize = 64;
 
-/// 扫描粘贴到远程目录前需用户裁决的同名冲突（与本地 `ops::scan_conflicts` 同构）。
+/// 扫描粘贴到远程目录前需用户裁决的同名冲突（结构与本地 `ops::scan_conflicts` 同构）。
 /// 源条目可为本地路径（本地→远程粘贴）或 sftp:// URL（远程→远程粘贴），目标恒为
-/// sftp:// URL。规则与本地一致：目录 vs 目录视为可合并，递归下钻找文件级冲突；
-/// 其余（文件 vs 文件、文件 vs 目录、目录 vs 文件）均为冲突，逐条返回。
+/// sftp:// URL。规则：文件 vs 文件、文件 vs 目录、目录 vs 文件均为冲突，逐条返回；
+/// 目录 vs 目录报一条目录冲突行（「覆盖」= 递归合并）并递归下钻找文件级冲突——
+/// 目录行是有意偏离本地语义的点（本地跨目录复制目录沿用 v0.28.0 静默合并不询问）：
+/// 静默合并的保护强度倒挂，顶层文件问了、目录内的同名文件却不问就覆盖，故远程
+/// 粘贴在目录合并前询问一次（v0.48 用户决策）。
 /// 冲突结构直接复用 [`crate::ops::Conflict`]，前端经同一 ConflictDialog 与裁决
 /// 纯函数处理。dest 字段为 sftp:// 完整 URL（plan 以 dest 为 key 的契约不变）。
 ///
@@ -657,7 +660,20 @@ pub async fn scan_conflicts(
         let s_is_dir = src_is_dir(pool, p).await;
         let dst_remote = join_remote(&dest_dir, &name);
         if s_is_dir && dest_is_dir {
-            // 顶层同名目录 → 合并语义，下钻找文件级冲突（与本地 scan_into 一致）
+            // 顶层同名目录：目录本身也报一条冲突行（覆盖 = 递归合并 / 改名 / 停止，
+            // 见函数注释），并继续下钻报文件级冲突——合并分支的类型冲突预删除仍需
+            // 这份清单；用户选「改名」时子树落新名（无冲突），其下钻行由前端按顶层
+            // 裁决作废（transfer.ts drilledTypeClashes），预删除不会误伤原目录。
+            push_conflict(
+                &mut out,
+                &dest_authority,
+                p,
+                &name,
+                &dst_remote,
+                true,
+                true,
+                &taken,
+            );
             scan_pair(
                 pool,
                 &dest_key,
@@ -1716,21 +1732,27 @@ mod tests {
                 !conflicts.iter().any(|c| c.src.ends_with("localonly.txt")),
                 "本地无同名不应报冲突: {conflicts:?}"
             );
-            // 3) 目录合并下钻：tree/ 与 sub/ 合并不报，只有文件级 n.txt 报
+            // 3) 目录合并：tree/ 本身报一条目录行（覆盖=合并），子目录 sub/ 不重复报，
+            //    文件级 n.txt 报下钻行
+            let tree = find("a/tree");
+            assert_eq!(tree.dest, format!("sftp://{authority}{dir_b}/tree"));
+            assert_eq!(tree.src_kind, "dir");
+            assert_eq!(tree.dest_kind, "dir");
+            assert_eq!(tree.suggest, "tree_1");
+            assert!(
+                !conflicts.iter().any(|c| c.src.ends_with("/a/tree/sub")),
+                "子目录合并不重复报行: {conflicts:?}"
+            );
             let n = find("tree/sub/n.txt");
             assert_eq!(n.dest, format!("sftp://{authority}{dir_b}/tree/sub/n.txt"));
             assert_eq!(n.suggest, "n_1.txt");
-            assert!(
-                !conflicts.iter().any(|c| c.src.ends_with("/a/tree")),
-                "目录合并本身不报冲突: {conflicts:?}"
-            );
             // 4) 类型冲突：源目录 vs 目标同名文件
             let tc = find("a/typeclash");
             assert_eq!(tc.src_kind, "dir");
             assert_eq!(tc.dest_kind, "file");
             assert_eq!(tc.suggest, "typeclash_1");
-            // 本地源文件冲突也在列（共 4 条）
-            assert_eq!(conflicts.len(), 4, "应恰好 4 条冲突: {conflicts:?}");
+            // 本地源文件冲突也在列（目录行 1 + 下钻行 1 + 顶层文件行 2 + 类型行 1，共 5 条）
+            assert_eq!(conflicts.len(), 5, "应恰好 5 条冲突: {conflicts:?}");
             assert!(conflicts.iter().any(|c| c.src == local_src.join("f.txt").to_string_lossy()));
 
             // 清理远端与本地

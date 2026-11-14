@@ -11,7 +11,8 @@ import { useT } from "@/lib/LanguageProvider";
 
 /**
  * 同名冲突裁决弹窗（Windows 风格）：覆盖 / 全部覆盖 / 改名 / 停止。
- * 目录同名已由后端递归合并，这里只处理文件级冲突。
+ * 文件级冲突与目录行（v0.48：远程粘贴同名目录报一条目录行，「覆盖」= 递归合并，
+ * 内部同名文件按覆盖落盘不再逐条问）共用本弹窗。
  *
  * v0.37 大小 + MD5 指纹：文件级冲突展示源/目标的大小与 MD5 对比，帮助判断覆盖
  * 是否丢内容。只查询**当前展示的这一条**（用户逐条确认 → 每条按需查询一次），
@@ -143,7 +144,11 @@ function ConflictDialogBody({
         </div>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
           {t("第 {i} / {n} 项冲突", { i: index + 1, n: total })}
-          {cur.srcKind === "dir" ? t("（同名目录内有同名文件）") : ""}
+          {cur.srcKind === "dir" && cur.destKind === "dir"
+            ? t("（覆盖将合并同名目录，内部同名文件将被覆盖）")
+            : cur.srcKind === "dir"
+              ? t("（同名目录内有同名文件）")
+              : ""}
         </p>
         <div className="mt-2 rounded-md border bg-muted/40 p-2 text-xs">
           <div className="truncate" title={cur.src}>

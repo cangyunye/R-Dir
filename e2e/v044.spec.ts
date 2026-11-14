@@ -249,4 +249,54 @@ test.describe("44C. SFTP↔SFTP 经临时目录中转", () => {
     await expect(dlg).not.toBeVisible();
     expect(await relays(page)).toHaveLength(3);
   });
+
+  // v0.48 目录行：粘贴同名目录 → 目录行也弹窗问一次（覆盖=递归合并，内部同名
+  // 文件不再逐条问），与本地跨目录复制目录的静默合并语义有意分叉
+  test("粘贴同名目录 → 目录行弹窗：停止不传 / 改名落新名 / 覆盖合并中转", async ({ page }) => {
+    await boot(page);
+    await page.getByRole("button", { name: "生产机" }).click();
+
+    const copyTree = async () => {
+      await page.getByRole("button", { name: "生产机" }).click();
+      await page.locator(`[data-path="${REMOTE}/src"]`).dblclick();
+      await expect(page.locator(`[data-path="${REMOTE}/src/tree"]`)).toBeVisible();
+      await page.locator(`[data-path="${REMOTE}/src/tree"]`).click();
+      await page.keyboard.press(`${MOD}+KeyC`);
+      await page.getByRole("button", { name: "生产机" }).click();
+      await page.locator(`[data-path="${REMOTE}/dst"]`).dblclick();
+      await page.locator("[data-filelist-body]").first().click();
+      await page.keyboard.press(`${MOD}+KeyV`);
+    };
+
+    // 目录行进弹窗（1/1，建议名 tree_1 回填，含合并提示文案）
+    await copyTree();
+    const dlg = page.locator("[data-conflict-dialog]");
+    await expect(dlg).toBeVisible();
+    await expect(dlg).toContainText("目标已存在同名项目");
+    await expect(dlg).toContainText("覆盖将合并同名目录");
+    await expect(dlg.locator("input")).toHaveValue("tree_1");
+
+    // 停止：不中转、剪贴板保留
+    await dlg.getByRole("button", { name: "停止" }).click();
+    await expect(dlg).not.toBeVisible();
+    expect(await relays(page)).toHaveLength(0);
+
+    // 再粘贴 → 改名（建议名 tree_1）→ 中转按新名落盘
+    await page.keyboard.press(`${MOD}+KeyV`);
+    await expect(dlg).toBeVisible();
+    await dlg.getByRole("button", { name: "改名" }).click();
+    await expect
+      .poll(async () => (await relays(page)).at(-1), { timeout: 5000 })
+      .toMatchObject({ src: `${REMOTE}/src/tree`, destDir: `${REMOTE}/dst`, name: "tree_1" });
+    await expect(page.locator(`[data-path="${REMOTE}/dst/tree_1"]`)).toBeVisible();
+
+    // 重新复制 → 覆盖 → 原名中转（递归合并）
+    await copyTree();
+    await expect(dlg).toBeVisible();
+    await dlg.getByRole("button", { name: "覆盖", exact: true }).click();
+    await expect
+      .poll(async () => (await relays(page)).at(-1), { timeout: 5000 })
+      .toMatchObject({ src: `${REMOTE}/src/tree`, destDir: `${REMOTE}/dst`, name: "tree" });
+    await expect(dlg).not.toBeVisible();
+  });
 });

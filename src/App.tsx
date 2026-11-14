@@ -145,7 +145,7 @@ import { ConnectDialog } from "@/components/ConnectDialog";
 import { PasswordDialog } from "@/components/PasswordDialog";
 import type { SectionId as SettingsSectionId } from "@/components/SettingsDialog";
 import { ConflictDialog } from "@/components/ConflictDialog";
-import { remoteNamesFromPlan, splitRemoteConflicts } from "@/lib/transfer";
+import { drilledTypeClashes, remoteNamesFromPlan, splitRemoteConflicts } from "@/lib/transfer";
 import { AppConfirmDialog, type AppConfirmRequest } from "@/components/AppConfirmDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
 import { basename, formatSize, isAbsolutePath } from "@/lib/format";
@@ -3514,25 +3514,28 @@ useEffect(() => {
             showError(t("远程复制暂不支持（可拖拽到其他窗格）"));
             if (localSrcs.length === 0 && sameDir.length === relaySrcs.length) return;
           }
-          // 冲突裁决（v0.48）：目标 SFTP 时与本地粘贴同一套语义——先扫描同名冲突，
-          // 顶层条目冲突弹 ConflictDialog 逐条裁决（覆盖/全部覆盖/改名/停止），
-          // 同名目录合并内部的下钻冲突按覆盖处理（对齐本地跨目录复制目录的语义）。
-          // NFS 目标无扫描能力，维持原静默行为。
+          // 冲突裁决（v0.48）：目标 SFTP 时先扫描同名冲突，顶层条目冲突（含同名
+          // 目录的目录行，「覆盖」= 递归合并）弹 ConflictDialog 逐条裁决（覆盖/
+          // 全部覆盖/改名/停止）；同名目录合并内部的下钻冲突按覆盖处理。与本地
+          // 语义的有意分叉：本地跨目录复制目录静默合并不询问（v0.28.0），远程
+          // 粘贴对目录合并问一次（保护强度倒挂——文件问了、目录里的文件反而不问
+          // 就覆盖）。NFS 目标无扫描能力，维持原静默行为。
           const scanSrcs = destIsSftp
             ? [...localSrcs, ...relaySrcs.filter((s) => !sameDir.includes(s))]
             : [];
           const renameBySrc: Record<string, string> = {};
+          const typeClashes: TransferConflict[] = [];
           if (scanSrcs.length > 0) {
             const conflicts = await sftpScanConflicts(scanSrcs, dest);
             const { topLevel, drilled } = splitRemoteConflicts(conflicts, scanSrcs);
-            // 类型冲突（文件 vs 目录）的「覆盖」先删目标再落盘——对齐本地
-            // apply_file/apply_dir 的覆盖语义；否则远程 OPEN 截断 / mkdir 直接报服务器错误。
-            // 删除统一在裁决之后执行（用户「停止」时不得先动手删目标）
-            const typeClashes = drilled.filter((c) => c.srcKind !== c.destKind);
+            let decision: ResolutionPlan | null = null;
             if (topLevel.length > 0) {
-              const decision = await promptConflicts(topLevel);
+              decision = await promptConflicts(topLevel);
               if (!decision) return; // 用户「停止」：保留剪贴板，可换个目录再粘贴
               Object.assign(renameBySrc, remoteNamesFromPlan(topLevel, decision));
+              // 类型冲突（文件 vs 目录）的「覆盖」先删目标再落盘——对齐本地
+              // apply_file/apply_dir 的覆盖语义；否则远程 OPEN 截断 / mkdir 直接报服务器错误。
+              // 删除统一在裁决之后执行（用户「停止」时不得先动手删目标）
               for (const c of topLevel) {
                 if (c.srcKind !== c.destKind && decision[c.dest]?.action === "overwrite") {
                   typeClashes.push(c);
@@ -3549,6 +3552,10 @@ useEffect(() => {
                 }
               }
             }
+            // 同名目录合并内部的类型冲突（下钻行）：顶层目录行获「覆盖」或无顶层
+            // 行（防御）时预删除；顶层行「改名」→ 子树落新名（无冲突），下钻行
+            // 全部作废——预删除不得动手，否则会误删用户选择不覆盖的原目录内容
+            typeClashes.push(...drilledTypeClashes(drilled, topLevel, decision ?? {}));
             for (const c of typeClashes) {
               await sftpDelete([c.dest]);
             }
