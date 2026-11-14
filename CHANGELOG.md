@@ -5,6 +5,18 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.49.0 (2026-11-14)
+
+- **大图标框选两根因修复**：「起不了框」= `startRubber` 的 `target===currentTarget` 严格门被 IconGrid 全尺寸内层 relative div 拦死，图标间缝隙/边缘全部起不了框（唯一可起框面只剩内容下方空白条）——引擎新增可注入 `isBlankPress` 空白判定，IconGrid 按「target 不在条目内」判空白（缝隙/边缘可起框，按在图标上仍走「选中+拖拽候选」访达语义）；FileList 同样注入，一并修掉虚拟滚动 padTop/padBottom 垫高 div 盖住行间行下空白导致详情列表空白处同样起不了框的既有缺口；`grid-label-full` 悬停浮层补 `pointer-events-none`（此前把按压区延伸进格子下方缝隙）。**配套 portal 事件回归修复**：菜单挂 body portal 但 React 组件树上是列表子节点，菜单内 mousedown 沿组件树冒泡进 `startRubber` 被 closest 空白判定误判 → 菜单组一展开选区即被清空（Z2 多选压缩挂）——`startRubber` 补 `currentTarget.contains(target)` DOM 路径校验，portal 事件一律拒绝。**「画的框错位」**：框选矩形坐标 = 视觉像素直接写进 zoomed 子树的布局像素，被根 zoom×窗格 zoom 整体放大（1.15385 时 400px 偏 461px），命中测试自洽所以「选中的图标跟手、画的框歪」——画框前按有效缩放比折算（探针子元素量法，每手势量一次），命中测试保持视觉空间；附带修复 `slotAt` 的同族 zoom 混算（槽位随索引漂移，slot5 算成 6）。
+- **大图标重命名拖选硬化**：发行等同代码真 WebView2 取证（CDP 场景矩阵 + `Input.setInterceptDrags` 拖拽拦截）证实 v0.48 路由机制完好，本次补两处残余缺口——行级按压路由打 `dataset.rdirPressed` 标记、重试聚焦链据此跳过 `select()`（焦点竞争窗内右键菜单改名 → 立即拖选的锚点重置守卫，v0.48 只修了框内路径）；重命名会话中条目 `draggable=false` 彻底关掉原生拖拽来源；e2e 补大图标 F2 后立即拖选 / 格右缘路由 / 图标区路由三用例。
+- **素/雅动画级别（新设置）**：外观区新增「动画效果」分段控件——**素**（默认）= 全部瞬时，与历史行为零 diff；**雅** = 苹果式丝滑动效，`--rdir-anim-dur(180ms)/--rdir-anim-ease` 驱动（组件引用变量，素=0ms 即瞬时、零 JS 分支）。覆盖：右键菜单折叠组展开（grid 0fr→1fr + 淡入）、菜单弹层入场（fade+0.97 缩放+4px 下滑，退出动画维持不做——FocusScope 抢焦问题）；`rfm.anim-level` 持久化，`document.documentElement[data-anim]`（CSS 侧 portal 弹层同效）+ `lib/anim` 镜像（JS 路径）同 state 写两侧；`prefers-reduced-motion` 恒优先于设置。
+- **拖拽拖影升级 + 落点确认**：拖影从文字 chip 升级为 Explorer 式堆叠卡——首项类型图标 + 文件名主卡、后层至多 2 张堆叠、数量徽章 + 操作文案（Alt=移动态）；引擎新增 `onDragActiveChange`（仅起拖/操作切换/结束上报，逐帧链路不进 React）。**落点确认**：大图标拖到文件夹图标上拖影内直接显示「复制/移动到「XX」」；HTML5/原生拖拽会话由 App 层跟手徽章显示「复制/移动到「目录名」」；文件夹 ring 高亮保留。引擎 `onDragStart` 入口 `defaultPrevented` 早退（外部否决不杀自研引擎 A）。素/雅两态都有拖影与徽章，雅加平滑过渡。
+- **雅·挤开位移动画（大图标特有）**：单选拖拽悬停空白时，被越过的占用图标沿行主序链实时推移一位（FLIP transform + `--rdir-anim-dur` 平滑过渡），松手按**插入语义**落位——预览与落位共用 `computeSlotShift` 纯函数，预览即终态、松手零跳动；素/多选拖拽维持 v0.27「找空位」语义（有意分叉，注释写明）；自动排列开启时不做槽位预览。
+- **排序方式冲突确认（用户问询答复）**：详情列表拖拽 = 复制/移动，行顺序恒由排序方式决定，与拖拽零冲突；大图标已有手动摆放槽位机制（自动排列关闭时），挤开动画与之整合；详情列表无插入语义故不做假挤开动画（如需真插入需新增「手动排列」排序项，另行立项）。
+- **i18n**：R-Dir-L10n **v0.6.5**（bump `#v0.6.4 → #v0.6.5`）——六包 +6 keys（「动画效果」「朴素」「优雅」+ 说明句 + 「复制到「{name}」」「移动到「{name}」」），移除拖影升级后失配旧键「复制 {n} 项」「移动 {n} 项」；check-coverage 六包 1113 strings / 21 errors 全绿。
+- **性能**：新对比套件 `e2e/perf-anim.spec.ts` + `tools/perf-anim-report.md`（合成目录 200/1000/4000 × 素/雅 × 五场景，rAF 帧时/longtask/JS 堆）——拖拽三场景素/雅均满帧（p95 16.7ms、零 longtask），雅动效零可测开销；S1 菜单 toggle 的 longtask 为 Radix 菜单挂载本身成本（两态都在，后续优化项）；真机 WebView2 进程级 CPU/GPU 采集待解锁后补测。
+- 测试：vitest 792→815（框选门控/zoom 折算、路由标记与 select() 守卫、DragGhost 渲染、slot-shift 插入推移 6 例、动画级别持久化与设置项等）；e2e 227→241（大图标缝隙起框+zoom 对齐 3、大图标重命名拖选 3、动画级别接线 2、拖影/落点徽章 3、挤开推移雅/素 2、性能套件 1）；全量 e2e 241 全绿。
+
 ## v0.48.0 (2026-11-14)
 
 - **粘贴到远程的同名冲突裁决弹窗**：目标为 SFTP 时粘贴（本地→远程与远程→远程）前先扫描同名冲突——顶层条目冲突弹 ConflictDialog 逐条裁决（覆盖 / 全部覆盖 / 改名 / 停止），此前该路径静默覆盖；类型冲突（文件 vs 目录）的「覆盖」先删目标再落盘对齐本地语义，删除统一在裁决之后执行（用户「停止」不动目标）；用户自输改名撞目标已有条目在传输开始前拦截报错；后端新增 `sftp_scan_conflicts`（源可为本地路径或 sftp URL，目标侧每层一次 list_dir 判同名/类型/建议名，目录下钻深度上限 64 防软链成环，会话锁即取即放不嵌套持两把，建议名复用 `ops::split_ext` 契约）；GUI 命令与 web 桥双注册（只读扫描口径）；顺手修复 `sftp_move_entry` 注册缺 cfg 门控（无 sftp 构建编译失败）。
