@@ -404,3 +404,24 @@ describe("IconGrid 橡皮筋框选（v0.49 缝隙起框：target≠currentTarget
     expect(onSelectRange).not.toHaveBeenCalled();
   });
 });
+
+describe("重命名会话中的条目拖拽（v0.49 BUG2 硬化）", () => {
+  it("重命名中 draggable=false 防原生拖拽劫持；非重命名维持 true", () => {
+    const { container } = render(
+      <IconGrid
+        {...makeProps({ renaming: { paneId: 0, path: "/mock/dir/main.rs", name: "main.rs" } })}
+      />,
+    );
+    expect(
+      container.querySelector('[data-path="/mock/dir/main.rs"]')!.getAttribute("draggable"),
+    ).toBe("false");
+    expect(
+      container.querySelector('[data-path="/mock/dir/Documents"]')!.getAttribute("draggable"),
+    ).toBe("true");
+
+    const { container: c2 } = render(<IconGrid {...makeProps()} />);
+    expect(
+      c2.querySelector('[data-path="/mock/dir/main.rs"]')!.getAttribute("draggable"),
+    ).toBe("true");
+  });
+});

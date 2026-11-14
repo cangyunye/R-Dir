@@ -751,7 +751,11 @@ export function IconGrid({
                           role="gridcell"
                           aria-selected={selected}
                           tabIndex={-1}
-                          draggable="true"
+                          // 重命名会话中禁用条目拖拽：拖选路由（startItemPress 的
+                          // renaming 分支）preventDefault mousedown 已能拦住原生
+                          // 拖拽，这里彻底关掉来源，防个别按压点漏 preventDefault
+                          // 被真硬件鼠标的原生拖拽劫持（v0.49 BUG2 硬化）
+                          draggable={!isRenaming}
                           onDragStart={(e) => {
                             const paths = selectionSet.has(entry.path) ? selection : [entry.path];
                             // 原生拖出仅支持真实文件系统路径；sftp://、http:// 等虚拟路径走 HTML5 文本拖拽

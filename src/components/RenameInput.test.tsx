@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
-import { RenameInput } from "./RenameInput";
+import { RenameInput, routeRenameRowPress } from "./RenameInput";
 
 
 function mount(overrides: { onCommit?: (n: string) => void; onCancel?: () => void; initial?: string } = {}) {
@@ -226,5 +226,37 @@ describe("框内按下塌缩全选（WKWebView 选区拖动规避）", () => {
     fireEvent.mouseDown(input, { clientX: 60 }); // 偏移 6，落在 (0,2) 之外
     expect(input.selectionStart).toBe(0);
     expect(input.selectionEnd).toBe(2);
+  });
+});
+
+describe("行级路由 everPressed 标记（v0.49 BUG2 硬化：路由路径 select() 重置守卫）", () => {
+  it("routeRenameRowPress 打 dataset 标记 + 聚焦 + 按水平位置塌缩锚点", () => {
+    const { input } = mount();
+    input.setSelectionRange(0, input.value.length);
+    routeRenameRowPress(input, 5);
+    expect(input.dataset.rdirPressed).toBe("1");
+    expect(document.activeElement).toBe(input);
+    // jsdom 无 canvas → caretOffsetAt 回 0 → 塌缩到串首
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(0);
+  });
+
+  it("路由按压后重试聚焦链只补焦点不再 select()（拖选锚点不被重置）", () => {
+    vi.useFakeTimers();
+    try {
+      const { input } = mount();
+      routeRenameRowPress(input, 10);
+      // 模拟路由拖选进行到中段的选区，随后焦点被 radix 回焦竞争抢走
+      input.setSelectionRange(0, 3);
+      input.blur();
+      act(() => {
+        vi.advanceTimersByTime(130); // 120ms 档重试
+      });
+      expect(document.activeElement).toBe(input);
+      expect(input.selectionStart).toBe(0);
+      expect(input.selectionEnd).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

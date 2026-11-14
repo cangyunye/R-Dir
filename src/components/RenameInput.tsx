@@ -48,6 +48,10 @@ function beginManualTextDrag(el: HTMLInputElement, anchor: number) {
  *  调用方（FileList/IconGrid 的行按压处理器）需已 stopPropagation。 */
 export function routeRenameRowPress(input: HTMLInputElement, clientX: number): void {
   input.focus();
+  // 行级路由拿不到组件实例，经 dataset 标记「用户已按过」：重试聚焦链据此跳过
+  // select()——否则起手焦点竞争窗内（右键菜单改名 → 立即行上按压拖选）的
+  // select() 会把正在进行的拖选锚点整个重置（v0.48 框内路径同源根因）
+  input.dataset.rdirPressed = "1";
   const offset = caretOffsetAt(input, clientX);
   beginManualTextDrag(input, offset);
 }
@@ -120,12 +124,15 @@ export function RenameInput({
         window.setTimeout(() => {
           if (document.activeElement === ref.current) return;
           ref.current?.focus();
-          // 用户已在框内按过（接管拖选中）：只补焦点不再 select()——接管的 mousedown
+          // 用户已在框内按过（接管拖选中）或已经行级路由按过（dataset 标记，见
+          // routeRenameRowPress）：只补焦点不再 select()——接管的 mousedown
           // preventDefault 会取消原生聚焦，重试补焦点后若再全选，会把正在进行的
           // 拖选锚点与选区整个重置（F2 起手快速按压拖选必中招，实测失效根因）
-          if (!everPressedRef.current) ref.current?.select();
+          const pressed =
+            everPressedRef.current || ref.current?.dataset.rdirPressed === "1";
+          if (!pressed) ref.current?.select();
           // 全选会把溢出内容的输入框滚到串尾（用户只看到名字尾部）；拨回串首
-          if (ref.current && !everPressedRef.current) ref.current.scrollLeft = 0;
+          if (ref.current && !pressed) ref.current.scrollLeft = 0;
         }, ms),
       );
     return () => attempts.forEach((t) => window.clearTimeout(t));

@@ -207,3 +207,89 @@ test.describe("分屏重命名（窗格隔离）", () => {
     await expect(page.locator(`[data-path="${HOME}/Notes.txt"] input`)).toHaveCount(0);
   });
 });
+
+test.describe("大图标重命名拖选（v0.49 补 v0.48 只修详情列表的缺口）", () => {
+  const ITEM = `[data-grid-item][data-path="${HOME}/Notes.txt"]`;
+
+  test("F2 后立即框内拖选（大图标）：选区生效且重试聚焦链不重置", async ({ page }) => {
+    await page.keyboard.press("Alt+2");
+    const item = page.locator(ITEM);
+    await expect(item).toBeVisible();
+    await item.click();
+    await page.keyboard.press("F2");
+    const input = item.locator("input");
+    await expect(input).toBeVisible();
+    const box = await input.boundingBox();
+    if (!box) throw new Error("重命名输入框无几何信息");
+    const y = box.y + box.height / 2;
+    const x0 = box.x + 8;
+    await page.mouse.move(x0, y);
+    await page.mouse.down();
+    for (let i = 1; i <= 5; i++) await page.mouse.move(x0 + i * 8, y);
+    await page.mouse.up();
+    const selLen = await input.evaluate(
+      (el) => (el as HTMLInputElement).selectionEnd - (el as HTMLInputElement).selectionStart,
+    );
+    expect(selLen).toBeGreaterThan(0);
+    // 静置跨过整个重试聚焦链后选区保持
+    await page.waitForTimeout(1100);
+    const selLen2 = await input.evaluate(
+      (el) => (el as HTMLInputElement).selectionEnd - (el as HTMLInputElement).selectionStart,
+    );
+    expect(selLen2).toBe(selLen);
+    await expect(input).toBeVisible();
+  });
+
+  test("F2 后在输入框右侧的格区域按下向左拖：路由为文本拖选而非位置拖拽", async ({ page }) => {
+    await page.keyboard.press("Alt+2");
+    const item = page.locator(ITEM);
+    await expect(item).toBeVisible();
+    await item.click();
+    await page.keyboard.press("F2");
+    const input = item.locator("input");
+    await expect(input).toBeVisible();
+    const cellBox = await item.boundingBox();
+    const inputBox = await input.boundingBox();
+    if (!cellBox || !inputBox) throw new Error("无几何信息");
+    // 按压点 = 格子右端、输入框覆盖不到的缝（fitWidth 72 居中于 88 格 → 右缘 ~8px）
+    const px = cellBox.x + cellBox.width - 4;
+    const py = inputBox.y + inputBox.height / 2;
+    expect(px).toBeGreaterThan(inputBox.x + inputBox.width - 2);
+    await page.mouse.move(px, py);
+    await page.mouse.down();
+    await page.mouse.move(inputBox.x + 8, py, { steps: 8 });
+    const mid = await input.evaluate((el) => [el.selectionStart, el.selectionEnd]);
+    await page.mouse.up();
+    const st = await input.evaluate((el) => ({
+      focused: document.activeElement === el,
+      sel: [el.selectionStart, el.selectionEnd],
+    }));
+    expect(mid[1] - mid[0]).toBeGreaterThan(0); // 拖选扩展生效（核心诉求）
+    expect(st.focused).toBe(true);
+    await expect(item.locator("input")).toBeVisible(); // 会话未被拖拽打断
+    await expect(page.locator("[data-app-confirm]")).toHaveCount(0); // 无覆盖确认
+  });
+
+  test("F2 后按在图标区（输入框上方）拖动：同样路由为文本拖选", async ({ page }) => {
+    await page.keyboard.press("Alt+2");
+    const item = page.locator(ITEM);
+    await expect(item).toBeVisible();
+    await item.click();
+    await page.keyboard.press("F2");
+    const input = item.locator("input");
+    await expect(input).toBeVisible();
+    const cellBox = await item.boundingBox();
+    const inputBox = await input.boundingBox();
+    if (!cellBox || !inputBox) throw new Error("无几何信息");
+    // 按压点 = 图标中央（input 上方 ~60px 处），水平投影落在文本中段，向右拖到串尾
+    const px = cellBox.x + cellBox.width / 2;
+    const py = cellBox.y + 24;
+    await page.mouse.move(px, py);
+    await page.mouse.down();
+    await page.mouse.move(inputBox.x + inputBox.width - 2, py, { steps: 8 });
+    const mid = await input.evaluate((el) => [el.selectionStart, el.selectionEnd]);
+    await page.mouse.up();
+    expect(mid[1] - mid[0]).toBeGreaterThan(0);
+    await expect(item.locator("input")).toBeVisible();
+  });
+});
