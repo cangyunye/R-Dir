@@ -172,7 +172,6 @@ export function IconGrid({
   dragDir = null,
   showHidden,
   showExtensions,
-  spaceTogglesPreview,
   renaming,
   isActive,
   onActivate,
@@ -272,8 +271,6 @@ export function IconGrid({
   dragDir?: string | null;
   showHidden: boolean;
   showExtensions: boolean;
-  /** v0.28 预览栏启用时空格让位给「切换预览」，网格不再用空格加选 */
-  spaceTogglesPreview?: boolean;
   renaming: RenameState | null;
   isActive: boolean;
   onActivate: () => void;
@@ -621,15 +618,9 @@ export function IconGrid({
         break;
       }
       case " ": {
-        // v0.28 预览栏启用时空格归「切换预览」（App 全局分发），网格放行
-        if (spaceTogglesPreview) break;
-        const p = sorted.find((x) => x.path === primary);
-        if (p) {
-          e.preventDefault();
-          // 预览未启用时这里语义是切换选中；阻断冒泡避免全局 togglePreview 弹「未开启」提示
-          e.stopPropagation();
-          onSelect(p, true);
-        }
+        // 空格 = 预览开关（App 全局 togglePreview）：网格不再消费为切换选中。
+        // preventDefault 防网格滚动，放行冒泡
+        e.preventDefault();
         break;
       }
     }

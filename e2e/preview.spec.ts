@@ -44,7 +44,7 @@ test.describe("预览栏（右侧拉门）", () => {
     );
   });
 
-  test("P1b 标题栏预览按钮一键全开/全关：窗体级，关闭后行内空格恢复选中语义，跨标签保持", async ({ page }) => {
+  test("P1b 标题栏预览按钮一键全开/全关：窗体级，空格可直接重新拉起，跨标签保持", async ({ page }) => {
     await openPreview(page);
     const toggle = page.getByTestId("preview-app-toggle");
     // 关：拉门与把手整体消失
@@ -52,18 +52,36 @@ test.describe("预览栏（右侧拉门）", () => {
     await expect(page.getByTestId("preview-drawer")).toHaveCount(0);
     await expect(page.getByTestId("preview-handle")).toHaveCount(0);
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
-    // 关闭后行内空格恢复「设置选中」语义，不弹任何提示
+    // 关闭后空格 = 直接重新开启预览栏（不再是选中语义），选中保持不变
     await page.locator(`[data-path="${HOME}/photo.png"]`).click();
     await page.keyboard.press("Space");
+    await expect(page.getByTestId("preview-drawer")).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator(`[data-path="${HOME}/photo.png"]`)).toHaveClass(/bg-selected/);
-    await expect(page.getByText("预览栏未开启：设置 → 预览 → 启用预览栏")).toHaveCount(0);
-    // 开：一键直接展开拉门（无「再按空格」中间步骤）
+    // 一键全关再一键全开（无「再按空格」中间步骤）
+    await toggle.click();
+    await expect(page.getByTestId("preview-drawer")).toHaveCount(0);
     await toggle.click();
     await expect(page.getByTestId("preview-drawer")).toHaveClass(/translate-x-0/);
-    await expect(toggle).toHaveAttribute("aria-pressed", "true");
     // 窗体级状态：切到新标签后保持（不会「切换后又要打开」）
     await page.getByTitle("新建标签页").click();
     await expect(page.getByTestId("preview-drawer")).toBeVisible();
+  });
+
+  test("P1c 预览从未开启时按空格 = 直接开启预览栏并预览选中项（不再是选中语义）", async ({ page }) => {
+    // 启动默认预览关闭（P1 已断言），选中文件后直接按空格：不经过任何按钮
+    await page.locator(`[data-path="${HOME}/photo.png"]`).click();
+    await page.keyboard.press("Space");
+    await expect(page.getByTestId("preview-drawer")).toBeVisible();
+    // 预览跟随选中：photo.png 即时预览
+    await expect(page.getByTestId("preview-image").locator("img")).toHaveAttribute(
+      "src",
+      /data:image\/png;base64/,
+    );
+    // 再按空格收起为贴边把手
+    await page.keyboard.press("Space");
+    await expect(page.getByTestId("preview-drawer")).toHaveClass(/translate-x-full/);
+    await expect(page.getByTestId("preview-handle")).toBeVisible();
   });
 
   test("P2 空格 = 收起为贴边把手/拉出；头部「收起」与把手等效", async ({ page }) => {

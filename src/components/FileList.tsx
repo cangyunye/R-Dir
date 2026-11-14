@@ -128,7 +128,6 @@ export function FileList({
   dragDir = null,
   showHidden,
   showExtensions,
-  spaceTogglesPreview,
   renaming,
   onRenameCommit,
   onRenameCancel,
@@ -228,8 +227,6 @@ export function FileList({
   showHidden: boolean;
   /** v0.14 显示文件扩展名（false 时列表隐藏扩展名） */
   showExtensions: boolean;
-  /** v0.28 预览栏启用时空格让位给「切换预览」，行内不再用空格切换选中 */
-  spaceTogglesPreview?: boolean;
   renaming: RenameState | null;
   onRenameCommit: (path: string, name: string) => void;
   onRenameCancel: () => void;
@@ -1002,13 +999,9 @@ export function FileList({
                       onOpen(entry);
                     }
                     if (e.key === " ") {
-                      // v0.28 预览栏启用时空格归「切换预览」（App 全局分发），行内放行
-                      if (spaceTogglesPreview) return;
-                      // 预览未启用时行内语义是切换选中；阻断冒泡，
-                      // 否则全局 togglePreview 会弹「预览栏未开启」错误提示
+                      // 空格 = 预览开关（App 全局 togglePreview，含「未开启→直接开启」）：
+                      // 行内不再消费为切换选中。preventDefault 防列表滚动，放行冒泡
                       e.preventDefault();
-                      e.stopPropagation();
-                      onSelect(entry, e.metaKey || e.ctrlKey);
                     }
                   }}
                   className={cn(

@@ -5503,7 +5503,6 @@ useEffect(() => {
                       showHidden={showHidden}
                       showExtensions={showExtensions}
                       showProperties={showProperties}
-                      previewSpace={previewPrefs.enabled}
                       canPaste={!!t.panes[t.activePane]}
                       renaming={renaming}
                       dragOver={dragOver}

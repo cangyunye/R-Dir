@@ -456,7 +456,6 @@ const PaneView = memo(function PaneView({
   showHidden,
   showExtensions,
   showProperties,
-  previewSpace,
   renaming,
   isActive,
   dragOver,
@@ -483,8 +482,6 @@ const PaneView = memo(function PaneView({
   /** 多窗格时给活动窗格加立体感描边（单窗格不需要） */
   highlight: boolean;
   showProperties: boolean;
-  /** v0.28 预览栏启用时空格让位给「切换预览」（列表/网格不再用空格切换选中） */
-  previewSpace: boolean;
   renaming: RenameState | null;
   isActive: boolean;
   dragOver: { targetPaneId: number; op: "copy" | "move" } | null;
@@ -631,7 +628,6 @@ const PaneView = memo(function PaneView({
         dragDir={dragDir?.paneId === pane.id ? dragDir.path : null}
         showHidden={showHidden}
         showExtensions={showExtensions}
-        spaceTogglesPreview={previewSpace}
         renaming={renaming}
         onRenameCommit={h.onRenameCommit}
         onRenameCancel={h.onRenameCancel}
@@ -722,7 +718,6 @@ const PaneView = memo(function PaneView({
             dragDir={dragDir?.paneId === pane.id ? dragDir.path : null}
             showHidden={showHidden}
             showExtensions={showExtensions}
-            spaceTogglesPreview={previewSpace}
             renaming={renaming}
             isActive={isActive}
             onActivate={() => h.onActivate(pane.id)}
@@ -825,7 +820,6 @@ export function SplitView({
   showHidden,
   showExtensions,
   showProperties,
-  previewSpace,
   canPaste,
   renaming,
   dragOver,
@@ -850,8 +844,6 @@ export function SplitView({
   showHidden: boolean;
   showExtensions: boolean;
   showProperties: boolean;
-  /** v0.28 预览栏启用时空格让位给「切换预览」 */
-  previewSpace: boolean;
   canPaste: boolean;
   renaming: RenameState | null;
   dragOver: { targetPaneId: number; op: "copy" | "move" } | null;
@@ -884,7 +876,6 @@ export function SplitView({
         showHidden={showHidden}
         showExtensions={showExtensions}
         showProperties={showProperties}
-        previewSpace={previewSpace}
         // 重命名按发起窗格隔离：renaming 本就带 paneId，但此前未过滤地下发给所有
         // PaneView——两窗格打开同一目录时，两侧行都按 path 命中，编辑框渲染两份、
         // 焦点竞争落到后挂载的窗格，表现为「在上窗格重命名，编辑框出现在下窗格」
@@ -923,7 +914,6 @@ export function SplitView({
           showHidden={showHidden}
           showExtensions={showExtensions}
           showProperties={showProperties}
-          previewSpace={previewSpace}
           canPaste={canPaste}
           renaming={renaming}
           dragOver={dragOver}
@@ -960,7 +950,6 @@ export function SplitView({
           showHidden={showHidden}
           showExtensions={showExtensions}
           showProperties={showProperties}
-          previewSpace={previewSpace}
           canPaste={canPaste}
           renaming={renaming}
           dragOver={dragOver}
