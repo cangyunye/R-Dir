@@ -5542,6 +5542,8 @@ useEffect(() => {
             onCopyPath={copyPath}
             onRenamed={handleSearchRenamed}
             onError={showError}
+            // v0.48：全盘索引插件启用时，Ctrl+F 的默认检索引擎 = 全盘索引
+            indexPluginEnabled={plugins?.some((p) => p.id === "index-search" && p.enabled) ?? false}
           />
         )}
 

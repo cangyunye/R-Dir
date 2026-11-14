@@ -342,6 +342,7 @@ export function SearchPanel({
   onRenamed,
   onError,
   onClose,
+  indexPluginEnabled,
 }: {
   entries: FileEntry[];
   dir: string;
@@ -349,6 +350,8 @@ export function SearchPanel({
   cmd: { tab: "name" | "content"; tick: number } | null;
   /** 在激活窗格中定位：目录进入，文件跳转所在目录并选中 */
   onReveal: (path: string, isDir: boolean) => void;
+  /** 全盘索引插件是否启用：启用时「文件名」tab 默认引擎 = 全盘索引而非当前层匹配（v0.48） */
+  indexPluginEnabled: boolean;
   /** 用系统关联程序打开文件（按扩展名） */
   onOpenFile: (path: string) => void;
   /** 复制路径文本（绝对 / 相对） */
@@ -483,8 +486,16 @@ export function SearchPanel({
   const fdTimer = useRef<number | null>(null);
   const fdSeq = useRef(0);
 
-  // 全盘索引引擎（v0.45）：与 fd 灯钮互斥——两个都是「文件名递归类」检索源
-  const [idxEnabled, setIdxEnabled] = useState(false);
+  // 全盘索引引擎（v0.45）：与 fd 灯钮互斥——两个都是「文件名递归类」检索源。
+  // 默认引擎跟随插件开关（v0.48）：索引插件启用时默认全盘检索，否则维持当前层匹配
+  const [idxEnabled, setIdxEnabled] = useState(indexPluginEnabled);
+  /** 用户是否手动切过检索引擎灯钮：切过即用户意图，插件开关的默认值不再覆盖 */
+  const engineTouchedRef = useRef(false);
+  // 插件清单晚于面板挂载到达（App 挂载即拉取、面板随 Ctrl+F 打开，存在竞态窗口）：
+  // useState 初值只吃挂载那一刻，未被手动切换前默认引擎持续跟随插件开关
+  useEffect(() => {
+    if (!engineTouchedRef.current) setIdxEnabled(indexPluginEnabled);
+  }, [indexPluginEnabled]);
   const [idxResults, setIdxResults] = useState<IndexHit[]>([]);
   const [idxLoading, setIdxLoading] = useState(false);
   const [idxError, setIdxError] = useState<string | null>(null);
@@ -743,6 +754,7 @@ export function SearchPanel({
                   label={t("递归")}
                   title={t("递归搜索子目录（fd 引擎，尊重 .gitignore）")}
                   onClick={() => {
+                    engineTouchedRef.current = true;
                     const next = !fdEnabled;
                     setFdEnabled(next);
                     if (next) setIdxEnabled(false);
@@ -754,6 +766,7 @@ export function SearchPanel({
                   label={t("全盘")}
                   title={t("全盘索引检索（Everything 级瞬时返回；需在 设置 → 插件 开启，索引范围可在 设置 → 全盘索引 配置）")}
                   onClick={() => {
+                    engineTouchedRef.current = true;
                     const next = !idxEnabled;
                     setIdxEnabled(next);
                     if (next) setFdEnabled(false);

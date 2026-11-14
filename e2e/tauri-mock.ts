@@ -653,22 +653,29 @@ export async function installTauriMock(page: Page): Promise<void> {
       prefs_load: () =>
         (window as unknown as { __RDIR_PREFS__?: unknown }).__RDIR_PREFS__ ?? {},
       prefs_save: () => null,
-      list_plugins: () =>
-        [
+      list_plugins: () => {
+        // v0.48 按测试注入插件开关：addInitScript 设 __RDIR_MOCK_PLUGINS__.{id}=bool
+        // （未注入的插件维持启用；index-search 默认关，与真实后端默认一致）
+        const flags = (
+          window as unknown as { __RDIR_MOCK_PLUGINS__?: Record<string, boolean> }
+        ).__RDIR_MOCK_PLUGINS__;
+        return [
           { id: "sftp", name: "SFTP 远程文件", description: "", protocols: ["sftp"], operations: ["list", "read"] },
           { id: "http", name: "HTTP 索引", description: "", protocols: ["http", "https"], operations: ["list"] },
           { id: "share", name: "窗口分享", description: "", protocols: ["share"], operations: ["serve"] },
           { id: "opener", name: "打开方式", description: "", protocols: [], operations: ["open_with"] },
           { id: "terminal", name: "终端", description: "", protocols: [], operations: ["open_terminal"] },
           { id: "cmdrun", name: "地址栏命令", description: "", protocols: [], operations: ["run"] },
+          { id: "index-search", name: "全盘索引搜索", description: "", protocols: [], operations: ["search"] },
         ].map((p) => ({
           ...p,
           version: "0.12.0",
           source: "builtin",
-          enabled: true,
+          enabled: flags?.[p.id] ?? p.id !== "index-search",
           configurable: false,
           installed: true,
-        })),
+        }));
+      },
       // v0.40 NFS 伴生进程插件安装链路（默认未安装态；面板三态回归用）
       nfs_plugin_status: () => ({
         source: "external",
