@@ -103,6 +103,35 @@ test.describe("重命名框内鼠标拖选（v0.41.2 回归）", () => {
     await page.getByRole("menu").getByText("重命名").click();
     await dragSelectInsideRenameInput(page, item.locator("input"));
   });
+
+  test("F2 后立即框内拖选：重试聚焦链不重置选区（v0.48 用户实测回归点）", async ({ page }) => {
+    // 用户真实场景：F2 后不等安定窗口立刻在框内拖选。接管的 mousedown
+    // preventDefault 会取消原生聚焦，重试聚焦链（120–1000ms）若在拖选期间
+    // 补 select() 会把选区整个重置——everPressedRef 守卫回归点。
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    await page.keyboard.press("F2");
+    const input = page.locator(`[data-path="${HOME}/Notes.txt"] input`);
+    await expect(input).toBeVisible();
+    const box = await input.boundingBox();
+    if (!box) throw new Error("重命名输入框无几何信息");
+    const y = box.y + box.height / 2;
+    const x0 = box.x + 8;
+    await page.mouse.move(x0, y);
+    await page.mouse.down();
+    for (let i = 1; i <= 5; i++) await page.mouse.move(x0 + i * 8, y);
+    await page.mouse.up();
+    const selLen = await input.evaluate(
+      (el) => (el as HTMLInputElement).selectionEnd - (el as HTMLInputElement).selectionStart,
+    );
+    expect(selLen).toBeGreaterThan(0);
+    // 静置跨过整个重试聚焦链（至 1000ms）后选区必须保持原样
+    await page.waitForTimeout(1100);
+    const selLen2 = await input.evaluate(
+      (el) => (el as HTMLInputElement).selectionEnd - (el as HTMLInputElement).selectionStart,
+    );
+    expect(selLen2).toBe(selLen);
+    await expect(input).toBeVisible();
+  });
 });
 
 test.describe("分屏重命名（窗格隔离）", () => {

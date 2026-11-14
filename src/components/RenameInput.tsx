@@ -1,16 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { isMac } from "@/lib/keymap";
 
 /** 点击坐标 → 输入框字符偏移：canvas 按输入框实际计算字体量前缀宽 + 二分定位
- *  （与 fitWidth 同一款字体串量法）。canvas 不可用（jsdom 裸环境）返回 0。 */
+ *  （与 fitWidth 同一款字体串量法）。canvas 不可用（jsdom 裸环境）返回 0。
+ *  zoom≠1 折算：clientX 与 rect 是视觉像素、measureText/scrollLeft 是布局像素，
+ *  按 rect.width/offsetWidth 比值把视觉位移折回布局空间（v0.44 列宽 zoom 换算同款
+ *  做法；不折算时塌缩锚点按 zoom 比例偏移，拖选起点错位）。 */
 function caretOffsetAt(el: HTMLInputElement, clientX: number): number {
   const ctx = document.createElement("canvas").getContext("2d");
   if (!ctx) return 0;
   const cs = getComputedStyle(el);
   ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
   const padL = Number.parseFloat(cs.paddingLeft) || 0;
-  const x = clientX - el.getBoundingClientRect().left - padL + el.scrollLeft;
+  const rect = el.getBoundingClientRect();
+  const ratio = rect.width / el.offsetWidth || 1;
+  const x = (clientX - rect.left) / ratio - padL + el.scrollLeft;
   let lo = 0;
   let hi = el.value.length;
   while (lo < hi) {
@@ -70,6 +74,8 @@ export function RenameInput({
   valueRef.current = value;
   /** 会话只结束一次：失焦与全局 mousedown 可能先后到达，也可能只来其一 */
   const doneRef = useRef(false);
+  /** 用户是否已在框内按过鼠标：接管拖选中重试聚焦链不得再 select()（见重试注释） */
+  const everPressedRef = useRef(false);
   const finishRef = useRef<(commit: boolean) => void>(() => {});
   useEffect(() => {
     finishRef.current = (commit: boolean) => {
@@ -89,9 +95,12 @@ export function RenameInput({
         window.setTimeout(() => {
           if (document.activeElement === ref.current) return;
           ref.current?.focus();
-          ref.current?.select();
+          // 用户已在框内按过（接管拖选中）：只补焦点不再 select()——接管的 mousedown
+          // preventDefault 会取消原生聚焦，重试补焦点后若再全选，会把正在进行的
+          // 拖选锚点与选区整个重置（F2 起手快速按压拖选必中招，实测失效根因）
+          if (!everPressedRef.current) ref.current?.select();
           // 全选会把溢出内容的输入框滚到串尾（用户只看到名字尾部）；拨回串首
-          if (ref.current) ref.current.scrollLeft = 0;
+          if (ref.current && !everPressedRef.current) ref.current.scrollLeft = 0;
         }, ms),
       );
     return () => attempts.forEach((t) => window.clearTimeout(t));
@@ -146,19 +155,18 @@ export function RenameInput({
       // "已全选但拖不动"）。必须显式放行（同 TextView v0.41 的处理）。
       className="h-6 min-w-0 flex-1 select-text px-1.5 text-[13px]"
       onMouseDown={(e) => {
-        // WKWebView：起手 select() 的全选让框内按下永远落在选区内，而 WebKit 对
-        // 「按在选区内的按下」走拖动既有选区的默认手势——显示放大镜、只移动光标，
-        // 永远拖不出新选区（Chromium 无此语义，e2e 测不出）。裸 setSelectionRange
-        // 塌缩又会打断 Blink 自己的原生拖选手势（两引擎皆失）——所以这条路径整个
-        // 接管：preventDefault 拦掉默认手势，mousedown 塌缩到按点 + mousemove 手动
-        // 扩展选区（Finder 语义）。其余按压全部留给原生：光标态按下、按在选区外、
-        // 双击/三击（e.detail>1 的选词/全选）、非左键。
-        // v0.48 起接管仅限 WebKit（macOS）：Chromium/WebView2 的原生拖选本就正确
-        // （双击进入重命名后的框内拖选即走原生，实测无恙），而接管的 canvas 测宽
-        // 在 zoom≠1 下是布局像素、clientX 是视觉像素，偏移错位会把 F2 路径的
-        // 拖选毁掉（v0.44 列宽 zoom 换算同款教训）——非 macOS 直接放行原生。
-        if (!isMac) return;
+        // 「按在选区内的按下」手势规避（v0.48 实测 WebView2/Edge 157 与 WKWebView
+        // 同样存在：起手 select() 的全选让框内按下永远落在选区内，引擎对这种按下
+        // 走「拖动既有选区」默认手势——只塌缩光标、拖不出新选区；光标态/选区外按下
+        // 原生即新选区拖动，v2 探针证实）。裸 setSelectionRange 塌缩又会打断引擎的
+        // 原生拖选手势——所以这条路径整个接管：preventDefault 拦掉默认手势与原生
+        // 聚焦，mousedown 塌缩到按点 + window mousemove 手动扩展选区（Finder 语义）。
+        // 其余按压全部留给原生：光标态按下、按在选区外、双击/三击（e.detail>1 的
+        // 选词/全选）、非左键。
+        // 接管取消原生聚焦的代价：重试聚焦链补焦点时不得再 select()（everPressedRef
+        // 守卫，见重试注释），否则拖选被重置——F2 起手快速按压拖选失效的实测根因。
         if (e.button !== 0 || e.detail > 1) return;
+        everPressedRef.current = true;
         const el = ref.current;
         if (!el) return;
         const selStart = el.selectionStart ?? 0;
