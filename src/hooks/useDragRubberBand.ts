@@ -29,6 +29,25 @@ export interface DragTargetHit {
   dirPath: string | null;
 }
 
+/** 有效缩放比量测（根 zoom × 窗格 zoom）：把视觉像素偏移折回 rectRef 布局空间。
+ *  框选矩形 div 的定位基准是 rectRef（窗格根，自身带 zoom），其布局 px 渲染时会被
+ *  (根 zoom × 窗格 zoom) 整体放大——不折算时画的框偏离鼠标，且偏得越远越夸张
+ *  （v0.49 大图标框选错位的根因：选中的图标跟手、画的框歪）。
+ *  rectRef 自身带 zoom，offsetWidth 的「自身 zoom」语义不可靠，改用一次性探针
+ *  子元素量：探针无自身 zoom，rect.width/1000 恰为 rectRef 子树被放大的倍数
+ *  （与 v0.44 列宽拖拽 rect/offsetWidth 同源做法，FileList.tsx:388-395）。
+ *  jsdom 等无布局环境量到 0 → 回退 1（不折算，单测桩全走布局=视觉）。 */
+function measureZoomRatio(el: HTMLElement): number {
+  const probe = document.createElement("div");
+  probe.style.cssText =
+    "position:absolute;width:1000px;height:0;visibility:hidden;pointer-events:none;";
+  el.appendChild(probe);
+  const w = probe.getBoundingClientRect().width;
+  el.removeChild(probe);
+  const ratio = w / 1000;
+  return ratio > 0 && Number.isFinite(ratio) ? ratio : 1;
+}
+
 export interface DragRubberBandOptions {
   /** 橡皮筋选框坐标系原点（两侧的根容器，带 data-pane-id） */
   rectRef: RefObject<HTMLElement | null>;
@@ -39,6 +58,11 @@ export interface DragRubberBandOptions {
   paneId: number;
   /** 最新选中（additive 框选合并用；经 ref 每帧取新值） */
   selection: string[];
+  /** 空白按压判定（可选注入，IconGrid 用）：注入后替代「target===currentTarget」严格门。
+   *  IconGrid 的滚动内容被全尺寸内层 relative div 盖住（v0.49 框选起不来的根因），
+   *  图标间缝隙按压的 target 是该 div——注入「target 不在条目内」判定让缝隙/边缘
+   *  可起框；FileList 不注入，维持原严格门行为不变。 */
+  isBlankPress?: (target: EventTarget | null) => boolean;
   /** 拖拽悬停/投放的落点解析（见 DragTargetHit） */
   resolveTarget: (x: number, y: number, draggedPaths: readonly string[]) => DragTargetHit;
   onSelectRange: (paths: string[]) => void;
@@ -102,6 +126,8 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
     right: number;
     bottom: number;
   } | null>(null);
+  /** 本手势的有效缩放比（懒量：首次画框时量一次；zoom 在手势中途不变） */
+  const zoomRatioRef = useRef<number | null>(null);
 
   const cleanupDrag = () => {
     window.removeEventListener("mousemove", onWinMouseMove);
@@ -115,6 +141,7 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
     setRubber(null);
     lastTargetRef.current = null;
     lastOpRef.current = "copy";
+    zoomRatioRef.current = null;
     if (hoverRef.current !== null) {
       hoverRef.current = null;
       optsRef.current.onHoverChange?.(null);
@@ -163,11 +190,19 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
     if (rb) {
       const cRect = opts.rectRef.current?.getBoundingClientRect();
       if (cRect) {
+        // 画的框以布局像素写进 zoomed 子树，视觉偏移须折回布局空间（每手势量一次）。
+        // mouseup 的命中测试保持视觉空间不动——条目 rect 也是视觉像素，天然自洽
+        if (zoomRatioRef.current === null) {
+          zoomRatioRef.current = opts.rectRef.current
+            ? measureZoomRatio(opts.rectRef.current)
+            : 1;
+        }
+        const ratio = zoomRatioRef.current;
         setRubber({
-          left: Math.min(rb.x0, e.clientX) - cRect.left,
-          top: Math.min(rb.y0, e.clientY) - cRect.top,
-          right: Math.max(rb.x0, e.clientX) - cRect.left,
-          bottom: Math.max(rb.y0, e.clientY) - cRect.top,
+          left: (Math.min(rb.x0, e.clientX) - cRect.left) / ratio,
+          top: (Math.min(rb.y0, e.clientY) - cRect.top) / ratio,
+          right: (Math.max(rb.x0, e.clientX) - cRect.left) / ratio,
+          bottom: (Math.max(rb.y0, e.clientY) - cRect.top) / ratio,
         });
       }
     }
@@ -262,7 +297,10 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
 
   const startRubber = (e: ReactMouseEvent) => {
     if (e.button !== 0) return;
-    if (e.target !== e.currentTarget) return;
+    // 空白判定：注入 isBlankPress 的视图按注入逻辑判（IconGrid 缝隙按压的
+    // target 是全尺寸内层 div）；未注入维持「target===currentTarget」严格门
+    const blank = optsRef.current.isBlankPress;
+    if (blank ? !blank(e.target) : e.target !== e.currentTarget) return;
     e.preventDefault();
     beginRubber(e.clientX, e.clientY, e.metaKey || e.ctrlKey || e.shiftKey, false);
     armDragListeners();

@@ -526,6 +526,41 @@ describe("FileList 橡皮筋框选（v0.34.1 补充回归：手势状态机此�
       rows[1].dataset.path,
     ]);
   });
+
+  it("画的框按有效 zoom 折算回布局像素（v0.49 大图标框选错位同源根因：视觉偏移被 zoom 放大）", () => {
+    const utils = renderList();
+    const pane = utils.container.querySelector("[data-pane-id]") as HTMLElement;
+    const rows = stubLayout(pane);
+    // 探针量比值：原型桩让 hook 的探针 rect.width = 1000×2 → 折算比 2。
+    // 容器/行已有直接赋值桩（优先于原型），hit-test 的视觉空间自洽不受影响
+    const divProto = HTMLDivElement.prototype as unknown as {
+      getBoundingClientRect: () => DOMRect;
+    };
+    const savedDivGBCR = divProto.getBoundingClientRect;
+    divProto.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 2000, bottom: 1200, width: 2000, height: 1200, x: 0, y: 0, toJSON() {} }) as DOMRect;
+    try {
+      fireEvent.mouseDown(utils.body, { button: 0, clientX: 10, clientY: 5 });
+      fireEvent.mouseMove(window, { clientX: 700, clientY: 50 });
+      // 视觉偏移折回布局：left=10÷2=5px、top=5÷2=2.5px、宽=690÷2=345px——框贴回鼠标，
+      // 不再被 zoom 放大（未折算时 left 会是 10×根zoom 起步的视觉值）
+      const rubberDiv = utils.container.querySelector(
+        '[class*="border-primary/70"]',
+      ) as HTMLElement;
+      expect(rubberDiv).toBeTruthy();
+      expect(rubberDiv.style.left).toBe("5px");
+      expect(rubberDiv.style.top).toBe("2.5px");
+      expect(rubberDiv.style.width).toBe("345px");
+      fireEvent.mouseUp(window, { clientX: 700, clientY: 50 });
+      // 命中测试保持视觉空间不动（条目 rect 也是视觉像素），选择结果不受折算影响
+      expect(utils.props.onSelectRange).toHaveBeenCalledWith([
+        rows[0].dataset.path,
+        rows[1].dataset.path,
+      ]);
+    } finally {
+      divProto.getBoundingClientRect = savedDivGBCR;
+    }
+  });
 });
 
 describe("FileList 重命名行滚动定位（v0.35 新建文件/文件夹后可见性）", () => {

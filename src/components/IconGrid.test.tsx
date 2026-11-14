@@ -328,3 +328,79 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
     expect(onSetIconPosition).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("IconGrid 橡皮筋框选（v0.49 缝隙起框：target≠currentTarget 的空白面）", () => {
+  const ORIG_GBCR = Element.prototype.getBoundingClientRect;
+  afterEach(() => {
+    (Element.prototype as unknown as { getBoundingClientRect: () => DOMRect })
+      .getBoundingClientRect = ORIG_GBCR;
+  });
+
+  /** 布局桩：窗格容器 (0,0) 800×600；jsdom 视口宽 0 → 单列，item i 在
+   *  left 12 / top 12+i×120（GRID_PAD=12、rowH=120），88×112 */
+  function stubLayout(container: HTMLElement) {
+    container.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600, x: 0, y: 0 }) as DOMRect;
+    const items = Array.from(container.querySelectorAll<HTMLElement>("[data-grid-item]"));
+    items.forEach((item, i) => {
+      item.getBoundingClientRect = () =>
+        ({
+          left: 12,
+          top: 12 + i * 120,
+          right: 100,
+          bottom: 12 + i * 120 + 112,
+          width: 88,
+          height: 112,
+          x: 12,
+          y: 12 + i * 120,
+        }) as DOMRect;
+    });
+    return items;
+  }
+
+  it("图标间缝隙按下可起框（target=全尺寸内层 div）→ 画的框出现、mouseup 命中覆盖图标", () => {
+    const onSelectRange = vi.fn();
+    const { container } = render(<IconGrid {...makeProps({ onSelectRange })} />);
+    const pane = container.querySelector("[data-pane-id]") as HTMLElement;
+    stubLayout(pane);
+    const body = container.querySelector("[data-icongrid-body]") as HTMLElement;
+    // 缝隙面 = 全尺寸内层 relative div（v0.49 之前 target≠currentTarget 直接早退）
+    const inner = body.querySelector("div.relative") as HTMLElement;
+    expect(inner).toBeTruthy();
+
+    fireEvent.mouseDown(inner, { button: 0, clientX: 30, clientY: 200 });
+    fireEvent.mouseMove(window, { clientX: 30, clientY: 300 });
+    // 框在拖动中出现（jsdom 无布局 → 探针量到 0 → 折算比回退 1，left=clientX−cRect.left）
+    const rubberDiv = container.querySelector('[class*="border-primary/70"]');
+    expect(rubberDiv).toBeTruthy();
+    expect((rubberDiv as HTMLElement).style.left).toBe("30px");
+    fireEvent.mouseUp(window, { clientX: 30, clientY: 300 });
+    // 纵向 200–300 覆盖 main.rs（132–244）与 photo.png（252–364），不覆盖 Documents（12–124）
+    expect(onSelectRange).toHaveBeenCalledWith([
+      "/mock/dir/main.rs",
+      "/mock/dir/photo.png",
+    ]);
+  });
+
+  it("按在图标上不起框：仍走 startItemPress 选中语义", () => {
+    const onSelect = vi.fn();
+    const onSelectRange = vi.fn();
+    const { container } = render(<IconGrid {...makeProps({ onSelect, onSelectRange })} />);
+    const pane = container.querySelector("[data-pane-id]") as HTMLElement;
+    stubLayout(pane);
+    const item = container.querySelector('[data-path="/mock/dir/main.rs"]') as HTMLElement;
+    // jsdom 无 elementFromPoint：装桩返回 null（落点解析返回空命中，不投目录）
+    const doc = document as unknown as { elementFromPoint?: (x: number, y: number) => Element | null };
+    const origFromPoint = doc.elementFromPoint;
+    doc.elementFromPoint = () => null;
+    try {
+      fireEvent.mouseDown(item, { button: 0, clientX: 40, clientY: 150 });
+      fireEvent.mouseMove(window, { clientX: 300, clientY: 260 });
+      fireEvent.mouseUp(window, { clientX: 300, clientY: 260 });
+    } finally {
+      doc.elementFromPoint = origFromPoint;
+    }
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: "main.rs" }), false);
+    expect(onSelectRange).not.toHaveBeenCalled();
+  });
+});

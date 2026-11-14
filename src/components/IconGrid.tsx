@@ -512,6 +512,11 @@ export function IconGrid({
     hitRootRef: scrollRef,
     hitSelector: "[data-grid-item]",
     paneId,
+    // 图标间缝隙被全尺寸内层 relative div 盖住（v0.49 框选起不来的根因），按
+    // 「target 不在条目内」判空白：缝隙/边缘/空态都能起框；按在图标上仍由
+    // startItemPress 接管（选中+拖拽候选，访达语义不变）
+    isBlankPress: (target) =>
+      !(target instanceof Element) || target.closest("[data-grid-item]") === null,
     selection,
     resolveTarget: (x, y, draggedPaths) => {
       const el = document.elementFromPoint(x, y) as HTMLElement | null;
@@ -906,11 +911,14 @@ export function IconGrid({
                                 {gridLabel}
                               </span>
                               {/* 选中/悬停展开全名浮层：绝对定位盖到下方内容上，
-                                  最多 4 行（长哈希名两行内放不下的兜底，悬停 title 仍在） */}
+                                  最多 4 行（长哈希名两行内放不下的兜底，悬停 title 仍在）。
+                                  pointer-events-none：浮层延伸到格子下方的缝隙里，可点会
+                                  把「缝隙起框选」的按压吞成条目拖拽候选（v0.49，同 FileList
+                                  nameTip 的处理） */}
                               <span
                                 data-testid="grid-label-full"
                                 className={cn(
-                                  "absolute inset-x-1 top-full z-20 hidden rounded-md border bg-background px-1.5 py-1 text-center text-[11px] leading-snug break-words shadow-lg",
+                                  "pointer-events-none absolute inset-x-1 top-full z-20 hidden rounded-md border bg-background px-1.5 py-1 text-center text-[11px] leading-snug break-words shadow-lg",
                                   isPrimary ? "block" : "group-hover:block",
                                 )}
                                 aria-hidden

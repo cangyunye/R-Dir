@@ -343,6 +343,11 @@ export function FileList({
     hitRootRef: containerRef,
     hitSelector: "[data-path]",
     paneId,
+    // 行间/行下空白被虚拟滚动的 padTop/padBottom 垫高 div 盖住（target=垫高 div，
+    // 严格门早退——v0.49 前空白处同样起不了框），按「target 不在行内」判空白；
+    // 行内按压 startRowPress stopPropagation 不会到这，列头在滚动容器外不受影响
+    isBlankPress: (target) =>
+      !(target instanceof Element) || target.closest('[role="row"]') === null,
     selection,
     resolveTarget: (x, y) => {
       const el = document.elementFromPoint(x, y) as HTMLElement | null;
