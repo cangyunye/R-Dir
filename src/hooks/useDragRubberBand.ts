@@ -314,6 +314,17 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
     // target 是全尺寸内层 div）；未注入维持「target===currentTarget」严格门
     const blank = optsRef.current.isBlankPress;
     if (blank ? !blank(e.target) : e.target !== e.currentTarget) return;
+    // Portal 事件（Radix 菜单挂在 body,但 React 组件树上是列表子节点）会沿
+    // 组件树冒泡进本处理器——其 DOM 路径并不经过滚动容器，isBlankPress 的
+    // closest 判定会把菜单内点击误判成空白按压（v0.49 Z2 回归：菜单组展开
+    // 即清空选区）。真实空白按压的 DOM 路径必经 currentTarget，contains 校验
+    // 双向兜住（target===currentTarget 时 contains 恒真，严格门不受影响）。
+    if (
+      !(e.currentTarget instanceof Node) ||
+      !(e.target instanceof Node) ||
+      !e.currentTarget.contains(e.target)
+    )
+      return;
     e.preventDefault();
     beginRubber(e.clientX, e.clientY, e.metaKey || e.ctrlKey || e.shiftKey, false);
     armDragListeners();
