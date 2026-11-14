@@ -69,17 +69,16 @@ test.describe("拖拽拖影与落点确认（v0.49 特性4）", () => {
     await page.mouse.up();
   });
 
-  test("HTML5:文件行拖到目录行 → 跟手落点徽章「复制到「Documents」」,移开即消失", async ({
+  test("HTML5:文件行拖到目录行 → 跟手拖影含文件名与落点行「复制到「Documents」」,移开落点行消失", async ({
     page,
   }) => {
     const srcSel = `[role="row"][data-path="${HOME}/Notes.txt"]`;
     const dirSel = `[role="row"][data-path="${HOME}/Documents"]`;
     const fileSel = `[role="row"][data-path="${HOME}/photo.png"]`;
     await page.evaluate(
-      ({ srcSel, dirSel, fileSel }) => {
+      ({ srcSel, dirSel }) => {
         const src = document.querySelector(srcSel)!;
         const dir = document.querySelector(dirSel)!;
-        const file = document.querySelector(fileSel)!;
         const dt = new DataTransfer();
         src.dispatchEvent(
           new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }),
@@ -95,16 +94,15 @@ test.describe("拖拽拖影与落点确认（v0.49 特性4）", () => {
           };
         };
         window.dispatchEvent(new DragEvent("dragover", at(dir)));
-        // 悬停在目录行上保持徽章；移到文件行（非目录落点）徽章即清
+        // 悬停在目录行上：拖影含落点行；移到文件行（非目录落点）落点行消失
         (window as unknown as { __rdirMoveTo: (el: Element) => void }).__rdirMoveTo = (el) =>
           window.dispatchEvent(new DragEvent("dragover", at(el)));
-        void file;
       },
-      { srcSel, dirSel, fileSel },
+      { srcSel, dirSel },
     );
-    const badge = page.locator("[data-drop-badge]");
-    await expect(badge).toBeVisible();
-    await expect(badge).toContainText("复制到「Documents」");
+    const ghost = page.locator("[data-native-ghost]");
+    await expect(ghost).toContainText("Notes.txt"); // 拖影主卡=被拖文件
+    await expect(ghost).toContainText("复制到「Documents」"); // 目录落点行
     await page.evaluate(
       ({ fileSel }) => {
         const file = document.querySelector(fileSel)!;
@@ -112,7 +110,12 @@ test.describe("拖拽拖影与落点确认（v0.49 特性4）", () => {
       },
       { fileSel },
     );
-    await expect(badge).toHaveCount(0);
+    await expect(ghost).not.toContainText("复制到「Documents」"); // 落点行随目标消失
+    await expect(ghost).toContainText("Notes.txt"); // 拖影本体仍在
+    await page.evaluate(() => window.dispatchEvent(new DragEvent("dragend", { bubbles: true })));
+    await expect
+      .poll(() => ghost.evaluate((el) => getComputedStyle(el).opacity))
+      .toBe("0"); // 会话结束拖影归零
   });
 });
 

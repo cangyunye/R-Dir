@@ -13,17 +13,17 @@ import type { FileEntry } from "@/lib/types";
  * - data-drag-ghost：e2e 定位锚（旧实现靠「复制 N 项」文案匹配，内容升级后改锚点）。
  * - 容器挂 transition opacity var(--rdir-anim-dur)：雅=透明度平滑显隐，素=瞬时。
  */
-export function DragGhost({
-  ghostRef,
+/** 拖影卡内容（堆叠卡 + 数量徽章 + 落点行）：引擎 A 的 DragGhost 与 App 层
+ *  原生/HTML5 会话跟手拖影（data-native-ghost）共用同一份视觉。 */
+export function DragGhostCards({
   paths,
   op,
   entries,
   dropDir = null,
 }: {
-  ghostRef: RefObject<HTMLDivElement | null>;
   paths: string[];
   op: "copy" | "move";
-  /** 本窗格条目（引擎 A 拖拽候选恒来自本窗格目录，按路径回查元数据） */
+  /** 按路径回查元数据（拖拽候选恒来自应用内条目） */
   entries: FileEntry[];
   /** 悬停文件夹名（目录落点确认行）；null = 无目录落点 */
   dropDir?: string | null;
@@ -35,12 +35,7 @@ export function DragGhost({
     .filter((e): e is FileEntry => !!e);
   const primary = shown[0];
   return (
-    <div
-      ref={ghostRef}
-      data-drag-ghost=""
-      className="pointer-events-none fixed left-0 top-0 z-50 opacity-0 [transition:opacity_var(--rdir-anim-dur)_linear]"
-      style={{ transform: "translate(0px, 0px)" }}
-    >
+    <>
       {/* 堆叠层留位：pl/pt 给后层卡片偏移，主卡盖在其上 */}
       <div className="relative pl-1.5 pt-1.5">
         {shown.slice(1, 3).map((e, i) => (
@@ -78,6 +73,33 @@ export function DragGhost({
           </div>
         )}
       </div>
+    </>
+  );
+}
+
+/** 引擎 A 拖影：位置由 useDragRubberBand 经 ghostRef 命令式驱动（逐帧不进
+ *  React），内容由 onDragActiveChange 状态渲染。 */
+export function DragGhost({
+  ghostRef,
+  paths,
+  op,
+  entries,
+  dropDir = null,
+}: {
+  ghostRef: RefObject<HTMLDivElement | null>;
+  paths: string[];
+  op: "copy" | "move";
+  entries: FileEntry[];
+  dropDir?: string | null;
+}) {
+  return (
+    <div
+      ref={ghostRef}
+      data-drag-ghost=""
+      className="pointer-events-none fixed left-0 top-0 z-50 opacity-0 [transition:opacity_var(--rdir-anim-dur)_linear]"
+      style={{ transform: "translate(0px, 0px)" }}
+    >
+      <DragGhostCards paths={paths} op={op} entries={entries} dropDir={dropDir} />
     </div>
   );
 }

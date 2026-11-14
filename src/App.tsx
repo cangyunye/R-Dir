@@ -234,6 +234,7 @@ import {
   type TagNames,
 } from "@/lib/persist";
 import { setAnimLevelRef } from "@/lib/anim";
+import { DragGhostCards } from "@/components/DragGhost";
 import { shareStopByDir, shareList, type IconPositionMap } from "@/lib/api";
 import { loadAutoArrangeDirs, saveAutoArrangeDirs } from "@/lib/persist";
 import { type IconSize, type ViewMode } from "@/lib/types";
@@ -262,6 +263,9 @@ import {
 
 /** 虚拟标签目录：tags://<tagId>（地址栏可直接输入） */
 const VIRTUAL_TAG_RE = /^tags:\/\/([a-z0-9_-]+)$/;
+
+/** 路径末段（拖影落点行/徽章显示名）；兼容 / 与 \ 分隔 */
+const basenameOf = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
 /** 非活动标签 keep-alive 上限（LRU）：超出后最久未激活的标签树卸载，退回「激活时重建」 */
 const KEEP_ALIVE_MAX = 8;
@@ -544,15 +548,76 @@ export default function App() {
   } | null>(null);
   /** 拖拽悬停的目录条目（详情列表目录行 / 大图标文件夹图标）：投放 = 移入/复制进该目录 */
   const [dragDir, setDragDir] = useState<{ paneId: number; path: string } | null>(null);
-  /** 落点确认徽章（v0.49 特性4,HTML5/原生拖拽会话）：悬停目录条目时跟随光标
-   *  显示「复制/移动到「目录名」」——拖到哪、放进哪个目录一目了然。
-   *  引擎 A（自研鼠标拖拽）的落点确认在 DragGhost 落点行内,不走这里。 */
+  /** 应用发起的原生/HTML5 拖拽会话的跟手拖影（v0.49 特性4 补口）：Windows 原生
+   *  CF_HDROP 拖拽时 WebView2 区域内系统拖拽影像不可见（实测「毫无抓住的感觉」），
+   *  应用自渲染 DragGhost 内容；悬停目录条目时落点行显示「复制/移动到「目录名」」
+   *  （与引擎 A 拖影的落点行同款）。引擎 A（自研鼠标拖拽）不经这里——它有自己的
+   *  ghostRef 拖影。位置命令式驱动（over 事件高频），内容 state 见 nativeGhostInfo。 */
+  /** 落点确认徽章（v0.49 特性4）：仅外部拖入（资源管理器 → 应用）的会话使用——
+   *  外部文件不是应用条目、没有可渲染的拖影内容，悬停目录条目时跟随光标显示
+   *  「复制到「目录名」」。应用发起的会话用 nativeGhost 拖影。 */
   const [dropBadge, setDropBadge] = useState<{
     name: string;
     op: "copy" | "move";
     x: number;
     y: number;
   } | null>(null);
+  /** nativeGhost 的位置走命令式（over 事件高频，App 整树重渲染不可承受），
+   *  内容（paths/op/落点）按 key 去重后进 state。两套 effect（Tauri 拖放事件
+   *  订阅 / window dragover HTML5 链路）共用。 */
+  const nativeGhostRef = useRef<HTMLDivElement | null>(null);
+  const nativeGhostInfoRef = useRef<{
+    key: string;
+    sourcePaneId: number | null;
+    paths: string[];
+    op: "copy" | "move";
+    dropDir: string | null;
+  } | null>(null);
+  const [nativeGhostInfo, setNativeGhostInfo] = useState<{
+    sourcePaneId: number | null;
+    paths: string[];
+    op: "copy" | "move";
+    dropDir: string | null;
+  } | null>(null);
+  const showNativeGhost = useCallback(
+    (
+      sourcePaneId: number | null,
+      paths: readonly string[],
+      op: "copy" | "move",
+      x: number,
+      y: number,
+      dropDir: string | null,
+    ) => {
+      const key = `${sourcePaneId}|${paths.join("|")}|${op}|${dropDir ?? ""}`;
+      const info = nativeGhostInfoRef.current;
+      if (!info || info.key !== key) {
+        const next = { key, sourcePaneId, paths: [...paths], op, dropDir };
+        nativeGhostInfoRef.current = next;
+        setNativeGhostInfo({ sourcePaneId, paths: [...paths], op, dropDir });
+      }
+      if (nativeGhostRef.current) {
+        nativeGhostRef.current.style.transform = `translate(${x + 16}px, ${y + 20}px)`;
+        nativeGhostRef.current.style.opacity = "1";
+      }
+    },
+    [],
+  );
+  const hideNativeGhost = useCallback(() => {
+    if (nativeGhostInfoRef.current) {
+      nativeGhostInfoRef.current = null;
+      setNativeGhostInfo(null);
+    }
+    if (nativeGhostRef.current) nativeGhostRef.current.style.opacity = "0";
+  }, []);
+  /** 拖影内容按路径回查条目元数据（拖拽源窗格的条目表；tabsRef 取新帧） */
+  const entriesOfPane = useCallback((paneId: number | null) => {
+    if (paneId === null) return [];
+    return (
+      tabsRef.current
+        .flatMap((tb) => Object.values(tb.panes))
+        .find((pn) => pn.id === paneId)?.entries ?? []
+    );
+  }, []);
   /** v0.30 窗格交换拖拽会话（拖窗格头到另一窗格互换布局位置）：
    *  source=拖动中的窗格，target=悬停目标（驱动 SplitView 的高亮/徽标） */
   const [paneSwap, setPaneSwap] = useState<PaneSwapDrag | null>(null);
@@ -3936,12 +4001,17 @@ useEffect(() => {
       const clear = () => {
         setDragOver(null);
         setDragDir(null);
+        setDropBadge(null);
+        hideNativeGhost();
         lastKey = "";
       };
-      /** Tauri 位置是窗口物理像素；elementFromPoint 要的是布局像素（÷ DPR ÷ 根 CSS zoom） */
+      /** Tauri 位置是窗口物理像素；elementFromPoint 要的是视口 CSS 像素（÷ DPR）。
+       *  v0.49 修复：此前多除了根 CSS zoom——elementFromPoint 一直要的是视口
+       *  CSS 像素（与 getBoundingClientRect/clientX 同一视觉空间），多除 zoom
+       *  会把解析点按 1/zoom 拉向窗口原点（zoom=1.38462 时光标在 Cargo.toml、
+       *  上方第 3 行的 src 被高亮的实测根因；drop 坐标同错会投错目录）。 */
       const toClient = (p: { x: number; y: number }) => {
-        const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
-        const s = (window.devicePixelRatio || 1) * zoom;
+        const s = window.devicePixelRatio || 1;
         return { x: p.x / s, y: p.y / s };
       };
       const highlight = (srcPaneId: number | null, t: DropTarget | null, op: "copy" | "move") => {
@@ -3989,10 +4059,18 @@ useEffect(() => {
                 })
                 .catch(() => {});
             }
-            highlight(
+            const op = lastAlt ? "move" : "copy";
+            const t = dropTargetAt(c.x, c.y, native.paths);
+            highlight(native.sourcePaneId, t, op);
+            // 应用发起的原生拖拽：跟手拖影（Windows 原生拖拽时 WebView2 区域内
+            // 系统拖拽影像不可见，应用自绘），位置随 over 更新
+            showNativeGhost(
               native.sourcePaneId,
-              dropTargetAt(c.x, c.y, native.paths),
-              lastAlt ? "move" : "copy",
+              native.paths,
+              op,
+              c.x,
+              c.y,
+              t?.dirPath ? basenameOf(t.dirPath) : null,
             );
             return;
           }
@@ -4002,7 +4080,19 @@ useEffect(() => {
             drop(-1, p.paths, "copy", c.x, c.y);
             return;
           }
-          highlight(null, dropTargetAt(c.x, c.y, []), "copy");
+          // 外部拖入：应用条目表里没有可渲染的拖影内容 → 徽章而非拖影
+          const t = dropTargetAt(c.x, c.y, []);
+          highlight(null, t, "copy");
+          setDropBadge(
+            t?.dirPath
+              ? {
+                  name: basenameOf(t.dirPath),
+                  op: "copy",
+                  x: c.x,
+                  y: c.y,
+                }
+              : null,
+          );
         });
         if (disposed) unlisten();
       } catch (e) {
@@ -4083,17 +4173,8 @@ useEffect(() => {
       lastKey = key;
       setDragOver(t && t.paneId !== srcPaneId ? { targetPaneId: t.paneId, op } : null);
       setDragDir(t?.dirPath ? { paneId: t.paneId, path: t.dirPath } : null);
-      // 落点确认徽章：命中目录条目才显示（跟手位置随每次 dragover 更新）
-      setDropBadge(
-        t?.dirPath
-          ? {
-              name: t.dirPath.split(/[\\/]/).filter(Boolean).pop() ?? t.dirPath,
-              op,
-              x,
-              y,
-            }
-          : null,
-      );
+      void x;
+      void y;
     };
     const onDragOver = (e: DragEvent) => {
       if (isPaneSwap(e)) {
@@ -4124,8 +4205,20 @@ useEffect(() => {
         return;
       }
       if (!isInternal(e)) {
-        // 资源管理器拖入的文件：只拦默认行为（不拦的话 drop 会让 WebView2 直接导航打开文件），不做应用内投放
-        if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+        // 资源管理器拖入的文件：只拦默认行为（不拦的话 drop 会让 WebView2 直接导航打开文件），不做应用内投放。
+        // 外部文件不在应用条目表、无拖影内容可渲染 → 悬停目录条目时给落点徽章（固定复制语义）
+        if (e.dataTransfer?.types.includes("Files")) {
+          e.preventDefault();
+          const t = dropTargetAt(e.clientX, e.clientY, []);
+          highlight(null, t, "copy", e.clientX, e.clientY);
+          setDropBadge(
+            t?.dirPath
+              ? { name: basenameOf(t.dirPath), op: "copy", x: e.clientX, y: e.clientY }
+              : null,
+          );
+        } else {
+          setDropBadge(null);
+        }
         return;
       }
       seenInternal = true;
@@ -4135,12 +4228,16 @@ useEffect(() => {
       lastPos = { x: e.clientX, y: e.clientY };
       // dragover 阶段 dataTransfer 值不可读，被拖路径从 HTML5 会话取（dragstart 记录）
       const html5 = getHtml5Drag();
-      highlight(
+      const t = dropTargetAt(e.clientX, e.clientY, html5?.paths ?? []);
+      highlight(html5?.sourcePaneId ?? null, t, op, e.clientX, e.clientY);
+      // 应用发起的 HTML5 会话：跟手拖影（同 Tauri 原生链路）
+      showNativeGhost(
         html5?.sourcePaneId ?? null,
-        dropTargetAt(e.clientX, e.clientY, html5?.paths ?? []),
+        html5?.paths ?? [],
         op,
         e.clientX,
         e.clientY,
+        t?.dirPath ? basenameOf(t.dirPath) : null,
       );
     };
     const onDragLeave = (e: DragEvent) => {
@@ -4154,6 +4251,7 @@ useEffect(() => {
       setDragOver(null);
       setDragDir(null);
       setDropBadge(null);
+      hideNativeGhost();
       lastKey = "";
     };
     /** 文件拖拽投放（HTML5 / 原生 / dragend 兜底三条链路共用）：目录条目 → 移入/复制
@@ -5377,8 +5475,27 @@ useEffect(() => {
         `}</style>
       </div>
     )}
-    {/* 落点确认徽章（v0.49 特性4,HTML5/原生拖拽会话）：悬停目录条目时跟手显示
-        「复制/移动到「目录名」」。素=瞬时挂载,雅=入场动画（index.css data-drop-badge 段） */}
+    {/* 应用发起的原生/HTML5 拖拽会话跟手拖影（v0.49 特性4 补口）：Windows 原生
+        CF_HDROP 拖拽时 WebView2 区域内系统拖拽影像不可见（实测「毫无抓住的感觉」），
+        应用自绘 DragGhost 内容；位置命令式驱动（over 高频不进 React），内容仅在
+        paths/op/落点变化时重渲染。素=瞬时显隐,雅=透明度过渡 */}
+    <div
+      ref={nativeGhostRef}
+      data-native-ghost=""
+      className="pointer-events-none fixed left-0 top-0 z-[55] opacity-0 [transition:opacity_var(--rdir-anim-dur)_linear]"
+      style={{ transform: "translate(0px, 0px)" }}
+    >
+      {nativeGhostInfo && (
+        <DragGhostCards
+          paths={nativeGhostInfo.paths}
+          op={nativeGhostInfo.op}
+          entries={entriesOfPane(nativeGhostInfo.sourcePaneId)}
+          dropDir={nativeGhostInfo.dropDir}
+        />
+      )}
+    </div>
+    {/* 落点确认徽章（v0.49 特性4）：仅外部拖入（资源管理器 → 应用）会话——外部文件
+        不在应用条目表、无拖影内容可渲染，悬停目录条目时跟手显示「复制到「目录名」」 */}
     {dropBadge && (
       <div
         data-drop-badge=""
