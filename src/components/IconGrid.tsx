@@ -38,8 +38,10 @@ import {
   setNativeDragOut,
   setHtml5Drag,
 } from "@/lib/native-drag";
-import { useDragRubberBand } from "@/hooks/useDragRubberBand";
+import { useDragRubberBand, measureZoomRatio } from "@/hooks/useDragRubberBand";
 import { DragGhost } from "@/components/DragGhost";
+import { computeSlotShift, shiftKey } from "@/lib/slot-shift";
+import { isElegant } from "@/lib/anim";
 import { useT } from "@/lib/LanguageProvider";
 import { FileIcon } from "@/components/FileIcon";
 import { ThumbImage } from "@/components/ThumbImage";
@@ -424,12 +426,23 @@ export function IconGrid({
     zoomTipTimer.current = window.setTimeout(() => setZoomTip(null), 1200);
   };
 
-  /** 指针位置 → 最近槽位（相对滚动内容坐标）。 */
+  /** 指针位置 → 最近槽位（相对滚动内容坐标）。
+   *  zoom 折算（v0.49）：clientX/cRect 是视觉像素、GRID_PAD 与槽距是布局像素——
+   *  之前直接混算,zoom≠1 时槽位随索引漂移（slot5 算成 6,v0.49 特性5 落位错一格
+   *  的根因）。视觉偏移先除以有效缩放比（探针量法,与 useDragRubberBand 同源）再进
+   *  布局数学;scrollLeft/scrollTop 本就是布局像素,不折算。比例按 zoom prop 缓存。 */
+  const zoomRatioRef = useRef(1);
+  useEffect(() => {
+    const el = scrollRef.current;
+    zoomRatioRef.current = el ? measureZoomRatio(el) : 1;
+  }, [zoom, iconSize]);
   const slotAt = (clientX: number, clientY: number): Slot => {
     const el = scrollRef.current;
     const cRect = el?.getBoundingClientRect();
-    const x = cRect ? clientX - cRect.left + (el?.scrollLeft ?? 0) - GRID_PAD : 0;
-    const y = cRect ? clientY - cRect.top + (el?.scrollTop ?? 0) - GRID_PAD : 0;
+    if (!cRect || !el) return { c: 0, r: 0 };
+    const ratio = zoomRatioRef.current;
+    const x = (clientX - cRect.left) / ratio + (el?.scrollLeft ?? 0) - GRID_PAD;
+    const y = (clientY - cRect.top) / ratio + (el?.scrollTop ?? 0) - GRID_PAD;
     return {
       c: Math.round(x / (cell.w + GRID_GAP)),
       r: Math.round(y / (cell.h + GRID_GAP)),
@@ -447,6 +460,24 @@ export function IconGrid({
     let { c, r } = slotAt(clientX, clientY);
     c = Math.max(0, c);
     r = Math.max(0, r);
+    // 雅·插入语义（v0.49 特性5,与挤开预览共用 computeSlotShift——预览即终态）：
+    // 单选拖拽在生效级别为雅时,落点槽位插入、被越过的占用项沿行主序链推移一位；
+    // 素/多选拖拽维持 v0.27「找空位」语义（雅特有效果,见用户需求描述）
+    if (isElegant() && paths.length === 1) {
+      const name = sorted.find((e) => e.path === paths[0])?.name;
+      const from = name ? slotsByName.get(name) : undefined;
+      if (name && from) {
+        const idxTo = r * cols + c;
+        const idxFrom = from.r * cols + from.c;
+        if (idxTo === idxFrom) return; // 原位
+        const shift = computeSlotShift(from, { c, r }, cols, slotsByName, new Set([name]));
+        if (shift) {
+          for (const [n, s] of shift) onSetIconPosition(n, [s.c, s.r]);
+        }
+        onSetIconPosition(name, [c, r]);
+        return;
+      }
+    }
     const occupant = new Map<string, string>(); // slotKey -> name
     for (const [name, s] of slotsByName) occupant.set(`${s.c}:${s.r}`, name);
     const order = sorted.filter((x) => paths.includes(x.path)).map((x) => x.name);
@@ -505,6 +536,13 @@ export function IconGrid({
     paths: string[];
     op: "copy" | "move";
   } | null>(null);
+  /** 雅·挤开预览（v0.49 特性5）：引擎 A 拖拽悬停本窗格空白时的插入推移映射
+   *  （name → 目标槽位）。预览与 slotDrop 插入分支共用 computeSlotShift——
+   *  预览即终态,松手零跳动。key 为 shiftKey 序列化（mousemove 去重）。 */
+  const [slotPreview, setSlotPreview] = useState<{
+    key: string;
+    map: Map<string, { c: number; r: number }> | null;
+  }>({ key: "", map: null });
   const {
     rubber,
     suppressClickRef,
@@ -523,22 +561,38 @@ export function IconGrid({
     // startItemPress 接管（选中+拖拽候选，访达语义不变）
     isBlankPress: (target) =>
       !(target instanceof Element) || target.closest("[data-grid-item]") === null,
-    // 拖影内容状态（v0.49 特性4）：起拖/操作切换/结束上报，DragGhost 据此渲染
-    onDragActiveChange: (s) => setDragGhostState(s),
+    // 拖影内容状态（v0.49 特性4）：起拖/操作切换/结束上报，DragGhost 据此渲染；
+    // 结束时同步清掉雅·挤开预览（拖拽会话终止,落位由 slotDrop 完成）
+    onDragActiveChange: (s) => {
+      setDragGhostState(s);
+      if (!s) setSlotPreview((prev) => (prev.key === "" ? prev : { key: "", map: null }));
+    },
     selection,
     resolveTarget: (x, y, draggedPaths) => {
       const el = document.elementFromPoint(x, y) as HTMLElement | null;
-      if (!el) return { paneId: null, dirPath: null };
+      if (!el) {
+        setSlotPreview((prev) => (prev.key === "" ? prev : { key: "", map: null }));
+        return { paneId: null, dirPath: null };
+      }
       const dirEl = el.closest("[data-grid-item][data-drop-dir]") as HTMLElement | null;
       if (dirEl) {
         const p = dirEl.dataset.path;
-        if (p && !draggedPaths.includes(p)) return { paneId: null, dirPath: p };
+        if (p && !draggedPaths.includes(p)) {
+          // 文件夹落点 = 投放语义,不做槽位挤开预览（与 folderHover 高亮同源）
+          setSlotPreview((prev) => (prev.key === "" ? prev : { key: "", map: null }));
+          return { paneId: null, dirPath: p };
+        }
       }
       const paneEl = el.closest("[data-pane-id]") as HTMLElement | null;
       if (paneEl) {
         const id = Number(paneEl.dataset.paneId);
-        if (id !== paneId) return { paneId: id, dirPath: null };
+        if (id !== paneId) {
+          setSlotPreview((prev) => (prev.key === "" ? prev : { key: "", map: null }));
+          return { paneId: id, dirPath: null };
+        }
       }
+      // 本窗格空白 → 雅·挤开预览：插入推移映射（素/autoArrange/多选 → 清空）
+      updateSlotPreview(x, y, draggedPaths);
       return { paneId: null, dirPath: null };
     },
     onSelectRange,
@@ -549,6 +603,27 @@ export function IconGrid({
     onHoverChange: setFolderHover,
     onDragOverChange,
   });
+
+  /** 雅·挤开预览更新（引擎 A 拖拽悬停本窗格空白时逐 move 调用）：计算插入推移
+   *  映射并去重 setState。素/autoArrange/多选拖拽一律清空（与 slotDrop 插入分支
+   *  同条件同函数——预览即终态）。 */
+  const updateSlotPreview = (x: number, y: number, draggedPaths: readonly string[]) => {
+    const clear = () => setSlotPreview((prev) => (prev.key === "" ? prev : { key: "", map: null }));
+    if (!isElegant() || autoArrange || draggedPaths.length !== 1) {
+      clear();
+      return;
+    }
+    const name = sorted.find((e) => e.path === draggedPaths[0])?.name;
+    const from = name ? slotsByName.get(name) : undefined;
+    if (!name || !from) {
+      clear();
+      return;
+    }
+    const to = slotAt(x, y);
+    const map = computeSlotShift(from, to, cols, slotsByName, new Set([name]));
+    const key = shiftKey(map);
+    setSlotPreview((prev) => (prev.key === key ? prev : { key, map }));
+  };
 
   const startItemPress = (e: React.MouseEvent, entry: FileEntry) => {
     if (e.button !== 0) return;
@@ -872,6 +947,16 @@ export function IconGrid({
                             top: GRID_PAD + slot.r * rowH,
                             width: cell.w,
                             height: cell.h,
+                            // 雅·挤开预览（v0.49 特性5）：被推移项按目标槽位差施加
+                            // transform（transition 0ms=素,雅=var 驱动的平滑推移）。
+                            // 左/顶不动、只走 transform,松手落位(改 left/top)与预览
+                            // 同帧衔接零跳动
+                            transform: (() => {
+                              const ps = slotPreview.map?.get(entry.name);
+                              if (!ps) return undefined;
+                              return `translate(${(ps.c - slot.c) * (cell.w + GRID_GAP)}px, ${(ps.r - slot.r) * rowH}px)`;
+                            })(),
+                            transition: "transform var(--rdir-anim-dur) var(--rdir-anim-ease, ease)",
                           }}
                         >
                           {showThumb ? (

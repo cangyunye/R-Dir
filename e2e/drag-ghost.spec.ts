@@ -115,3 +115,62 @@ test.describe("拖拽拖影与落点确认（v0.49 特性4）", () => {
     await expect(badge).toHaveCount(0);
   });
 });
+
+test.describe("雅·挤开位移动画（v0.49 特性5,大图标）", () => {
+  async function dragOverNeighbor(page: import("@playwright/test").Page) {
+    await page.evaluate(() => {
+      window.addEventListener("dragstart", (e) => e.preventDefault(), true);
+    });
+    await page.locator(switchBtn("icons")).click();
+    await expect(page.locator("[data-grid-item]")).toHaveCount(6);
+    const item = page.locator(`[data-grid-item][data-path="${HOME}/Notes.txt"]`);
+    const nb = page.locator(`[data-grid-item][data-path="${HOME}/photo.png"]`);
+    const ib = await item.boundingBox();
+    const nbBox = await nb.boundingBox();
+    // 拖 Notes.txt 到 photo.png 所在槽位（插入语义:photo.png 应被推移）
+    await page.mouse.move(ib.x + ib.width / 2, ib.y + ib.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(nbBox.x + nbBox.width / 2, nbBox.y + nbBox.height / 2, { steps: 5 });
+    return { item, nb, nbBox };
+  }
+
+  test("雅:拖到邻居槽位 → 被越过项带 transform 推移;松手落位=预览", async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("rfm.anim-level", "elegant");
+      } catch { /* ignore */ }
+    });
+    await page.goto("/");
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+    await expect(page.locator('[class*="z-[9999]"]')).toHaveCount(0);
+    const { item, nb, nbBox } = await dragOverNeighbor(page);
+    // 挤开推移进行中:photo.png 带 transform（雅预览）
+    await expect
+      .poll(() => nb.evaluate((el) => getComputedStyle(el).transform))
+      .not.toBe("none");
+    // 松手落位:插入语义生效 → Notes.txt 落 photo.png 原槽,预览 transform 归零
+    await page.mouse.up();
+    await expect
+      .poll(() => nb.evaluate((el) => getComputedStyle(el).transform))
+      .toBe("none");
+    const ibAfter = await item.boundingBox();
+    // Notes.txt 现在在 photo.png 原来的槽位（左上角对齐,容差 2px）
+    expect(Math.abs(ibAfter.x - nbBox.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(ibAfter.y - nbBox.y)).toBeLessThanOrEqual(2);
+  });
+
+  test("素:同样的拖拽悬停,邻居不带 transform（无挤开）", async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("rfm.anim-level", "plain");
+      } catch { /* ignore */ }
+    });
+    await page.goto("/");
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+    await expect(page.locator('[class*="z-[9999]"]')).toHaveCount(0);
+    const { nb } = await dragOverNeighbor(page);
+    await page.waitForTimeout(200);
+    expect(await nb.evaluate((el) => getComputedStyle(el).transform)).toBe("none");
+    await page.mouse.up();
+  });
+});

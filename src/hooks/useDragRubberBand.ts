@@ -28,15 +28,16 @@ export interface DragTargetHit {
   dirPath: string | null;
 }
 
-/** 有效缩放比量测（根 zoom × 窗格 zoom）：把视觉像素偏移折回 rectRef 布局空间。
+/** 有效缩放比量测（根 zoom × 窗格 zoom）：把视觉像素偏移折回布局空间。
  *  框选矩形 div 的定位基准是 rectRef（窗格根，自身带 zoom），其布局 px 渲染时会被
  *  (根 zoom × 窗格 zoom) 整体放大——不折算时画的框偏离鼠标，且偏得越远越夸张
  *  （v0.49 大图标框选错位的根因：选中的图标跟手、画的框歪）。
- *  rectRef 自身带 zoom，offsetWidth 的「自身 zoom」语义不可靠，改用一次性探针
- *  子元素量：探针无自身 zoom，rect.width/1000 恰为 rectRef 子树被放大的倍数
- *  （与 v0.44 列宽拖拽 rect/offsetWidth 同源做法，FileList.tsx:388-395）。
- *  jsdom 等无布局环境量到 0 → 回退 1（不折算，单测桩全走布局=视觉）。 */
-function measureZoomRatio(el: HTMLElement): number {
+ *  被量元素自身带 zoom 时 offsetWidth 的语义不可靠，改用一次性探针子元素量：
+ *  探针无自身 zoom，rect.width/1000 恰为该子树被放大的倍数（与 v0.44 列宽拖拽
+ *  rect/offsetWidth 同源做法，FileList.tsx:388-395）。
+ *  jsdom 等无布局环境量到 0 → 回退 1（不折算，单测桩全走布局=视觉）。
+ *  导出供 IconGrid.slotAt 等同族换算复用（v0.49 特性5 槽位换算同样混算过）。 */
+export function measureZoomRatio(el: HTMLElement): number {
   const probe = document.createElement("div");
   probe.style.cssText =
     "position:absolute;width:1000px;height:0;visibility:hidden;pointer-events:none;";
