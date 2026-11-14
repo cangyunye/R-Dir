@@ -15,7 +15,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { RenameInput } from "@/components/RenameInput";
+import { RenameInput, routeRenameRowPress } from "@/components/RenameInput";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TAG_DEFS, tagLabel, type FileTags, type MenuConfig, type TagDef, type TagNames } from "@/lib/persist";
@@ -607,6 +607,24 @@ export function FileList({
     // 重命名输入框内按下：交还给文本拖选（拖拽引擎会把 >5px 的移动升级成
     // 文件拖拽——userSelect=none + 幽灵标签，直接掐断框内选区）
     if ((e.target as HTMLElement).closest?.("input")) return;
+    // F2 准心路由（v0.48.1）：重命名行上、输入框之外的左键按压 → 转为输入框
+    // 文本拖选。F2 后光标通常停在点选文件时的旧位置（未必在名称列内），选中行
+    // 按下会升级成文件拖拽，拖经列表松在同目录即触发覆盖确认。
+    if (
+      renaming?.path === entry.path &&
+      !e.shiftKey &&
+      !e.metaKey &&
+      !e.ctrlKey
+    ) {
+      const inputEl = (e.currentTarget as HTMLElement).querySelector("input");
+      if (inputEl) {
+        // preventDefault：行 tabIndex=0，原生 mousedown 默认动作会把焦点抢给行，
+        // 覆盖掉 routeRenameRowPress 刚打进输入框的聚焦
+        e.preventDefault();
+        routeRenameRowPress(inputEl, e.clientX);
+        return;
+      }
+    }
     const fromSelected = propsRef.current.selectionSet.has(entry.path);
     const additive = e.metaKey || e.ctrlKey;
     if (fromSelected) {
@@ -858,6 +876,14 @@ export function FileList({
           const ae = document.activeElement as HTMLElement | null;
           if (ae?.id === "rdir-addr-input") return;
           if ((e.target as HTMLElement).closest("input,textarea,[data-quickjump]")) return;
+          // 重命名行上（输入框外）的按压不抢焦点：随后被路由进输入框（准心激活，
+          // v0.48.1 F2 场景）——抢了焦点会经 onBlur 把会话误关
+          if (
+            renaming &&
+            (e.target as HTMLElement).closest("[data-path]")?.getAttribute("data-path") ===
+              renaming.path
+          )
+            return;
           listScrollRef.current?.focus({ preventScroll: true });
         }}
         onKeyDown={handleListKeyDown}

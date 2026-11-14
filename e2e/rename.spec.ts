@@ -132,6 +132,50 @@ test.describe("重命名框内鼠标拖选（v0.41.2 回归）", () => {
     expect(selLen2).toBe(selLen);
     await expect(input).toBeVisible();
   });
+
+  test("F2 后在重命名行（输入框外的列区域）按下拖动：准心路由进输入框而非文件拖拽（v0.48.1）", async ({
+    page,
+  }) => {
+    // 用户实测：F2 后光标停在点选文件时的旧位置（可能不在名称列），行上按压
+    // 旧代码会升级成文件拖拽，拖经列表松在同目录触发覆盖确认。修复=重命名行
+    // 上的左键按压一律路由进输入框（准心激活）。
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click();
+    await page.keyboard.press("F2");
+    const input = page.locator(`[data-path="${HOME}/Notes.txt"] input`);
+    await expect(input).toBeVisible();
+    const rowBox = await page.locator(`[data-path="${HOME}/Notes.txt"]`).boundingBox();
+    const inputBox = await input.boundingBox();
+    if (!rowBox || !inputBox) throw new Error("无几何信息");
+    expect(inputBox.x + inputBox.width).toBeLessThan(rowBox.x + rowBox.width - 8);
+    // 行右端（输入框覆盖不到的列区域）按下并向左拖
+    const px = rowBox.x + rowBox.width - 24;
+    const py = rowBox.y + rowBox.height / 2;
+    await page.mouse.move(px, py);
+    await page.mouse.down();
+    // 一路拖进文本起点（按压点在文本末端之外，偏移被钳到串尾；左拖穿越文本才会扩展）
+    await page.mouse.move(inputBox.x + 12, py, { steps: 8 });
+    // 拖动中途读选区：路由后的手动扩展必须产生非空选区（用户的核心诉求）
+    const mid = await input.evaluate((el) => [el.selectionStart, el.selectionEnd]);
+    await page.mouse.up();
+    const st = await input.evaluate((el) => ({
+      focused: document.activeElement === el,
+      sel: [el.selectionStart, el.selectionEnd],
+    }));
+    const aeInfo = await page.evaluate((sel) => {
+      const a = document.activeElement as HTMLElement | null;
+      return {
+        tag: a?.tagName ?? null,
+        dp: a?.closest("[data-path]")?.getAttribute("data-path") ?? null,
+        renamingInputAlive: !!document.querySelector(`${sel} input`),
+      };
+    }, `[data-path="${HOME}/Notes.txt"]`);
+    expect(mid[1] - mid[0]).toBeGreaterThan(0); // 拖选扩展生效
+    expect(st.focused).toBe(true);
+    expect(aeInfo.renamingInputAlive).toBe(true);
+    // 无文件拖拽幽灵、无覆盖确认弹窗
+    await expect(page.locator("[data-app-confirm]")).toHaveCount(0);
+    await expect(input).toBeVisible();
+  });
 });
 
 test.describe("分屏重命名（窗格隔离）", () => {

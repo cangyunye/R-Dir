@@ -44,7 +44,7 @@ import { FileIcon } from "@/components/FileIcon";
 import { ThumbImage } from "@/components/ThumbImage";
 import { TagDots } from "@/components/TagView";
 import { type RenameState } from "@/components/FileList";
-import { RenameInput } from "@/components/RenameInput";
+import { RenameInput, routeRenameRowPress } from "@/components/RenameInput";
 import { BlankContextMenuContent, EntryContextMenuContent } from "@/components/EntryContextMenu";
 import type { QuickToolItem } from "@/lib/openerApi";
 import {
@@ -543,6 +543,22 @@ export function IconGrid({
     // 重命名输入框内按下：交还给文本拖选（拖拽引擎会把 >5px 的移动升级成
     // 文件拖拽——userSelect=none + 幽灵标签，直接掐断框内选区）
     if ((e.target as HTMLElement).closest?.("input")) return;
+    // F2 准心路由（v0.48.1）：重命名图标格上、输入框之外的左键按压 → 转为输入框
+    // 文本拖选（同 FileList；图标格输入框带 fitWidth 更窄，更容易按在框外）
+    if (
+      renaming?.path === entry.path &&
+      !e.shiftKey &&
+      !e.metaKey &&
+      !e.ctrlKey
+    ) {
+      const inputEl = (e.currentTarget as HTMLElement).querySelector("input");
+      if (inputEl) {
+        // preventDefault：防原生默认把焦点抢给可聚焦的格子元素（同 FileList）
+        e.preventDefault();
+        routeRenameRowPress(inputEl, e.clientX);
+        return;
+      }
+    }
     const additive = e.metaKey || e.ctrlKey;
     if (e.shiftKey || additive) return; // 修饰键选择交给 click
     // 图标视图语义（访达一致）：按下未选中图标 = 立即选中并直接成为拖拽候选；

@@ -25,6 +25,33 @@ function caretOffsetAt(el: HTMLInputElement, clientX: number): number {
   return lo;
 }
 
+/** 接管式手动文本拖选：塌缩到锚点 + window mousemove 扩展选区（Finder 语义）。
+ *  框内「按在选区内」手势规避与行级按压路由共用。 */
+function beginManualTextDrag(el: HTMLInputElement, anchor: number) {
+  el.setSelectionRange(anchor, anchor);
+  const onMove = (ev: MouseEvent) => {
+    const pos = caretOffsetAt(el, ev.clientX);
+    el.setSelectionRange(Math.min(anchor, pos), Math.max(anchor, pos));
+  };
+  const onUp = () => {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+  };
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+}
+
+/** 重命名行按压路由（F2 场景）：F2 后光标通常停在点选文件时的旧位置（可能不在
+ *  名称列/输入框上），行上任意位置的左键按压若不走此路由会升级成行级文件拖拽
+ *  （选中行按下 = 拖动文件），拖经列表松在同目录即触发覆盖确认。此函数把该按压
+ *  转为输入框文本拖选：聚焦 + 按水平位置塌缩锚点 + 挂手动扩展（与框内接管同一套）。
+ *  调用方（FileList/IconGrid 的行按压处理器）需已 stopPropagation。 */
+export function routeRenameRowPress(input: HTMLInputElement, clientX: number): void {
+  input.focus();
+  const offset = caretOffsetAt(input, clientX);
+  beginManualTextDrag(input, offset);
+}
+
 /** 行内重命名输入框（FileList 行 / 搜索结果行 / 图标网格共用） */
 export function RenameInput({
   initial,
@@ -42,8 +69,6 @@ export function RenameInput({
 }) {
   const [value, setValue] = useState(initial);
   const ref = useRef<HTMLInputElement>(null);
-  /** 接管中的框内拖选（按在选区内的按下）：anchor = 塌缩后的选区起点 */
-  const dragSelRef = useRef<{ anchor: number } | null>(null);
   const fitMin = fitWidth?.min;
   const fitMax = fitWidth?.max;
   /** 自适应宽 = canvas 按输入框实际计算字体测的文本宽 + 内边距 12px + 边框 2px + 2px 余量，
@@ -113,6 +138,13 @@ export function RenameInput({
     const onWinMouseDown = (e: MouseEvent) => {
       if (!everFocusedRef.current) return; // 起手焦点竞争窗口，交给重试聚焦
       if (e.target instanceof Node && ref.current?.contains(e.target)) return;
+      // 重命名行上（输入框外）的按压不收口：行级处理器会把它路由为文本拖选
+      // （准心入框，v0.48.1 F2 场景）；行外的按压才按访达语义结束会话
+      if (
+        e.target instanceof Node &&
+        ref.current?.closest("[data-path]")?.contains(e.target)
+      )
+        return;
       finishRef.current(valueRef.current !== initial);
     };
     window.addEventListener("mousedown", onWinMouseDown, true);
@@ -175,24 +207,7 @@ export function RenameInput({
         const offset = caretOffsetAt(el, e.clientX);
         if (offset < selStart || offset > selEnd) return; // 选区外：原生即新选区
         e.preventDefault();
-        el.setSelectionRange(offset, offset);
-        dragSelRef.current = { anchor: offset };
-        const onMove = (ev: MouseEvent) => {
-          const cur = ref.current;
-          if (!cur || !dragSelRef.current) return;
-          const pos = caretOffsetAt(cur, ev.clientX);
-          cur.setSelectionRange(
-            Math.min(dragSelRef.current.anchor, pos),
-            Math.max(dragSelRef.current.anchor, pos),
-          );
-        };
-        const onUp = () => {
-          dragSelRef.current = null;
-          window.removeEventListener("mousemove", onMove);
-          window.removeEventListener("mouseup", onUp);
-        };
-        window.addEventListener("mousemove", onMove);
-        window.addEventListener("mouseup", onUp);
+        beginManualTextDrag(el, offset);
       }}
       spellCheck={false}
     />
