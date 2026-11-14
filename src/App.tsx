@@ -211,6 +211,9 @@ import {
   loadSidebarCollapsed,
   saveSidebarCollapsed,
   saveShowExtensions,
+  loadAnimLevel,
+  saveAnimLevel,
+  type AnimLevel,
   loadDiffCaseSensitive,
   loadDiffMtimeTolerance,
   loadPrefsFromDisk,
@@ -230,6 +233,7 @@ import {
   type TagDef,
   type TagNames,
 } from "@/lib/persist";
+import { setAnimLevelRef } from "@/lib/anim";
 import { shareStopByDir, shareList, type IconPositionMap } from "@/lib/api";
 import { loadAutoArrangeDirs, saveAutoArrangeDirs } from "@/lib/persist";
 import { type IconSize, type ViewMode } from "@/lib/types";
@@ -3350,6 +3354,21 @@ useEffect(() => {
     });
   }, []);
 
+  /** v0.49 动画级别（素=瞬时历史行为 / 雅=丝滑动效）：一份 state 写两处——
+   *  documentElement.dataset.anim（CSS 侧含 Radix portal 弹层,必须挂文档根）+
+   *  lib/anim 模块镜像（window 级监听器/命令式路径读不到 React 状态） */
+  const [animLevel, setAnimLevel] = useState<AnimLevel>(() => loadAnimLevel());
+  const changeAnimLevel = useCallback((v: AnimLevel) => {
+    setAnimLevel(v);
+    saveAnimLevel(v);
+    setAnimLevelRef(v);
+  }, []);
+  useEffect(() => {
+    // 首挂同步镜像 + 根属性（loadAnimLevel 的初始值也要进 lib/anim 镜像）
+    setAnimLevelRef(animLevel);
+    document.documentElement.dataset.anim = animLevel;
+  }, [animLevel]);
+
   const toggleTag = useCallback((path: string, tagId: string) => {
     setFileTags((prev) => {
       const cur = prev[path] ?? [];
@@ -5694,6 +5713,8 @@ useEffect(() => {
         }}
         themeMode={themeMode}
         onThemeModeChange={changeThemeMode}
+        animLevel={animLevel}
+        onAnimLevelChange={changeAnimLevel}
         themePacks={themePacks}
         themeErrors={themeErrors}
         activeThemeId={activeThemeId}

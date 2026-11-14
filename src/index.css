@@ -188,6 +188,51 @@
   max-height: calc(var(--radix-popper-available-height, 100vh) / var(--rdir-zoom, 1));
 }
 
+/* ═══ v0.49 素/雅动画级别 ═══
+   素（默认，data-anim 无值或 =plain）= 全部瞬时，与历史行为零 diff；
+   雅（data-anim=elegant）= 苹果式丝滑动效，由 --rdir-anim-dur / --rdir-anim-ease
+   驱动：组件写 transition/animation 引用这两个变量，0ms 即瞬时，无需 JS 分支。
+   JS 侧读 src/lib/anim.ts（App 同一 state 写两边，保持同源）。
+   系统「减弱动态效果」偏好优先于设置（与 tag-hero-sweep 同惯例）。 */
+:root {
+  --rdir-anim-dur: 0ms;
+}
+[data-anim="elegant"] {
+  --rdir-anim-dur: 180ms;
+  --rdir-anim-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --rdir-anim-dur: 0ms !important;
+  }
+}
+
+/* 右键/下拉菜单弹层入场（雅）：fade + 轻缩放 + 轻下滑，复用 tw-animate-css 的
+   全局 enter keyframe（自定义属性供帧值）。退出动画维持不做——FocusScope 陷阱
+   在退出动画期间会抢 RenameInput 焦点（见 ui/context-menu.tsx 注释）。 */
+@media (prefers-reduced-motion: no-preference) {
+  [data-anim="elegant"] [data-slot="context-menu-content"],
+  [data-anim="elegant"] [data-slot="dropdown-menu-content"] {
+    --tw-enter-opacity: 0;
+    --tw-enter-scale: 0.97;
+    --tw-enter-translate-y: -4px;
+    animation: enter 150ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* MenuGroup 折叠组身体（雅）：从 0fr 展开到 1fr + 淡入；素=0ms 即瞬时，
+     与历史「expanded && 挂载」行为零 diff。折叠维持卸载（Radix 箭头导航不会
+     落进不可见子项，也规避 FocusScope 退出动画问题）。 */
+  [data-anim="elegant"] .menu-group-body {
+    animation: rdir-group-in var(--rdir-anim-dur) var(--rdir-anim-ease);
+  }
+  @keyframes rdir-group-in {
+    from {
+      grid-template-rows: 0fr;
+      opacity: 0;
+    }
+  }
+}
+
 /* ═══ 设置面板皮肤：浅色「云舒云卷」磨砂玻璃 / 深色「黑金纹琉璃」 ═══
    做法：设置框根元素挂 .settings-glass、页面遮罩挂 .settings-overlay，在两者子树内
    重定义主题 token（--background/--card/--border/--primary/…）。@theme inline 让

@@ -687,6 +687,29 @@ const DIFF_LEVEL_KEY = "rfm.diff-level";
 const DIFF_CASE_KEY = "rfm.diff-case-sensitive";
 const DIFF_MTIME_KEY = "rfm.diff-mtime-tolerance";
 
+// ---- v0.49 动画级别（素=瞬时,历史行为；雅=苹果式丝滑动效） ----
+/** 素「plain」= 全部瞬时（默认，保持历史行为零 diff）；雅「elegant」= 菜单展开/
+ *  拖拽反馈/位移动画走 --rdir-anim-dur 驱动的平滑动效。 */
+export type AnimLevel = "plain" | "elegant";
+const ANIM_LEVEL_KEY = "rfm.anim-level";
+
+export function loadAnimLevel(): AnimLevel {
+  try {
+    const v = localStorage.getItem(ANIM_LEVEL_KEY);
+    return v === "elegant" ? "elegant" : "plain";
+  } catch {
+    return "plain";
+  }
+}
+
+export function saveAnimLevel(level: AnimLevel): void {
+  try {
+    localStorage.setItem(ANIM_LEVEL_KEY, level);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** 默认名称匹配是否区分大小写：Windows / macOS 文件系统不敏感。 */
 export function defaultCaseSensitive(): boolean {
   try {

@@ -3,6 +3,7 @@ import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ContextMenuItem } from "@/components/ui/context-menu";
 import { useT } from "@/lib/LanguageProvider";
+import { getAnimLevel } from "@/lib/anim";
 
 /**
  * 右键菜单二级「折叠组」：点组名在同级菜单内联展开子项。
@@ -28,9 +29,18 @@ export function MenuGroup({
   const bodyRef = useRef<HTMLDivElement>(null);
   const t = useT();
   // 展开后把新增子项滚进可视区：菜单内容受可用高度约束（展开不再顶破窗口）时，
-  // 组往往在滚动边界之下，不滚就看不见刚展开的内容
+  // 组往往在滚动边界之下，不滚就看不见刚展开的内容。
+  // 雅模式延到展开动画之后（0fr 起步时量不到高度，立即滚会滚错位）
   useEffect(() => {
-    if (expanded) bodyRef.current?.scrollIntoView({ block: "nearest" });
+    if (!expanded) return;
+    if (getAnimLevel() === "elegant") {
+      const id = window.setTimeout(
+        () => bodyRef.current?.scrollIntoView({ block: "nearest" }),
+        200,
+      );
+      return () => window.clearTimeout(id);
+    }
+    bodyRef.current?.scrollIntoView({ block: "nearest" });
   }, [expanded]);
   return (
     <>
@@ -50,9 +60,12 @@ export function MenuGroup({
           )}
         />
       </ContextMenuItem>
+      {/* 折叠组身体：外层 grid 1fr（雅=从 0fr 展开动画,见 index.css rdir-group-in；
+          素=0ms 瞬时与旧「expanded && 挂载」零 diff）+ 内层 overflow-hidden 裁切。
+          折叠仍维持卸载：Radix 箭头导航不能落进不可见子项。 */}
       {expanded && (
-        <div ref={bodyRef} className="ml-3 border-l pl-1">
-          {children}
+        <div ref={bodyRef} className="menu-group-body ml-3 border-l pl-1" style={{ display: "grid", gridTemplateRows: "1fr" }}>
+          <div className="min-h-0 overflow-hidden">{children}</div>
         </div>
       )}
     </>

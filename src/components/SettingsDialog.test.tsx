@@ -18,10 +18,13 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
   const onSetOpenerExtensions = vi.fn();
   const onAddOpener = vi.fn();
   const onThemeModeChange = vi.fn();
+  const onAnimLevelChange = vi.fn();
   render(
     <SettingsDialog
       open
       onClose={() => {}}
+      animLevel="plain"
+      onAnimLevelChange={onAnimLevelChange}
       themeMode="light"
       onThemeModeChange={onThemeModeChange}
       onBindingsChanged={() => {}}
@@ -59,8 +62,26 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: "打开方式" }));
-  return { onRemoveOpener, onSetOpenerExtensions, onAddOpener, onThemeModeChange };
+  return { onRemoveOpener, onSetOpenerExtensions, onAddOpener, onThemeModeChange, onAnimLevelChange };
 }
+
+describe("SettingsDialog 动画级别（v0.49 素/雅）", () => {
+  it("外观区展示「动画效果」分段控件，当前级别带 aria-pressed", () => {
+    setup({ animLevel: "elegant" });
+    fireEvent.click(screen.getByRole("button", { name: "外观" }));
+    const plain = screen.getByRole("button", { name: "朴素" });
+    const elegant = screen.getByRole("button", { name: "优雅" });
+    expect(plain).toHaveAttribute("aria-pressed", "false");
+    expect(elegant).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("点击分段切换并回调目标级别", () => {
+    const { onAnimLevelChange } = setup({ animLevel: "plain" });
+    fireEvent.click(screen.getByRole("button", { name: "外观" }));
+    fireEvent.click(screen.getByRole("button", { name: "优雅" }));
+    expect(onAnimLevelChange).toHaveBeenCalledWith("elegant");
+  });
+});
 
 describe("SettingsDialog 打开方式分区", () => {
   it("展示名称与已关联扩展名", () => {

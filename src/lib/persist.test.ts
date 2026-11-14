@@ -32,6 +32,8 @@ import {
   autoUiFontSize,
   UI_FONT_MAX,
   loadShowExtensions,
+  loadAnimLevel,
+  saveAnimLevel,
   saveShowExtensions,
   loadSidebarCollapsed,
   saveSidebarCollapsed,
@@ -478,5 +480,22 @@ describe("remoteTempDir（v0.37 远程打开临时目录）", () => {
     saveRemoteTempDir("/tmp/rdir-cache");
     saveRemoteTempDir("   ");
     expect(loadRemoteTempDir()).toBe("");
+  });
+});
+
+// ---- v0.49 动画级别（素/雅） ----
+describe("动画级别", () => {
+  it("默认素（plain）", () => {
+    expect(loadAnimLevel()).toBe("plain");
+  });
+  it("保存雅后读回雅", () => {
+    saveAnimLevel("elegant");
+    expect(loadAnimLevel()).toBe("elegant");
+    saveAnimLevel("plain");
+  });
+  it("非法值回落素", () => {
+    localStorage.setItem("rfm.anim-level", "fancy");
+    expect(loadAnimLevel()).toBe("plain");
+    localStorage.removeItem("rfm.anim-level");
   });
 });
