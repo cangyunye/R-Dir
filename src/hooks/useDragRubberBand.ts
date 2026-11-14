@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, RefObject } from "react";
-import { t } from "@/lib/i18n";
 
 /**
  * 自研鼠标拖拽（复制/移动跨窗格投放）+ 橡皮筋框选的共用引擎
@@ -79,6 +78,10 @@ export interface DragRubberBandOptions {
   onSlotDrop?: (paths: string[], clientX: number, clientY: number) => void;
   /** 文件夹悬停高亮同步（仅 IconGrid 的 setFolderHover） */
   onHoverChange?: (path: string | null) => void;
+  /** 拖拽会话状态（v0.49 特性4 拖影升级）：起拖/操作切换时给 {paths,op}、
+   *  结束时给 null。仅状态切换触发（不逐帧），视图据此渲染 DragGhost 内容；
+   *  位置仍由 ghostRef 命令式 transform 驱动。 */
+  onDragActiveChange?: (s: { paths: string[]; op: "copy" | "move" } | null) => void;
   onDragOverChange: (target: { targetPaneId: number; op: "copy" | "move" } | null) => void;
 }
 
@@ -119,6 +122,8 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
   );
   /** 文件夹落点悬停（仅 IconGrid 消费；FileList 的 resolveTarget 恒返回 dirPath=null） */
   const hoverRef = useRef<string | null>(null);
+  /** 已上报的拖影内容状态（起拖/操作切换判定用，cleanup 清空） */
+  const dragStateRef = useRef<{ paths: string[]; op: "copy" | "move" } | null>(null);
   const suppressClickRef = useRef(false);
   const [rubber, setRubber] = useState<{
     left: number;
@@ -147,6 +152,10 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
       optsRef.current.onHoverChange?.(null);
     }
     if (ghostRef.current) ghostRef.current.style.opacity = "0";
+    if (dragStateRef.current) {
+      dragStateRef.current = null;
+      optsRef.current.onDragActiveChange?.(null);
+    }
     optsRef.current.onDragOverChange(null);
   };
 
@@ -164,10 +173,13 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
         const op: "copy" | "move" = e.altKey ? "move" : "copy";
         if (ghostRef.current) {
           ghostRef.current.style.transform = `translate(${e.clientX + 10}px, ${e.clientY + 10}px)`;
-          ghostRef.current.textContent =
-            op === "move"
-              ? t("移动 {n} 项", { n: cand.paths.length })
-              : t("复制 {n} 项", { n: cand.paths.length });
+          // 内容（堆叠卡/数量/落点行）由 onDragActiveChange 状态渲染——不再
+          // textContent 直写（会清掉 DragGhost 的子元素，v0.49 特性4）
+        }
+        // 拖影内容状态：起拖与操作切换时上报（不逐帧）
+        if (!dragStateRef.current || dragStateRef.current.op !== op) {
+          dragStateRef.current = { paths: [...cand.paths], op };
+          opts.onDragActiveChange?.(dragStateRef.current);
         }
         // 目标检测（仅变化时通知，避免高频重渲染）
         const hit = opts.resolveTarget(e.clientX, e.clientY, cand.paths);

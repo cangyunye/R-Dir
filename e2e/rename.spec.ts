@@ -69,14 +69,10 @@ test.describe("重命名框内鼠标拖选（v0.41.2 回归）", () => {
     await page.mouse.move(startX, y);
     await page.mouse.down();
     for (let i = 1; i <= 5; i++) await page.mouse.move(startX + i * 8, y);
-    // 拖拽中途：文件拖拽幽灵标签（「复制 N 项」）必须仍未显形——
+    // 拖拽中途：文件拖拽拖影（v0.49 data-drag-ghost 锚点）必须仍未显形——
     // 旧实现会在这里升级成文件拖拽（幽灵显形 + select-none 掐断框内选区）
     const ghostOpacity = await page.evaluate(() => {
-      const ghost = [...document.querySelectorAll("div")].find(
-        (d) =>
-          d.className.includes("pointer-events-none") &&
-          /^复制 \d+ 项$/.test(d.textContent ?? ""),
-      );
+      const ghost = document.querySelector("[data-drag-ghost]");
       return ghost ? getComputedStyle(ghost).opacity : "missing";
     });
     expect(ghostOpacity).toBe("0");

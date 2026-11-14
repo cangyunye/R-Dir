@@ -39,6 +39,7 @@ import {
   setHtml5Drag,
 } from "@/lib/native-drag";
 import { useDragRubberBand } from "@/hooks/useDragRubberBand";
+import { DragGhost } from "@/components/DragGhost";
 import { useT } from "@/lib/LanguageProvider";
 import { FileIcon } from "@/components/FileIcon";
 import { ThumbImage } from "@/components/ThumbImage";
@@ -499,6 +500,11 @@ export function IconGrid({
   // 本侧注入：文件夹图标命中（[data-grid-item][data-drop-dir]，排除被拖路径自身）、
   // 窗格级落点排除本窗格、空槽重摆回落与 folderHover 高亮
   const [folderHover, setFolderHover] = useState<string | null>(null);
+  /** 拖影内容状态（v0.49 特性4）：引擎起拖/操作切换/结束时上报 */
+  const [dragGhostState, setDragGhostState] = useState<{
+    paths: string[];
+    op: "copy" | "move";
+  } | null>(null);
   const {
     rubber,
     suppressClickRef,
@@ -517,6 +523,8 @@ export function IconGrid({
     // startItemPress 接管（选中+拖拽候选，访达语义不变）
     isBlankPress: (target) =>
       !(target instanceof Element) || target.closest("[data-grid-item]") === null,
+    // 拖影内容状态（v0.49 特性4）：起拖/操作切换/结束上报，DragGhost 据此渲染
+    onDragActiveChange: (s) => setDragGhostState(s),
     selection,
     resolveTarget: (x, y, draggedPaths) => {
       const el = document.elementFromPoint(x, y) as HTMLElement | null;
@@ -757,6 +765,9 @@ export function IconGrid({
                           // 被真硬件鼠标的原生拖拽劫持（v0.49 BUG2 硬化）
                           draggable={!isRenaming}
                           onDragStart={(e) => {
+                            // 拖拽已被外部取消（测试钩子/上层否决）→ 浏览器不会进入
+                            // 原生拖拽，mousemove 照常派发，自研引擎 A 继续接管
+                            if (e.defaultPrevented) return;
                             const paths = selectionSet.has(entry.path) ? selection : [entry.path];
                             // 原生拖出仅支持真实文件系统路径；sftp://、http:// 等虚拟路径走 HTML5 文本拖拽
                             // （应用内投放两条链路都由 App 的 window 监听完成，目标窗格类型无关）
@@ -1010,13 +1021,16 @@ export function IconGrid({
               )}
             </div>
 
-            <div
-              ref={ghostRef}
-              className="pointer-events-none fixed left-0 top-0 z-50 rounded-md border bg-popover px-2 py-1 text-xs opacity-0 shadow-elevate"
-              style={{ transform: "translate(0px, 0px)" }}
-            >
-              {t("复制 {n} 项", { n: 0 })}
-            </div>
+            {/* 拖拽拖影（v0.49 特性4）：位置仍由引擎 ghostRef 命令式驱动。
+                dropDirName = folderHover 的显示名（引擎 A 命中文件夹图标时给出
+                「复制/移动到「XX」」落点确认行,与 folderHover 高亮同源） */}
+            <DragGhost
+              ghostRef={ghostRef}
+              paths={dragGhostState?.paths ?? []}
+              op={dragGhostState?.op ?? "copy"}
+              entries={sorted}
+              dropDir={folderHover ? (sorted.find((e) => e.path === folderHover)?.name ?? null) : null}
+            />
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent

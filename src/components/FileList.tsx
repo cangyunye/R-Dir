@@ -16,6 +16,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { RenameInput, routeRenameRowPress } from "@/components/RenameInput";
+import { DragGhost } from "@/components/DragGhost";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TAG_DEFS, tagLabel, type FileTags, type MenuConfig, type TagDef, type TagNames } from "@/lib/persist";
@@ -348,6 +349,8 @@ export function FileList({
     // 行内按压 startRowPress stopPropagation 不会到这，列头在滚动容器外不受影响
     isBlankPress: (target) =>
       !(target instanceof Element) || target.closest('[role="row"]') === null,
+    // 拖影内容状态（v0.49 特性4）：起拖/操作切换/结束上报，DragGhost 据此渲染
+    onDragActiveChange: (s) => setDragGhostState(s),
     selection,
     resolveTarget: (x, y) => {
       const el = document.elementFromPoint(x, y) as HTMLElement | null;
@@ -364,6 +367,11 @@ export function FileList({
   /** v0.8.3 虚拟滚动：固定行高，只渲染可视区 +/- buffer 行（行高见 lib/virtual-scroll） */
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(400); // 初始给个合理值，避免首帧只渲染前 6 行
+  /** 拖影内容状态（v0.49 特性4）：引擎起拖/操作切换/结束时上报 */
+  const [dragGhostState, setDragGhostState] = useState<{
+    paths: string[];
+    op: "copy" | "move";
+  } | null>(null);
   const onListScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     setScrollTop(el.scrollTop);
@@ -930,6 +938,9 @@ export function FileList({
                   data-drop-dir={entry.is_dir ? "" : undefined}
                   draggable="true"
                   onDragStart={(e) => {
+                    // 拖拽已被外部取消（测试钩子/上层否决）→ 浏览器不会进入原生拖拽，
+                    // mousemove 照常派发，自研引擎 A 继续接管（同 IconGrid）
+                    if (e.defaultPrevented) return;
                     const paths = selectionSet.has(entry.path) ? selection : [entry.path];
                     // 原生拖出仅支持真实文件系统路径；sftp://、http:// 等虚拟路径走 HTML5 文本拖拽
                     // （应用内投放两条链路都由 App 的 window 监听完成，目标窗格类型无关）
@@ -1174,14 +1185,15 @@ export function FileList({
         )}
       </div>
 
-      {/* 拖拽幽灵标签（常驻 DOM，拖动时显示） */}
-      <div
-        ref={ghostRef}
-        className="pointer-events-none fixed left-0 top-0 z-50 rounded-md border bg-popover px-2 py-1 text-xs opacity-0 shadow-elevate"
-        style={{ transform: "translate(0px, 0px)" }}
-      >
-        复制 0 项
-      </div>
+      {/* 拖拽拖影（v0.49 特性4）：位置仍由引擎 ghostRef 命令式驱动，内容经状态渲染。
+          引擎 A 不解析目录落点（resolveTarget 恒 dirPath=null），dropDirName 恒 null——
+          不给「复制到某目录」的误导反馈；目录落点确认由 App 层徽章（HTML5/原生会话）承担 */}
+      <DragGhost
+        ghostRef={ghostRef}
+        paths={dragGhostState?.paths ?? []}
+        op={dragGhostState?.op ?? "copy"}
+        entries={sorted}
+      />
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent

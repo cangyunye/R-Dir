@@ -219,6 +219,13 @@
     animation: enter 150ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
+  /* 落点确认徽章（App 层,HTML5/原生拖拽会话）与拖影挂载（雅）入场 */
+  [data-anim="elegant"] [data-drop-badge] {
+    --tw-enter-opacity: 0;
+    --tw-enter-scale: 0.96;
+    animation: enter 150ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
   /* MenuGroup 折叠组身体（雅）：从 0fr 展开到 1fr + 淡入；素=0ms 即瞬时，
      与历史「expanded && 挂载」行为零 diff。折叠维持卸载（Radix 箭头导航不会
      落进不可见子项，也规避 FocusScope 退出动画问题）。 */

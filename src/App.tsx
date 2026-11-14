@@ -544,6 +544,15 @@ export default function App() {
   } | null>(null);
   /** 拖拽悬停的目录条目（详情列表目录行 / 大图标文件夹图标）：投放 = 移入/复制进该目录 */
   const [dragDir, setDragDir] = useState<{ paneId: number; path: string } | null>(null);
+  /** 落点确认徽章（v0.49 特性4,HTML5/原生拖拽会话）：悬停目录条目时跟随光标
+   *  显示「复制/移动到「目录名」」——拖到哪、放进哪个目录一目了然。
+   *  引擎 A（自研鼠标拖拽）的落点确认在 DragGhost 落点行内,不走这里。 */
+  const [dropBadge, setDropBadge] = useState<{
+    name: string;
+    op: "copy" | "move";
+    x: number;
+    y: number;
+  } | null>(null);
   /** v0.30 窗格交换拖拽会话（拖窗格头到另一窗格互换布局位置）：
    *  source=拖动中的窗格，target=悬停目标（驱动 SplitView 的高亮/徽标） */
   const [paneSwap, setPaneSwap] = useState<PaneSwapDrag | null>(null);
@@ -4061,13 +4070,30 @@ useEffect(() => {
      *  无操作（详情列表）要么是空槽重摆（图标网格），常驻提示条只会误导。
      *  跨窗格时提示条对「是否悬停在目录行上」保持稳定（不随行切换闪烁），
      *  目录高亮在其上叠加精确提示。 */
-    const highlight = (srcPaneId: number | null, t: DropTarget | null, op: "copy" | "move") => {
+    const highlight = (
+      srcPaneId: number | null,
+      t: DropTarget | null,
+      op: "copy" | "move",
+      x: number,
+      y: number,
+    ) => {
       lastOp = op; // dragend 兜底投放用最近一次 dragover 的操作类型
       const key = `${t?.paneId ?? ""}|${t?.dirPath ?? ""}|${op}`;
       if (key === lastKey) return;
       lastKey = key;
       setDragOver(t && t.paneId !== srcPaneId ? { targetPaneId: t.paneId, op } : null);
       setDragDir(t?.dirPath ? { paneId: t.paneId, path: t.dirPath } : null);
+      // 落点确认徽章：命中目录条目才显示（跟手位置随每次 dragover 更新）
+      setDropBadge(
+        t?.dirPath
+          ? {
+              name: t.dirPath.split(/[\\/]/).filter(Boolean).pop() ?? t.dirPath,
+              op,
+              x,
+              y,
+            }
+          : null,
+      );
     };
     const onDragOver = (e: DragEvent) => {
       if (isPaneSwap(e)) {
@@ -4092,6 +4118,8 @@ useEffect(() => {
           native.sourcePaneId,
           dropTargetAt(e.clientX, e.clientY, native.paths),
           op,
+          e.clientX,
+          e.clientY,
         );
         return;
       }
@@ -4107,7 +4135,13 @@ useEffect(() => {
       lastPos = { x: e.clientX, y: e.clientY };
       // dragover 阶段 dataTransfer 值不可读，被拖路径从 HTML5 会话取（dragstart 记录）
       const html5 = getHtml5Drag();
-      highlight(html5?.sourcePaneId ?? null, dropTargetAt(e.clientX, e.clientY, html5?.paths ?? []), op);
+      highlight(
+        html5?.sourcePaneId ?? null,
+        dropTargetAt(e.clientX, e.clientY, html5?.paths ?? []),
+        op,
+        e.clientX,
+        e.clientY,
+      );
     };
     const onDragLeave = (e: DragEvent) => {
       if (!e.relatedTarget) {
@@ -4119,6 +4153,7 @@ useEffect(() => {
     const finishDrag = () => {
       setDragOver(null);
       setDragDir(null);
+      setDropBadge(null);
       lastKey = "";
     };
     /** 文件拖拽投放（HTML5 / 原生 / dragend 兜底三条链路共用）：目录条目 → 移入/复制
@@ -5340,6 +5375,23 @@ useEffect(() => {
             100% { width: 100%; }
           }
         `}</style>
+      </div>
+    )}
+    {/* 落点确认徽章（v0.49 特性4,HTML5/原生拖拽会话）：悬停目录条目时跟手显示
+        「复制/移动到「目录名」」。素=瞬时挂载,雅=入场动画（index.css data-drop-badge 段） */}
+    {dropBadge && (
+      <div
+        data-drop-badge=""
+        className="pointer-events-none fixed z-[60]"
+        style={{ left: dropBadge.x + 16, top: dropBadge.y + 20 }}
+      >
+        <div className="flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary shadow-elevate backdrop-blur-sm">
+          <span className="truncate">
+            {dropBadge.op === "move"
+              ? t("移动到「{name}」", { name: dropBadge.name })
+              : t("复制到「{name}」", { name: dropBadge.name })}
+          </span>
+        </div>
       </div>
     )}
     <div
