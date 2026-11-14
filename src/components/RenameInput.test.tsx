@@ -2,6 +2,10 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
 import { RenameInput } from "./RenameInput";
 
+// 框内拖选的接管分支仅 macOS（WKWebView 选区拖动规避，v0.48 起按 isMac 门控）。
+// 本文件专测该分支，mock 成 mac 平台；Windows/原生路径见 RenameInput.platform.test.tsx。
+vi.mock("@/lib/keymap", () => ({ isMac: true }));
+
 function mount(overrides: { onCommit?: (n: string) => void; onCancel?: () => void; initial?: string } = {}) {
   const onCommit = overrides.onCommit ?? vi.fn();
   const onCancel = overrides.onCancel ?? vi.fn();

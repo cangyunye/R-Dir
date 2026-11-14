@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
+import { isMac } from "@/lib/keymap";
 
 /** 点击坐标 → 输入框字符偏移：canvas 按输入框实际计算字体量前缀宽 + 二分定位
  *  （与 fitWidth 同一款字体串量法）。canvas 不可用（jsdom 裸环境）返回 0。 */
@@ -152,6 +153,11 @@ export function RenameInput({
         // 接管：preventDefault 拦掉默认手势，mousedown 塌缩到按点 + mousemove 手动
         // 扩展选区（Finder 语义）。其余按压全部留给原生：光标态按下、按在选区外、
         // 双击/三击（e.detail>1 的选词/全选）、非左键。
+        // v0.48 起接管仅限 WebKit（macOS）：Chromium/WebView2 的原生拖选本就正确
+        // （双击进入重命名后的框内拖选即走原生，实测无恙），而接管的 canvas 测宽
+        // 在 zoom≠1 下是布局像素、clientX 是视觉像素，偏移错位会把 F2 路径的
+        // 拖选毁掉（v0.44 列宽 zoom 换算同款教训）——非 macOS 直接放行原生。
+        if (!isMac) return;
         if (e.button !== 0 || e.detail > 1) return;
         const el = ref.current;
         if (!el) return;
