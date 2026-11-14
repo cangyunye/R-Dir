@@ -134,6 +134,8 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
   } | null>(null);
   /** 本手势的有效缩放比（懒量：首次画框时量一次；zoom 在手势中途不变） */
   const zoomRatioRef = useRef<number | null>(null);
+  /** 拖影换算比（懒量：拖拽激活时量 ghost 的 DOM 父元素一次；zoom 中途不变） */
+  const ghostRatioRef = useRef<number | null>(null);
 
   const cleanupDrag = () => {
     window.removeEventListener("mousemove", onWinMouseMove);
@@ -148,6 +150,7 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
     lastTargetRef.current = null;
     lastOpRef.current = "copy";
     zoomRatioRef.current = null;
+    ghostRatioRef.current = null;
     if (hoverRef.current !== null) {
       hoverRef.current = null;
       optsRef.current.onHoverChange?.(null);
@@ -173,7 +176,16 @@ export function useDragRubberBand(options: DragRubberBandOptions): DragRubberBan
         e.preventDefault();
         const op: "copy" | "move" = e.altKey ? "move" : "copy";
         if (ghostRef.current) {
-          ghostRef.current.style.transform = `translate(${e.clientX + 10}px, ${e.clientY + 10}px)`;
+          // ghost 是 zoomed 子树内的 fixed 元素：translate 的 px 渲染时被
+          // (根 zoom × 窗格 zoom) 放大——不折算时拖影偏离鼠标，偏离量随光标
+          // 距窗口原点的距离增大（v0.49 用户实测拖影远落在右下方）。视觉偏移
+          // ÷ 有效缩放比折回布局像素（探针量法，量 ghost 的 DOM 父元素一次/手势）
+          if (ghostRatioRef.current === null) {
+            const parent = ghostRef.current.parentElement;
+            ghostRatioRef.current = parent ? measureZoomRatio(parent) : 1;
+          }
+          const gr = ghostRatioRef.current;
+          ghostRef.current.style.transform = `translate(${(e.clientX + 10) / gr}px, ${(e.clientY + 10) / gr}px)`;
           // 内容（堆叠卡/数量/落点行）由 onDragActiveChange 状态渲染——不再
           // textContent 直写（会清掉 DragGhost 的子元素，v0.49 特性4）
         }

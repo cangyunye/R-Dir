@@ -34,6 +34,13 @@ test.describe("拖拽拖影与落点确认（v0.49 特性4）", () => {
       .poll(() => ghost.evaluate((el) => getComputedStyle(el).opacity))
       .toBe("1");
     await expect(ghost).toContainText("Notes.txt");
+    // 跟手位置：拖影容器左上角 ≈ 光标 + (10,10) 视觉像素（zoom 折算后,未折算时
+    // 会按 1.0769 放大偏离 ~27px）
+    const cx = box.x + box.width / 2 + 20;
+    const cy = box.y + box.height / 2 + 8;
+    const gb = (await ghost.boundingBox())!;
+    expect(Math.abs(gb.x - (cx + 10))).toBeLessThanOrEqual(8);
+    expect(Math.abs(gb.y - (cy + 10))).toBeLessThanOrEqual(8);
 
     // 拖到 Documents 文件夹图标上：落点行「复制到「Documents」」
     const dir = page.locator(`[data-grid-item][data-path="${HOME}/Documents"]`);
@@ -103,6 +110,11 @@ test.describe("拖拽拖影与落点确认（v0.49 特性4）", () => {
     const ghost = page.locator("[data-native-ghost]");
     await expect(ghost).toContainText("Notes.txt"); // 拖影主卡=被拖文件
     await expect(ghost).toContainText("复制到「Documents」"); // 目录落点行
+    // 跟手位置：拖影容器左上角 ≈ dragover 坐标 + (16,20) 视觉像素
+    const dirBox = (await page.locator(dirSel).boundingBox())!;
+    const gb2 = (await ghost.boundingBox())!;
+    expect(Math.abs(gb2.x - (dirBox.x + dirBox.width / 2 + 16))).toBeLessThanOrEqual(8);
+    expect(Math.abs(gb2.y - (dirBox.y + dirBox.height / 2 + 20))).toBeLessThanOrEqual(8);
     await page.evaluate(
       ({ fileSel }) => {
         const file = document.querySelector(fileSel)!;

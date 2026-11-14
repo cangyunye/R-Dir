@@ -267,6 +267,12 @@ const VIRTUAL_TAG_RE = /^tags:\/\/([a-z0-9_-]+)$/;
 /** 路径末段（拖影落点行/徽章显示名）；兼容 / 与 \ 分隔 */
 const basenameOf = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
+/** 根 CSS zoom（界面字体缩放）：App 根内 fixed 浮层的 translate/left px 渲染时
+ *  会被它放大——视口 CSS 像素写进这类浮层前须 ÷ 本值折回布局像素（v0.49 拖影
+ *  跟手修复；未折算时偏移量随光标距窗口原点增大）。 */
+const rootZoomFactor = () =>
+  parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+
 /** 非活动标签 keep-alive 上限（LRU）：超出后最久未激活的标签树卸载，退回「激活时重建」 */
 const KEEP_ALIVE_MAX = 8;
 
@@ -596,7 +602,10 @@ export default function App() {
         setNativeGhostInfo({ sourcePaneId, paths: [...paths], op, dropDir });
       }
       if (nativeGhostRef.current) {
-        nativeGhostRef.current.style.transform = `translate(${x + 16}px, ${y + 20}px)`;
+        // fixed 浮层活在根 zoom 放大子树内：translate 写视口像素前 ÷ 根 zoom
+        // 折回布局像素（不折算时拖影偏离鼠标,偏离量随光标距原点增大）
+        const z = rootZoomFactor();
+        nativeGhostRef.current.style.transform = `translate(${(x + 16) / z}px, ${(y + 20) / z}px)`;
         nativeGhostRef.current.style.opacity = "1";
       }
     },
@@ -5500,7 +5509,10 @@ useEffect(() => {
       <div
         data-drop-badge=""
         className="pointer-events-none fixed z-[60]"
-        style={{ left: dropBadge.x + 16, top: dropBadge.y + 20 }}
+        style={{
+          left: (dropBadge.x + 16) / rootZoomFactor(),
+          top: (dropBadge.y + 20) / rootZoomFactor(),
+        }}
       >
         <div className="flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary shadow-elevate backdrop-blur-sm">
           <span className="truncate">
