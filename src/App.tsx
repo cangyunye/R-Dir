@@ -212,7 +212,6 @@ import {
   saveSidebarCollapsed,
   saveShowExtensions,
   loadAnimLevel,
-  saveAnimLevel,
   type AnimLevel,
   loadDiffCaseSensitive,
   loadDiffMtimeTolerance,
@@ -3437,15 +3436,11 @@ useEffect(() => {
     });
   }, []);
 
-  /** v0.49 动画级别（素=瞬时历史行为 / 雅=丝滑动效）：一份 state 写两处——
+  /** v0.49 动画级别（雅=默认丝滑动效 / 素=瞬时历史行为,隐藏开关不在设置面板——
+   *  紧急退路:localStorage 直写 rfm.anim-level=plain 后刷新）：一份 state 写两处——
    *  documentElement.dataset.anim（CSS 侧含 Radix portal 弹层,必须挂文档根）+
    *  lib/anim 模块镜像（window 级监听器/命令式路径读不到 React 状态） */
-  const [animLevel, setAnimLevel] = useState<AnimLevel>(() => loadAnimLevel());
-  const changeAnimLevel = useCallback((v: AnimLevel) => {
-    setAnimLevel(v);
-    saveAnimLevel(v);
-    setAnimLevelRef(v);
-  }, []);
+  const [animLevel] = useState<AnimLevel>(() => loadAnimLevel());
   useEffect(() => {
     // 首挂同步镜像 + 根属性（loadAnimLevel 的初始值也要进 lib/anim 镜像）
     setAnimLevelRef(animLevel);
@@ -5894,8 +5889,6 @@ useEffect(() => {
         }}
         themeMode={themeMode}
         onThemeModeChange={changeThemeMode}
-        animLevel={animLevel}
-        onAnimLevelChange={changeAnimLevel}
         themePacks={themePacks}
         themeErrors={themeErrors}
         activeThemeId={activeThemeId}

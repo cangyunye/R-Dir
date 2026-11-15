@@ -42,7 +42,6 @@ import {
 } from "@/lib/keymap";
 import { cn } from "@/lib/utils";
 import type { ThemeMode } from "@/lib/types";
-import type { AnimLevel } from "@/lib/persist";
 import { themeSwatch, type ThemeLoadError, type ThemePack } from "@/lib/themePacks";
 import { quickInitials, quickTileColor } from "@/components/EntryContextMenu";
 import type { QuickToolItem, EditorCandidate } from "@/lib/openerApi";
@@ -121,8 +120,6 @@ const CONTEXT_MENU_ITEMS: { id: string; label: string }[] = [
 export function SettingsDialog({
   open,
   onClose,
-  animLevel,
-  onAnimLevelChange,
   themeMode,
   onThemeModeChange,
   /** v0.39 主题包（本地安装的纯数据配色；null = 尚未加载） */
@@ -179,9 +176,6 @@ export function SettingsDialog({
 }: {
   open: boolean;
   onClose: () => void;
-  /** v0.49 动画级别：素=瞬时（历史行为）/ 雅=苹果式丝滑动效 */
-  animLevel: AnimLevel;
-  onAnimLevelChange: (v: AnimLevel) => void;
   /** 主题颜色模式：显式浅色/深色，或跟随系统 */
   themeMode: ThemeMode;
   onThemeModeChange: (m: ThemeMode) => void;
@@ -692,41 +686,6 @@ export function SettingsDialog({
                           </button>
                         ))}
                       </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* v0.49 动画级别：素=瞬时（历史行为）/ 雅=苹果式丝滑动效；
-                    系统「减弱动态效果」偏好优先于本设置（JS 与 CSS 两侧同折算） */}
-                <div className="mb-5">
-                  <div className="overflow-hidden rounded-md border bg-card">
-                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
-                      <span className="text-foreground">{t("动画效果")}</span>
-                      <div className="flex gap-1">
-                        {(
-                          [
-                            { v: "plain" as AnimLevel, label: "朴素" },
-                            { v: "elegant" as AnimLevel, label: "优雅" },
-                          ]
-                        ).map(({ v, label }) => (
-                          <button
-                            key={v}
-                            aria-pressed={animLevel === v}
-                            onClick={() => onAnimLevelChange(v)}
-                            className={cn(
-                              "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors",
-                              animLevel === v
-                                ? "bg-primary text-primary-foreground"
-                                : "bg-muted text-muted-foreground hover:bg-accent",
-                            )}
-                          >
-                            {t(label)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="border-t px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
-                      {t("雅：菜单展开、拖拽反馈与动效平滑跟手；素：全部瞬时（原始行为）")}
                     </div>
                   </div>
                 </div>

@@ -484,18 +484,18 @@ describe("remoteTempDir（v0.37 远程打开临时目录）", () => {
 });
 
 // ---- v0.49 动画级别（素/雅） ----
-describe("动画级别", () => {
-  it("默认素（plain）", () => {
-    expect(loadAnimLevel()).toBe("plain");
-  });
-  it("保存雅后读回雅", () => {
-    saveAnimLevel("elegant");
+describe("动画级别（v0.49 默认雅,隐藏开关不在设置面板）", () => {
+  it("默认雅（elegant）", () => {
     expect(loadAnimLevel()).toBe("elegant");
-    saveAnimLevel("plain");
   });
-  it("非法值回落素", () => {
-    localStorage.setItem("rfm.anim-level", "fancy");
+  it("保存素后读回素（紧急退路：localStorage 直写,面板无入口）", () => {
+    saveAnimLevel("plain");
     expect(loadAnimLevel()).toBe("plain");
+    saveAnimLevel("elegant");
+  });
+  it("非法值回落雅", () => {
+    localStorage.setItem("rfm.anim-level", "fancy");
+    expect(loadAnimLevel()).toBe("elegant");
     localStorage.removeItem("rfm.anim-level");
   });
 });

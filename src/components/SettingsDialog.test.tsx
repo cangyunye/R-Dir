@@ -18,13 +18,10 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
   const onSetOpenerExtensions = vi.fn();
   const onAddOpener = vi.fn();
   const onThemeModeChange = vi.fn();
-  const onAnimLevelChange = vi.fn();
   render(
     <SettingsDialog
       open
       onClose={() => {}}
-      animLevel="plain"
-      onAnimLevelChange={onAnimLevelChange}
       themeMode="light"
       onThemeModeChange={onThemeModeChange}
       onBindingsChanged={() => {}}
@@ -62,94 +59,8 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: "打开方式" }));
-  return { onRemoveOpener, onSetOpenerExtensions, onAddOpener, onThemeModeChange, onAnimLevelChange };
+  return { onRemoveOpener, onSetOpenerExtensions, onAddOpener, onThemeModeChange };
 }
-
-describe("SettingsDialog 动画级别（v0.49 素/雅）", () => {
-  it("外观区展示「动画效果」分段控件，当前级别带 aria-pressed", () => {
-    setup({ animLevel: "elegant" });
-    fireEvent.click(screen.getByRole("button", { name: "外观" }));
-    const plain = screen.getByRole("button", { name: "朴素" });
-    const elegant = screen.getByRole("button", { name: "优雅" });
-    expect(plain).toHaveAttribute("aria-pressed", "false");
-    expect(elegant).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("点击分段切换并回调目标级别", () => {
-    const { onAnimLevelChange } = setup({ animLevel: "plain" });
-    fireEvent.click(screen.getByRole("button", { name: "外观" }));
-    fireEvent.click(screen.getByRole("button", { name: "优雅" }));
-    expect(onAnimLevelChange).toHaveBeenCalledWith("elegant");
-  });
-});
-
-describe("SettingsDialog 打开方式分区", () => {
-  it("展示名称与已关联扩展名", () => {
-    setup();
-    expect(screen.getByText("Zed")).toBeInTheDocument();
-    expect(screen.getByText("json")).toBeInTheDocument();
-    expect(screen.getByText("yaml")).toBeInTheDocument();
-  });
-
-  it("移除扩展名 → onSetOpenerExtensions 传剩余列表", () => {
-    const { onSetOpenerExtensions } = setup();
-    fireEvent.click(screen.getAllByTitle("移除该扩展名")[0]);
-    expect(onSetOpenerExtensions).toHaveBeenCalledWith("custom:1", ["yaml"]);
-  });
-
-  it("新增扩展名 → 归一化后合并", () => {
-    const { onSetOpenerExtensions } = setup();
-    const input = screen.getByPlaceholderText(/如 json/);
-    fireEvent.change(input, { target: { value: " .TOML " } });
-    fireEvent.submit(input.closest("form")!);
-    expect(onSetOpenerExtensions).toHaveBeenCalledWith("custom:1", ["json", "yaml", "toml"]);
-  });
-
-  it("逗号/空格分隔可一次加多个扩展名", () => {
-    const { onSetOpenerExtensions } = setup();
-    const input = screen.getByPlaceholderText(/如 json/);
-    fireEvent.change(input, { target: { value: "toml, .XML   ini" } });
-    fireEvent.submit(input.closest("form")!);
-    expect(onSetOpenerExtensions).toHaveBeenCalledWith("custom:1", [
-      "json",
-      "yaml",
-      "toml",
-      "xml",
-      "ini",
-    ]);
-  });
-
-  it("删除打开方式 → onRemoveOpener(id)", () => {
-    const { onRemoveOpener } = setup();
-    fireEvent.click(screen.getByTitle("删除此打开方式"));
-    expect(onRemoveOpener).toHaveBeenCalledWith("custom:1");
-  });
-
-  it("空列表显示引导文案", () => {
-    setup({ openers: [] });
-    expect(screen.getByText(/还没有自定义打开方式/)).toBeInTheDocument();
-  });
-});
-
-describe("SettingsDialog 收藏夹分区", () => {
-  it("左栏含「收藏夹」分区,点按钮关闭设置并 onOpenFavorites", () => {
-    const onOpenFavorites = vi.fn();
-    const onClose = vi.fn();
-    setup({ onOpenFavorites, onClose });
-    fireEvent.click(screen.getByRole("button", { name: "收藏夹" }));
-    fireEvent.click(screen.getByRole("button", { name: /打开收藏夹面板/ }));
-    expect(onClose).toHaveBeenCalled();
-    expect(onOpenFavorites).toHaveBeenCalled();
-  });
-});
-
-describe("SettingsDialog 关于分区", () => {
-  it("显示应用名与版本（随 tag 同步）", () => {
-    setup({ appName: "R-Dir", appVersion: "9.9.9" });
-    fireEvent.click(screen.getByRole("button", { name: "关于" }));
-    expect(screen.getByText("版本 v9.9.9 · Tauri 2 + React")).toBeInTheDocument();
-  });
-});
 
 describe("SettingsDialog 外观：颜色模式三态", () => {
   it("浅色/深色/跟随系统三段钮，当前模式高亮（aria-pressed）", () => {

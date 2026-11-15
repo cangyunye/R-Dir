@@ -688,17 +688,19 @@ const DIFF_CASE_KEY = "rfm.diff-case-sensitive";
 const DIFF_MTIME_KEY = "rfm.diff-mtime-tolerance";
 
 // ---- v0.49 动画级别（素=瞬时,历史行为；雅=苹果式丝滑动效） ----
-/** 素「plain」= 全部瞬时（默认，保持历史行为零 diff）；雅「elegant」= 菜单展开/
- *  拖拽反馈/位移动画走 --rdir-anim-dur 驱动的平滑动效。 */
+/** 雅「elegant」= 默认（菜单展开/拖拽反馈/位移动画走 --rdir-anim-dur 驱动的平滑
+ *  动效）；素「plain」= 全部瞬时（历史行为）。**隐藏开关**：v0.49 起不在设置面板
+ *  出现（开关量级还少），仅保留 localStorage 键作紧急退路——
+ *  `localStorage.setItem("rfm.anim-level", "plain")` 后刷新即回素。 */
 export type AnimLevel = "plain" | "elegant";
 const ANIM_LEVEL_KEY = "rfm.anim-level";
 
 export function loadAnimLevel(): AnimLevel {
   try {
     const v = localStorage.getItem(ANIM_LEVEL_KEY);
-    return v === "elegant" ? "elegant" : "plain";
+    return v === "plain" ? "plain" : "elegant";
   } catch {
-    return "plain";
+    return "elegant";
   }
 }
 

@@ -302,10 +302,11 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
     setHtml5Drag(null);
   });
 
-  it("HTML5 drop 落回本窗格空白槽：按落点写入摆放记录；非应用内投放不动作", () => {
+  it("HTML5 drop 落回本窗格空白槽：雅默认=插入语义（被越过项一并推移）；外部拖入不动作", () => {
     const onSetIconPosition = vi.fn();
     // 不设选中：主选中的「滚入可视区」effect 会在 jsdom 里改 scrollTop，槽位换算随之漂移。
-    // 被拖路径来自 dataTransfer，与选中无关
+    // 被拖路径来自 dataTransfer，与选中无关。默认动画级别=雅 → 单选拖拽走插入语义
+    // （素=找空位语义，历史行为经 rfm.anim-level=plain 隐藏开关可得）
     const { container } = render(<IconGrid {...makeProps({ onSetIconPosition })} />);
     const body = container.querySelector("[data-icongrid-body]")!;
     const makeDt = (types: string[]) => ({
@@ -320,12 +321,15 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
       Object.defineProperty(nativeEvent, "clientY", { value: y });
       fireEvent(body, nativeEvent);
     };
-    // iconSize 64 → 单元 88×112，行距 120：clientY 600 → 槽位 (0,5)，写入摆放记录
+    // iconSize 64 → 单元 88×112，行距 120：clientY 600 → 槽位 (0,5)；
+    // jsdom 单列：Documents(0,0) main.rs(0,1) photo.png(0,2)——main.rs 插入 (0,5),
+    // 链上 photo.png(0,2) 前移到 (0,1)（插入推移,与 computeSlotShift 一致）
     dropAt(40, 600, ["application/x-rdir-dnd", "text/plain"]);
+    expect(onSetIconPosition).toHaveBeenCalledWith("photo.png", [0, 1]);
     expect(onSetIconPosition).toHaveBeenCalledWith("main.rs", [0, 5]);
     // 无应用内标记（外部拖入）：不动作
     dropAt(40, 600, ["Files"]);
-    expect(onSetIconPosition).toHaveBeenCalledTimes(1);
+    expect(onSetIconPosition).toHaveBeenCalledTimes(2);
   });
 });
 

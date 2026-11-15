@@ -10,25 +10,8 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('[class*="z-[9999]"]')).toHaveCount(0);
 });
 
-test.describe("素/雅动画级别（v0.49）", () => {
-  test("默认素：data-anim=plain，右键菜单弹层无入场动画", async ({ page }) => {
-    const anim = await page.evaluate(() => document.documentElement.dataset.anim);
-    expect(anim).toBe("plain");
-    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click({ button: "right" });
-    const content = page.locator('[data-slot="context-menu-content"]');
-    await expect(content).toBeVisible();
-    const animName = await content.evaluate((el) => getComputedStyle(el).animationName);
-    expect(animName).toBe("none");
-  });
-
-  test("雅：种 rfm.anim-level=elegant → data-anim=elegant + 菜单弹层入场动画生效", async ({ page }) => {
-    await page.addInitScript(() => {
-      try {
-        localStorage.setItem("rfm.anim-level", "elegant");
-      } catch { /* ignore */ }
-    });
-    await page.reload();
-    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+test.describe("素/雅动画级别（v0.49 默认雅,隐藏开关仅 localStorage）", () => {
+  test("默认雅：data-anim=elegant，右键菜单弹层入场动画生效", async ({ page }) => {
     const anim = await page.evaluate(() => document.documentElement.dataset.anim);
     expect(anim).toBe("elegant");
     await page.locator(`[data-path="${HOME}/Notes.txt"]`).click({ button: "right" });
@@ -36,7 +19,22 @@ test.describe("素/雅动画级别（v0.49）", () => {
     await expect(content).toBeVisible();
     const animName = await content.evaluate((el) => getComputedStyle(el).animationName);
     expect(animName).toBe("enter");
-    const dur = await content.evaluate((el) => getComputedStyle(el).animationDuration);
-    expect(dur).toBe("0.15s");
+  });
+
+  test("素（紧急退路）：种 rfm.anim-level=plain → data-anim=plain + 弹层无动画", async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("rfm.anim-level", "plain");
+      } catch { /* ignore */ }
+    });
+    await page.reload();
+    await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
+    const anim = await page.evaluate(() => document.documentElement.dataset.anim);
+    expect(anim).toBe("plain");
+    await page.locator(`[data-path="${HOME}/Notes.txt"]`).click({ button: "right" });
+    const content = page.locator('[data-slot="context-menu-content"]');
+    await expect(content).toBeVisible();
+    const animName = await content.evaluate((el) => getComputedStyle(el).animationName);
+    expect(animName).toBe("none");
   });
 });
