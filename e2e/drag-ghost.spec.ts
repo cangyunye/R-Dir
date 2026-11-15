@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { installTauriMock } from "./tauri-mock";
 
 const HOME = "/mock/home";
+const MOD = process.platform === "darwin" ? "Meta" : "Control"; // mac: Ctrl+click=右键,加选用 Cmd
 const switchBtn = (mode: string) => `[data-view-switch] button[data-view-mode="${mode}"]`;
 
 test.beforeEach(async ({ page }) => {
@@ -61,10 +62,10 @@ test.describe("拖拽拖影与落点确认（v0.49 特性4）", () => {
     await page.locator(switchBtn("icons")).click();
     await expect(page.locator("[data-grid-item]")).toHaveCount(6);
     // Ctrl+点选两个文件后按住其一拖动
-    await page.keyboard.down("Control");
+    await page.keyboard.down(MOD);
     await page.locator(`[data-grid-item][data-path="${HOME}/Notes.txt"]`).click();
     await page.locator(`[data-grid-item][data-path="${HOME}/photo.png"]`).click();
-    await page.keyboard.up("Control");
+    await page.keyboard.up(MOD);
     const item = page.locator(`[data-grid-item][data-path="${HOME}/Notes.txt"]`);
     const box = await item.boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -132,6 +133,10 @@ test.describe("拖拽拖影与落点确认（v0.49 特性4）", () => {
 });
 
 test.describe("雅·挤开位移动画（v0.49 特性5,大图标）", () => {
+  // 套件断言真实雅位移（transform 过渡 + 插入预览）,显式退出全局 reduced-motion 模拟
+  // （JS 侧 getAnimLevel 会把系统 reduce 折算回素,预览不激活）
+  test.use({ reducedMotion: "no-preference" });
+
   async function dragOverNeighbor(page: import("@playwright/test").Page) {
     await page.evaluate(() => {
       window.addEventListener("dragstart", (e) => e.preventDefault(), true);

@@ -11,6 +11,9 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe("素/雅动画级别（v0.49 默认雅,隐藏开关仅 localStorage）", () => {
+  // 套件断言真实动画帧（enter）,显式退出 playwright.config 的全局 reduced-motion 模拟
+  test.use({ reducedMotion: "no-preference" });
+
   test("默认雅：data-anim=elegant，右键菜单弹层入场动画生效", async ({ page }) => {
     const anim = await page.evaluate(() => document.documentElement.dataset.anim);
     expect(anim).toBe("elegant");

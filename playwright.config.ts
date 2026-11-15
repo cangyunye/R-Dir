@@ -15,6 +15,12 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: "http://localhost:1420",
+    // CI 行为门禁模拟系统「减弱动态效果」：CSS 对 reduce 强制 --rdir-anim-dur:0,
+    // 等同「素」——e2e 断言不被 150ms 入场动画干扰（v0.49.0 mac runner 上雅默认
+    // 曾致菜单点击稳定性检查风暴,大面积 30s 超时）。动画接线的正验由
+    // anim-level.spec 显式 test.use({ reducedMotion: "no-preference" }) 继续
+    // 跑真动画;本地默认同样 reduce,与 CI 一致。
+    reducedMotion: "reduce",
     trace: "on-first-retry",
   },
   projects: [
