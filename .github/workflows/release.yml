@@ -14,7 +14,9 @@ jobs:
   # 只在 CI 才被 pnpm build(tsc) 抓到。这里提前、低成本地拦住。
   test:
     runs-on: macos-latest
-    timeout-minutes: 30
+    # v0.49.0 曾超 30min 被砍（e2e 241 例在 mac runner 上 ~29min+，v0.48.0 全程
+    # 已贴线 29m44s）——提至 60min 留余量
+    timeout-minutes: 60
     steps:
       # 拉全量 tag：version.test 断言「版本文件 == 最高 git tag」，tag 触发时
       # checkout 会带上当次 tag，而分支 workflow_dispatch 不拉任何 tag 会假失败

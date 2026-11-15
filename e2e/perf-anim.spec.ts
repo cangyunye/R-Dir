@@ -144,6 +144,10 @@ async function sampleStop(page: import("@playwright/test").Page): Promise<Metric
 }
 
 test("素/雅性能对比套件（stdout 输出 __PERF_JSON__ 单行 JSON）", async ({ page }) => {
+  // 性能画像仅本地跑：CI 的 e2e 是行为门禁，不跑基准（mac runner 上本套件要
+  // 7min+，v0.49.0 曾因此顶爆 release.yml test job 的 30min 上限——已改 60min
+  // 并在此跳过；本地跑法与 JSON 提取见 tools/perf-anim-report.mjs 头注）
+  test.skip(!!process.env.CI, "性能画像套件仅本地跑（CI 行为门禁不含基准）");
   test.setTimeout(480_000);
   const runs: { mode: string; size: number; scenario: string; metrics: Metrics }[] = [];
   await seedOnce(page);
