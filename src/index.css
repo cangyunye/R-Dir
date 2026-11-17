@@ -476,3 +476,8 @@
 .dark .codehl .hljs-deletion {
   color: oklch(0.67 0.15 25);
 }
+
+/* 侧栏服务器拖拽换组（指针链，见 Sidebar.tsx）起拖后的全局光标；收尾由 Sidebar 摘除该类 */
+body.rdir-server-dnd-active {
+  cursor: grabbing;
+}

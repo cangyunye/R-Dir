@@ -936,7 +936,12 @@ export function FileList({
                   tabIndex={0}
                   data-path={entry.path}
                   data-drop-dir={entry.is_dir ? "" : undefined}
-                  draggable="true"
+                  // 重命名会话中禁用本行拖拽（对齐 IconGrid v0.49 BUG2 硬化）：
+                  // 拖选路由（startRowPress 的 input 早退 / RenameInput 光标态早退）
+                  // 都不 preventDefault——光标态按拖时 Blink 沿祖先链找到 draggable=true
+                  // 的行起原生拖拽，框内拖选被「文件拖动」劫持（真硬件鼠标实测 dragstart
+                  // 触发、选区不动）。关掉来源后光标态按拖回归原生文本选择。
+                  draggable={renaming?.path !== entry.path}
                   onDragStart={(e) => {
                     // 拖拽已被外部取消（测试钩子/上层否决）→ 浏览器不会进入原生拖拽，
                     // mousemove 照常派发，自研引擎 A 继续接管（同 IconGrid）

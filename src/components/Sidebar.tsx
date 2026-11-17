@@ -30,6 +30,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { hasScheme } from "@/lib/cmdline";
+import { canPointerDnd } from "@/lib/native-drag";
 import type { QuickAccessItem, SftpServerView, VolumeInfo } from "@/lib/types";
 import type { ShellItem } from "@/lib/openerApi";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -271,6 +272,133 @@ export function Sidebar({
   const [renameGroupInput, setRenameGroupInput] = useState("");
   const renameGroupInputRef = useRef<HTMLInputElement>(null);
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
+  /** v0.34 Windows 原生拖放接管（tauri.windows.conf.json dragDropEnabled:true）后 wry 接管
+   *  WebView2 的 OLE 拖放，HTML5 dragover/drop 不再进页面 —— 服务器拖拽换组（v0.31，全应用
+   *  最后一条纯 HTML5 内部拖拽链）在 Windows 自 v0.34.0 起静默失效：dragstart 能触发，
+   *  分组头永远收不到 dragover/drop，松手落进 Tauri 原生 drop 且 paths 为空被 no-op。
+   *  修复照抄 SplitView 窗格头方案：指针事件驱动，在源行 / 命中的分组头上合成同一套
+   *  DragEvent（dragstart → dragover/dragleave → drop → dragend），既有 HTML5 处理器零改动；
+   *  仅在指针链可用（真实 Windows 应用 / e2e 旗标）时启用，macOS / 浏览器照走真 HTML5 拖拽。 */
+  const serverPtr = useRef<{
+    el: HTMLButtonElement;
+    pointerId: number;
+    x: number;
+    y: number;
+    active: boolean;
+    dt: DataTransfer;
+    hover: string | null;
+    cleanup: () => void;
+  } | null>(null);
+  /** 合成 dragstart 派发期间置位：行 onDragStart 据此放行（真 HTML5 拖拽才拦） */
+  const synthRef = useRef(false);
+  /** 起拖后置位：吞掉指针捕获把松手落点收回源行导致的 click，防拖完误触「连接」 */
+  const suppressClickRef = useRef(false);
+  const dragEv = (type: string, dt: DataTransfer, x?: number, y?: number) =>
+    new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y });
+  /** 收尾一次指针链会话（drop / 取消共用）：清会话、摘监听、还原源行透明度与光标；
+   *  传 pointerId 时顺带释放指针捕获 */
+  const clearServerPtr = (releasePointerId?: number) => {
+    const s = serverPtr.current;
+    if (!s) return;
+    serverPtr.current = null;
+    s.cleanup();
+    s.el.style.opacity = "";
+    document.body.classList.remove("rdir-server-dnd-active");
+    if (releasePointerId !== undefined) {
+      try {
+        s.el.releasePointerCapture(releasePointerId);
+      } catch {
+        /* 指针可能已释放 */
+      }
+    }
+    return s;
+  };
+  /** Esc / 失焦取消：不派发 drop，起拖过才补 dragend（行 onDragEnd 清组头高亮） */
+  const cancelServerPtr = () => {
+    const s = clearServerPtr();
+    if (s?.active) s.el.dispatchEvent(dragEv("dragend", s.dt));
+  };
+  const serverPtrHandlers = {
+    onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
+      if (!canPointerDnd() || e.button !== 0) return;
+      // 此时不捕获指针：捕获会把 click 目标改成源行，普通点击（连接）失效；
+      // 超过拖动阈值真正开始拖拽时再捕获（对齐 SplitView 窗格头）
+      serverPtr.current = {
+        el: e.currentTarget,
+        pointerId: e.pointerId,
+        x: e.clientX,
+        y: e.clientY,
+        active: false,
+        dt: new DataTransfer(),
+        hover: null,
+        cleanup: () => {},
+      };
+    },
+    onPointerMove: (e: React.PointerEvent<HTMLButtonElement>) => {
+      const s = serverPtr.current;
+      if (!s || s.el !== e.currentTarget) return;
+      if (!s.active) {
+        if (Math.hypot(e.clientX - s.x, e.clientY - s.y) < 5) return;
+        s.active = true;
+        s.pointerId = e.pointerId;
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* 指针可能已离开 */
+        }
+        // 起拖视觉：源行半透明（对齐窗格交换的 opacity-60）+ 全局 grabbing 光标；
+        // 顺带补上窗格交换范本缺的两档保险：Esc 可取消、失焦不残留
+        s.el.style.opacity = "0.6";
+        document.body.classList.add("rdir-server-dnd-active");
+        const esc = (ev: KeyboardEvent) => {
+          if (ev.key === "Escape") cancelServerPtr();
+        };
+        window.addEventListener("keydown", esc);
+        window.addEventListener("blur", cancelServerPtr);
+        s.cleanup = () => {
+          window.removeEventListener("keydown", esc);
+          window.removeEventListener("blur", cancelServerPtr);
+        };
+        synthRef.current = true;
+        try {
+          s.el.dispatchEvent(dragEv("dragstart", s.dt));
+        } finally {
+          synthRef.current = false;
+        }
+      }
+      // 落点命中分组头（视口 CSS 像素空间，elementFromPoint 不受滚动容器影响）；
+      // 组头变化时补发 dragleave / dragover，让既有 React 处理器接管悬停高亮
+      const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-server-group]");
+      const g = hit?.getAttribute("data-server-group") ?? null;
+      if (g !== s.hover) {
+        if (s.hover) {
+          document
+            .querySelector(`[data-server-group="${CSS.escape(s.hover)}"]`)
+            ?.dispatchEvent(dragEv("dragleave", s.dt, e.clientX, e.clientY));
+        }
+        hit?.dispatchEvent(dragEv("dragover", s.dt, e.clientX, e.clientY));
+        s.hover = g;
+      }
+    },
+    onPointerUp: (e: React.PointerEvent<HTMLButtonElement>) => {
+      const s = serverPtr.current;
+      if (!s || s.el !== e.currentTarget) return;
+      clearServerPtr(e.pointerId);
+      if (!s.active) return;
+      // 指针捕获把松手落点收回源行，紧随的 click 会误触「连接」——吞掉（下一宏任务复位）
+      suppressClickRef.current = true;
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
+      const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-server-group]");
+      hit?.dispatchEvent(dragEv("drop", s.dt, e.clientX, e.clientY));
+      s.el.dispatchEvent(dragEv("dragend", s.dt));
+    },
+    onPointerCancel: () => {
+      // 对齐 SplitView：不派发 drop，只派发 dragend 收尾
+      cancelServerPtr();
+    },
+  };
   const openRenameGroup = (group: string) => {
     setRenameGroupOld(group);
     // 预填显示名（数据哨兵「默认」→ 显示层翻译），提交时按显示名对齐回数据值
@@ -930,7 +1058,11 @@ export function Sidebar({
                   <ContextMenu onOpenChange={(o) => !o && setExpandedMenu(null)}>
                     <ContextMenuTrigger asChild>
                       <button
-                        onClick={() => onSftpOpen(sv)}
+                        onClick={() => {
+                          // 指针链拖拽收尾的 click（捕获使松手落点回到源行）不当作「连接」
+                          if (suppressClickRef.current) return;
+                          onSftpOpen(sv);
+                        }}
                         onAuxClick={(e) =>
                           e.button === 1 &&
                           (e.preventDefault(), onMiddleOpen(`sftp://${sv.user}@${sv.host}:${sv.port}/`))
@@ -938,10 +1070,17 @@ export function Sidebar({
                         draggable={!!onSftpSetGroup}
                         onDragStart={(e) => {
                           if (!onSftpSetGroup) return;
+                          // Windows 原生模式：阻止真 HTML5 拖拽（投放事件到不了页面），交给下方指针链；
+                          // 指针链合成的 dragstart 走到这里时 synthRef 已置位，照常写入标记数据
+                          if (canPointerDnd() && !synthRef.current) {
+                            e.preventDefault();
+                            return;
+                          }
                           e.dataTransfer.setData(SERVER_DND_TYPE, sv.id);
                           e.dataTransfer.effectAllowed = "move";
                         }}
                         onDragEnd={() => setDragOverGroup(null)}
+                        {...serverPtrHandlers}
                         title={`${sv.user}@${sv.host}:${sv.port}${sv.connected ? t("（已连接）") : ""} · ${t("右键操作")}${onSftpSetGroup ? " · " + t("拖到分组名可换组") : ""}`}
                         className={cn(
                           "flex w-full items-center gap-2 rounded py-1.5 pr-6 pl-2 text-left text-xs",

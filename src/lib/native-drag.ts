@@ -41,6 +41,24 @@ export const probeNativeDragOut = async () => {
 
 export const canNativeDragOut = () => probed && supported;
 
+/**
+ * 侧栏服务器拖拽换组的指针链可用性（v0.34 Windows 原生拖放接管后 HTML5
+ * dragover/drop 不再进页面，见 Sidebar.tsx 顶部注释）。
+ *
+ * 窄谓词、不并入 canNativeDragOut()：e2e 逃生舱旗标只翻转侧栏分支，
+ * 若并入会连带翻转 FileList/IconGrid/App 的原生拖放分支、破坏既有 e2e。
+ * 各环境：真实 Windows 壳=true（探测成功）；macOS / web / jsdom=false；
+ * e2e 默认 false，仅 addInitScript 预置 rdir.e2e.force-native-drag 的新用例为 true。
+ */
+export const canPointerDnd = () => {
+  try {
+    if (sessionStorage.getItem("rdir.e2e.force-native-drag") === "1") return true;
+  } catch {
+    /* jsdom 等无 sessionStorage 场景照走探测结果 */
+  }
+  return canNativeDragOut();
+};
+
 /** 一次原生拖出会话：发起时设置，drop 回落本窗格或拖拽结束后清除 */
 export interface NativeDragOut {
   sourcePaneId: number;
