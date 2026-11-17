@@ -306,7 +306,7 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
     const onSetIconPosition = vi.fn();
     // 不设选中：主选中的「滚入可视区」effect 会在 jsdom 里改 scrollTop，槽位换算随之漂移。
     // 被拖路径来自 dataTransfer，与选中无关。默认动画级别=雅 → 单选拖拽走插入语义
-    // （素=找空位语义，历史行为经 rfm.anim-level=plain 隐藏开关可得）
+    // （素=找空位语义，历史行为经 rfm.anim-level-v2=plain 隐藏开关可得）
     const { container } = render(<IconGrid {...makeProps({ onSetIconPosition })} />);
     const body = container.querySelector("[data-icongrid-body]")!;
     const makeDt = (types: string[]) => ({

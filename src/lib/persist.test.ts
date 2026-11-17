@@ -494,7 +494,12 @@ describe("动画级别（v0.49 默认雅,隐藏开关不在设置面板）", () 
     saveAnimLevel("elegant");
   });
   it("非法值回落雅", () => {
-    localStorage.setItem("rfm.anim-level", "fancy");
+    localStorage.setItem("rfm.anim-level-v2", "fancy");
+    expect(loadAnimLevel()).toBe("elegant");
+    localStorage.removeItem("rfm.anim-level-v2");
+  });
+  it("面板时代旧键 rfm.anim-level 整体作废：残留 plain 不再把用户钉在素模式（v0.49.1 换键回归）", () => {
+    localStorage.setItem("rfm.anim-level", "plain");
     expect(loadAnimLevel()).toBe("elegant");
     localStorage.removeItem("rfm.anim-level");
   });

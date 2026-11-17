@@ -38,7 +38,7 @@ async function seedOnce(page: import("@playwright/test").Page) {
     const n = Number(localStorage.getItem("perf-n") || "0");
     const mode = localStorage.getItem("perf-mode") || "plain";
     try {
-      localStorage.setItem("rfm.anim-level", mode);
+      localStorage.setItem("rfm.anim-level-v2", mode);
     } catch {
       /* ignore */
     }

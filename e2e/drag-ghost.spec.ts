@@ -157,7 +157,7 @@ test.describe("雅·挤开位移动画（v0.49 特性5,大图标）", () => {
   test("雅:拖到邻居槽位 → 被越过项带 transform 推移;松手落位=预览", async ({ page }) => {
     await page.addInitScript(() => {
       try {
-        localStorage.setItem("rfm.anim-level", "elegant");
+        localStorage.setItem("rfm.anim-level-v2", "elegant");
       } catch { /* ignore */ }
     });
     await page.goto("/");
@@ -182,7 +182,7 @@ test.describe("雅·挤开位移动画（v0.49 特性5,大图标）", () => {
   test("素:同样的拖拽悬停,邻居不带 transform（无挤开）", async ({ page }) => {
     await page.addInitScript(() => {
       try {
-        localStorage.setItem("rfm.anim-level", "plain");
+        localStorage.setItem("rfm.anim-level-v2", "plain");
       } catch { /* ignore */ }
     });
     await page.goto("/");

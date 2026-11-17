@@ -3437,7 +3437,7 @@ useEffect(() => {
   }, []);
 
   /** v0.49 动画级别（雅=默认丝滑动效 / 素=瞬时历史行为,隐藏开关不在设置面板——
-   *  紧急退路:localStorage 直写 rfm.anim-level=plain 后刷新）：一份 state 写两处——
+   *  紧急退路:localStorage 直写 rfm.anim-level-v2=plain 后刷新）：一份 state 写两处——
    *  documentElement.dataset.anim（CSS 侧含 Radix portal 弹层,必须挂文档根）+
    *  lib/anim 模块镜像（window 级监听器/命令式路径读不到 React 状态） */
   const [animLevel] = useState<AnimLevel>(() => loadAnimLevel());

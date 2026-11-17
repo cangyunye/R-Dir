@@ -691,9 +691,12 @@ const DIFF_MTIME_KEY = "rfm.diff-mtime-tolerance";
 /** 雅「elegant」= 默认（菜单展开/拖拽反馈/位移动画走 --rdir-anim-dur 驱动的平滑
  *  动效）；素「plain」= 全部瞬时（历史行为）。**隐藏开关**：v0.49 起不在设置面板
  *  出现（开关量级还少），仅保留 localStorage 键作紧急退路——
- *  `localStorage.setItem("rfm.anim-level", "plain")` 后刷新即回素。 */
+ *  `localStorage.setItem("rfm.anim-level-v2", "plain")` 后刷新即回素。
+ *  v0.49.1 换键：面板短暂存在期间（v0.49.0 前）持久化的 `rfm.anim-level` 可能
+ *  残留 "plain"，面板移除后用户无入口改回，会被静默钉在素模式——旧键整体
+ *  作废，不做值迁移（当时的「素/雅」只是临时对比开关，非正式用户偏好）。 */
 export type AnimLevel = "plain" | "elegant";
-const ANIM_LEVEL_KEY = "rfm.anim-level";
+const ANIM_LEVEL_KEY = "rfm.anim-level-v2";
 
 export function loadAnimLevel(): AnimLevel {
   try {

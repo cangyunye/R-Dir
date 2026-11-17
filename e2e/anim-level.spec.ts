@@ -24,10 +24,10 @@ test.describe("素/雅动画级别（v0.49 默认雅,隐藏开关仅 localStorag
     expect(animName).toBe("enter");
   });
 
-  test("素（紧急退路）：种 rfm.anim-level=plain → data-anim=plain + 弹层无动画", async ({ page }) => {
+  test("素（紧急退路）：种 rfm.anim-level-v2=plain → data-anim=plain + 弹层无动画", async ({ page }) => {
     await page.addInitScript(() => {
       try {
-        localStorage.setItem("rfm.anim-level", "plain");
+        localStorage.setItem("rfm.anim-level-v2", "plain");
       } catch { /* ignore */ }
     });
     await page.reload();

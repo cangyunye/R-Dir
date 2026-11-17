@@ -5,6 +5,10 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.49.1 (2026-11-17)
+
+- **修复：面板时代残留的动画级别持久化值把用户静默钉在素模式**——v0.49.0 前设置面板短暂存在过「动画效果」开关，期间点击「朴素」会持久化 `rfm.anim-level=plain`；v0.49.0 该开关收进代码（默认雅）并移除面板后，旧残留值既被静默继承、又无任何 UI 可改回——表现为安装 v0.49.0 后毫无动效（「像开关没打开」）。修复：持久化键换为 `rfm.anim-level-v2`，**旧键整体作废不做值迁移**（当时的素/雅只是临时对比开关而非正式偏好），所有用户回到默认雅；隐藏紧急退路改用新键（直写 `rfm.anim-level-v2=plain` 后刷新）。localStorage 取证：安装版 WebView2 leveldb 内实测存在 `rfm.anim-level` 的 plain/elegant 多条历史写入。
+
 ## v0.49.0 (2026-11-14)
 
 - **大图标框选两根因修复**：「起不了框」= `startRubber` 的 `target===currentTarget` 严格门被 IconGrid 全尺寸内层 relative div 拦死，图标间缝隙/边缘全部起不了框（唯一可起框面只剩内容下方空白条）——引擎新增可注入 `isBlankPress` 空白判定，IconGrid 按「target 不在条目内」判空白（缝隙/边缘可起框，按在图标上仍走「选中+拖拽候选」访达语义）；FileList 同样注入，一并修掉虚拟滚动 padTop/padBottom 垫高 div 盖住行间行下空白导致详情列表空白处同样起不了框的既有缺口；`grid-label-full` 悬停浮层补 `pointer-events-none`（此前把按压区延伸进格子下方缝隙）。**配套 portal 事件回归修复**：菜单挂 body portal 但 React 组件树上是列表子节点，菜单内 mousedown 沿组件树冒泡进 `startRubber` 被 closest 空白判定误判 → 菜单组一展开选区即被清空（Z2 多选压缩挂）——`startRubber` 补 `currentTarget.contains(target)` DOM 路径校验，portal 事件一律拒绝。**「画的框错位」**：框选矩形坐标 = 视觉像素直接写进 zoomed 子树的布局像素，被根 zoom×窗格 zoom 整体放大（1.15385 时 400px 偏 461px），命中测试自洽所以「选中的图标跟手、画的框歪」——画框前按有效缩放比折算（探针子元素量法，每手势量一次），命中测试保持视觉空间；附带修复 `slotAt` 的同族 zoom 混算（槽位随索引漂移，slot5 算成 6）。
