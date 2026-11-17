@@ -199,7 +199,8 @@
 }
 [data-anim="elegant"] {
   --rdir-anim-dur: 180ms;
-  --rdir-anim-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* iOS sheet 曲线:慢起步-匀加速-长尾滑行,无「猛冲后急停」的顿点 */
+  --rdir-anim-ease: cubic-bezier(0.32, 0.72, 0, 1);
 }
 /* 右键/下拉菜单弹层入场（雅）：fade + 轻缩放 + 轻下滑，复用 tw-animate-css 的
    全局 enter keyframe（自定义属性供帧值）。退出动画维持不做——FocusScope 陷阱
@@ -211,40 +212,22 @@
   --tw-enter-opacity: 0;
   --tw-enter-scale: 0.96;
   --tw-enter-translate-y: -3px;
-  animation: enter 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: enter 200ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* 落点确认徽章（App 层,HTML5/原生拖拽会话）入场 */
 [data-anim="elegant"] [data-drop-badge] {
   --tw-enter-opacity: 0;
   --tw-enter-scale: 0.96;
-  animation: enter 150ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: enter 150ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* MenuGroup 折叠组身体（雅）：从 0fr 展开到 1fr + 淡入；素=0ms 即瞬时，
    与历史「expanded && 挂载」行为零 diff。折叠维持卸载（Radix 箭头导航不会
    落进不可见子项，也规避 FocusScope 退出动画问题）。 */
-[data-anim="elegant"] .menu-group-body {
-  animation: rdir-group-in var(--rdir-anim-dur) var(--rdir-anim-ease);
-}
-@keyframes rdir-group-in {
-  from {
-    grid-template-rows: 0fr;
-    opacity: 0;
-  }
-}
-
-/* 展开组子项「流动滑入」：高度生长的同时子内容自身轻下滑+淡入——
-   之前只有外层裁切显现,视觉上是「擦除」而非内容随手势流动 */
-[data-anim="elegant"] .menu-group-inner {
-  animation: rdir-inner-in var(--rdir-anim-dur) var(--rdir-anim-ease);
-}
-@keyframes rdir-inner-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-}
+/* 展开组推挤动画 = MenuGroup 内的合成器 FLIP（下方兄弟 transform 滑落，见
+   MenuGroup.tsx useLayoutEffect 注释）——不在 CSS 做布局动画（grid-template-rows
+   每帧重排整个菜单，弱机 4× 节流实测 90-108ms 冻结）。 */
 
 /* ═══ 设置面板皮肤：浅色「云舒云卷」磨砂玻璃 / 深色「黑金纹琉璃」 ═══
    做法：设置框根元素挂 .settings-glass、页面遮罩挂 .settings-overlay，在两者子树内
