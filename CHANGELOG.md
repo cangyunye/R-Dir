@@ -5,6 +5,11 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+## v0.49.2 (2026-11-17)
+
+- **修复：「雅」不再被系统「减弱动态效果」静默压制**——Windows 关闭「动画效果」（设置 > 辅助功能 > 视觉效果）或经远程桌面连接的机器，WebView2 会向页面报告 `prefers-reduced-motion: reduce`；v0.49.x 按无障碍惯例把该信号折算回「素」，导致这类机器上**任何构建都没有动效**（用户在其他机器实测：全新安装 v0.49.0/v0.49.1 依然毫无动画）。现改为：**雅 = 无条件生效**，素 = 唯一关闭途径（隐藏键 `rfm.anim-level-v2=plain`）；JS 折算（lib/anim）与 CSS 的 reduce 强制归零/`no-preference` 包裹全部移除。取而代之，行为门禁的「素」由 e2e mock 预置承担（`RDIR_E2E_ANIM` 环境变量可切雅），动画接线的正验由 anim-level / 挤开位移两套件继续跑真动画。CDP 取证：生产壳内模拟 reduce 后 `enter` 动画仍运行（0.15s）。
+- 测试：vitest +1（系统 reduce 不再折算级别）；e2e mock 新增动画级别预置与 sessionStorage 豁免旗标（「默认雅」用例走真实无键路径）；全量 vitest 806 / e2e 241 全绿。
+
 ## v0.49.1 (2026-11-17)
 
 - **修复：面板时代残留的动画级别持久化值把用户静默钉在素模式**——v0.49.0 前设置面板短暂存在过「动画效果」开关，期间点击「朴素」会持久化 `rfm.anim-level=plain`；v0.49.0 该开关收进代码（默认雅）并移除面板后，旧残留值既被静默继承、又无任何 UI 可改回——表现为安装 v0.49.0 后毫无动效（「像开关没打开」）。修复：持久化键换为 `rfm.anim-level-v2`，**旧键整体作废不做值迁移**（当时的素/雅只是临时对比开关而非正式偏好），所有用户回到默认雅；隐藏紧急退路改用新键（直写 `rfm.anim-level-v2=plain` 后刷新）。localStorage 取证：安装版 WebView2 leveldb 内实测存在 `rfm.anim-level` 的 plain/elegant 多条历史写入。

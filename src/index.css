@@ -201,42 +201,36 @@
   --rdir-anim-dur: 180ms;
   --rdir-anim-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --rdir-anim-dur: 0ms !important;
-  }
-}
-
 /* 右键/下拉菜单弹层入场（雅）：fade + 轻缩放 + 轻下滑，复用 tw-animate-css 的
    全局 enter keyframe（自定义属性供帧值）。退出动画维持不做——FocusScope 陷阱
-   在退出动画期间会抢 RenameInput 焦点（见 ui/context-menu.tsx 注释）。 */
-@media (prefers-reduced-motion: no-preference) {
-  [data-anim="elegant"] [data-slot="context-menu-content"],
-  [data-anim="elegant"] [data-slot="dropdown-menu-content"] {
-    --tw-enter-opacity: 0;
-    --tw-enter-scale: 0.97;
-    --tw-enter-translate-y: -4px;
-    animation: enter 150ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
+   在退出动画期间会抢 RenameInput 焦点（见 ui/context-menu.tsx 注释）。
+   雅不受系统 prefers-reduced-motion 影响（v0.49.1 产品拍板,见 lib/anim.ts）——
+   Windows 关闭窗口动画/RDP 的机器上此前被折算回素,用户实测动效全部消失。 */
+[data-anim="elegant"] [data-slot="context-menu-content"],
+[data-anim="elegant"] [data-slot="dropdown-menu-content"] {
+  --tw-enter-opacity: 0;
+  --tw-enter-scale: 0.97;
+  --tw-enter-translate-y: -4px;
+  animation: enter 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
 
-  /* 落点确认徽章（App 层,HTML5/原生拖拽会话）与拖影挂载（雅）入场 */
-  [data-anim="elegant"] [data-drop-badge] {
-    --tw-enter-opacity: 0;
-    --tw-enter-scale: 0.96;
-    animation: enter 150ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
+/* 落点确认徽章（App 层,HTML5/原生拖拽会话）入场 */
+[data-anim="elegant"] [data-drop-badge] {
+  --tw-enter-opacity: 0;
+  --tw-enter-scale: 0.96;
+  animation: enter 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
 
-  /* MenuGroup 折叠组身体（雅）：从 0fr 展开到 1fr + 淡入；素=0ms 即瞬时，
-     与历史「expanded && 挂载」行为零 diff。折叠维持卸载（Radix 箭头导航不会
-     落进不可见子项，也规避 FocusScope 退出动画问题）。 */
-  [data-anim="elegant"] .menu-group-body {
-    animation: rdir-group-in var(--rdir-anim-dur) var(--rdir-anim-ease);
-  }
-  @keyframes rdir-group-in {
-    from {
-      grid-template-rows: 0fr;
-      opacity: 0;
-    }
+/* MenuGroup 折叠组身体（雅）：从 0fr 展开到 1fr + 淡入；素=0ms 即瞬时，
+   与历史「expanded && 挂载」行为零 diff。折叠维持卸载（Radix 箭头导航不会
+   落进不可见子项，也规避 FocusScope 退出动画问题）。 */
+[data-anim="elegant"] .menu-group-body {
+  animation: rdir-group-in var(--rdir-anim-dur) var(--rdir-anim-ease);
+}
+@keyframes rdir-group-in {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
   }
 }
 

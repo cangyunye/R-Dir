@@ -12,6 +12,21 @@ import type { Page } from "@playwright/test";
  * 这里提供一个固定的虚拟文件系统，让用例能断言真实的列表内容与交互结果。
  */
 export async function installTauriMock(page: Page): Promise<void> {
+  // v0.49.1 起「雅」不受系统 reduce 影响,行为门禁的「素」由这里预置承担：
+  // 默认种 rfm.anim-level-v2=plain（与其他 initScript 的注册顺序在先,后注册者
+  // 可覆盖——anim-level/挤开套件显式种自己的值）;RDIR_E2E_ANIM=elegant 让默认雅。
+  // （mac runner 上雅动画曾致菜单点击稳定性风暴,行为用例不跑真动画。）
+  const e2eAnim = process.env.RDIR_E2E_ANIM === "elegant" ? "elegant" : "plain";
+  await page.addInitScript((anim) => {
+    try {
+      // sessionStorage 旗标 = 用例要测「无持久化」的真实默认路径（如「默认雅」），
+      // 本种子跳过
+      if (sessionStorage.getItem("rdir-e2e-anim-unseeded") === "1") return;
+      localStorage.setItem("rfm.anim-level-v2", anim);
+    } catch {
+      /* ignore */
+    }
+  }, e2eAnim);
   await page.addInitScript(() => {
     const HOME = "/mock/home";
     // 1x1 透明 PNG（preview_data 桩用）
