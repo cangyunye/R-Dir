@@ -209,9 +209,9 @@
 [data-anim="elegant"] [data-slot="context-menu-content"],
 [data-anim="elegant"] [data-slot="dropdown-menu-content"] {
   --tw-enter-opacity: 0;
-  --tw-enter-scale: 0.97;
-  --tw-enter-translate-y: -4px;
-  animation: enter 150ms cubic-bezier(0.22, 1, 0.36, 1);
+  --tw-enter-scale: 0.96;
+  --tw-enter-translate-y: -3px;
+  animation: enter 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* 落点确认徽章（App 层,HTML5/原生拖拽会话）入场 */
@@ -231,6 +231,18 @@
   from {
     grid-template-rows: 0fr;
     opacity: 0;
+  }
+}
+
+/* 展开组子项「流动滑入」：高度生长的同时子内容自身轻下滑+淡入——
+   之前只有外层裁切显现,视觉上是「擦除」而非内容随手势流动 */
+[data-anim="elegant"] .menu-group-inner {
+  animation: rdir-inner-in var(--rdir-anim-dur) var(--rdir-anim-ease);
+}
+@keyframes rdir-inner-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
   }
 }
 
