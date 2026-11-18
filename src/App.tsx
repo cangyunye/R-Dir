@@ -182,6 +182,13 @@ import { LanguageProvider } from "@/lib/LanguageProvider";
 import { serializeSession, serializeSessionTab, sessionSignature } from "@/lib/session";
 import { getNativeDragOut, probeNativeDragOut, setNativeDragOut, getHtml5Drag, setHtml5Drag, canNativeDragOut } from "@/lib/native-drag";
 import { dropTargetAt, type DropTarget } from "@/lib/drop-target";
+import { rootZoomFactor } from "@/lib/zoom";
+import {
+  getSearchDrag,
+  finishSearchDrag,
+  emitSearchDragHover,
+  resolveSearchDropAt,
+} from "@/lib/search-drag";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { fetchLatestRelease, DOCS_URL, REPO_URL } from "@/lib/update";
 import {
@@ -265,12 +272,6 @@ const VIRTUAL_TAG_RE = /^tags:\/\/([a-z0-9_-]+)$/;
 
 /** 路径末段（拖影落点行/徽章显示名）；兼容 / 与 \ 分隔 */
 const basenameOf = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
-
-/** 根 CSS zoom（界面字体缩放）：App 根内 fixed 浮层的 translate/left px 渲染时
- *  会被它放大——视口 CSS 像素写进这类浮层前须 ÷ 本值折回布局像素（v0.49 拖影
- *  跟手修复；未折算时偏移量随光标距窗口原点增大）。 */
-const rootZoomFactor = () =>
-  parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
 
 /** 非活动标签 keep-alive 上限（LRU）：超出后最久未激活的标签树卸载，退回「激活时重建」 */
 const KEEP_ALIVE_MAX = 8;
@@ -577,12 +578,18 @@ export default function App() {
     paths: string[];
     op: "copy" | "move";
     dropDir: string | null;
+    /** 搜索拖拽会话（feat/search-drag）：拖影内容按会话条目回查（搜索行不在窗格条目表） */
+    entries?: FileEntry[];
+    /** 搜索拖拽专属落点提示（"trash"=松开删除 / "cancel"=松开取消）；渲染处翻译 */
+    hint?: "trash" | "cancel" | null;
   } | null>(null);
   const [nativeGhostInfo, setNativeGhostInfo] = useState<{
     sourcePaneId: number | null;
     paths: string[];
     op: "copy" | "move";
     dropDir: string | null;
+    entries?: FileEntry[];
+    hint?: "trash" | "cancel" | null;
   } | null>(null);
   const showNativeGhost = useCallback(
     (
@@ -592,13 +599,15 @@ export default function App() {
       x: number,
       y: number,
       dropDir: string | null,
+      entries?: FileEntry[],
+      hint?: "trash" | "cancel" | null,
     ) => {
-      const key = `${sourcePaneId}|${paths.join("|")}|${op}|${dropDir ?? ""}`;
+      const key = `${sourcePaneId}|${paths.join("|")}|${op}|${dropDir ?? ""}|${hint ?? ""}`;
       const info = nativeGhostInfoRef.current;
       if (!info || info.key !== key) {
-        const next = { key, sourcePaneId, paths: [...paths], op, dropDir };
+        const next = { key, sourcePaneId, paths: [...paths], op, dropDir, entries, hint: hint ?? null };
         nativeGhostInfoRef.current = next;
-        setNativeGhostInfo({ sourcePaneId, paths: [...paths], op, dropDir });
+        setNativeGhostInfo({ sourcePaneId, paths: [...paths], op, dropDir, entries, hint: hint ?? null });
       }
       if (nativeGhostRef.current) {
         // fixed 浮层活在根 zoom 放大子树内：translate 写视口像素前 ÷ 根 zoom
@@ -3974,6 +3983,40 @@ useEffect(() => {
     [transferPaths],
   );
 
+  // ─── 搜索结果拖拽（feat/search-drag）回调 ───
+  /** 拖拽删除：移入回收站，不弹确认（手势直删，Ctrl+Z 可撤销）；刷新正显示被删
+   *  条目父目录的窗格（同 handleSearchRenamed 的刷新逻辑，当前层结果经窗格刷新派生） */
+  const doSearchTrashDelete = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+      try {
+        await deleteEntries(paths);
+        pushOp({ kind: "delete", paths, paneId: searchPane?.id ?? -1 });
+        const parents = new Set(paths.map((p) => parentPath(p)));
+        tabs
+          .flatMap((tb) => Object.values(tb.panes))
+          .filter((p) => parents.has(p.path))
+          .forEach((p) => refreshPane(p.id));
+      } catch (e) {
+        showError(String(e));
+      }
+    },
+    [pushOp, searchPane, tabs, refreshPane, showError],
+  );
+  /** 拖拽复制/移动：目标 = 目录条目（进该目录）或跨窗格（进目标窗格当前目录）；
+   *  源窗格 = 面板冻结的 searchPane（关闭后回落活动窗格），冲突走 transferPaths 全套管线 */
+  const doSearchDropCopy = useCallback(
+    (target: { paneId: number; dirPath: string | null }, paths: string[], op: "copy" | "move") => {
+      if (!searchPane) return;
+      if (target.dirPath) void doDropIntoDir(searchPane.id, paths, op, target.dirPath, target.paneId);
+      else if (target.paneId !== searchPane.id) void doDropPaths(searchPane.id, paths, op, target.paneId);
+    },
+    [searchPane, doDropIntoDir, doDropPaths],
+  );
+  /** 原生拖放订阅 effect（空依赖）持有旧帧闭包：经 ref 每帧取新值 */
+  const searchTrashRef = useRef(doSearchTrashDelete);
+  searchTrashRef.current = doSearchTrashDelete;
+
   // v0.22.2 原生（HTML5）拖拽投放：行 onDragStart 后由浏览器接管拖动，mousemove/mouseup
   // 停发，自研鼠标拖拽收不到松手事件——表现为拖动全程 🚫、松手后提示条才出现、
   // 下一次点击才触发投放。这里在 window 上接原生事件流修复：
@@ -4007,6 +4050,8 @@ useEffect(() => {
         setDragDir(null);
         setDropBadge(null);
         hideNativeGhost();
+        // 搜索拖拽 zone 悬停通报复位（面板渲染侧随会话/通报恢复）
+        emitSearchDragHover(null);
         lastKey = "";
       };
       /** Tauri 位置是窗口物理像素；elementFromPoint 要的是视口 CSS 像素（÷ DPR）。
@@ -4043,6 +4088,56 @@ useEffect(() => {
           const c = toClient(p.position);
           const native = getNativeDragOut();
           if (native) {
+            // 搜索结果拖拽会话（feat/search-drag）：落点先解析专属投放区（右上角取消区/
+            // 右下角垃圾箱），悬停经 emitSearchDragHover 通报面板渲染 zone 高亮与拖影提示行；
+            // 拖影内容按会话条目回查（搜索行不在窗格条目表）。收尾 finishSearchDrag 恰好
+            // 一次，OLE promise（面板侧）读到 finished 不再重复收尾
+            const search = native.search ? getSearchDrag() : null;
+            if (search) {
+              if (p.type === "drop") {
+                void queryModifiers()
+                  .catch(() => ({ alt: lastAlt }))
+                  .then((m) => {
+                    clear();
+                    const at = resolveSearchDropAt(c.x, c.y, native.paths);
+                    if (at.kind === "trash") {
+                      finishSearchDrag("deleted");
+                      void searchTrashRef.current(native.paths);
+                    } else if (at.kind === "cancel") {
+                      finishSearchDrag("cancelled");
+                    } else if (at.target) {
+                      const op = m.alt ? "move" : "copy";
+                      const { doDropPaths: dp, doDropIntoDir: dd } = dropActionsRef.current;
+                      if (at.target.dirPath)
+                        void dd(native.sourcePaneId, native.paths, op, at.target.dirPath, at.target.paneId);
+                      else if (at.target.paneId !== native.sourcePaneId)
+                        void dp(native.sourcePaneId, native.paths, op, at.target.paneId);
+                      finishSearchDrag("copied");
+                    } else {
+                      // 窗外回落但无目标 / 空白处 = 取消
+                      finishSearchDrag("cancelled");
+                    }
+                    setNativeDragOut(null);
+                  });
+                return;
+              }
+              const at = resolveSearchDropAt(c.x, c.y, native.paths);
+              emitSearchDragHover(at.kind);
+              const op = lastAlt ? "move" : "copy";
+              // zone 悬停时窗格高亮让位（取消区/垃圾箱与窗格提示条不同亮）
+              highlight(native.sourcePaneId, at.kind ? null : at.target, op);
+              showNativeGhost(
+                native.sourcePaneId,
+                native.paths,
+                op,
+                c.x,
+                c.y,
+                at.target?.dirPath ? basenameOf(at.target.dirPath) : null,
+                search.entries,
+                at.kind,
+              );
+              return;
+            }
             if (p.type === "drop") {
               void queryModifiers()
                 .catch(() => ({ alt: lastAlt }))
@@ -4232,6 +4327,24 @@ useEffect(() => {
       lastPos = { x: e.clientX, y: e.clientY };
       // dragover 阶段 dataTransfer 值不可读，被拖路径从 HTML5 会话取（dragstart 记录）
       const html5 = getHtml5Drag();
+      // 搜索结果拖拽会话（feat/search-drag，macOS/浏览器 HTML5 链路）：同原生链路的
+      // 专属落点（取消区/垃圾箱）分流，zone 悬停时窗格高亮让位
+      const search = html5?.search ? getSearchDrag() : null;
+      if (search) {
+        const at = resolveSearchDropAt(e.clientX, e.clientY, html5?.paths ?? []);
+        emitSearchDragHover(at.kind);
+        showNativeGhost(
+          html5?.sourcePaneId ?? null,
+          html5?.paths ?? [],
+          op,
+          e.clientX,
+          e.clientY,
+          at.target?.dirPath ? basenameOf(at.target.dirPath) : null,
+          search.entries,
+          at.kind,
+        );
+        return;
+      }
       const t = dropTargetAt(e.clientX, e.clientY, html5?.paths ?? []);
       highlight(html5?.sourcePaneId ?? null, t, op, e.clientX, e.clientY);
       // 应用发起的 HTML5 会话：跟手拖影（同 Tauri 原生链路）
@@ -4306,11 +4419,34 @@ useEffect(() => {
       e.preventDefault();
       droppedAtRef.current = Date.now();
       finishDrag();
+      const html5 = getHtml5Drag();
       setHtml5Drag(null);
       const source = Number(e.dataTransfer?.getData(DND_TYPE));
       const paths = (e.dataTransfer?.getData("text/plain") ?? "")
         .split("\n")
         .filter(Boolean);
+      // 搜索结果拖拽会话（feat/search-drag）：专属落点分流——垃圾箱=回收站删除（可撤销）、
+      // 取消区/空白=取消恢复面板、窗格/目录=复制（Alt=移动，transferPaths 冲突管线）
+      if (html5?.search && getSearchDrag()) {
+        const at = resolveSearchDropAt(e.clientX, e.clientY, html5.paths);
+        if (at.kind === "trash") {
+          finishSearchDrag("deleted");
+          void searchTrashRef.current(html5.paths);
+        } else if (at.kind === "cancel") {
+          finishSearchDrag("cancelled");
+        } else if (at.target) {
+          const op = e.altKey ? "move" : "copy";
+          const { doDropPaths: dp, doDropIntoDir: dd } = dropActionsRef.current;
+          if (at.target.dirPath)
+            void dd(html5.sourcePaneId, html5.paths, op, at.target.dirPath, at.target.paneId);
+          else if (at.target.paneId !== html5.sourcePaneId)
+            void dp(html5.sourcePaneId, html5.paths, op, at.target.paneId);
+          finishSearchDrag("copied");
+        } else {
+          finishSearchDrag("cancelled");
+        }
+        return;
+      }
       fileDrop(source, paths, e.altKey ? "move" : "copy", e.clientX, e.clientY);
     };
     const onDragEnd = (e: DragEvent) => {
@@ -4318,6 +4454,9 @@ useEffect(() => {
       finishSwap();
       // HTML5 会话无论怎样收场都清掉（drop 已清，这里兜 Esc 取消 / 拖出窗口）
       setHtml5Drag(null);
+      // 搜索拖拽会话（feat/search-drag）：drop 已收尾时 no-op；Esc 取消（浏览器原生
+      // 取消 drag → dragend）与拖出窗口松手在此兜底恢复面板
+      if (getSearchDrag()) finishSearchDrag("cancelled");
       // dragend 阶段 dataTransfer 已进入保护模式（types 清空），用 dragover 里的标记
       if (!seenInternal) return;
       seenInternal = false;
@@ -5493,8 +5632,15 @@ useEffect(() => {
         <DragGhostCards
           paths={nativeGhostInfo.paths}
           op={nativeGhostInfo.op}
-          entries={entriesOfPane(nativeGhostInfo.sourcePaneId)}
+          entries={nativeGhostInfo.entries ?? entriesOfPane(nativeGhostInfo.sourcePaneId)}
           dropDir={nativeGhostInfo.dropDir}
+          hint={
+            nativeGhostInfo.hint === "trash"
+              ? t("松开删除")
+              : nativeGhostInfo.hint === "cancel"
+                ? t("松开取消")
+                : null
+          }
         />
       )}
     </div>
@@ -5734,6 +5880,7 @@ useEffect(() => {
             entries={searchPane.entries}
             dir={searchPane.path}
             cmd={searchCmd}
+            sourcePaneId={searchPane.id}
             onClose={closeSearchPanel}
             // v0.29.0 模态框化：定位导航发生在遮罩后面的窗格里，关掉框才能看到定位结果
             onReveal={(p, isDir) => {
@@ -5743,6 +5890,9 @@ useEffect(() => {
             onOpenFile={openFileExternal}
             onCopyPath={copyPath}
             onRenamed={handleSearchRenamed}
+            // feat/search-drag：搜索结果拖拽 = 复制到窗格/目录、垃圾箱删除（可撤销）
+            onDropCopy={doSearchDropCopy}
+            onTrashDelete={doSearchTrashDelete}
             onError={showError}
             // v0.48：全盘索引插件启用时，Ctrl+F 的默认检索引擎 = 全盘索引
             indexPluginEnabled={plugins?.some((p) => p.id === "index-search" && p.enabled) ?? false}
