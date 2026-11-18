@@ -163,9 +163,14 @@ export const clipboardClearFiles = () =>
  * 发起原生 OLE 拖拽（Windows：CF_HDROP 文件引用），阻塞到松手，
  * 返回最终投放效果（0 = 无目标/取消，1 = copy，2 = move，4 = shortcut）。
  * 空列表为 no-op（前端启动时的能力探测）。
+ * opts.cancelOnRightButton：拖动中按下右键取消——OLE 拖拽期间页面收不到键鼠事件，
+ * 「右键取消」只能由原生侧 DropSource 实现；仅搜索结果拖拽传 true（窗格拖拽行为不变）。
  */
-export const dragOutFiles = (paths: string[]) =>
-  invoke<number>("drag_out_files", { paths });
+export const dragOutFiles = (paths: string[], opts?: { cancelOnRightButton?: boolean }) =>
+  invoke<number>("drag_out_files", {
+    paths,
+    cancelOnRightButton: opts?.cancelOnRightButton === true,
+  });
 
 /**
  * 修饰键实时状态（v0.34）：Windows 启用 Tauri 原生拖放后事件不带按键状态，

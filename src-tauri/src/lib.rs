@@ -2742,9 +2742,10 @@ fn clipboard_clear_files() {
 /// 原生拖出（Windows：OLE 拖拽携带 CF_HDROP，浏览器上传投放区/资源管理器可接收）。
 /// 阻塞到松手，返回投放效果（0 = 无目标/取消，1 = copy，2 = move，4 = 快捷方式）；
 /// 空列表为 no-op（前端启动时的能力探测）。必须保持同步命令以在主线程执行。
+/// cancel_on_right_button：拖动中按下右键取消（仅搜索结果拖拽传 true，缺省 false 行为不变）。
 #[tauri::command]
-fn drag_out_files(paths: Vec<String>) -> Result<u32, String> {
-    drag_out::start(paths)
+fn drag_out_files(paths: Vec<String>, cancel_on_right_button: Option<bool>) -> Result<u32, String> {
+    drag_out::start(paths, cancel_on_right_button.unwrap_or(false))
 }
 
 /// 修饰键实时状态（v0.34：Windows 原生拖放投放时判定 Alt=移动）。

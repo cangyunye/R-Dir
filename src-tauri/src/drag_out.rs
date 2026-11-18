@@ -17,19 +17,27 @@ mod imp {
         DoDragDrop, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE, DROPEFFECT_NONE,
         IDropSource, IDropSource_Impl, OleInitialize,
     };
-    use windows::Win32::System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS};
+    use windows::Win32::System::SystemServices::{MK_LBUTTON, MK_RBUTTON, MODIFIERKEYS_FLAGS};
     use windows::Win32::UI::Shell::{
         ILFindLastID, ILFree, SHBindToParent, SHParseDisplayName, IShellFolder,
     };
     use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 
     /// 松开左键 → 投放；Esc → 取消。视觉反馈交给系统默认光标。
+    /// cancel_on_right_button：拖动中按下右键也取消——OLE 拖拽期间页面收不到
+    /// 键鼠事件，「右键取消拖拽」只能在原生侧实现；仅搜索结果拖拽开启此标志
+    /// （窗格文件拖拽不传，右键行为不变，见 SearchPanel feat/search-drag）。
     #[implement(IDropSource)]
-    struct DropSource;
+    struct DropSource {
+        cancel_on_right_button: bool,
+    }
 
     impl IDropSource_Impl for DropSource_Impl {
         fn QueryContinueDrag(&self, escape_pressed: BOOL, key_state: MODIFIERKEYS_FLAGS) -> HRESULT {
             if escape_pressed.as_bool() {
+                return DRAGDROP_S_CANCEL;
+            }
+            if self.cancel_on_right_button && (key_state & MK_RBUTTON) == MK_RBUTTON {
                 return DRAGDROP_S_CANCEL;
             }
             if (key_state & MK_LBUTTON) != MK_LBUTTON {
@@ -85,14 +93,14 @@ mod imp {
         }
     }
 
-    pub fn start(paths: &[String]) -> Result<u32, String> {
+    pub fn start(paths: &[String], cancel_on_right_button: bool) -> Result<u32, String> {
         // OLE 必须在发起线程初始化（DoDragDrop 要求）；已初始化时返回 S_FALSE 同样按可用处理。
         // 有意不配对 OleUninitialize——OLE 随线程常驻，与 GUI 线程惯例一致。
         if let Err(e) = unsafe { OleInitialize(None) } {
             return Err(format!("OleInitialize 失败（线程非 STA？）：{e}"));
         }
         let (data_object, pidls) = make_data_object(paths)?;
-        let drop_source: IDropSource = DropSource.into();
+        let drop_source: IDropSource = DropSource { cancel_on_right_button }.into();
         let mut effect = DROPEFFECT_NONE;
         unsafe {
             // DRAGDROP_S_DROP / DRAGDROP_S_CANCEL 也是成功级 HRESULT，ok() 视为正常结束；
@@ -165,17 +173,18 @@ mod imp {
 
 /// 发起原生拖出并阻塞到松手；返回最终投放效果（0 = 无目标/取消，1 = copy，2 = move，4 = 快捷方式）。
 /// 空列表直接返回 0（前端启动时的能力探测，不进入拖拽循环）。
+/// cancel_on_right_button：拖动中按下右键取消（仅搜索结果拖拽传 true，见 DropSource 注释）。
 #[cfg(windows)]
-pub fn start(paths: Vec<String>) -> Result<u32, String> {
+pub fn start(paths: Vec<String>, cancel_on_right_button: bool) -> Result<u32, String> {
     if paths.is_empty() {
         return Ok(0);
     }
-    imp::start(&paths)
+    imp::start(&paths, cancel_on_right_button)
 }
 
 /// 非 Windows 平台：macOS 走 HTML5 file:// uri-list 拖出，本命令仅被能力探测调用。
 #[cfg(not(windows))]
-pub fn start(_paths: Vec<String>) -> Result<u32, String> {
+pub fn start(_paths: Vec<String>, _cancel_on_right_button: bool) -> Result<u32, String> {
     Err("原生拖出仅支持 Windows（macOS 走 HTML5 拖出）".into())
 }
 
