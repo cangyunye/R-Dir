@@ -432,6 +432,7 @@ function SearchDropZones({
           translate 前须 ÷ rootZoomFactor 折算——同 App 层原生拖影） */}
       <div
         ref={ghostRef}
+        data-search-drag-ghost=""
         className="pointer-events-none fixed left-0 top-0 z-[60] opacity-0 [transition:opacity_var(--rdir-anim-dur)_linear]"
         style={{ transform: "translate(0px, 0px)" }}
       >

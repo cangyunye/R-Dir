@@ -5,6 +5,16 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
+
+## 未发布 (feat/search-drag，本地特性分支，待用户体验确认)
+
+- **搜索结果可左键拖动**：搜索面板（Ctrl+F / Ctrl+Shift+F）结果行直接拖动——拖到窗格 / 目录条目 = **复制**（Alt=移动，走 transferPaths 冲突管线全套），右下角临时浮现的**垃圾箱** = 删除到回收站（手势直删不弹确认，Ctrl+Z 可撤销；会话含 sftp/nfs/http 远程路径时垃圾箱禁用——回收站是本地文件系统概念），拖动期间搜索面板整体隐藏（`invisible` 不卸载：visibility:hidden 不参与 `elementFromPoint` 命中、下方窗格露出可投放），**收尾（复制/删除/取消）一律恢复搜索窗**，删除完成后结果行乐观移除（fd/全盘索引/内容三套结果集；当前层结果经窗格刷新派生）。
+- **取消三通道（按键可达性分层）**：①OLE 原生拖拽（Windows 本地路径）期间页面收不到键鼠事件——Esc 取消走系统既有 `QueryContinueDrag`，**右键取消为本次新增原生能力**（`drag_out_files` 加 `cancel_on_right_button` 参数，`DropSource::QueryContinueDrag` 在标志开启且 `MK_RBUTTON` 按下时返回 `DRAGDROP_S_CANCEL`；仅搜索拖拽传 true，窗格文件拖拽行为不变）；②页内指针链（Windows 虚拟路径 / e2e 旗标）Esc / 右键即时取消（window 捕获监听，右键 `preventDefault` 不弹菜单）；③**右上角「四分支+中心圆」取消投放区**作为按键不可达时的视觉兜底（OLE 拖拽中页面收不到键盘，把文件拖到取消区松手即取消）。取消按键场景隔离：会话期间面板自身的 document 捕获 Esc 处理器让位（Esc = 取消拖拽而非关面板），全局 keymap 因 `searchOpen ∈ modalActive` 本就暂停，未拖拽时右键菜单零影响。
+- **三路拖拽载体（对齐 FileList/IconGrid 既有模式）**：Windows 本地真实路径 → 原生 OLE CF_HDROP 拖拽（`setTimeout(0)` 先渲染隐藏态再发起；应用内落地由 App 拖放事件收口，promise 兜窗外松手——有目标接收=复制完成、无目标=取消）；Windows 虚拟路径 / e2e 旗标 → 页内指针链（引擎 A 式窗口鼠标链 + 本地拖影）；macOS/浏览器 → HTML5 `file://` uri-list。
+- **实现**：新增 `src/lib/search-drag.ts` 会话模块（SearchDragSession + 悬停/收尾订阅广播——OLE 拖拽期间 zone 悬停只能由 App 侧解析 Tauri 事件坐标后通报面板渲染；`finishSearchDrag` 恰好收尾一次，App 拖放事件与 OLE promise 兜底竞态安全；`resolveSearchDropAt` 先认 `[data-search-drop]` 专属投放区〔禁用态垃圾箱按取消〕再回落 `drop-target.ts`）；`rootZoomFactor` 从 App.tsx 提为 `src/lib/zoom.ts` 公共工具（body 级 portal 拖影同款根 zoom 折算）；App 原生/HTML5 拖放事件加 search 会话分流（垃圾箱=删除、取消区=取消、窗格/目录=复制），拖影内容按会话条目回查（搜索行不在窗格条目表）+ 提示行令牌（「松开删除」「松开取消」，渲染处翻译）。
+- **i18n**：新增中文源串 8 个（拖到这里取消/松开取消/拖到这里删除/松开删除/不可删除/松开取消拖拽/松开删除到回收站（Ctrl+Z 可撤销）/回收站仅支持本地文件），多语言翻译按惯例随下一批次 L10n 滚动。
+- 测试：vitest +9（会话单次收尾/悬停广播/落点解析）；e2e 新增 `search-drag.spec.ts` 7 例（旗标强制指针链 + 真鼠标序列：起拖隐藏与 zone 出现/拖影跟随、目录复制落地、垃圾箱删除与行移除、Esc 取消〔且不关面板〕、右键取消〔不弹菜单〕、取消区、空白取消、单击/双击/右键回归）。**e2e 前置坑**：启动 splash（z-9999 覆盖层，1100ms 卸载）会吞掉 mousedown——用例必须先等 splash 消失，否则拖拽链路整体不启动且回归用例假绿。
+
 ## v0.49.1 (2026-11-17，覆盖重发)
 
 - **修复：侧栏「服务器拖到分组」在 Windows 自 v0.34.0 起静默失效**——根因链：89f136c 的原生拖放接管（`tauri.windows.conf.json` `dragDropEnabled: true`，资源管理器拖入即复制的根基）让 wry 接管 WebView2 的 OLE 拖放后，HTML5 `dragover`/`drop` 事件不再进页面（App/FileList/SplitView 三处既有注释均记录），而侧栏服务器换组（v0.31）是全应用最后一条未适配的纯 HTML5 内部拖拽链——dragstart 能触发但分组头永远收不到投放，松手落进 Tauri 原生 drop 因 paths 为空被 no-op；Chromium e2e 不受 `dragDropEnabled` 影响所以一直假绿（功能仅 v0.31–v0.33 存活 9 天）。修复照抄 SplitView 窗格头既有方案：服务器行改指针事件驱动，在源行/命中分组头上合成同一套 DragEvent（dragstart → dragover/dragleave → drop → dragend，落点命中 `elementFromPoint().closest("[data-server-group]")`），既有 HTML5 处理器零改动；仅在 `canPointerDnd()` 为真时启用（native-drag.ts 新增窄谓词 = 原生拖出探测成功〔真实 Windows 应用〕或 e2e 逃生舱旗标 `rdir.e2e.force-native-drag`，不并入 `canNativeDragOut()` 以免翻转文件拖拽分支），macOS / web / e2e 默认照走真 HTML5。补齐窗格头范本缺的两档保险：Esc 可取消、失焦清理；起拖源行半透明 + 全局 grabbing 光标；指针捕获把松手落点收回源行的收拢 click 加抑制（防拖完误触「连接」，下一宏任务复位）。
