@@ -311,7 +311,9 @@ impl SftpSession {
     /// 不如命令行 sftp 的并发窗口）；现一次发出至多 WINDOW 个写请求、按 request-id
     /// 对账应答（应答可乱序），配合 128KB 大包，吞吐 ≈ 窗口×包长/RTT，受链路带宽约束。
     /// cb(done, total)：已确认字节 / 本地文件总字节；返回 false 中止上传
-    /// （排空在途应答后关闭远程句柄并尽力删除远端半成品，返回「已取消」）
+    /// （排空在途应答后关闭远程句柄并尽力删除远端半成品，返回「已取消」）。
+    /// 写循环失败统一走 [`Self::abort_upload`]：清理远端残留（OPEN 即 FXF_TRUNC
+    /// 截断/新建，失败残留就是用户看到的「0 字节空文件」）+ 磁盘满分级警告。
     pub async fn upload(
         &mut self,
         local: &Path,
@@ -334,6 +336,27 @@ impl SftpSession {
             })
             .await?;
         let handle = read_handle(&body)?;
+        match self.upload_loop(&handle, remote, &mut f, total, &mut cb).await {
+            Ok(acked) => {
+                self.request(proto::CLOSE, |b| b.str(&handle)).await?;
+                Ok(acked)
+            }
+            Err((orig, code)) => Err(self.abort_upload(&handle, remote, orig, code).await),
+        }
+    }
+
+    /// [`Self::upload`] 的写循环（OPEN 之后）：错误以 (原始消息, STATUS 码位) 抛出，
+    /// 由调用方收口清理与分类。
+    async fn upload_loop(
+        &mut self,
+        handle: &str,
+        remote: &str,
+        f: &mut std::fs::File,
+        total: u64,
+        cb: &mut impl FnMut(u64, u64) -> bool,
+    ) -> Result<u64, (String, Option<u32>)> {
+        const CHUNK: usize = 128 * 1024;
+        const WINDOW: usize = 32;
         let mut offset = 0u64; // 已发出的写偏移
         let mut acked = 0u64; // 已确认的写偏移（进度按确认字节上报）
         let mut eof = false;
@@ -343,7 +366,7 @@ impl SftpSession {
         while !eof || !in_flight.is_empty() {
             if !eof && in_flight.len() < WINDOW {
                 let mut buf = vec![0u8; CHUNK];
-                let n = f.read(&mut buf).map_err(|e| format!("读取本地失败：{e}"))?;
+                let n = f.read(&mut buf).map_err(|e| (format!("读取本地失败：{e}"), None))?;
                 if n == 0 {
                     eof = true;
                 } else {
@@ -351,27 +374,32 @@ impl SftpSession {
                     let mut b = Buf::new();
                     b.u8(proto::WRITE);
                     b.u32(id);
-                    b.str(&handle);
+                    b.str(handle);
                     b.u64(offset);
                     b.u32(n as u32);
                     b.raw(&buf[..n]);
-                    self.send_packet(&b.finalize()).await?;
+                    self.send_packet(&b.finalize())
+                        .await
+                        .map_err(|e| (e, None))?;
                     in_flight.push_back((id, n));
                     offset += n as u64;
                 }
                 continue; // 先把窗口填满，再收应答
             }
             // 窗口已满（或文件读完）：收一个应答并按 id 对账（应答顺序不保证）
-            let (ty, id, body) = self.receive_packet_id().await?;
+            let (ty, id, body) = self
+                .receive_packet_id()
+                .await
+                .map_err(|e| (e, None))?;
             let Some(pos) = in_flight.iter().position(|(i, _)| *i == id) else {
-                return Err("write 应答 id 不匹配".into());
+                return Err(("write 应答 id 不匹配".into(), None));
             };
             let (_, n) = in_flight.remove(pos).unwrap();
             if ty != proto::STATUS {
-                return Err("write 意外回复".into());
+                return Err(("write 意外回复".into(), None));
             }
-            if let Some(msg) = proto::parse_status(&body)? {
-                return Err(msg);
+            if let Some((code, msg)) = proto::parse_status_full(&body).map_err(|e| (e, None))? {
+                return Err((msg, Some(code)));
             }
             acked += n as u64;
             if !cancel && !cb(acked, total) {
@@ -380,10 +408,8 @@ impl SftpSession {
                 eof = true;
             }
         }
-        self.request(proto::CLOSE, |b| b.str(&handle)).await?;
         if cancel {
-            let _ = self.remove(remote).await;
-            return Err(crate::ERR_CANCELLED.into());
+            return Err((crate::ERR_CANCELLED.into(), None));
         }
         Ok(acked)
     }
@@ -520,6 +546,25 @@ impl SftpSession {
             })
             .await?;
         let handle = read_handle(&body)?;
+        // 与 [`Self::upload`] 同一收口：失败清理远端残留 + 磁盘满分级警告
+        match self.upload_pipe_loop(&handle, remote, &mut rx, total, &mut cb).await {
+            Ok(acked) => {
+                self.request(proto::CLOSE, |b| b.str(&handle)).await?;
+                Ok(acked)
+            }
+            Err((orig, code)) => Err(self.abort_upload(&handle, remote, orig, code).await),
+        }
+    }
+
+    /// [`Self::upload_pipe`] 的写循环（OPEN 之后）。错误以 (原始消息, STATUS 码位) 抛出。
+    async fn upload_pipe_loop(
+        &mut self,
+        handle: &str,
+        remote: &str,
+        rx: &mut mpsc::Receiver<(u64, Vec<u8>)>,
+        total: u64,
+        cb: &mut impl FnMut(u64, u64) -> bool,
+    ) -> Result<u64, (String, Option<u32>)> {
         let mut acked = 0u64; // 已确认字节（进度）
         let mut closed = false; // channel 已关闭（读端结束）
         let mut cancel = false;
@@ -533,27 +578,29 @@ impl SftpSession {
                         let mut b = Buf::new();
                         b.u8(proto::WRITE);
                         b.u32(id);
-                        b.str(&handle);
+                        b.str(handle);
                         b.u64(offset);
                         b.u32(data.len() as u32);
                         b.raw(&data);
-                        self.send_packet(&b.finalize()).await?;
+                        self.send_packet(&b.finalize())
+                            .await
+                            .map_err(|e| (e, None))?;
                         in_flight.push_back((id, data.len()));
                     }
                     None => closed = true,
                 }
                 continue; // 先把窗口填满，再收应答
             }
-            let (ty, id, body) = self.receive_packet_id().await?;
+            let (ty, id, body) = self.receive_packet_id().await.map_err(|e| (e, None))?;
             let Some(pos) = in_flight.iter().position(|(i, _)| *i == id) else {
-                return Err("write 应答 id 不匹配".into());
+                return Err(("write 应答 id 不匹配".into(), None));
             };
             let (_, n) = in_flight.remove(pos).unwrap();
             if ty != proto::STATUS {
-                return Err("write 意外回复".into());
+                return Err(("write 意外回复".into(), None));
             }
-            if let Some(msg) = proto::parse_status(&body)? {
-                return Err(msg);
+            if let Some((code, msg)) = proto::parse_status_full(&body).map_err(|e| (e, None))? {
+                return Err((msg, Some(code)));
             }
             acked += n as u64;
             if !cancel && !cb(acked, total) {
@@ -561,12 +608,59 @@ impl SftpSession {
                 closed = true;
             }
         }
-        self.request(proto::CLOSE, |b| b.str(&handle)).await?;
         if cancel {
-            let _ = self.remove(remote).await;
-            return Err(crate::ERR_CANCELLED.into());
+            return Err((crate::ERR_CANCELLED.into(), None));
         }
         Ok(acked)
+    }
+
+    /// statvfs@openssh.com（OpenSSH 扩展，SFTP v3 无原生命令）：查目录可用字节数。
+    /// None = 扩展不支持 / 查询失败（调用方降级为纯文本判定）。
+    pub async fn statvfs_available(&mut self, dir: &str) -> Option<u64> {
+        let (ty, body) = self
+            .request(proto::EXTENDED, |b| {
+                b.str("statvfs@openssh.com");
+                b.str(dir);
+            })
+            .await
+            .ok()?;
+        if ty != proto::EXTENDED_REPLY {
+            return None;
+        }
+        proto::parse_statvfs_available(&body)
+    }
+
+    /// 上传失败收口（[`Self::upload`] / [`Self::upload_pipe`] 共用）：
+    /// ①关闭句柄；②删除远端残留——OPEN 带 FXF_TRUNC，打开即截断/新建，写失败
+    /// 残留就是用户看到的「0 字节空文件」（与取消路径的既有行为一致）；
+    /// ③磁盘满分级警告：先文本匹配（跨服务器通用），FAILURE 码位再查
+    /// statvfs@openssh.com 可用空间 <4MB 兜底（OpenSSH 把 ENOSPC 归入 FAILURE
+    /// 且常不带文本，单靠文本匹配漏报）。
+    async fn abort_upload(
+        &mut self,
+        handle: &str,
+        remote: &str,
+        orig: String,
+        status_code: Option<u32>,
+    ) -> String {
+        let _ = self.request(proto::CLOSE, |b| b.str(handle)).await;
+        let _ = self.remove(remote).await;
+        let dir = match remote.rfind('/') {
+            Some(0) => "/",
+            Some(i) => &remote[..i],
+            None => ".",
+        };
+        let disk_full = disk_full_by_text(&orig)
+            || (status_code == Some(proto::err::FAILURE)
+                && matches!(
+                    self.statvfs_available(dir).await,
+                    Some(avail) if avail < 4 * 1024 * 1024
+                ));
+        if disk_full {
+            format!("目标磁盘空间不足，上传已中止并清理远端残留文件（SFTP：{orig}）")
+        } else {
+            orig
+        }
     }
 
     /// 新建空文件（open write+creat 后立即关闭）
@@ -687,6 +781,24 @@ fn read_handle(body: &[u8]) -> Result<String, String> {
     r.str()
 }
 
+/// 远端磁盘满/配额超限的文本识别（跨服务器通用的一级判定；OpenSSH 的 ENOSPC
+/// 归入 FAILURE 且部分版本不带文本，漏报由 statvfs@openssh.com 二级判定兜底）。
+fn disk_full_by_text(msg: &str) -> bool {
+    let l = msg.to_lowercase();
+    [
+        "no space left",
+        "disk full",
+        "disk quota",
+        "quota exceeded",
+        "out of space",
+        "space left on",
+        "空间不足",
+        "磁盘满",
+    ]
+    .iter()
+    .any(|p| l.contains(p))
+}
+
 /// 密钥候选：指定路径优先，随后按 .ssh 常规方案探测常见私钥
 fn key_candidates(specified: &str) -> Vec<String> {
     let home = dirs::home_dir().unwrap_or_default();
@@ -728,4 +840,24 @@ fn load_key(path: &str, passphrase: Option<&str>) -> Result<Arc<russh::keys::key
     russh::keys::decode_secret_key(&text, passphrase)
         .map(Arc::new)
         .map_err(|e| format!("解析私钥失败（如需口令请填写 passphrase）：{e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::disk_full_by_text;
+
+    /// 磁盘满文本判定：OpenSSH/常见服务器中英文表述 + 负例（普通失败不误报）
+    #[test]
+    fn disk_full_text_match() {
+        assert!(disk_full_by_text("write failed: No space left on device"));
+        assert!(disk_full_by_text("FAILURE
+No space left on device"));
+        assert!(disk_full_by_text("Disk quota exceeded"));
+        assert!(disk_full_by_text("quota exceeded: /data"));
+        assert!(disk_full_by_text("write error: The device is out of space"));
+        assert!(disk_full_by_text("目标磁盘空间不足"));
+        assert!(!disk_full_by_text("操作失败"));
+        assert!(!disk_full_by_text("Permission denied"));
+        assert!(!disk_full_by_text(""));
+    }
 }

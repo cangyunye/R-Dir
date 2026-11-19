@@ -1,5 +1,6 @@
 import { isMac } from "./keymap";
 import { dragOutFiles } from "./api";
+import type { FileEntry } from "./types";
 
 /**
  * Windows 原生拖出（OLE 拖拽携带 CF_HDROP）能力探测与会话标记。
@@ -63,6 +64,11 @@ export const canPointerDnd = () => {
 export interface NativeDragOut {
   sourcePaneId: number;
   paths: string[];
+  /** 搜索结果拖拽会话（feat/search-drag）：App 拖放事件据此分流专属落点解析
+   *  （垃圾箱/取消区）与收尾通报；见 src/lib/search-drag.ts */
+  search?: boolean;
+  /** 拖影回查元数据：搜索行（索引/fd/内容命中）不在窗格条目表里，由面板合成带来 */
+  entries?: FileEntry[];
 }
 
 let active: NativeDragOut | null = null;

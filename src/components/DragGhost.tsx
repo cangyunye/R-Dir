@@ -20,6 +20,7 @@ export function DragGhostCards({
   op,
   entries,
   dropDir = null,
+  hint = null,
 }: {
   paths: string[];
   op: "copy" | "move";
@@ -27,6 +28,8 @@ export function DragGhostCards({
   entries: FileEntry[];
   /** 悬停文件夹名（目录落点确认行）；null = 无目录落点 */
   dropDir?: string | null;
+  /** 悬停专属投放区提示行（搜索拖拽：「松开删除」「松开取消」）；null = 不显示 */
+  hint?: string | null;
 }) {
   const t = useT();
   const shown = paths
@@ -70,6 +73,12 @@ export function DragGhostCards({
                 ? t("移动到「{name}」", { name: dropDir })
                 : t("复制到「{name}」", { name: dropDir })}
             </span>
+          </div>
+        )}
+        {hint && !dropDir && (
+          <div className="mt-1 flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary shadow-elevate backdrop-blur-sm">
+            <CornerDownRight className="h-3 w-3 shrink-0" />
+            <span className="truncate">{hint}</span>
           </div>
         )}
       </div>

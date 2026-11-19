@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import {
   Check,
   Clipboard,
@@ -14,6 +15,7 @@ import {
   Pencil,
   Search,
   SearchX,
+  Trash2,
   X,
   Zap,
 } from "lucide-react";
@@ -35,10 +37,23 @@ import {
 } from "@/components/ui/context-menu";
 import { FileIcon } from "@/components/FileIcon";
 import { RenameInput } from "@/components/RenameInput";
+import { DragGhostCards } from "@/components/DragGhost";
 import { useModalLayer } from "@/hooks/useModalLayer";
 import { isTopModalLayer } from "@/lib/modal-stack";
-import { findFiles, indexSearch, indexStatus, renameEntry, searchContent } from "@/lib/api";
-import { isSftpPath, isNfsPath } from "@/lib/sftp-path";
+import { findFiles, indexSearch, indexStatus, renameEntry, searchContent, dragOutFiles } from "@/lib/api";
+import { isSftpPath, isNfsPath, isHttpPath } from "@/lib/sftp-path";
+import { canNativeDragOut, setHtml5Drag, setNativeDragOut } from "@/lib/native-drag";
+import {
+  emitSearchDragHover,
+  finishSearchDrag,
+  getSearchDrag,
+  onSearchDragFinish,
+  onSearchDragHover,
+  resolveSearchDropAt,
+  setSearchDrag,
+  type SearchDropKind,
+} from "@/lib/search-drag";
+import { rootZoomFactor } from "@/lib/zoom";
 import { useT } from "@/lib/LanguageProvider";
 import { terr } from "@/lib/i18n";
 import { isMac } from "@/lib/keymap";
@@ -244,17 +259,20 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 
-/** 一条搜索结果：单击选中、双击打开（文件走系统关联程序，目录进入）、右键定位/打开/重命名/复制路径 */
+/** 一条搜索结果：单击选中、双击打开（文件走系统关联程序，目录进入）、右键定位/打开/重命名/复制路径；
+ *  feat/search-drag 起可左键拖动（draggable + onDragStart 分流三路载体，见 SearchPanel.startSearchDrag） */
 function ResultRow({
   path,
   relPath,
   isDir,
   selected,
+  entry,
   onActivate,
   onReveal,
   onOpenFile,
   onCopyPath,
   onRename,
+  onStartDrag,
   renaming,
   children,
 }: {
@@ -262,12 +280,16 @@ function ResultRow({
   relPath: string;
   isDir: boolean;
   selected: boolean;
+  /** 本行条目元数据（拖拽会话的拖影回查用；各渲染处已合成 FileEntry） */
+  entry: FileEntry;
   onActivate: () => void;
   onReveal: (path: string, isDir: boolean) => void;
   onOpenFile: (path: string) => void;
   onCopyPath: (path: string) => void;
   /** 右键重命名（仅本地路径）：进入行内编辑 */
   onRename?: (path: string, name: string) => void;
+  /** 左键拖动起拖（feat/search-drag）：传入即开启行的 draggable */
+  onStartDrag?: (e: ReactDragEvent<HTMLButtonElement>, path: string, entry: FileEntry) => void;
   /** 当前行改名中：渲染行内输入框（不再挂右键菜单） */
   renaming?: { name: string; onCommit: (name: string) => void; onCancel: () => void } | null;
   children: ReactNode;
@@ -290,6 +312,8 @@ function ResultRow({
         <button
           type="button"
           data-search-path={path}
+          draggable={!!onStartDrag}
+          onDragStart={onStartDrag ? (e) => onStartDrag(e, path, entry) : undefined}
           onClick={onActivate}
           onDoubleClick={() => (isDir ? onReveal(path, true) : onOpenFile(path))}
           className={cn(
@@ -327,19 +351,118 @@ function ResultRow({
   );
 }
 
+/** 搜索拖拽专属投放区（feat/search-drag）：拖动会话期间 portal 到 body（z-60 悬浮于
+ *  面板与窗格之上）——右上角「四分支+中心圆」取消区、右下角垃圾箱。
+ *  悬停高亮由 dropHover 驱动（面板鼠标链本地解析 / App 原生·HTML5 链路经
+ *  emitSearchDragHover 通报——OLE 拖拽期间页面收不到鼠标事件，只能后者）。
+ *  data-search-drop：resolveSearchDropAt 的落点锚；垃圾箱禁用态（会话含远程路径，
+ *  回收站是本地文件系统概念）带 data-disabled，落点解析按取消处理。 */
+function SearchDropZones({
+  paths,
+  hover,
+  ghostRef,
+  ghostPaths,
+  ghostEntries,
+  ghostHint,
+}: {
+  paths: string[];
+  hover: SearchDropKind | null;
+  /** 指针链分支的跟手拖影（OLE/HTML5 分支用 App 层原生拖影，此 ref 空转） */
+  ghostRef: RefObject<HTMLDivElement | null>;
+  ghostPaths: string[];
+  ghostEntries: FileEntry[];
+  ghostHint: string | null;
+}) {
+  const t = useT();
+  const trashEnabled = paths.every((p) => !isSftpPath(p) && !isNfsPath(p) && !isHttpPath(p));
+  return createPortal(
+    <>
+      {/* 右上角取消区：四臂十字 + 中心圆（圆内 ✕） */}
+      <div
+        data-search-drop="cancel"
+        title={t("松开取消拖拽")}
+        className={cn(
+          // w-28 固定宽：激活态文案「拖到这里取消→松开取消」变短，无固定宽时框随内容缩窄
+          // （垃圾箱同款 w-28 没这个问题），scale-110 的 10% 放大补不回来
+          "fixed right-5 top-5 z-[60] flex w-28 flex-col items-center gap-0.5 rounded-xl border-2 p-2 transition-all",
+          hover === "cancel"
+            ? "scale-110 border-primary bg-primary/15 text-primary shadow-elevate"
+            : "border-border/70 bg-background/80 text-muted-foreground shadow-lg backdrop-blur-sm",
+        )}
+      >
+        <svg
+          viewBox="0 0 48 48"
+          className="h-11 w-11"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2.5}
+          strokeLinecap="round"
+          aria-hidden
+        >
+          <line x1="24" y1="3" x2="24" y2="13" />
+          <line x1="24" y1="35" x2="24" y2="45" />
+          <line x1="3" y1="24" x2="13" y2="24" />
+          <line x1="35" y1="24" x2="45" y2="24" />
+          <circle cx="24" cy="24" r="9" />
+          <line x1="20.5" y1="20.5" x2="27.5" y2="27.5" strokeWidth={2} />
+          <line x1="27.5" y1="20.5" x2="20.5" y2="27.5" strokeWidth={2} />
+        </svg>
+        <span className="text-[11px] font-medium">{hover === "cancel" ? t("松开取消") : t("拖到这里取消")}</span>
+      </div>
+      {/* 右下角垃圾箱：拖入 = 删除到回收站（可 Ctrl+Z 撤销）；含远程路径时禁用 */}
+      <div
+        data-search-drop="trash"
+        data-disabled={!trashEnabled || undefined}
+        aria-disabled={!trashEnabled}
+        title={trashEnabled ? t("松开删除到回收站（Ctrl+Z 可撤销）") : t("回收站仅支持本地文件")}
+        className={cn(
+          "fixed bottom-6 right-6 z-[60] flex w-28 flex-col items-center gap-1 rounded-xl border-2 p-3 transition-all",
+          !trashEnabled && "opacity-40",
+          trashEnabled && hover === "trash"
+            ? "scale-110 border-destructive bg-destructive/15 text-destructive shadow-elevate"
+            : trashEnabled
+              ? "border-border/70 bg-background/80 text-muted-foreground shadow-lg backdrop-blur-sm"
+              : "border-border/50 bg-background/60 text-muted-foreground/60",
+        )}
+      >
+        <Trash2 className="h-8 w-8" />
+        <span className="text-center text-[11px] font-medium">
+          {trashEnabled ? (hover === "trash" ? t("松开删除") : t("拖到这里删除")) : t("不可删除")}
+        </span>
+      </div>
+      {/* 指针链分支跟手拖影（portal 在 body：documentElement.zoom 同样放大此子树，
+          translate 前须 ÷ rootZoomFactor 折算——同 App 层原生拖影） */}
+      <div
+        ref={ghostRef}
+        data-search-drag-ghost=""
+        className="pointer-events-none fixed left-0 top-0 z-[60] opacity-0 [transition:opacity_var(--rdir-anim-dur)_linear]"
+        style={{ transform: "translate(0px, 0px)" }}
+      >
+        <DragGhostCards paths={ghostPaths} op="copy" entries={ghostEntries} hint={ghostHint} />
+      </div>
+    </>,
+    document.body,
+  );
+}
+
 /**
  * 搜索面板（v0.29.0 起以居中模态框展示；此前为右侧停靠窄栏）。
  * 文件名检索：当前层前端过滤 / fd 递归引擎；内容检索：当前层 / 递归。
  * 选项为灯芯按钮（蓝=递归 绿=隐藏 琥珀=大小写 紫=正则/通配），两 tab 同一套语义。
+ * feat/search-drag：结果行可左键拖动——拖到窗格=复制、右下角垃圾箱=删除（可撤销）、
+ * Esc/右键/右上角取消区=取消；拖动期间面板隐藏（invisible 不卸载），收尾一律恢复。
  */
 export function SearchPanel({
   entries,
   dir,
   cmd,
+  sourcePaneId,
   onReveal,
   onOpenFile,
   onCopyPath,
   onRenamed,
+  onDropCopy,
+  onTrashDelete,
   onError,
   onClose,
   indexPluginEnabled,
@@ -348,6 +471,8 @@ export function SearchPanel({
   dir: string;
   /** 外部命令（Ctrl+F / Ctrl+Shift+F）：切换 tab 并聚焦输入框 */
   cmd: { tab: "name" | "content"; tick: number } | null;
+  /** 打开面板时冻结的源窗格 id：拖拽投放的 sourcePaneId（transferPaths 双方刷新用） */
+  sourcePaneId: number;
   /** 在激活窗格中定位：目录进入，文件跳转所在目录并选中 */
   onReveal: (path: string, isDir: boolean) => void;
   /** 全盘索引插件是否启用：启用时「文件名」tab 默认引擎 = 全盘索引而非当前层匹配（v0.48） */
@@ -358,6 +483,14 @@ export function SearchPanel({
   onCopyPath: (path: string) => void;
   /** 搜索结果内联重命名完成：刷新正显示该目录的窗格并定位新条目 */
   onRenamed: (oldPath: string, newPath: string) => void;
+  /** 拖拽复制：target.dirPath = 目录条目落点，否则进目标窗格当前目录（Alt=移动由调用方解析） */
+  onDropCopy: (
+    target: { paneId: number; dirPath: string | null },
+    paths: string[],
+    op: "copy" | "move",
+  ) => void;
+  /** 拖拽删除：移入回收站（不弹确认，Ctrl+Z 可撤销；仅本地路径会调到这里） */
+  onTrashDelete: (paths: string[]) => void;
   /** 重命名失败的错误提示（App 全局 notice） */
   onError: (msg: string) => void;
   /** 关闭搜索模态框（右上角 × / 遮罩点击 / Esc） */
@@ -408,6 +541,9 @@ export function SearchPanel({
         return;
       }
       if (e.key !== "Escape" || e.defaultPrevented || renaming) return;
+      // feat/search-drag：拖拽会话中 Esc = 取消拖拽而非关面板——会话自己的 window
+      // 捕获监听（见下）已 stopPropagation 先行消费，这里双保险兜底
+      if (getSearchDrag()) return;
       if (e.isComposing || e.keyCode === 229) return;
       if (!isTopModalLayer("searchPanel")) return;
       if (
@@ -421,6 +557,198 @@ export function SearchPanel({
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [renaming, onClose, toggleFull]);
+
+  // ─── 搜索结果拖拽（feat/search-drag）───
+  // 拖动会话 UI 状态：非 null = 拖动中 → 面板整体 invisible（不卸载：控制器/落点 UI
+  // 存活，visibility:hidden 元素不参与 elementFromPoint 命中，下方窗格露出可投放），
+  // 右上角取消区 + 右下角垃圾箱经 SearchDropZones portal 到 body。
+  const [dragUI, setDragUI] = useState<{ paths: string[]; entries: FileEntry[] } | null>(null);
+  const [dropHover, setDropHover] = useState<SearchDropKind | null>(null);
+  const dragGhostRef = useRef<HTMLDivElement | null>(null);
+  /** 指针链分支的取消收口（Esc/右键/失焦共用：摘 mousemove/mouseup、还原 userSelect/拖影） */
+  const pointerCancelRef = useRef<(() => void) | null>(null);
+  /** 起拖后置位：吞掉松手落回源行时的合成 click（防拖完误改选中），下一宏任务复位 */
+  const suppressClickRef = useRef(false);
+
+  // 悬停通报订阅：引擎 A 分支本地 emit / App 原生·HTML5 链路 emit（OLE 拖拽期间
+  // 页面收不到鼠标事件，zone 高亮只能由 App 侧解析坐标后通报）→ 驱动 zone 高亮
+  useEffect(() => onSearchDragHover(setDropHover), []);
+
+  // 收尾通报订阅：任一方 finishSearchDrag（App 拖放事件 / OLE promise 兜底 /
+  // 面板鼠标链 mouseup）→ 恢复面板显示 + 删除完成时乐观移除结果行
+  useEffect(
+    () =>
+      onSearchDragFinish((s) => {
+        setDragUI(null);
+        setDropHover(null);
+        pointerCancelRef.current?.();
+        pointerCancelRef.current = null;
+        if (s.result === "deleted") {
+          const gone = new Set(s.paths);
+          setFdResults((rs) => rs.filter((r) => !gone.has(r.path)));
+          setIdxResults((rs) => rs.filter((h) => !gone.has(h.path)));
+          setCResults((rs) => rs.filter((m) => !gone.has(m.path)));
+          setSelected((sel) => (sel && gone.has(sel) ? null : sel));
+        }
+      }),
+    [],
+  );
+
+  // 拖动会话期间的场景隔离按键守卫（window 捕获，先于面板 document 捕获 Esc 处理器）：
+  // Esc = 取消拖拽；右键 = 取消拖拽（页内分支——OLE 分支页面收不到键鼠事件，右键取消
+  // 由原生侧 DropSource 实现；此处对 OLE 分支仅是收不到事件的静默兜底）。
+  // 全局 keymap 因 searchOpen ∈ modalActive 本就暂停，无额外冲突。
+  useEffect(() => {
+    if (!dragUI) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      e.stopPropagation();
+      finishSearchDrag("cancelled");
+      pointerCancelRef.current?.();
+    };
+    const onCtx = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      finishSearchDrag("cancelled");
+      pointerCancelRef.current?.();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("contextmenu", onCtx, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("contextmenu", onCtx, true);
+    };
+  }, [dragUI]);
+
+  /** 指针链分支（Windows 虚拟路径 / e2e 强制旗标）：窗口级 mousemove/mouseup 鼠标链，
+   *  落点解析与 OLE/HTML5 链路同一套 resolveSearchDropAt；Alt=移动。 */
+  const beginPointerDrag = useCallback(
+    (paths: string[]) => {
+      let lastOp: "copy" | "move" = "copy";
+      const stop = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        window.removeEventListener("blur", cancel);
+        document.body.style.userSelect = "";
+        if (dragGhostRef.current) dragGhostRef.current.style.opacity = "0";
+        pointerCancelRef.current = null;
+      };
+      const finishWith = (at: ReturnType<typeof resolveSearchDropAt>) => {
+        stop();
+        if (at.kind === "trash") {
+          finishSearchDrag("deleted");
+          onTrashDelete(paths);
+        } else if (at.kind === "cancel") {
+          finishSearchDrag("cancelled");
+        } else if (at.target) {
+          // 窗格级/目录级统一交 onDropCopy（App 侧 searchTargetValid 过滤自复制：
+          // 搜索结果父目录 ≠ 冻结窗格目录，同窗格投放同样是跨目录复制）
+          finishSearchDrag("copied");
+          onDropCopy(at.target, paths, lastOp);
+        } else {
+          // 空白处松手：无有效目标 = 取消
+          finishSearchDrag("cancelled");
+        }
+        suppressClickRef.current = true;
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      };
+      const move = (e: MouseEvent) => {
+        lastOp = e.altKey ? "move" : "copy";
+        const g = dragGhostRef.current;
+        if (g) {
+          // portal 在 body：documentElement.zoom 放大此子树，translate 前 ÷ 根 zoom
+          const z = rootZoomFactor();
+          g.style.transform = `translate(${(e.clientX + 10) / z}px, ${(e.clientY + 20) / z}px)`;
+          g.style.opacity = "1";
+        }
+        const at = resolveSearchDropAt(e.clientX, e.clientY, paths);
+        emitSearchDragHover(at.kind);
+      };
+      const up = (e: MouseEvent) => {
+        if (e.button !== 0) return; // 右键松开交给 contextmenu 取消
+        finishWith(resolveSearchDropAt(e.clientX, e.clientY, paths));
+      };
+      const cancel = () => {
+        stop();
+        finishSearchDrag("cancelled");
+      };
+      pointerCancelRef.current = cancel;
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+      window.addEventListener("blur", cancel);
+      document.body.style.userSelect = "none";
+    },
+    [onDropCopy, onTrashDelete, sourcePaneId],
+  );
+
+  /** 结果行 dragstart 分流（对齐 FileList 三路模式）：
+   *  ① Windows 本地真实路径 → 原生 OLE 拖拽（cancelOnRightButton：右键取消由原生侧实现，
+   *     setTimeout(0) 先让面板渲染隐藏态）；应用内落地由 App 拖放事件收尾，promise 兜窗外松手。
+   *  ② Windows 虚拟路径 / e2e 强制旗标 → 页内指针链（HTML5 dragover/drop 被 wry 接管不进页面）。
+   *  ③ macOS / 纯浏览器 → HTML5 file:// uri-list 拖出（App HTML5 链路收口）。 */
+  const startSearchDrag = useCallback(
+    (e: ReactDragEvent<HTMLButtonElement>, path: string, dragEntry: FileEntry) => {
+      if (e.defaultPrevented) return;
+      const paths = [path];
+      const dragEntries = [dragEntry];
+      setSearchDrag({ paths, entries: dragEntries, finished: false });
+      setDropHover(null);
+      setDragUI({ paths, entries: dragEntries });
+      const forcePointer = (() => {
+        try {
+          return sessionStorage.getItem("rdir.e2e.force-search-pointer-drag") === "1";
+        } catch {
+          return false;
+        }
+      })();
+      const allLocal = paths.every((p) => !isSftpPath(p) && !isNfsPath(p) && !isHttpPath(p));
+      if (canNativeDragOut() && allLocal && !forcePointer) {
+        console.info("[rdir] search-drag: 原生 OLE 会话", paths.length, "项 sourcePane", sourcePaneId);
+        e.preventDefault();
+        setNativeDragOut({ sourcePaneId, paths, entries: dragEntries, search: true });
+        window.setTimeout(() => {
+          dragOutFiles(paths, { cancelOnRightButton: true })
+            .then((effect) => {
+              // 应用内落地（复制/垃圾箱/取消区）已由 App 拖放事件先行收尾（finished=true
+              // 时此处 no-op）；这里兜窗外松手：有目标接收 = 复制完成，无目标 = 取消
+              console.info("[rdir] search-drag: OLE 结束 effect=", effect, "已收尾=", getSearchDrag() === null);
+              finishSearchDrag(effect === 0 ? "cancelled" : "copied");
+            })
+            .catch((e) => {
+              console.warn("[rdir] search-drag: OLE 失败", e);
+              finishSearchDrag("cancelled");
+            })
+            .finally(() => setNativeDragOut(null));
+        }, 0);
+        return;
+      }
+      if (canNativeDragOut() || forcePointer) {
+        e.preventDefault();
+        beginPointerDrag(paths);
+        return;
+      }
+      const uriList = paths.map((p) => "file://" + p.replace(/\\/g, "/")).join("\r\n");
+      e.dataTransfer?.setData("text/uri-list", uriList);
+      e.dataTransfer?.setData("text/plain", paths.join("\n"));
+      e.dataTransfer?.setData("application/x-rdir-dnd", String(sourcePaneId));
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "copyMove";
+      setHtml5Drag({ sourcePaneId, paths, entries: dragEntries, search: true });
+    },
+    [beginPointerDrag, sourcePaneId],
+  );
+
+  /** 单击选中（拖拽收尾的合成 click 抑制后照常工作） */
+  const rowActivate = useCallback(
+    (path: string) => () => {
+      if (suppressClickRef.current) return;
+      setSelected(path);
+    },
+    [],
+  );
   /** rel_path 尾段改名（当前层 results 由窗格 entries 派生，不走这里） */
   const withNewTail = (rel: string, oldName: string, newName: string) =>
     rel.endsWith(oldName) ? rel.slice(0, rel.length - oldName.length) + newName : rel;
@@ -668,15 +996,36 @@ export function SearchPanel({
   }, [cQuery, dir, recursive, caseSensitive, cHidden, cRegex, maxDepth, excludeGlobs]);
 
   return (
-    // v0.29.0 模态框化：原右侧 256px 停靠栏在递归检索时 rel_path 截断严重，
-    // 改为居中浮层（640×70vh），点遮罩或 Esc 关闭；内容结构不变。
-    // v0.34.1 弹层栈登记：更高层弹层打开时 Esc 让位
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <>
+      {/* 拖动会话专属 UI（feat/search-drag）：右上角取消区 + 右下角垃圾箱 + 指针链拖影，
+          portal 到 body 悬浮于一切之上；面板隐藏期间这是唯一的会话界面 */}
+      {dragUI && (
+        <SearchDropZones
+          paths={dragUI.paths}
+          hover={dropHover}
+          ghostRef={dragGhostRef}
+          ghostPaths={dragUI.paths}
+          ghostEntries={dragUI.entries}
+          ghostHint={
+            dropHover === "trash" ? t("松开删除") : dropHover === "cancel" ? t("松开取消") : null
+          }
+        />
+      )}
+      {/* v0.29.0 模态框化：原右侧 256px 停靠栏在递归检索时 rel_path 截断严重，
+      改为居中浮层（640×70vh），点遮罩或 Esc 关闭；内容结构不变。
+      v0.34.1 弹层栈登记：更高层弹层打开时 Esc 让位。
+      feat/search-drag：拖动会话中面板整体 invisible（不卸载）——visibility:hidden
+      不参与 elementFromPoint 命中、pointer-events 一并失效，下方窗格露出可投放；
+      收尾（复制/删除/取消）一律恢复显示 */}
+      <div
+        className={cn(
+          "fixed inset-0 z-50 flex items-center justify-center bg-black/40",
+          dragUI && "invisible",
+        )}
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
     <div
       className={
         full
@@ -939,11 +1288,13 @@ export function SearchPanel({
                         relPath={h.path}
                         isDir={h.is_dir}
                         selected={selected === h.path}
-                        onActivate={() => setSelected(h.path)}
+                        entry={fe}
+                        onActivate={rowActivate(h.path)}
                         onReveal={onReveal}
                         onOpenFile={onOpenFile}
                         onCopyPath={onCopyPath}
                         onRename={(p, name) => setRenaming({ path: p, name })}
+                        onStartDrag={startSearchDrag}
                         renaming={renamingForRow(h.path)}
                       >
                         <span className="block w-full px-2.5 py-1">
@@ -1013,11 +1364,13 @@ export function SearchPanel({
                         relPath={e.rel_path}
                         isDir={e.is_dir}
                         selected={selected === e.path}
-                        onActivate={() => setSelected(e.path)}
+                        entry={fe}
+                        onActivate={rowActivate(e.path)}
                         onReveal={onReveal}
                         onOpenFile={onOpenFile}
                         onCopyPath={onCopyPath}
                         onRename={(p, name) => setRenaming({ path: p, name })}
+                        onStartDrag={startSearchDrag}
                         renaming={renamingForRow(e.path)}
                       >
                         <span className="block w-full px-2.5 py-1">
@@ -1060,11 +1413,13 @@ export function SearchPanel({
                     relPath={e.name}
                     isDir={e.is_dir}
                     selected={selected === e.path}
-                    onActivate={() => setSelected(e.path)}
+                    entry={e}
+                    onActivate={rowActivate(e.path)}
                     onReveal={onReveal}
                     onOpenFile={onOpenFile}
                     onCopyPath={onCopyPath}
                     onRename={(p, name) => setRenaming({ path: p, name })}
+                    onStartDrag={startSearchDrag}
                     renaming={renamingForRow(e.path)}
                   >
                     <span className="flex w-full items-center gap-2 px-2.5 py-1.5 text-xs">
@@ -1131,11 +1486,13 @@ export function SearchPanel({
                       relPath={m.rel_path}
                       isDir={false}
                       selected={selected === m.path}
-                      onActivate={() => setSelected(m.path)}
+                      entry={fe}
+                      onActivate={rowActivate(m.path)}
                       onReveal={onReveal}
                       onOpenFile={onOpenFile}
                       onCopyPath={onCopyPath}
                       onRename={(p, name) => setRenaming({ path: p, name })}
+                      onStartDrag={startSearchDrag}
                       renaming={renamingForRow(m.path)}
                     >
                       <span className="block w-full px-2.5 py-1.5">
@@ -1165,5 +1522,6 @@ export function SearchPanel({
       </Tabs>
     </div>
     </div>
+    </>
   );
 }
