@@ -18,6 +18,8 @@ pub const STAT: u8 = 17;
 pub const RENAME: u8 = 18;
 /// 扩展请求（v3+，posix-rename@openssh.com 等）
 pub const EXTENDED: u8 = 200;
+/// SSH_FXP_EXTENDED_REPLY：statvfs@openssh.com 等 OpenSSH 扩展的应答
+pub const EXTENDED_REPLY: u8 = 201;
 
 // 回复类型
 pub const VERSION: u8 = 2;
@@ -212,6 +214,12 @@ pub fn parse_name(data: &[u8]) -> Result<Vec<(String, SftpAttrs)>, String> {
 
 /// 解析 STATUS 报文 → 错误字符串；code=0 返回 None
 pub fn parse_status(data: &[u8]) -> Result<Option<String>, String> {
+    Ok(parse_status_full(data)?.map(|(_, msg)| msg))
+}
+
+/// 解析 STATUS 的原始码 + 已本地化文本（磁盘满分级判定需要码位：
+/// ENOSPC 在 OpenSSH 里归入 FAILURE 且常不带文本，单靠文本匹配兜不住）
+pub fn parse_status_full(data: &[u8]) -> Result<Option<(u32, String)>, String> {
     let mut r = Reader::new(data);
     let code = r.u32()?;
     let msg = r.str()?;
@@ -219,8 +227,21 @@ pub fn parse_status(data: &[u8]) -> Result<Option<String>, String> {
     if code == 0 {
         Ok(None)
     } else {
-        Ok(Some(err_str(code, &msg)))
+        Ok(Some((code, err_str(code, &msg))))
     }
+}
+
+/// 解析 statvfs@openssh.com 应答（SSH_FXP_EXTENDED_REPLY，11 个 uint64：
+/// f_bsize/f_frsize/f_blocks/f_bfree/f_bavail/f_files/f_ffree/f_favail/
+/// f_fsid/f_flag/f_namemax），返回可用字节数 = f_bavail × f_frsize。
+pub fn parse_statvfs_available(data: &[u8]) -> Option<u64> {
+    let mut r = Reader::new(data);
+    let _bsize = r.u64().ok()?;
+    let frsize = r.u64().ok()?;
+    let _blocks = r.u64().ok()?;
+    let _bfree = r.u64().ok()?;
+    let bavail = r.u64().ok()?;
+    Some(bavail.saturating_mul(frsize))
 }
 
 /// 解析 VERSION 报文（记录扩展名）
@@ -240,6 +261,43 @@ mod tests {
     use super::*;
 
     // ---------- Buf / Reader roundtrip ----------
+
+    #[test]
+    /// statvfs@openssh.com 应答解析：11 个 uint64，可用字节 = f_bavail × f_frsize
+    #[test]
+    fn parse_statvfs_available_ok() {
+        let mut b = Buf::new();
+        for v in [4096u64, 4096, 1_000_000, 999_000, 500_000, 0, 0, 0, 0, 0, 255] {
+            b.u64(v);
+        }
+        assert_eq!(parse_statvfs_available(&b.data), Some(500_000 * 4096));
+    }
+
+    /// 截断的应答 → None（降级为文本判定，不 panic）
+    #[test]
+    fn parse_statvfs_available_truncated() {
+        let mut b = Buf::new();
+        b.u64(4096u64);
+        assert_eq!(parse_statvfs_available(&b.data), None);
+    }
+
+    /// STATUS 带码解析：FAILURE(4) + 文本透传；OK(0) → None
+    #[test]
+    fn parse_status_full_code_and_msg() {
+        let mut b = Buf::new();
+        b.u32(4u32);
+        b.str("No space left on device");
+        b.str("");
+        assert_eq!(
+            parse_status_full(&b.data).unwrap(),
+            Some((4, "操作失败（No space left on device）".into()))
+        );
+        let mut ok = Buf::new();
+        ok.u32(0u32);
+        ok.str("");
+        ok.str("");
+        assert_eq!(parse_status_full(&ok.data).unwrap(), None);
+    }
 
     #[test]
     fn u32_u64_str_roundtrip() {
