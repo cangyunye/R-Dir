@@ -6,7 +6,7 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
 
-## 未发布 (feat/search-drag，本地特性分支，待用户体验确认)
+## v0.50.0 (2026-11-20)
 
 - **搜索结果可左键拖动**：搜索面板（Ctrl+F / Ctrl+Shift+F）结果行直接拖动——拖到窗格 / 目录条目 = **复制**（Alt=移动，走 transferPaths 冲突管线全套），右下角临时浮现的**垃圾箱** = 删除到回收站（手势直删不弹确认，Ctrl+Z 可撤销；会话含 sftp/nfs/http 远程路径时垃圾箱禁用——回收站是本地文件系统概念），拖动期间搜索面板整体隐藏（`invisible` 不卸载：visibility:hidden 不参与 `elementFromPoint` 命中、下方窗格露出可投放），**收尾（复制/删除/取消）一律恢复搜索窗**，删除完成后结果行乐观移除（fd/全盘索引/内容三套结果集；当前层结果经窗格刷新派生）。
 - **取消三通道（按键可达性分层）**：①OLE 原生拖拽（Windows 本地路径）期间页面收不到键鼠事件——Esc 取消走系统既有 `QueryContinueDrag`，**右键取消为本次新增原生能力**（`drag_out_files` 加 `cancel_on_right_button` 参数，`DropSource::QueryContinueDrag` 在标志开启且 `MK_RBUTTON` 按下时返回 `DRAGDROP_S_CANCEL`；仅搜索拖拽传 true，窗格文件拖拽行为不变）；②页内指针链（Windows 虚拟路径 / e2e 旗标）Esc / 右键即时取消（window 捕获监听，右键 `preventDefault` 不弹菜单）；③**右上角「四分支+中心圆」取消投放区**作为按键不可达时的视觉兜底（OLE 拖拽中页面收不到键盘，把文件拖到取消区松手即取消）。取消按键场景隔离：会话期间面板自身的 document 捕获 Esc 处理器让位（Esc = 取消拖拽而非关面板），全局 keymap 因 `searchOpen ∈ modalActive` 本就暂停，未拖拽时右键菜单零影响。
