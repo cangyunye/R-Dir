@@ -382,7 +382,9 @@ function SearchDropZones({
         data-search-drop="cancel"
         title={t("松开取消拖拽")}
         className={cn(
-          "fixed right-5 top-5 z-[60] flex flex-col items-center gap-0.5 rounded-xl border-2 p-2 transition-all",
+          // w-28 固定宽：激活态文案「拖到这里取消→松开取消」变短，无固定宽时框随内容缩窄
+          // （垃圾箱同款 w-28 没这个问题），scale-110 的 10% 放大补不回来
+          "fixed right-5 top-5 z-[60] flex w-28 flex-col items-center gap-0.5 rounded-xl border-2 p-2 transition-all",
           hover === "cancel"
             ? "scale-110 border-primary bg-primary/15 text-primary shadow-elevate"
             : "border-border/70 bg-background/80 text-muted-foreground shadow-lg backdrop-blur-sm",
