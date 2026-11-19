@@ -642,7 +642,9 @@ export function SearchPanel({
           onTrashDelete(paths);
         } else if (at.kind === "cancel") {
           finishSearchDrag("cancelled");
-        } else if (at.target && (at.target.dirPath || at.target.paneId !== sourcePaneId)) {
+        } else if (at.target) {
+          // 窗格级/目录级统一交 onDropCopy（App 侧 searchTargetValid 过滤自复制：
+          // 搜索结果父目录 ≠ 冻结窗格目录，同窗格投放同样是跨目录复制）
           finishSearchDrag("copied");
           onDropCopy(at.target, paths, lastOp);
         } else {

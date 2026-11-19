@@ -170,6 +170,44 @@ test.describe("搜索结果拖拽（feat/search-drag）", () => {
     expect(((await mockFs(page))[HOME] ?? []).some((f) => f.name === "Notes.txt")).toBe(true);
   });
 
+  test("拖到窗格空白（子目录结果）= 复制进窗格当前目录；自复制抑制", async ({ page }) => {
+    // 窗格级语义：搜索结果父目录 ≠ 冻结窗格目录（fd 递归结果的子目录条目）时，
+    // 同窗格投放同样是跨目录复制——普通拖拽的「同窗格=无操作」不适用；
+    // 目标目录 == 被拖文件父目录（自复制）则视为无目标（不投、面板恢复）
+    await openSearch(page, "zzz-nomatch");
+    // 点亮「递归」灯钮（fd 引擎）→ 结果含子目录条目
+    await page.getByRole("button", { name: "递归", exact: true }).first().click();
+    await page.getByPlaceholder(/检索/).fill("readme");
+    const src = page.locator(`[data-search-path="${HOME}/Documents/readme.md"]`);
+    await expect(src).toBeVisible();
+
+    // ① 子目录结果拖到窗格空白 → 复制进 /mock/home
+    const body = page.locator("[data-filelist-body]");
+    const bb = (await body.boundingBox())!;
+    const sb = (await src.boundingBox())!;
+    await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height - 40, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.getByPlaceholder(/检索/)).toBeVisible();
+    await expect
+      .poll(async () => ((await mockFs(page))[HOME] ?? []).some((f) => f.name === "readme.md"))
+      .toBe(true);
+
+    // ② 自复制抑制：当前层结果（父目录==窗格目录）拖到空白窗格 → 不投放
+    await page.getByPlaceholder(/检索/).fill("Notes");
+    const src2 = page.locator(`[data-search-path="${HOME}/Notes.txt"]`);
+    await expect(src2).toBeVisible();
+    const sb2 = (await src2.boundingBox())!;
+    const bb2 = (await body.boundingBox())!;
+    await page.mouse.move(sb2.x + sb2.width / 2, sb2.y + sb2.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bb2.x + bb2.width / 2, bb2.y + bb2.height - 40, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.getByPlaceholder(/检索/)).toBeVisible();
+    expect(((await mockFs(page))[HOME] ?? []).filter((f) => f.name === "Notes.txt")).toHaveLength(1);
+  });
+
   test("拖到空白处松手 = 无目标取消，恢复面板", async ({ page }) => {
     await openSearch(page, "Notes");
     const src = row(page, `${HOME}/Notes.txt`);

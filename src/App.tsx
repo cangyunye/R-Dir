@@ -4005,17 +4005,38 @@ useEffect(() => {
   );
   /** 拖拽复制/移动：目标 = 目录条目（进该目录）或跨窗格（进目标窗格当前目录）；
    *  源窗格 = 面板冻结的 searchPane（关闭后回落活动窗格），冲突走 transferPaths 全套管线 */
+  /** 搜索拖拽落点的有效性：目标目录（dirPath 或目标窗格当前目录）== 被拖文件
+   *  父目录 = 自复制无意义 → 视为无目标（不亮提示条、不投放）。
+   *  注意不能沿用普通拖拽的「同窗格=无操作」：搜索结果（全盘检索）父目录 ≠
+   *  冻结窗格目录，同窗格投放同样是跨目录复制；SFTP 窗格（远程目录）同理。 */
+  const searchTargetValid = useCallback(
+    (t: DropTarget | null, paths: readonly string[]): DropTarget | null => {
+      if (!t) return null;
+      const parent = parentPath(paths[0] ?? "");
+      const dest =
+        t.dirPath ??
+        tabsRef.current.flatMap((tb) => Object.values(tb.panes)).find((p) => p.id === t.paneId)?.path ??
+        "";
+      return dest === "" || trimSlash(dest) === trimSlash(parent) ? null : t;
+    },
+    [],
+  );
   const doSearchDropCopy = useCallback(
     (target: { paneId: number; dirPath: string | null }, paths: string[], op: "copy" | "move") => {
-      if (!searchPane) return;
-      if (target.dirPath) void doDropIntoDir(searchPane.id, paths, op, target.dirPath, target.paneId);
-      else if (target.paneId !== searchPane.id) void doDropPaths(searchPane.id, paths, op, target.paneId);
+      const t = searchTargetValid(target, paths);
+      if (!t || !searchPane) return;
+      if (t.dirPath) void doDropIntoDir(searchPane.id, paths, op, t.dirPath, t.paneId);
+      else void doDropPaths(searchPane.id, paths, op, t.paneId);
     },
-    [searchPane, doDropIntoDir, doDropPaths],
+    [searchTargetValid, searchPane, doDropIntoDir, doDropPaths],
   );
   /** 原生拖放订阅 effect（空依赖）持有旧帧闭包：经 ref 每帧取新值 */
   const searchTrashRef = useRef(doSearchTrashDelete);
   searchTrashRef.current = doSearchTrashDelete;
+  const searchDropRef = useRef(doSearchDropCopy);
+  searchDropRef.current = doSearchDropCopy;
+  const searchTargetValidRef = useRef(searchTargetValid);
+  searchTargetValidRef.current = searchTargetValid;
 
   // v0.22.2 原生（HTML5）拖拽投放：行 onDragStart 后由浏览器接管拖动，mousemove/mouseup
   // 停发，自研鼠标拖拽收不到松手事件——表现为拖动全程 🚫、松手后提示条才出现、
@@ -4063,11 +4084,19 @@ useEffect(() => {
         const s = window.devicePixelRatio || 1;
         return { x: p.x / s, y: p.y / s };
       };
-      const highlight = (srcPaneId: number | null, t: DropTarget | null, op: "copy" | "move") => {
-        const key = `${t?.paneId ?? ""}|${t?.dirPath ?? ""}|${op}`;
+      const highlight = (
+        srcPaneId: number | null,
+        t: DropTarget | null,
+        op: "copy" | "move",
+        alwaysPaneHighlight = false,
+      ) => {
+        const key = `${t?.paneId ?? ""}|${t?.dirPath ?? ""}|${op}|${alwaysPaneHighlight}`;
         if (key === lastKey) return;
         lastKey = key;
-        setDragOver(t && t.paneId !== srcPaneId ? { targetPaneId: t.paneId, op } : null);
+        // alwaysPaneHighlight（搜索拖拽）：普通拖拽源=窗格当前目录，同窗格窗格级投放
+        // 无意义故不亮提示条；搜索结果父目录 ≠ 冻结窗格目录（有效性已由
+        // searchTargetValid 把自复制滤成 null），同窗格窗格级投放同样是真复制，要亮
+        setDragOver(t && (alwaysPaneHighlight || t.paneId !== srcPaneId) ? { targetPaneId: t.paneId, op } : null);
         setDragDir(t?.dirPath ? { paneId: t.paneId, path: t.dirPath } : null);
       };
       const drop = (source: number, paths: string[], op: "copy" | "move", x: number, y: number) => {
@@ -4100,8 +4129,12 @@ useEffect(() => {
                 // DoDragDrop 返回后先完成 → finishSearchDrag 恢复面板 → 晚到的解析
                 // elementFromPoint 命中的是【已恢复的可见面板】→ 恒 null → 既不复制
                 // 也不删除（dts feat-search-drag_inapp-drop-noop 取证）。此刻面板仍
-                // 隐藏、zone 仍在 DOM，同步解析才命中真实落点。
-                const at = resolveSearchDropAt(c.x, c.y, native.paths);
+                // 隐藏、zone 仍在 DOM，同步解析才命中真实落点。自复制（目标目录 ==
+                // 被拖文件父目录）在 searchTargetValid 滤成 null
+                const raw = resolveSearchDropAt(c.x, c.y, native.paths);
+                const at = raw.kind
+                  ? raw
+                  : { kind: null, target: searchTargetValidRef.current(raw.target, native.paths) };
                 console.info(
                   `[rdir] search-drag: drop @ (${c.x.toFixed(0)},${c.y.toFixed(0)}) kind=${at.kind ?? "null"} target=${at.target ? `pane${at.target.paneId}${at.target.dirPath ? "@" + at.target.dirPath : ""}` : "null"}`,
                 );
@@ -4124,12 +4157,7 @@ useEffect(() => {
                   .then((m) => {
                     clear();
                     if (at.target) {
-                      const op = m.alt ? "move" : "copy";
-                      const { doDropPaths: dp, doDropIntoDir: dd } = dropActionsRef.current;
-                      if (at.target.dirPath)
-                        void dd(native.sourcePaneId, native.paths, op, at.target.dirPath, at.target.paneId);
-                      else if (at.target.paneId !== native.sourcePaneId)
-                        void dp(native.sourcePaneId, native.paths, op, at.target.paneId);
+                      void searchDropRef.current(at.target, native.paths, m.alt ? "move" : "copy");
                     }
                     // promise 兜底已按 effect 收尾（copied/cancelled）；此处仅剩收口
                     finishSearchDrag(at.target ? "copied" : "cancelled");
@@ -4140,8 +4168,14 @@ useEffect(() => {
               const at = resolveSearchDropAt(c.x, c.y, native.paths);
               emitSearchDragHover(at.kind);
               const op = lastAlt ? "move" : "copy";
-              // zone 悬停时窗格高亮让位（取消区/垃圾箱与窗格提示条不同亮）
-              highlight(native.sourcePaneId, at.kind ? null : at.target, op);
+              // zone 悬停时窗格高亮让位（取消区/垃圾箱与窗格提示条不同亮）；
+              // 自复制（目标目录==被拖文件父目录）已滤成 null，同窗格窗格级要亮提示条
+              highlight(
+                native.sourcePaneId,
+                at.kind ? null : searchTargetValidRef.current(at.target, native.paths),
+                op,
+                true,
+              );
               showNativeGhost(
                 native.sourcePaneId,
                 native.paths,
@@ -4281,12 +4315,15 @@ useEffect(() => {
       op: "copy" | "move",
       x: number,
       y: number,
+      alwaysPaneHighlight = false,
     ) => {
       lastOp = op; // dragend 兜底投放用最近一次 dragover 的操作类型
-      const key = `${t?.paneId ?? ""}|${t?.dirPath ?? ""}|${op}`;
+      const key = `${t?.paneId ?? ""}|${t?.dirPath ?? ""}|${op}|${alwaysPaneHighlight}`;
       if (key === lastKey) return;
       lastKey = key;
-      setDragOver(t && t.paneId !== srcPaneId ? { targetPaneId: t.paneId, op } : null);
+      // alwaysPaneHighlight（搜索拖拽）：有效性已由 searchTargetValid 滤掉自复制，
+      // 同窗格窗格级投放同样是真复制，要亮提示条（对齐原生链路 highlight 的同参语义）
+      setDragOver(t && (alwaysPaneHighlight || t.paneId !== srcPaneId) ? { targetPaneId: t.paneId, op } : null);
       setDragDir(t?.dirPath ? { paneId: t.paneId, path: t.dirPath } : null);
       void x;
       void y;
@@ -4347,8 +4384,12 @@ useEffect(() => {
       // 专属落点（取消区/垃圾箱）分流，zone 悬停时窗格高亮让位
       const search = html5?.search ? getSearchDrag() : null;
       if (search) {
-        const at = resolveSearchDropAt(e.clientX, e.clientY, html5?.paths ?? []);
+        const raw = resolveSearchDropAt(e.clientX, e.clientY, html5?.paths ?? []);
+        const at = raw.kind
+          ? raw
+          : { kind: null, target: searchTargetValidRef.current(raw.target, html5?.paths ?? []) };
         emitSearchDragHover(at.kind);
+        highlight(html5?.sourcePaneId ?? null, at.kind ? null : at.target, op, e.clientX, e.clientY, true);
         showNativeGhost(
           html5?.sourcePaneId ?? null,
           html5?.paths ?? [],
@@ -4444,19 +4485,17 @@ useEffect(() => {
       // 搜索结果拖拽会话（feat/search-drag）：专属落点分流——垃圾箱=回收站删除（可撤销）、
       // 取消区/空白=取消恢复面板、窗格/目录=复制（Alt=移动，transferPaths 冲突管线）
       if (html5?.search && getSearchDrag()) {
-        const at = resolveSearchDropAt(e.clientX, e.clientY, html5.paths);
+        const raw = resolveSearchDropAt(e.clientX, e.clientY, html5.paths);
+        const at = raw.kind
+          ? raw
+          : { kind: null, target: searchTargetValidRef.current(raw.target, html5.paths) };
         if (at.kind === "trash") {
           finishSearchDrag("deleted");
           void searchTrashRef.current(html5.paths);
         } else if (at.kind === "cancel") {
           finishSearchDrag("cancelled");
         } else if (at.target) {
-          const op = e.altKey ? "move" : "copy";
-          const { doDropPaths: dp, doDropIntoDir: dd } = dropActionsRef.current;
-          if (at.target.dirPath)
-            void dd(html5.sourcePaneId, html5.paths, op, at.target.dirPath, at.target.paneId);
-          else if (at.target.paneId !== html5.sourcePaneId)
-            void dp(html5.sourcePaneId, html5.paths, op, at.target.paneId);
+          void searchDropRef.current(at.target, html5.paths, e.altKey ? "move" : "copy");
           finishSearchDrag("copied");
         } else {
           finishSearchDrag("cancelled");
