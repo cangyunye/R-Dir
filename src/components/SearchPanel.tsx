@@ -703,6 +703,7 @@ export function SearchPanel({
       })();
       const allLocal = paths.every((p) => !isSftpPath(p) && !isNfsPath(p) && !isHttpPath(p));
       if (canNativeDragOut() && allLocal && !forcePointer) {
+        console.info("[rdir] search-drag: 原生 OLE 会话", paths.length, "项 sourcePane", sourcePaneId);
         e.preventDefault();
         setNativeDragOut({ sourcePaneId, paths, entries: dragEntries, search: true });
         window.setTimeout(() => {
@@ -710,9 +711,13 @@ export function SearchPanel({
             .then((effect) => {
               // 应用内落地（复制/垃圾箱/取消区）已由 App 拖放事件先行收尾（finished=true
               // 时此处 no-op）；这里兜窗外松手：有目标接收 = 复制完成，无目标 = 取消
+              console.info("[rdir] search-drag: OLE 结束 effect=", effect, "已收尾=", getSearchDrag() === null);
               finishSearchDrag(effect === 0 ? "cancelled" : "copied");
             })
-            .catch(() => finishSearchDrag("cancelled"))
+            .catch((e) => {
+              console.warn("[rdir] search-drag: OLE 失败", e);
+              finishSearchDrag("cancelled");
+            })
             .finally(() => setNativeDragOut(null));
         }, 0);
         return;

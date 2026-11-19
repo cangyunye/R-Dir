@@ -171,22 +171,22 @@ mod imp {
     }
 }
 
-/// 发起原生拖出并阻塞到松手；返回最终投放效果（0 = 无目标/取消，1 = copy，2 = move，4 = 快捷方式）。
-/// 空列表直接返回 0（前端启动时的能力探测，不进入拖拽循环）。
-/// cancel_on_right_button：拖动中按下右键取消（仅搜索结果拖拽传 true，见 DropSource 注释）。
-#[cfg(windows)]
-pub fn start(paths: Vec<String>, cancel_on_right_button: bool) -> Result<u32, String> {
-    if paths.is_empty() {
-        return Ok(0);
+    /// 发起原生拖出并阻塞到松手；返回最终投放效果（0 = 无目标/取消，1 = copy，2 = move，4 = 快捷方式）。
+    /// 空列表直接返回 0（前端启动时的能力探测，不进入拖拽循环）。
+    /// cancel_on_right_button：拖动中按下右键取消（仅搜索结果拖拽传 true，见 DropSource 注释）。
+    #[cfg(windows)]
+    pub fn start(paths: Vec<String>, cancel_on_right_button: bool) -> Result<u32, String> {
+        if paths.is_empty() {
+            return Ok(0);
+        }
+        imp::start(&paths, cancel_on_right_button)
     }
-    imp::start(&paths, cancel_on_right_button)
-}
 
-/// 非 Windows 平台：macOS 走 HTML5 file:// uri-list 拖出，本命令仅被能力探测调用。
-#[cfg(not(windows))]
-pub fn start(_paths: Vec<String>, _cancel_on_right_button: bool) -> Result<u32, String> {
-    Err("原生拖出仅支持 Windows（macOS 走 HTML5 拖出）".into())
-}
+    /// 非 Windows 平台：macOS 走 HTML5 file:// uri-list 拖出，本命令仅被能力探测调用。
+    #[cfg(not(windows))]
+    pub fn start(_paths: Vec<String>, _cancel_on_right_button: bool) -> Result<u32, String> {
+        Err("原生拖出仅支持 Windows（macOS 走 HTML5 拖出）".into())
+    }
 
 /// 修饰键实时状态（v0.34）。Windows 上启用 Tauri 原生拖放后（tauri.windows.conf.json
 /// `dragDropEnabled: true`）拖放事件不再携带按键状态——应用内拖出「按住 Alt = 移动」

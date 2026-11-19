@@ -4095,28 +4095,44 @@ useEffect(() => {
             const search = native.search ? getSearchDrag() : null;
             if (search) {
               if (p.type === "drop") {
+                // 落点解析必须在本处理器内【同步】完成：query_modifiers 是异步 invoke，
+                // 其命令要等 DoDragDrop 返回才能执行；而 dragOutFiles 的 promise 在
+                // DoDragDrop 返回后先完成 → finishSearchDrag 恢复面板 → 晚到的解析
+                // elementFromPoint 命中的是【已恢复的可见面板】→ 恒 null → 既不复制
+                // 也不删除（dts feat-search-drag_inapp-drop-noop 取证）。此刻面板仍
+                // 隐藏、zone 仍在 DOM，同步解析才命中真实落点。
+                const at = resolveSearchDropAt(c.x, c.y, native.paths);
+                console.info(
+                  `[rdir] search-drag: drop @ (${c.x.toFixed(0)},${c.y.toFixed(0)}) kind=${at.kind ?? "null"} target=${at.target ? `pane${at.target.paneId}${at.target.dirPath ? "@" + at.target.dirPath : ""}` : "null"}`,
+                );
+                if (at.kind === "trash") {
+                  // 垃圾箱/取消区不需要 Alt 状态：同步收尾（先于 promise，序确定）
+                  finishSearchDrag("deleted");
+                  void searchTrashRef.current(native.paths);
+                  clear();
+                  setNativeDragOut(null);
+                  return;
+                }
+                if (at.kind === "cancel") {
+                  finishSearchDrag("cancelled");
+                  clear();
+                  setNativeDragOut(null);
+                  return;
+                }
                 void queryModifiers()
                   .catch(() => ({ alt: lastAlt }))
                   .then((m) => {
                     clear();
-                    const at = resolveSearchDropAt(c.x, c.y, native.paths);
-                    if (at.kind === "trash") {
-                      finishSearchDrag("deleted");
-                      void searchTrashRef.current(native.paths);
-                    } else if (at.kind === "cancel") {
-                      finishSearchDrag("cancelled");
-                    } else if (at.target) {
+                    if (at.target) {
                       const op = m.alt ? "move" : "copy";
                       const { doDropPaths: dp, doDropIntoDir: dd } = dropActionsRef.current;
                       if (at.target.dirPath)
                         void dd(native.sourcePaneId, native.paths, op, at.target.dirPath, at.target.paneId);
                       else if (at.target.paneId !== native.sourcePaneId)
                         void dp(native.sourcePaneId, native.paths, op, at.target.paneId);
-                      finishSearchDrag("copied");
-                    } else {
-                      // 窗外回落但无目标 / 空白处 = 取消
-                      finishSearchDrag("cancelled");
                     }
+                    // promise 兜底已按 effect 收尾（copied/cancelled）；此处仅剩收口
+                    finishSearchDrag(at.target ? "copied" : "cancelled");
                     setNativeDragOut(null);
                   });
                 return;
