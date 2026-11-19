@@ -4979,7 +4979,16 @@ useEffect(() => {
     setSearchPaneId(activePane?.id ?? null);
     setSearchOpen(true);
   }, [activePane]);
-  const closeSearchPanel = useCallback(() => setSearchOpen(false), []);
+  const closeSearchPanel = useCallback(() => {
+    setSearchOpen(false);
+    // 关闭后焦点归还活动窗格列表（对齐 Radix Dialog 的焦点归还语义）：
+    // 否则焦点落在 BODY，详情列表/图标网格的方向键要再点一下行才能用
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(`[data-pane-id="${activePane?.id}"] [data-filelist-body]`)
+        ?.focus({ preventScroll: true });
+    });
+  }, [activePane?.id]);
   const toggleSearchPanel = useCallback(() => {
     if (searchOpen) closeSearchPanel();
     else openSearchPanel();

@@ -547,11 +547,23 @@ export function FileList({
       return;
     }
     if (e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+    const tgt = e.target as HTMLElement;
+    if (tgt.closest("input,textarea")) return;
+    // ↑/↓ 移动选中（对齐 IconGrid.moveFocus 的网格方向键；单列列表只有纵向邻位）。
+    // 选中后的滚动跟随由既有 ensureVisible effect（primary 依赖）自动完成。
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      if (sorted.length === 0) return;
+      e.preventDefault();
+      const delta = e.key === "ArrowUp" ? -1 : 1;
+      const idx = sorted.findIndex((x) => x.path === primary);
+      const next = idx < 0 ? (delta > 0 ? 0 : sorted.length - 1) : Math.min(sorted.length - 1, Math.max(0, idx + delta));
+      const entry = sorted[next];
+      if (entry && entry.path !== primary) onSelect(entry, false);
+      return;
+    }
     if (e.key.length !== 1) return;
     // 空格不作首字母：它是「选中切换/预览开关」的键，误拉起搜索浮层会与预览冲突
     if (e.key === " ") return;
-    const tgt = e.target as HTMLElement;
-    if (tgt.closest("input,textarea")) return;
     e.preventDefault();
     openQuickJump(e.key);
   };
