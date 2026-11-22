@@ -262,7 +262,6 @@ mod tests {
 
     // ---------- Buf / Reader roundtrip ----------
 
-    #[test]
     /// statvfs@openssh.com 应答解析：11 个 uint64，可用字节 = f_bavail × f_frsize
     #[test]
     fn parse_statvfs_available_ok() {

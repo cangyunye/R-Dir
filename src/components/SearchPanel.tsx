@@ -294,6 +294,11 @@ function ResultRow({
   renaming?: { name: string; onCommit: (name: string) => void; onCancel: () => void } | null;
   children: ReactNode;
 }) {
+  // useT 必须在早退分支之前（Rules of Hooks）：useContext 虽不占 hook 链今天没炸，
+  // 但仓库无 eslint-plugin-react-hooks 防线——将来在早退前加任何 useState/useEffect
+  // 都会触发渲染期 invariant 崩溃，顺序统一收口在这里
+  const name = path.split(/[\\/]/).pop() ?? path;
+  const t = useT();
   if (renaming) {
     return (
       <div
@@ -304,8 +309,6 @@ function ResultRow({
       </div>
     );
   }
-  const name = path.split(/[\\/]/).pop() ?? path;
-  const t = useT();
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -780,7 +783,7 @@ export function SearchPanel({
       );
       onRenamed(oldPath, newPath);
     } catch (e) {
-      onError(String(e));
+      onError(terr(String(e)));
     }
   };
   const renamingForRow = (path: string) =>

@@ -423,6 +423,13 @@ impl RescanCollector {
         for id in old.direct_children(dir) {
             let m = &old.meta[id as usize];
             let path = old.path_of(id).to_string();
+            // 排除路径（含新增排除后旧索引里的残留条目，如应用配置目录）直接丢弃：
+            // 置 changed 触发一次重建清干净，之后恒命中不了——否则残留条目的
+            // mtime 每次被应用自身写盘更新，会让重扫反复误判「有变更」不收敛
+            if exclusions.is_excluded(std::path::Path::new(&path)) {
+                self.changed = true;
+                continue;
+            }
             if m.is_dir {
                 let sub_cur = std::fs::symlink_metadata(&path).map(|md| mtime_ms(&md)).unwrap_or(0);
                 if sub_cur == 0 {
@@ -832,6 +839,54 @@ mod tests {
         std::fs::write(deep.join("fresh.txt"), "f").unwrap();
         let st1 = EngineState::rescan(&st0, &roots, &excl, fp).expect("深层变更必须被检出");
         assert!(st1.exact_lookup(deep.join("fresh.txt").to_str().unwrap()).is_some());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 自反馈收敛（v0.50 评审 P0）：应用配置目录加入排除后，旧索引残留条目
+    /// 一次性清掉（首轮 Some），之后该目录内的高频写盘（模拟快照 persist）
+    /// 不再触发重扫——否则「写盘→检测到自家写盘→再写盘」永不收敛。
+    #[test]
+    fn rescan_excluded_dir_converges() {
+        let root = std::env::temp_dir().join(format!("rdir_index_excl_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let appdir = root.join("cfg"); // 模拟应用配置目录（在被监视的根内）
+        let inner = appdir.join("index");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::write(root.join("doc.txt"), "d").unwrap();
+        std::fs::write(inner.join("snapshot.bin"), "s").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let roots = vec![root.to_str().unwrap().to_string()];
+        let excl_none = Exclusions::default();
+        let fp = roots_fingerprint(&roots, &excl_none);
+        let st0 = EngineState::build_full(&roots, &excl_none, fp).0;
+        // doc.txt、cfg、cfg/index、snapshot.bin = 4 条（根自身不收录）
+        assert_eq!(st0.len(), 4);
+
+        // 加入排除（集成层把应用配置目录加进生效排除，指纹口径不变）首轮重扫：
+        // 残留条目清掉并触发一次重建
+        let excl = Exclusions {
+            dirs: vec![appdir.to_string_lossy().into_owned()],
+            ..Exclusions::default()
+        };
+        let st1 = EngineState::rescan(&st0, &roots, &excl, fp).expect("排除引入变更");
+        assert!(st1.exact_lookup(&inner.to_string_lossy()).is_none());
+        assert!(st1.exact_lookup(&appdir.to_string_lossy()).is_none());
+        assert!(st1.exact_lookup(&root.join("doc.txt").to_string_lossy()).is_some());
+        assert_eq!(st1.len(), 1);
+
+        // 收敛后：被排除目录内高频写盘不再触发重建（自反馈切断）
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(inner.join("snapshot.bin"), "s2").unwrap();
+        assert!(
+            EngineState::rescan(&st1, &roots, &excl, fp).is_none(),
+            "排除目录内写盘不得再触发重建"
+        );
+
+        // 真实变更仍正常检出
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(root.join("new.txt"), "n").unwrap();
+        let st2 = EngineState::rescan(&st1, &roots, &excl, fp).expect("真实变更应检出");
+        assert!(st2.exact_lookup(&root.join("new.txt").to_string_lossy()).is_some());
         std::fs::remove_dir_all(&root).ok();
     }
 

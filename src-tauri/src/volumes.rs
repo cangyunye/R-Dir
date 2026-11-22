@@ -7,7 +7,8 @@ use std::time::Duration;
 pub struct VolumeInfo {
     pub name: String,
     pub path: String,
-    /// 简化分类：root / fixed / removable / volume
+    /// 简化分类：root / fixed / removable / network / optical / unknown / volume
+    /// （network = 映射网络驱动器；索引默认只收 fixed，见 indexer::default_roots）
     pub kind: String,
 }
 
@@ -48,11 +49,33 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
     }
     #[cfg(target_os = "windows")]
     {
+        use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::GetDriveTypeW;
+        // DRIVE_* 类型常量归 System::WindowsProgramming（windows 0.62 划分）
+        use windows::Win32::System::WindowsProgramming::{
+            DRIVE_CDROM, DRIVE_FIXED, DRIVE_NO_ROOT_DIR, DRIVE_RAMDISK, DRIVE_REMOTE,
+            DRIVE_REMOVABLE,
+        };
+
         let mut vols = Vec::new();
         for c in b'A'..=b'Z' {
             let drive = format!("{}:\\", c as char);
-            if std::fs::metadata(&drive).is_ok() {
-                let kind = if c < b'C' { "removable" } else { "fixed" };
+            let mut wide: Vec<u16> = drive.encode_utf16().collect();
+            wide.push(0);
+            // GetDriveTypeW 只读驱动器映射表、不探测文件系统：已断连的映射网络盘
+            // 也立即返回（此前 metadata() 会阻塞数秒至数十秒，且 2s 轮询的
+            // spawn_watcher 每轮都要挨一次）。
+            let dt = unsafe { GetDriveTypeW(PCWSTR::from_raw(wide.as_ptr())) };
+            if dt == DRIVE_NO_ROOT_DIR {
+                continue; // 盘符不存在
+            }
+            let kind = drive_kind(dt);
+            // 存在性门控只对本地盘保留（metadata 快速且防幽灵盘符：A: 无软盘 /
+            // 读卡器无卡时 metadata 失败，与旧行为一致不显示）；映射网络盘改为
+            // 只看 GetDriveTypeW——断连的 Z: 会显示在侧边栏（点击报错，属可
+            // 接受的显式状态），换取不再阻塞。
+            let exists = kind == "network" || std::fs::metadata(&drive).is_ok();
+            if exists {
                 vols.push(VolumeInfo {
                     name: format!("{} ({})", c as char, drive),
                     path: drive,
@@ -65,6 +88,23 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         Vec::new()
+    }
+}
+
+/// Win32 驱动器类型 → 卷分类。字母序启发（C 以下=removable 其余=fixed）会
+/// 把 D: 上的 USB/光盘、Z: 等映射网络驱动器全归为 fixed——被 indexer 默认
+/// 全盘索引（SMB 目录 mtime 不可靠，剪枝失效），故必须走真实类型查询。
+#[cfg(target_os = "windows")]
+fn drive_kind(dt: u32) -> &'static str {
+    use windows::Win32::System::WindowsProgramming::{
+        DRIVE_CDROM, DRIVE_FIXED, DRIVE_RAMDISK, DRIVE_REMOTE, DRIVE_REMOVABLE,
+    };
+    match dt {
+        DRIVE_FIXED | DRIVE_RAMDISK => "fixed", // RAM 盘 = 本地固定卷，可索引
+        DRIVE_REMOVABLE => "removable",
+        DRIVE_REMOTE => "network",
+        DRIVE_CDROM => "optical",
+        _ => "unknown",
     }
 }
 
@@ -170,5 +210,40 @@ mod tests {
         let x = vec![vol("a", "b", "volume")];
         let y = vec![vol("ab", "", "volume")];
         assert_ne!(volumes_signature(&x), volumes_signature(&y));
+    }
+
+    /// Win32 驱动器类型常量 → 分类的映射（纯函数，无需真实硬件）
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn drive_kind_maps_win32_constants() {
+        use windows::Win32::System::WindowsProgramming::{
+            DRIVE_CDROM, DRIVE_FIXED, DRIVE_NO_ROOT_DIR, DRIVE_RAMDISK, DRIVE_REMOTE,
+            DRIVE_REMOVABLE,
+        };
+        assert_eq!(drive_kind(DRIVE_FIXED), "fixed");
+        assert_eq!(drive_kind(DRIVE_RAMDISK), "fixed");
+        assert_eq!(drive_kind(DRIVE_REMOVABLE), "removable");
+        assert_eq!(drive_kind(DRIVE_REMOTE), "network");
+        assert_eq!(drive_kind(DRIVE_CDROM), "optical");
+        assert_eq!(drive_kind(DRIVE_NO_ROOT_DIR), "unknown");
+    }
+
+    /// 系统盘必须分类为 fixed（GetDriveTypeW 真实调用冒烟）
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn system_drive_classified_fixed() {
+        let tmp = std::env::temp_dir();
+        let prefix = tmp.to_string_lossy().chars().next().unwrap().to_string();
+        let vols = list_volumes();
+        let v = vols
+            .iter()
+            .find(|v| v.path.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("系统盘 {prefix}: 应在卷列表内"));
+        assert_eq!(v.kind, "fixed", "系统盘 {prefix}: 必须分类为 fixed");
+        // 映射网络驱动器（若本机有）绝不能被分类成 fixed——否则会被默认索引
+        assert!(
+            vols.iter().all(|v| v.kind != "fixed" || !v.path.to_uppercase().starts_with("Z")),
+            "Z: 网络盘不得分类为 fixed（如本机确有 fixed 类 Z: 可放宽此断言）"
+        );
     }
 }

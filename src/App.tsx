@@ -1,4 +1,4 @@
-﻿import { Activity, useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { exit } from "@tauri-apps/plugin-process";
 import { isTauri, listen } from "@/lib/ipc";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -561,13 +561,13 @@ export default function App() {
    *  ghostRef 拖影。位置命令式驱动（over 事件高频），内容 state 见 nativeGhostInfo。 */
   /** 落点确认徽章（v0.49 特性4）：仅外部拖入（资源管理器 → 应用）的会话使用——
    *  外部文件不是应用条目、没有可渲染的拖影内容，悬停目录条目时跟随光标显示
-   *  「复制到「目录名」」。应用发起的会话用 nativeGhost 拖影。 */
-  const [dropBadge, setDropBadge] = useState<{
-    name: string;
-    op: "copy" | "move";
-    x: number;
-    y: number;
-  } | null>(null);
+   *  「复制到「目录名」」。应用发起的会话用 nativeGhost 拖影。
+   *  位置命令式直写（over 事件高频，App 整树重渲染不可承受——与上方
+   *  nativeGhost 同款架构），state 只存内容（name/op）按 key 去重；条件挂载
+   *  保住雅模式入场动画，挂载初值经 layout effect 从 posRef 补写。 */
+  const [dropBadge, setDropBadge] = useState<{ name: string; op: "copy" | "move" } | null>(null);
+  const dropBadgeRef = useRef<HTMLDivElement | null>(null);
+  const dropBadgePosRef = useRef<{ x: number; y: number } | null>(null);
   /** nativeGhost 的位置走命令式（over 事件高频，App 整树重渲染不可承受），
    *  内容（paths/op/落点）按 key 去重后进 state。两套 effect（Tauri 拖放事件
    *  订阅 / window dragover HTML5 链路）共用。 */
@@ -626,6 +626,37 @@ export default function App() {
     }
     if (nativeGhostRef.current) nativeGhostRef.current.style.opacity = "0";
   }, []);
+  /** 落点徽章更新：位置命令式直写（÷ 根 zoom 折算，同 nativeGhost 613 行注释），
+   *  内容按 key 去重进 state——坐标逐事件变化不触发重渲染 */
+  const updateDropBadge = useCallback(
+    (next: { name: string; op: "copy" | "move" } | null, x?: number, y?: number) => {
+      if (next && x !== undefined && y !== undefined) {
+        dropBadgePosRef.current = { x, y };
+        const el = dropBadgeRef.current;
+        if (el) {
+          const z = rootZoomFactor();
+          el.style.left = `${(x + 16) / z}px`;
+          el.style.top = `${(y + 20) / z}px`;
+        }
+        setDropBadge((prev) => (prev?.name === next.name && prev?.op === next.op ? prev : next));
+      } else {
+        dropBadgePosRef.current = null;
+        setDropBadge(null);
+      }
+    },
+    [],
+  );
+  // 徽章挂载初值：null→显示 的那次渲染在绘制前补写位置（事件里 ref 还没挂上），
+  // 后续事件的位置走命令式直写，不再经过这里
+  useLayoutEffect(() => {
+    const el = dropBadgeRef.current;
+    const pos = dropBadgePosRef.current;
+    if (dropBadge && el && pos) {
+      const z = rootZoomFactor();
+      el.style.left = `${(pos.x + 16) / z}px`;
+      el.style.top = `${(pos.y + 20) / z}px`;
+    }
+  }, [dropBadge]);
   /** 拖影内容按路径回查条目元数据（拖拽源窗格的条目表；tabsRef 取新帧） */
   const entriesOfPane = useCallback((paneId: number | null) => {
     if (paneId === null) return [];
@@ -3629,8 +3660,21 @@ useEffect(() => {
           const scanSrcs = destIsSftp
             ? [...localSrcs, ...relaySrcs.filter((s) => !sameDir.includes(s))]
             : [];
+          // 剪切粘贴到同一台服务器：服务器端一次 rename_over（posix-rename）
+          // 直接完成，不经临时目录中转，且 rename 天然删源——剪切语义真生效。
+          // 跨服务器（或复制）仍走中转；authority id 与后端 pool_key 同构。
+          // （提前到冲突扫描之前：目录行的「覆盖」裁决要据此改走中转合并）
+          const destId = destIsSftp ? parseSftpAuthority(dest)?.id : undefined;
+          const mvSrcs = new Set(
+            isCut && destId
+              ? relaySrcs.filter((s) => parseSftpAuthority(s)?.id === destId)
+              : [],
+          );
           const renameBySrc: Record<string, string> = {};
           const typeClashes: TransferConflict[] = [];
+          /** 剪切 + 顶层目录行 + 「覆盖」裁决的源：posix-rename 无法覆盖非空
+           *  目录，改走中转递归合并 + 删源（扫描块内填充，见下） */
+          const mergeCutSrcs = new Set<string>();
           if (scanSrcs.length > 0) {
             const conflicts = await sftpScanConflicts(scanSrcs, dest);
             const { topLevel, drilled } = splitRemoteConflicts(conflicts, scanSrcs);
@@ -3639,6 +3683,21 @@ useEffect(() => {
               decision = await promptConflicts(topLevel);
               if (!decision) return; // 用户「停止」：保留剪贴板，可换个目录再粘贴
               Object.assign(renameBySrc, remoteNamesFromPlan(topLevel, decision));
+              // 剪切 + 目录 + 「覆盖」裁决：posix-rename 无法覆盖非空目录
+              //（ENOTEMPTY，也不能先删目标——那会毁掉整棵目标树），改走中转
+              // 递归合并（与复制路径的「覆盖=合并」语义一致），成功后删源保
+              // 剪切语义。文件行不受影响（file→file 原子替换）。
+              if (isCut) {
+                for (const c of topLevel) {
+                  if (
+                    c.srcKind === "dir" &&
+                    decision[c.dest]?.action === "overwrite" &&
+                    mvSrcs.has(c.src)
+                  ) {
+                    mergeCutSrcs.add(c.src);
+                  }
+                }
+              }
               // 类型冲突（文件 vs 目录）的「覆盖」先删目标再落盘——对齐本地
               // apply_file/apply_dir 的覆盖语义；否则远程 OPEN 截断 / mkdir 直接报服务器错误。
               // 删除统一在裁决之后执行（用户「停止」时不得先动手删目标）
@@ -3673,21 +3732,17 @@ useEffect(() => {
               : nfsUpload(src, dest, basename(src)));
             pasted.push(dest.endsWith("/") ? dest + finalName(src) : `${dest}/${finalName(src)}`);
           }
-          // 剪切粘贴到同一台服务器：服务器端一次 rename_over（posix-rename）
-          // 直接完成，不经临时目录中转，且 rename 天然删源——剪切语义真生效。
-          // 跨服务器（或复制）仍走中转；authority id 与后端 pool_key 同构。
-          const destId = destIsSftp ? parseSftpAuthority(dest)?.id : undefined;
-          const mvSrcs = new Set(
-            isCut && destId
-              ? relaySrcs.filter((s) => parseSftpAuthority(s)?.id === destId)
-              : [],
-          );
           for (const src of relaySrcs) {
             if (sameDir.includes(src)) continue;
-            // 顶层同名冲突已在上面裁决（改名/覆盖），此处按裁决名落盘
-            pasted.push(
-              await (mvSrcs.has(src) ? sftpMove(src, dest, finalName(src)) : sftpRelay(src, dest, finalName(src))),
-            );
+            // 顶层同名冲突已在上面裁决（改名/覆盖），此处按裁决名落盘。
+            // 同服务器剪切默认走 rename_over 原子移动；剪切 + 目录 + 覆盖裁决
+            // 的例外改走中转递归合并，成功后删源保剪切语义。
+            if (mvSrcs.has(src) && !mergeCutSrcs.has(src)) {
+              pasted.push(await sftpMove(src, dest, finalName(src)));
+              continue;
+            }
+            pasted.push(await sftpRelay(src, dest, finalName(src)));
+            if (mergeCutSrcs.has(src)) await sftpDelete([src]);
           }
           const relayedCount = relaySrcs.filter((s) => !sameDir.includes(s) && !mvSrcs.has(s)).length;
           if (relayedCount > 0 && isCut) {
@@ -3998,7 +4053,7 @@ useEffect(() => {
           .filter((p) => parents.has(p.path))
           .forEach((p) => refreshPane(p.id));
       } catch (e) {
-        showError(String(e));
+        showError(terr(String(e)));
       }
     },
     [pushOp, searchPane, tabs, refreshPane, showError],
@@ -4069,7 +4124,7 @@ useEffect(() => {
       const clear = () => {
         setDragOver(null);
         setDragDir(null);
-        setDropBadge(null);
+        updateDropBadge(null);
         hideNativeGhost();
         // 搜索拖拽 zone 悬停通报复位（面板渲染侧随会话/通报恢复）
         emitSearchDragHover(null);
@@ -4232,15 +4287,10 @@ useEffect(() => {
           // 外部拖入：应用条目表里没有可渲染的拖影内容 → 徽章而非拖影
           const t = dropTargetAt(c.x, c.y, []);
           highlight(null, t, "copy");
-          setDropBadge(
-            t?.dirPath
-              ? {
-                  name: basenameOf(t.dirPath),
-                  op: "copy",
-                  x: c.x,
-                  y: c.y,
-                }
-              : null,
+          updateDropBadge(
+            t?.dirPath ? { name: basenameOf(t.dirPath), op: "copy" } : null,
+            c.x,
+            c.y,
           );
         });
         if (disposed) unlisten();
@@ -4363,13 +4413,13 @@ useEffect(() => {
           e.preventDefault();
           const t = dropTargetAt(e.clientX, e.clientY, []);
           highlight(null, t, "copy", e.clientX, e.clientY);
-          setDropBadge(
-            t?.dirPath
-              ? { name: basenameOf(t.dirPath), op: "copy", x: e.clientX, y: e.clientY }
-              : null,
+          updateDropBadge(
+            t?.dirPath ? { name: basenameOf(t.dirPath), op: "copy" } : null,
+            e.clientX,
+            e.clientY,
           );
         } else {
-          setDropBadge(null);
+          updateDropBadge(null);
         }
         return;
       }
@@ -4424,7 +4474,7 @@ useEffect(() => {
     const finishDrag = () => {
       setDragOver(null);
       setDragDir(null);
-      setDropBadge(null);
+      updateDropBadge(null);
       hideNativeGhost();
       lastKey = "";
     };
@@ -5709,15 +5759,14 @@ useEffect(() => {
       )}
     </div>
     {/* 落点确认徽章（v0.49 特性4）：仅外部拖入（资源管理器 → 应用）会话——外部文件
-        不在应用条目表、无拖影内容可渲染，悬停目录条目时跟手显示「复制到「目录名」」 */}
+        不在应用条目表、无拖影内容可渲染，悬停目录条目时跟手显示「复制到「目录名」」。
+        位置命令式直写（updateDropBadge），left/top 不进 JSX——挂载初值由 layout
+        effect 在首帧绘制前补写，渲染期样式不会把命令式位置打回旧值 */}
     {dropBadge && (
       <div
+        ref={dropBadgeRef}
         data-drop-badge=""
         className="pointer-events-none fixed z-[60]"
-        style={{
-          left: (dropBadge.x + 16) / rootZoomFactor(),
-          top: (dropBadge.y + 20) / rootZoomFactor(),
-        }}
       >
         <div className="flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary shadow-elevate backdrop-blur-sm">
           <span className="truncate">

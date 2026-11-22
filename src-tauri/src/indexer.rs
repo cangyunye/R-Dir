@@ -270,6 +270,48 @@ pub fn env_exclusions() -> Vec<String> {
 ///   （临时目录/垃圾箱/敏感目录等系统目录是「几乎没人想索引」的，名字级排除
 ///   同理并集；用户自定义项原样保留），回写为新版本——根清单不动
 ///   （用户「仅扫描哪些目录」的选择不受影响）。
+/// roots 清洗（set_config 入口与 load_config 共用）：trim、去尾分隔符（盘根
+/// `C:\` 保留）、去重、剔除嵌套根。重复/嵌套根会让共享子树被遍历两遍——
+/// 同名路径出现两条 RawEntry，每条搜索结果重复返回、内存翻倍、by_path 二分
+/// 结果不确定。比较按小写归一（Windows 盘符与目录名大小写不敏感；类 Unix
+/// 平台大小写敏感，但同名重复根本身罕见，保守归一无害）。
+fn normalize_roots(roots: &[String]) -> Vec<String> {
+    let norm = |r: &str| -> String {
+        let t = r.trim().trim_end_matches(['\\', '/']).to_string();
+        // 盘根不能去尾分隔符：Win32 里 "C:" 是「该盘当前目录」而非盘根
+        if t.len() == 2 && t.as_bytes()[1] == b':' && t.as_bytes()[0].is_ascii_alphabetic() {
+            format!("{t}\\")
+        } else if t.is_empty() && r.trim().len() > 0 {
+            // 输入全是分隔符（如 "/"）：还原为单个根分隔符
+            r.trim().chars().next().unwrap_or('/').to_string()
+        } else {
+            t
+        }
+    };
+    let is_child = |p: &str, of: &str| -> bool {
+        let pl = p.to_lowercase();
+        // 父路径归一到无尾分隔符再拼组件边界（盘根 "C:\" 已带分隔符，直接拼
+        // 会变成 "c:\\" 而漏匹配）；归一后为空 = 根分隔符本身（"/"）
+        let ol = of.to_lowercase();
+        let ol = ol.trim_end_matches(['\\', '/']);
+        if ol.is_empty() {
+            return pl.starts_with('/') || pl.starts_with('\\');
+        }
+        pl == ol || pl.starts_with(&format!("{ol}\\")) || pl.starts_with(&format!("{ol}/"))
+    };
+    let mut out: Vec<String> = Vec::new();
+    for r in roots {
+        let r = norm(r);
+        if r.is_empty() || out.iter().any(|k| is_child(&r, k)) {
+            continue;
+        }
+        // 新根是已收根的祖先：移除已收根（保留覆盖面更大的）
+        out.retain(|k| !is_child(k, &r));
+        out.push(r);
+    }
+    out
+}
+
 pub fn load_config(config_dir: &Path) -> IndexConfigFile {
     let path = config_dir.join(INDEX_CONFIG_FILE);
     let loaded: Option<IndexConfigFile> = crate::json_store::read_json(&path, "读索引配置失败", "解析索引配置失败")
@@ -277,6 +319,7 @@ pub fn load_config(config_dir: &Path) -> IndexConfigFile {
         .flatten();
     match loaded {
         Some(mut cfg) if !cfg.roots.is_empty() => {
+            cfg.roots = normalize_roots(&cfg.roots);
             if cfg.config_version < CONFIG_VERSION {
                 let mut merged = default_exclusions();
                 for e in std::mem::take(&mut cfg.exclusions) {
@@ -511,7 +554,7 @@ impl Indexer {
         let exclude_exts = normalize_exts(&exclude_exts);
         let include_exts = normalize_exts(&include_exts);
         let cfg = IndexConfigFile {
-            roots: roots.clone(),
+            roots: normalize_roots(&roots),
             exclusions: exclusions.clone(),
             name_exclusions,
             index_hidden,
@@ -564,6 +607,9 @@ fn should_rescan(
 /// Access/Other 事件不置脏：Linux inotify 会把「读取」当事件上报，若不过滤，
 /// 自家重扫的 stat 会喂回脏标志形成自我反馈循环；macOS FSEvents / Windows
 /// ReadDirectoryChangesW 本就不产生 Access 事件，过滤只为 Linux 一致性。
+/// 配置目录（含快照 index/snapshot.bin、session.json 等应用自写文件）不置脏：
+/// 它们位于被监视的固定盘内，自家写盘若置脏会形成「写盘 → 置脏 → 重扫检测到
+/// 自家写盘 → 再写盘」的自反馈循环，永不收敛。
 fn on_watch_event(idx: &Indexer, res: Result<notify::Event, notify::Error>) {
     let relevant = match &res {
         Ok(ev) => !matches!(ev.kind, notify::EventKind::Access(_) | notify::EventKind::Other),
@@ -571,6 +617,12 @@ fn on_watch_event(idx: &Indexer, res: Result<notify::Event, notify::Error>) {
     };
     if !relevant {
         return;
+    }
+    if let Ok(ev) = &res {
+        // 路径全落在配置目录内才跳过；空 paths（个别平台的 Rescan 类事件）不吞
+        if !ev.paths.is_empty() && ev.paths.iter().all(|p| p.starts_with(&idx.config_dir)) {
+            return;
+        }
     }
     if let Err(e) = &res {
         eprintln!("indexer 监视事件异常（已置脏，等待重扫对账）：{e}");
@@ -652,6 +704,11 @@ fn thread_loop(idx: Arc<Indexer>) {
         );
         let mut excl_dirs = cfg.exclusions.clone();
         excl_dirs.extend(env_exclusions());
+        // 应用自身配置目录（含快照 index/snapshot.bin、session.json、thumbs 等高频
+        // 自写文件）不索引：既避免搜索结果混入应用内部文件，更关键的是切断快照
+        // 自反馈循环——快照写盘若被索引，下轮重扫必检测到变更，再写盘、再检测，
+        // 永不收敛。与 env 推导排除同口径：只作用于遍历，不计入快照指纹。
+        excl_dirs.push(idx.config_dir.to_string_lossy().into_owned());
         let excl = Exclusions {
             files,
             hidden,
@@ -714,12 +771,18 @@ fn thread_loop(idx: Arc<Indexer>) {
                     last_rescan.map(|t| t.elapsed()),
                 ) {
                     // 事件驱动 / 例行增量：无变化时 rescan 返回 None，零成本
+                    // 记住本轮看到的脏时刻：重扫（可能数秒）期间到达的监视事件
+                    // 会更新 dirty_at，此时不能清脏——否则窗口内变更要等下一次
+                    // 任意事件或最长一轮例行间隔才被补扫
+                    let dirty_at0 = idx.dirty_at.load(Ordering::Relaxed);
                     if let Some(new) = EngineState::rescan(st, &cfg.roots, &excl, fp) {
                         idx.swap(new);
                         persist(&idx);
                     }
-                    idx.dirty.store(false, Ordering::Relaxed);
-                    idx.dirty_at.store(0, Ordering::Relaxed);
+                    if idx.dirty_at.load(Ordering::Relaxed) == dirty_at0 {
+                        idx.dirty.store(false, Ordering::Relaxed);
+                        idx.dirty_at.store(0, Ordering::Relaxed);
+                    }
                     idx.last_scan_ms.store(now_ms(), Ordering::Relaxed);
                     last_rescan = Some(Instant::now());
                 }
@@ -739,7 +802,8 @@ fn persist(idx: &Indexer) {
 
 /// 搜索命令的共享执行体（GUI 与 web 桥同构）：插件门禁 + 后台线程查询。
 /// 结果上限 MAX_HITS=500（rdir-index 内常量），与 fd 引擎展示口径一致；
-/// gram 交集查询亚毫秒级，无需 spawn_blocking。
+/// Contains 走 gram 交集亚毫秒级，但 glob/regex 重模式可观——命令层（GUI 与
+/// web 桥）统一包 spawn_blocking 兜底，不让任何模式占住异步执行器。
 pub fn search_checked(
     plugins_state: &plugins::PluginState,
     indexer: &Indexer,
@@ -845,6 +909,30 @@ mod tests {
         assert_eq!(cfg.file_mode, "include");
         assert_eq!(cfg.exclude_exts, vec!["log".to_string()]);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// roots 清洗：去重 / 嵌套根剔除 / 尾分隔符归一 / 盘根保留（v0.50 评审 P1）
+    #[test]
+    fn normalize_roots_dedups_and_strips_nested() {
+        // 完全重复
+        assert_eq!(normalize_roots(&["C:\\".into(), "C:\\".into()]), vec!["C:\\"]);
+        // 嵌套（子在前 / 父在前，两种输入顺序都收敛到父）
+        assert_eq!(normalize_roots(&["C:\\".into(), "C:\\Users\\".into()]), vec!["C:\\"]);
+        assert_eq!(normalize_roots(&["C:\\Users\\".into(), "C:\\".into()]), vec!["C:\\"]);
+        // 大小写归一（Windows 目录名不区分大小写）
+        assert_eq!(normalize_roots(&["C:\\a".into(), "C:\\A\\b".into()]), vec!["C:\\a"]);
+        // Unix 风格嵌套 + 前缀非组件边界不得误判（/tmp ≠ /tmpfoo 的祖先）
+        assert_eq!(normalize_roots(&["/tmp".into(), "/tmp/x".into()]), vec!["/tmp"]);
+        assert_eq!(normalize_roots(&["/tmp".into(), "/tmpfoo".into()]), vec!["/tmp", "/tmpfoo"]);
+        // 兄弟根互不影响；尾分隔符归一
+        assert_eq!(
+            normalize_roots(&["C:\\a\\".into(), "C:\\b".into(), "C:\\b\\".into()]),
+            vec!["C:\\a", "C:\\b"]
+        );
+        // 盘根去尾后不得落成 "C:"（Win32 里那是「该盘当前目录」）
+        assert_eq!(normalize_roots(&["D:\\".into()]), vec!["D:\\"]);
+        // 空白项丢弃
+        assert_eq!(normalize_roots(&["C:\\a".into(), "  ".into()]), vec!["C:\\a"]);
     }
 
     /// 端到端（真实 FS + 真实内核监视器）：外部新增 → 秒级进索引 → 外部删除 → 秒级出索引。

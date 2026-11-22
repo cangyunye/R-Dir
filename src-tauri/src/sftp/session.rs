@@ -244,7 +244,9 @@ impl SftpSession {
         Ok(out)
     }
 
-    /// stat（不跟随符号链接）
+    /// stat（SSH_FXP_STAT=17，**跟随**符号链接；不跟随的是 LSTAT=7，本协议层
+    /// 未封装。调用方若需 lstat 语义应走 readdir 的 attrs——OpenSSH readdir
+    /// 对条目即 lstat 语义）
     pub async fn stat(&mut self, path: &str) -> Result<SftpAttrs, String> {
         let (_ty, body) = self
             .request(proto::STAT, |b| b.str(path))
@@ -740,6 +742,13 @@ impl SftpSession {
     /// 普通 RENAME 在 OpenSSH 上遇已存在目标会报 FAILURE）；服务器不支持该扩展
     /// （STATUS OP_UNSUPPORTED）时回退「删目标 + 普通 RENAME」（覆盖语义已由调用方
     /// 确认，非原子但等效）。
+    ///
+    /// FAILURE 不回退（v0.50 评审修正）：此前 FAILURE 也走「删目标 + 改名」，
+    /// 但 FAILURE 同样是 EXDEV（源/目标跨挂载点）、权限等真实错误的回复——
+    /// 先删掉目标再 rename 失败 = 目标内容被毁、操作失败、无补偿。真正遇到
+    /// 「未知扩展名回 FAILURE 而非 OP_UNSUPPORTED」的服务器时，这里会以清晰
+    /// 错误失败（可恢复、可见），比静默毁掉目标安全；届时再按服务器做能力
+    /// 探测选路径，而不是破坏性回退。
     pub async fn rename_over(&mut self, old: &str, new: &str) -> Result<(), String> {
         let id = self.next_id();
         let mut b = Buf::new();
@@ -756,16 +765,18 @@ impl SftpSession {
             if code == 0 {
                 return Ok(());
             }
-            if code == proto::err::OP_UNSUPPORTED
-                // 个别非 OpenSSH 服务器对未知扩展名回 FAILURE 而非 OP_UNSUPPORTED：
-                // 同样走回退（真正的权限错误会在回退的删/改名中再次暴露）
-                || code == proto::err::FAILURE
-            {
+            if code == proto::err::OP_UNSUPPORTED {
                 // 回退：删目标再普通改名（目标不存在时顺序无损）
                 let _ = self.remove(new).await;
                 return self.rename(old, new).await;
             }
-            return Err(proto::parse_status(&body)?.unwrap_or_default());
+            let msg = proto::parse_status(&body)?.unwrap_or_default();
+            if code == proto::err::FAILURE {
+                return Err(format!(
+                    "{msg}（posix-rename 失败；若服务器不支持该扩展，请反馈此错误提示）"
+                ));
+            }
+            return Err(msg);
         }
         Err("rename 意外回复".into())
     }
