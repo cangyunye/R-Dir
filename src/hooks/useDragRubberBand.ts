@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { measureZoomRatio } from "@/lib/zoom";
 import type { MouseEvent as ReactMouseEvent, RefObject } from "react";
 
 /**
@@ -37,17 +38,6 @@ export interface DragTargetHit {
  *  rect/offsetWidth 同源做法，FileList.tsx:388-395）。
  *  jsdom 等无布局环境量到 0 → 回退 1（不折算，单测桩全走布局=视觉）。
  *  导出供 IconGrid.slotAt 等同族换算复用（v0.49 特性5 槽位换算同样混算过）。 */
-export function measureZoomRatio(el: HTMLElement): number {
-  const probe = document.createElement("div");
-  probe.style.cssText =
-    "position:absolute;width:1000px;height:0;visibility:hidden;pointer-events:none;";
-  el.appendChild(probe);
-  const w = probe.getBoundingClientRect().width;
-  el.removeChild(probe);
-  const ratio = w / 1000;
-  return ratio > 0 && Number.isFinite(ratio) ? ratio : 1;
-}
-
 export interface DragRubberBandOptions {
   /** 橡皮筋选框坐标系原点（两侧的根容器，带 data-pane-id） */
   rectRef: RefObject<HTMLElement | null>;

@@ -163,11 +163,28 @@ pub fn mtime_ms(md: &std::fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
+/// 每线程批量收集器：条目先落线程本地缓冲，线程收尾（Drop）一次性合并进共享桶。
+/// 旧实现逐条 `Mutex::push`——百万条目 × 全局锁把并行遍历的收集阶段串行化；
+/// 批量化后整轮锁次数 = 每线程 1 次。条目顺序无关（by_path 排序重建、gram 不敏感）。
+struct BatchCollector {
+    buf: Vec<RawEntry>,
+    shared: Arc<Mutex<Vec<Vec<RawEntry>>>>,
+}
+
+impl Drop for BatchCollector {
+    fn drop(&mut self) {
+        self.shared
+            .lock()
+            .unwrap()
+            .push(std::mem::take(&mut self.buf));
+    }
+}
+
 /// 全量枚举所有根。返回（条目, 各根的目录 mtime——增量剪枝基线, 跳过的错误计数）。
 /// 根自身不收录（它是搜索的锚，不出现在结果里）；符号链接不跟随。
 pub fn walk_all(roots: &[String], exclusions: &Exclusions) -> (Vec<RawEntry>, Vec<i64>, u64) {
     let excl = Arc::new(exclusions.clone());
-    let entries: Arc<Mutex<Vec<RawEntry>>> = Arc::new(Mutex::new(Vec::new()));
+    let batches: Arc<Mutex<Vec<Vec<RawEntry>>>> = Arc::new(Mutex::new(Vec::new()));
     let errs = Arc::new(AtomicU64::new(0));
     let mut root_mtimes = Vec::with_capacity(roots.len());
 
@@ -184,7 +201,7 @@ pub fn walk_all(roots: &[String], exclusions: &Exclusions) -> (Vec<RawEntry>, Ve
                 })
                 .unwrap_or(0),
         );
-        let entries2 = entries.clone();
+        let batches2 = batches.clone();
         let errs2 = errs.clone();
         let excl2 = excl.clone();
         WalkBuilder::new(rp)
@@ -192,9 +209,12 @@ pub fn walk_all(roots: &[String], exclusions: &Exclusions) -> (Vec<RawEntry>, Ve
             .follow_links(false)
             .build_parallel()
             .run(move || {
-                // 每线程一份节流计数；收集器经 Arc 共享
+                // 每线程一份节流计数与批量收集器（Drop 时合并进共享桶）
                 let mut since_throttle = 0u32;
-                let entries = entries2.clone();
+                let mut col = BatchCollector {
+                    buf: Vec::new(),
+                    shared: batches2.clone(),
+                };
                 let errs = errs2.clone();
                 let excl = excl2.clone();
                 Box::new(move |result: Result<DirEntry, ignore::Error>| -> WalkState {
@@ -241,7 +261,7 @@ pub fn walk_all(roots: &[String], exclusions: &Exclusions) -> (Vec<RawEntry>, Ve
                                     return WalkState::Continue;
                                 }
                             };
-                            entries.lock().unwrap().push(RawEntry {
+                            col.buf.push(RawEntry {
                                 path: path.to_string_lossy().into_owned(),
                                 is_dir,
                                 size: if is_dir { 0 } else { md.len() },
@@ -266,8 +286,11 @@ pub fn walk_all(roots: &[String], exclusions: &Exclusions) -> (Vec<RawEntry>, Ve
             });
     }
 
-    let drained = entries.lock().unwrap().split_off(0);
-    (drained, root_mtimes, errs.load(Ordering::Relaxed))
+    let mut entries_vec = Vec::new();
+    for b in batches.lock().unwrap().drain(..) {
+        entries_vec.extend(b);
+    }
+    (entries_vec, root_mtimes, errs.load(Ordering::Relaxed))
 }
 
 const THROTTLE_EVERY: u32 = 8192;

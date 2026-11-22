@@ -207,6 +207,9 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>, nfs_installed: bool)
         configurable: false,
         installed: true,
     });
+    // 全盘索引插件（feature = "index" 门控）：未编译该 feature 的构建不出现在
+    // 插件清单（前端面板无从启用，index_* 命令桩返回 INDEX_DISABLED）
+    #[cfg(feature = "index")]
     v.push(PluginInfo {
         id: "index-search".into(),
         name: "全盘索引搜索".into(),
@@ -226,8 +229,15 @@ pub fn builtin_plugins(enabled_map: &HashMap<String, bool>, nfs_installed: bool)
 
 /// 各插件的默认启用状态。绝大多数默认开启；「全盘索引搜索」默认关闭——
 /// 后台全盘扫描属重资源功能，由用户在插件面板显式开启。
+/// （feature = "index" 未编译时 index-search 不在清单，恒默认开启无意义——
+/// 直接放行走 default_enabled 其他分支语义）
 pub fn default_enabled(id: &str) -> bool {
-    !matches!(id, "index-search")
+    #[cfg(feature = "index")]
+    if id == "index-search" {
+        return false;
+    }
+    let _ = id;
+    true
 }
 
 pub fn plugin_enabled(state: &PluginState, id: &str) -> bool {
@@ -321,6 +331,7 @@ mod tests {
     /// v0.47 回归：面板清单（builtin_plugins）与真实门禁（plugin_enabled）必须
     /// 同源 default_enabled——此前清单侧硬编码默认全开，默认关闭的「全盘索引」
     /// 在面板显示已开启而实际是关的（视觉与行为颠倒，首次点击发出的是关闭指令）
+    #[cfg(feature = "index")]
     #[test]
     fn panel_matches_gate_for_default_off_plugin() {
         let map = HashMap::new(); // 空表 = 全默认（无 plugins.json 覆盖）
@@ -336,6 +347,7 @@ mod tests {
     }
 
     /// 开启默认关闭的插件 → to_file 落盘记录；再关回默认值 → 记录消失（噪音过滤）
+    #[cfg(feature = "index")]
     #[test]
     fn toggle_persists_non_default_and_filters_default() {
         let state = PluginState::default();

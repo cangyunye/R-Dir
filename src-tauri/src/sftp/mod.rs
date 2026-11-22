@@ -635,8 +635,11 @@ const SCAN_MAX_DEPTH: usize = 64;
 /// 本地 `scan_into` 的 `if let Ok(rd)` 容错）。会话锁即取即放、绝不嵌套持两把，
 /// 跨服务器扫描不与并发传输反序持锁互等。目标目录不存在/列失败向上传错
 /// （目标侧信息不可靠时无法判定冲突，粘贴本身也必失败）。
+/// pool 收 `tokio::Mutex<SessionPool>` 引用：内部每个远程操作各自短暂取锁，
+/// 调用方不得预先持锁——扫描是网络级长操作（每层 2 次 list_dir RTT），持池锁
+/// 进行会把所有并发 SFTP 命令串行卡住（v0.50 评审 P2）。
 pub async fn scan_conflicts(
-    pool: &SessionPool,
+    pool: &tokio::sync::Mutex<SessionPool>,
     paths: &[String],
     dest: &str,
 ) -> Result<Vec<crate::ops::Conflict>, String> {
@@ -704,7 +707,7 @@ pub async fn scan_conflicts(
 /// `src_dir` 为完整源目录（本地路径或 sftp URL），`dst_remote` 为目标侧同名的
 /// 完整远程路径（不含 authority）。
 fn scan_pair<'a>(
-    pool: &'a SessionPool,
+    pool: &'a tokio::sync::Mutex<SessionPool>,
     dest_key: &'a str,
     dest_authority: &'a str,
     src_dir: &'a str,
@@ -780,11 +783,12 @@ fn push_conflict(
 
 /// 目标侧目录列表 → (名字, 是否目录)。
 async fn remote_list(
-    pool: &SessionPool,
+    pool: &tokio::sync::Mutex<SessionPool>,
     key: &str,
     dir: &str,
 ) -> Result<Vec<(String, bool)>, String> {
-    let sess = get_session(pool, key).await?;
+    let guard = pool.lock().await;
+    let sess = get_session(&guard, key).await?;
     let mut g = sess.lock().await;
     let entries = g.list_dir(dir).await?;
     Ok(entries.into_iter().map(|(n, a)| (n, a.is_dir)).collect())
@@ -792,7 +796,7 @@ async fn remote_list(
 
 /// 源条目是否目录：sftp URL → 对应会话 stat（stat 失败按文件，对齐本地
 /// `scan_into` 的 `src.is_dir()` 不可读即 false）；本地路径 → fs metadata。
-async fn src_is_dir(pool: &SessionPool, src: &str) -> bool {
+async fn src_is_dir(pool: &tokio::sync::Mutex<SessionPool>, src: &str) -> bool {
     if src.starts_with("sftp://") {
         let Ok((authority, remote)) = parse_sftp_path(src) else {
             return false;
@@ -800,7 +804,8 @@ async fn src_is_dir(pool: &SessionPool, src: &str) -> bool {
         let Ok((u, h, p)) = parse_authority(&authority) else {
             return false;
         };
-        let Ok(sess) = get_session(pool, &pool_key(&u, &h, p)).await else {
+        let guard = pool.lock().await;
+        let Ok(sess) = get_session(&guard, &pool_key(&u, &h, p)).await else {
             return false;
         };
         let mut g = sess.lock().await;
@@ -812,7 +817,7 @@ async fn src_is_dir(pool: &SessionPool, src: &str) -> bool {
 
 /// 列源目录子项 → (名字, 完整子路径, 是否目录)。本地路径走 fs，sftp URL 走对应
 /// 会话；列失败返回空（对齐本地 `scan_into` 的容错——子树冲突漏报不阻塞粘贴）。
-async fn src_children(pool: &SessionPool, src: &str) -> Vec<(String, String, bool)> {
+async fn src_children(pool: &tokio::sync::Mutex<SessionPool>, src: &str) -> Vec<(String, String, bool)> {
     if src.starts_with("sftp://") {
         let Ok((authority, remote)) = parse_sftp_path(src) else {
             return Vec::new();
@@ -820,7 +825,8 @@ async fn src_children(pool: &SessionPool, src: &str) -> Vec<(String, String, boo
         let Ok((u, h, p)) = parse_authority(&authority) else {
             return Vec::new();
         };
-        let Ok(sess) = get_session(pool, &pool_key(&u, &h, p)).await else {
+        let guard = pool.lock().await;
+        let Ok(sess) = get_session(&guard, &pool_key(&u, &h, p)).await else {
             return Vec::new();
         };
         let mut g = sess.lock().await;
@@ -1157,8 +1163,41 @@ mod tests {
             assert!(format!("{:?}", r.unwrap_err()).contains("CANCELLED"));
             assert!(g.stat(&remote2).await.is_err(), "远端半成品应被删除");
 
+            // 3) 覆盖上传暂存化（v0.50 评审）：写失败/取消不得毁目标原内容
+            let remote3 = format!("/tmp/rdir-sftp-it-{}-over.bin", std::process::id());
+            let small = dir.join("small.bin");
+            std::fs::write(&small, b"PRECIOUS").unwrap();
+            g.upload(&small, &remote3, |_, _| true).await.expect("首写成功");
+            // 取消覆盖上传：目标原内容必须完好（旧实现 OPEN 即截断 → 变 0 字节）
+            let r = g.upload(&local, &remote3, |_done, _total| false).await;
+            assert!(r.is_err(), "取消应报错");
+            g.download(&remote3, &dir.join("over-back.bin"), |_, _| true)
+                .await
+                .expect("取消后目标仍可读");
+            assert_eq!(
+                std::fs::read(dir.join("over-back.bin")).unwrap(),
+                b"PRECIOUS",
+                "取消覆盖上传不得毁目标原内容"
+            );
+            // 成功覆盖：内容替换为新内容 + 无 .part 残留
+            g.upload(&local, &remote3, |_, _| true).await.expect("覆盖上传成功");
+            g.download(&remote3, &dir.join("over-back2.bin"), |_, _| true)
+                .await
+                .expect("覆盖后可读");
+            assert_eq!(
+                std::fs::read(dir.join("over-back2.bin")).unwrap().len(),
+                size,
+                "覆盖上传内容 = 新内容"
+            );
+            let entries = g.list_dir("/tmp").await.expect("list /tmp");
+            assert!(
+                !entries.iter().any(|(n, _)| n.contains(".rdir-") && n.ends_with(".part")),
+                "覆盖上传成功后不得残留 .part 暂存文件"
+            );
+
             // 清理
             let _ = g.remove(&remote).await;
+            let _ = g.remove(&remote3).await;
             let _ = std::fs::remove_dir_all(&dir);
         });
     }
@@ -1695,6 +1734,7 @@ mod tests {
             let mut pool = pool::SessionPool::default();
             pool.put(&key, g);
             let authority = format!("{user}@127.0.0.1");
+            let pool = tokio::sync::Mutex::new(pool);
 
             let conflicts = scan_conflicts(
                 &pool,
@@ -1756,7 +1796,8 @@ mod tests {
             assert!(conflicts.iter().any(|c| c.src == local_src.join("f.txt").to_string_lossy()));
 
             // 清理远端与本地
-            let sess = get_session(&pool, &key).await.unwrap();
+            let guard = pool.lock().await;
+            let sess = get_session(&guard, &key).await.unwrap();
             let mut g = sess.lock().await;
             for f in [
                 format!("{dir_a}/f.txt"),

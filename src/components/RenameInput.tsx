@@ -6,11 +6,30 @@ import { Input } from "@/components/ui/input";
  *  zoom≠1 折算：clientX 与 rect 是视觉像素、measureText/scrollLeft 是布局像素，
  *  按 rect.width/offsetWidth 比值把视觉位移折回布局空间（v0.44 列宽 zoom 换算同款
  *  做法；不折算时塌缩锚点按 zoom 比例偏移，拖选起点错位）。 */
+/** 模块级 canvas 量测上下文（复用）：拖选期间逐 mousemove 调用 caretOffsetAt，
+ *  旧实现每次调用新建 canvas + 重设 font——ctx 会话级复用，font 串按值缓存
+ *  （切换输入框实例时字体变化才重设）。 */
+let caretCtx: CanvasRenderingContext2D | null = null;
+let caretFontCache = "";
+
+function caretCtxFor(el: HTMLInputElement): CanvasRenderingContext2D | null {
+  if (!caretCtx) {
+    caretCtx = document.createElement("canvas").getContext("2d");
+  }
+  if (!caretCtx) return null;
+  const cs = getComputedStyle(el);
+  const font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  if (font !== caretFontCache) {
+    caretCtx.font = font;
+    caretFontCache = font;
+  }
+  return caretCtx;
+}
+
 function caretOffsetAt(el: HTMLInputElement, clientX: number): number {
-  const ctx = document.createElement("canvas").getContext("2d");
+  const ctx = caretCtxFor(el);
   if (!ctx) return 0;
   const cs = getComputedStyle(el);
-  ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
   const padL = Number.parseFloat(cs.paddingLeft) || 0;
   const rect = el.getBoundingClientRect();
   const ratio = rect.width / el.offsetWidth || 1;

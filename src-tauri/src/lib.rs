@@ -9,6 +9,7 @@ mod find;
 mod fs_ops;
 mod fs_watch;
 mod iconpos;
+#[cfg(feature = "index")]
 mod indexer;
 mod json_store;
 mod ops;
@@ -446,6 +447,7 @@ pub(crate) fn set_plugin_enabled_core(
 ) -> Result<Vec<plugins::PluginInfo>, String> {
     plugins::set_enabled(&state.plugins, &id, enabled);
     // 全盘索引插件开关同步进后台线程（关 → 线程转 disabled 不再构建/重扫）
+    #[cfg(feature = "index")]
     if id == "index-search" {
         if let Some(ix) = indexer::shared() {
             ix.sync_enabled(&state.plugins);
@@ -2031,8 +2033,8 @@ async fn sftp_scan_conflicts(
     dest: String,
 ) -> Result<Vec<ops::Conflict>, String> {
     ensure_plugin(&state, "sftp")?;
-    let pool = state.sftp_pool.lock().await;
-    sftp::scan_conflicts(&pool, &paths, &dest).await
+    // 不预持池锁：扫描内部各远程操作即取即放（持锁扫描会串行卡住全部 SFTP 命令）
+    sftp::scan_conflicts(&state.sftp_pool, &paths, &dest).await
 }
 
 // ==================== NFS 插件命令（v0.40 无条件编译；InProcess/伴生插件由 NfsHandle 分发，事件/取消与 SFTP 同构） ====================
@@ -2852,6 +2854,7 @@ async fn find_files(
 
 /// 索引状态（phase/条目数/上次扫描/错误数/roots）：设置分区与搜索面板轮询用，
 /// 顺带把插件开关同步进后台线程
+#[cfg(feature = "index")]
 #[tauri::command]
 async fn index_status(
     app: tauri::AppHandle,
@@ -2867,6 +2870,7 @@ async fn index_status(
 
 /// 全盘索引搜索（gram 交集亚毫秒级；regex/glob 模式线性扫描较重，spawn_blocking 包裹；
 /// show_hidden=false 过滤 `.` 开头条目，与 fd/当前层隐藏灯同语义）
+#[cfg(feature = "index")]
 #[tauri::command]
 async fn index_search(
     app: tauri::AppHandle,
@@ -2896,6 +2900,7 @@ async fn index_search(
 }
 
 /// 手动全量重建（后台线程 ≤2s 内响应；构建期间旧索引继续可查）
+#[cfg(feature = "index")]
 #[tauri::command]
 async fn index_rebuild(
     app: tauri::AppHandle,
@@ -2910,6 +2915,7 @@ async fn index_rebuild(
 }
 
 /// 索引配置读取（roots + 排除清单）
+#[cfg(feature = "index")]
 #[tauri::command]
 async fn index_get_config(
     app: tauri::AppHandle,
@@ -2925,6 +2931,7 @@ async fn index_get_config(
 /// 索引配置写入：落盘 index.json（roots/排除清单/名字级排除/隐藏开关/文件类型
 /// 模式/例行间隔 0=仅事件/实时监视开关）；指纹与选项变化由后台线程检测后自动
 /// 生效（重建/重建监视器）
+#[cfg(feature = "index")]
 #[tauri::command]
 async fn index_set_config(
     app: tauri::AppHandle,
@@ -3018,6 +3025,7 @@ pub fn run() {
             plugins::init(app.handle(), &state.plugins);
             // 全盘索引后台线程（v0.45）：默认关闭（插件面板启用后开始构建/查询）。
             // 启动即挂线程：快照加载 <1s 恢复，无快照时空闲节流全量构建
+            #[cfg(feature = "index")]
             indexer::ensure(
                 &paths::config_dir(app.handle())?,
                 plugins::plugin_enabled(&state.plugins, "index-search"),
@@ -3086,10 +3094,15 @@ pub fn run() {
         shell_integration_register,
         shell_integration_unregister,
         create_shortcuts,
+        #[cfg(feature = "index")]
         index_status,
+        #[cfg(feature = "index")]
         index_search,
+        #[cfg(feature = "index")]
         index_rebuild,
+        #[cfg(feature = "index")]
         index_get_config,
+        #[cfg(feature = "index")]
         index_set_config,
         #[cfg(feature = "sftp")]
         sftp_list_servers,

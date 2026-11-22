@@ -1,6 +1,6 @@
 [package]
 name = "rust-file-manager"
-version = "0.50.0"
+version = "0.50.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -75,11 +75,12 @@ russh-keys = { version = "0.45", optional = true }
 # NFS 插件 crate：线协议类型恒需（host ↔ 伴生进程契约）；NFS 客户端本体由 nfs feature 经
 # rdir-nfs/client 门控——发行版不带 nfs，NFS 能力经 .rdplugin 安装的伴生进程动态获得
 rdir-nfs = { path = "crates/rdir-nfs", default-features = false }
-# 全盘索引搜索引擎（字符级 2-gram 倒排 + 快照；默认关闭，插件面板启用后后台构建）
-rdir-index = { path = "crates/rdir-index" }
+# 全盘索引搜索引擎（字符级 2-gram 倒排 + 快照；feature = "index" 门控——默认关闭，
+# 插件面板启用后后台构建；v0.50 起编译期可选，对齐 sftp/share 拔出模式）
+rdir-index = { path = "crates/rdir-index", optional = true }
 # 全盘索引实时监视（v0.46）：内核事件（macOS FSEvents / Windows ReadDirectoryChangesW /
 # Linux inotify 自动选择）——外部文件变更秒级进索引；空闲 0% CPU / 0 IO，<1MB 常驻
-notify = "7"
+notify = { version = "7", optional = true }
 async-trait = "0.1"
 # v0.7 分享服务（内置插件，feature = "share" 可编译期拔出）：内嵌 HTTP 文件服务
 axum = { version = "0.8", optional = true, features = ["ws", "http1", "multipart"] }
@@ -145,7 +146,7 @@ libc = "0.2"
 # 默认 = 发行口径（与 CI 的 tauri-action 构建一致）：无内嵌 NFS，NFS 能力经
 # .rdplugin 伴生进程插件获得。tauri CLI 只有 --features（可加不可减、无
 # --no-default-features），发行形态必须落在 default 上。
-default = ["sftp", "share", "nfs-sidecar"]
+default = ["sftp", "share", "nfs-sidecar", "index"]
 sftp = ["dep:russh", "dep:russh-keys", "dep:tokio", "dep:aes-gcm", "dep:sha2", "dep:rand"]
 # v0.40 内嵌 NFS 客户端（开发/全量构建 opt-in）：pnpm tauri dev --features nfs /
 # cargo build --features nfs。与 nfs-sidecar 并存时内嵌优先
@@ -157,6 +158,9 @@ share = ["dep:axum", "dep:tokio", "dep:local-ip-address", "dep:futures-util"]
 # v0.43 web 子命令（rdir-web bin）：axum 单端口 invoke 透传 + WS 事件广播 +
 # rust-embed 内嵌前端静态资源；与 share 共享 axum/tokio 可选依赖
 web = ["dep:axum", "dep:tokio", "dep:futures-util", "dep:rust-embed", "dep:rand"]
+# v0.50 全盘索引编译期门控（对齐 sftp/share 的拔出模式）：不需要全盘索引的
+# 构建不编译 rdir-index crate + notify + indexer.rs。发行 default 含 index
+index = ["dep:rdir-index", "dep:notify"]
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

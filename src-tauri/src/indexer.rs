@@ -666,6 +666,10 @@ fn spawn_watcher(idx: &Arc<Indexer>, roots: &[String]) -> Option<notify::Recomme
 /// 后台主循环
 fn thread_loop(idx: Arc<Indexer>) {
     let mut last_rescan: Option<Instant> = None;
+    // env 推导排除线程启动时算一次（最多 8 个 env 路径的 is_dir stat）：
+    // 旧实现在每 2s 轮询里重算——若某变量指向断连网络路径，每轮 poll 都会
+    // 阻塞数秒。env 变量在进程生命周期内基本不变，缓存一次足够
+    let env_excl_cached = env_exclusions();
     // 监视器句柄（drop = 停止监视）；签名为 (roots指纹, watch_enabled)，
     // 任一变化即重建（重新挂 root 集合）
     let mut watcher: Option<notify::RecommendedWatcher> = None;
@@ -703,7 +707,7 @@ fn thread_loop(idx: Arc<Indexer>) {
             },
         );
         let mut excl_dirs = cfg.exclusions.clone();
-        excl_dirs.extend(env_exclusions());
+        excl_dirs.extend(env_excl_cached.iter().cloned());
         // 应用自身配置目录（含快照 index/snapshot.bin、session.json、thumbs 等高频
         // 自写文件）不索引：既避免搜索结果混入应用内部文件，更关键的是切断快照
         // 自反馈循环——快照写盘若被索引，下轮重扫必检测到变更，再写盘、再检测，

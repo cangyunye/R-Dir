@@ -25,6 +25,8 @@ dist-ssr
 
 # Rust / Tauri
 src-tauri/target
+# v0.50.1：.cargo/config.toml 把 target-dir 固化到仓库内 cargotarget（rust 1.100 OOM jobs=6 方案）
+src-tauri/cargotarget/
 src-tauri/gen
 playwright-report
 test-results

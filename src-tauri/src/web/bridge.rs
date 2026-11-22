@@ -60,54 +60,41 @@ fn val<T: serde::Serialize>(r: Result<T, String>) -> Result<Value, String> {
     r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
 }
 
-/// 写类命令清单：`--read-only` 时服务端统一拒绝（比 UI 隐藏更可靠的防线；
-/// 新增写类命令必须同步登记，漏登记 = 只读模式出现写通道）。
-/// 口径 = 修改被浏览的文件系统（本地或远端）。缓存性写入不算：缩略图缓存、
-/// sftp_download 落临时目录（远程预览/打开的前置步骤）在只读模式下照常工作。
-const WRITE_COMMANDS: &[&str] = &[
-    "copy_entries",
-    "move_entries",
-    "copy_entries_plan",
-    "move_entries_plan",
-    "rename_entry",
-    "delete_entries",
-    "permanent_delete_entries",
-    "restore_from_trash",
-    "create_dir",
-    "create_file",
-    // v0.46 快捷方式创建（.lnk / 符号链接落盘）
-    "create_shortcuts",
-    "compress_items",
-    "extract_archive",
-    // 远端写 / 落用户指定本地目录
-    "sftp_download_to",
-    "sftp_upload",
-    // v0.44.0 SFTP↔SFTP 中转：写目标远端
-    "sftp_relay",
-    "sftp_mkdir",
-    "sftp_create_file",
-    "sftp_delete",
-    "sftp_rename",
-    // v0.46 同服务器剪切粘贴：服务器端一次 rename（不走中转）
-    "sftp_move_entry",
-    "write_text_file",
-    "http_download_to",
-    // 写用户在服务端指定路径（导出类）
-    "sftp_export_servers",
-    "theme_export",
-];
+/// 命令读写标记的展开（宏内辅助）
+macro_rules! web_flag {
+    (write) => {
+        true
+    };
+    (read) => {
+        false
+    };
+}
 
-/// 声明式分发表：单一 match 生成 dispatch + 命令清单。
-/// 新增桥接命令 = 加一行 `名称 => 处理函数`。
+/// 声明式分发表：单一来源同时生成 dispatch、命令清单与写类判定。
+/// 新增桥接命令 = 加一行 `名称 => 处理函数 @ write` 或 `@ read`——**写标记与
+/// 登记强制同时表态**：旧实现写类命令靠手维护独立清单，新增命令忘登记 =
+/// 只读模式出现写通道，这个漂移面由宏消灭。
+/// 口径 = 修改被浏览的文件系统（本地或远端）、写服务端用户指定路径（导出类）、
+/// 改动服务器凭据库（保存/导入/删除/分组/主密钥——v0.50 评审纳入只读门禁）；
+/// 缓存与配置类写入不算（@read）：缩略图缓存、sftp_download 落临时目录
+/// （远程预览/打开的前置步骤）、session/prefs/theme/插件开关/索引配置等
+/// 应用自身配置，只读模式下照常工作。
 macro_rules! web_commands {
-    ( $( $name:literal => $handler:ident ),* $(,)? ) => {
+    ( $( $name:literal => $handler:ident @ $flag:ident ),* $(,)? ) => {
+        /// 命令是否写类（由分发表标记生成，与登记同源无漂移）
+        pub fn is_write_command(cmd: &str) -> bool {
+            match cmd {
+                $( $name => web_flag!($flag), )*
+                _ => false,
+            }
+        }
         pub async fn dispatch(
             ctx: &WebCtx,
             cmd: &str,
             args: &Value,
         ) -> Result<Value, String> {
             // 服务端只读门禁：写类命令在进入处理函数前拒绝
-            if ctx.read_only && WRITE_COMMANDS.contains(&cmd) {
+            if ctx.read_only && is_write_command(cmd) {
                 return Err("READ_ONLY|只读模式拒绝写操作".into());
             }
             match cmd {
@@ -789,8 +776,8 @@ async fn c_sftp_scan_conflicts(ctx: &WebCtx, args: &Value) -> Result<Value, Stri
     let paths: Vec<String> = arg(args, "paths")?;
     let dest: String = arg(args, "dest")?;
     crate::ensure_plugin(&ctx.state, "sftp")?;
-    let pool = ctx.state.sftp_pool.lock().await;
-    val(crate::sftp::scan_conflicts(&pool, &paths, &dest).await)
+    // 不预持池锁：扫描内部各远程操作即取即放
+    val(crate::sftp::scan_conflicts(&ctx.state.sftp_pool, &paths, &dest).await)
 }
 
 #[cfg(feature = "sftp")]
@@ -846,6 +833,7 @@ sftp_stubs!(
     c_sftp_download,
     c_sftp_download_to,
     c_sftp_upload,
+    c_sftp_relay,
     c_sftp_mkdir,
     c_sftp_create_file,
     c_sftp_delete,
@@ -969,7 +957,10 @@ async fn c_find_files(_ctx: &WebCtx, args: &Value) -> Result<Value, String> {
 // ==================== 全盘索引（v0.45） ====================
 
 /// 惰性启动共享索引器（web 模式无 setup 钩子，首条 index_* 命令启动）；
-/// 同时同步插件开关（设置分区/搜索面板轮询状态即完成同步）
+/// 同时同步插件开关（设置分区/搜索面板轮询状态即完成同步）。
+/// feature = "index" 关闭时五个 c_index_* 处理函数由下方桩替身（INDEX_DISABLED），
+/// 分发表登记保持不变——前端插件面板本就把未启用插件灰置。
+#[cfg(feature = "index")]
 fn index_with_ctx(ctx: &WebCtx) -> &'static std::sync::Arc<crate::indexer::Indexer> {
     let ix = crate::indexer::ensure(&ctx.config_dir, {
         crate::plugins::plugin_enabled(&ctx.state.plugins, "index-search")
@@ -978,8 +969,32 @@ fn index_with_ctx(ctx: &WebCtx) -> &'static std::sync::Arc<crate::indexer::Index
     ix
 }
 
+#[cfg(feature = "index")]
 async fn c_index_status(ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
     val(Ok(index_with_ctx(ctx).status()))
+}
+
+// feature = "index" 关闭时的桩替身：分发表登记不变，调用统一返回码化错误
+// （前端插件面板未启用索引时本就不发起这些命令；直呼得明确错误而非 WEB_UNSUPPORTED）
+#[cfg(not(feature = "index"))]
+async fn c_index_status(_ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    Err("INDEX_DISABLED|全盘索引未编译（构建缺 index feature）".into())
+}
+#[cfg(not(feature = "index"))]
+async fn c_index_search(_ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    Err("INDEX_DISABLED|全盘索引未编译（构建缺 index feature）".into())
+}
+#[cfg(not(feature = "index"))]
+async fn c_index_rebuild(_ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    Err("INDEX_DISABLED|全盘索引未编译（构建缺 index feature）".into())
+}
+#[cfg(not(feature = "index"))]
+async fn c_index_get_config(_ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    Err("INDEX_DISABLED|全盘索引未编译（构建缺 index feature）".into())
+}
+#[cfg(not(feature = "index"))]
+async fn c_index_set_config(_ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
+    Err("INDEX_DISABLED|全盘索引未编译（构建缺 index feature）".into())
 }
 
 /// v0.46 启动路径拉取（桌面端 Explorer/Finder 右键集成）；web 模式无「带路径启动」语义，恒空
@@ -1014,6 +1029,7 @@ async fn c_create_shortcuts(ctx: &WebCtx, args: &Value) -> Result<Value, String>
         .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
 }
 
+#[cfg(feature = "index")]
 async fn c_index_search(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let query: String = arg(args, "query")?;
     let case_sensitive: bool = arg(args, "caseSensitive")?;
@@ -1035,15 +1051,18 @@ async fn c_index_search(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
 }
 
+#[cfg(feature = "index")]
 async fn c_index_rebuild(ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
     index_with_ctx(ctx).rebuild();
     val(Ok(()))
 }
 
+#[cfg(feature = "index")]
 async fn c_index_get_config(ctx: &WebCtx, _args: &Value) -> Result<Value, String> {
     val(Ok(index_with_ctx(ctx).get_config()))
 }
 
+#[cfg(feature = "index")]
 async fn c_index_set_config(ctx: &WebCtx, args: &Value) -> Result<Value, String> {
     let roots: Vec<String> = arg(args, "roots")?;
     let exclusions: Vec<String> = arg(args, "exclusions")?;
@@ -1157,100 +1176,109 @@ async fn c_set_plugin_enabled(ctx: &WebCtx, args: &Value) -> Result<Value, Strin
 // 首批：浏览/持久化/缩略图/预览/属性统计；第二批：写类（复制/移动/删除/改名/新建/压缩/解压）。
 
 web_commands! {
-    "get_home_dir" => c_get_home_dir,
-    "get_volumes" => c_get_volumes,
-    "get_quick_access" => c_get_quick_access,
-    "parent_dir" => c_parent_dir,
-    "list_dir" => c_list_dir,
-    "resolve_path" => c_resolve_path,
-    "complete_path" => c_complete_path,
-    "stat_path" => c_stat_path,
-    "stat_paths" => c_stat_paths,
-    "stat_entry" => c_stat_entry,
-    "fs_watch_set" => c_fs_watch_set,
-    "session_load" => c_session_load,
-    "session_save" => c_session_save,
-    "session_clear" => c_session_clear,
-    "favorites_load" => c_favorites_load,
-    "favorites_save" => c_favorites_save,
-    "prefs_load" => c_prefs_load,
-    "prefs_save" => c_prefs_save,
-    "icon_positions_load" => c_icon_positions_load,
-    "icon_positions_save" => c_icon_positions_save,
-    "themes_list" => c_themes_list,
-    "list_plugins" => c_list_plugins,
-    "thumb_get" => c_thumb_get,
-    "preview_data" => c_preview_data,
-    "probe_local_file" => c_probe_local_file,
-    "compute_size" => c_compute_size,
-    "cancel_size" => c_cancel_size,
-    // ---- 写类（--read-only 时服务端拒绝） ----
-    "copy_entries" => c_copy_entries,
-    "move_entries" => c_move_entries,
-    "copy_entries_plan" => c_copy_entries_plan,
-    "move_entries_plan" => c_move_entries_plan,
-    "scan_conflicts" => c_scan_conflicts,
-    "scan_dir_duplicates" => c_scan_dir_duplicates,
-    "rename_entry" => c_rename_entry,
-    "delete_entries" => c_delete_entries,
-    "permanent_delete_entries" => c_permanent_delete_entries,
-    "restore_from_trash" => c_restore_from_trash,
-    "create_dir" => c_create_dir,
-    "create_file" => c_create_file,
-    "cancel_transfer" => c_cancel_transfer,
-    "compress_items" => c_compress_items,
-    "extract_archive" => c_extract_archive,
+    "get_home_dir" => c_get_home_dir @ read,
+    "get_volumes" => c_get_volumes @ read,
+    "get_quick_access" => c_get_quick_access @ read,
+    "parent_dir" => c_parent_dir @ read,
+    "list_dir" => c_list_dir @ read,
+    "resolve_path" => c_resolve_path @ read,
+    "complete_path" => c_complete_path @ read,
+    "stat_path" => c_stat_path @ read,
+    "stat_paths" => c_stat_paths @ read,
+    "stat_entry" => c_stat_entry @ read,
+    "fs_watch_set" => c_fs_watch_set @ read,
+    "session_load" => c_session_load @ read,
+    "session_save" => c_session_save @ read,
+    "session_clear" => c_session_clear @ read,
+    "favorites_load" => c_favorites_load @ read,
+    "favorites_save" => c_favorites_save @ read,
+    "prefs_load" => c_prefs_load @ read,
+    "prefs_save" => c_prefs_save @ read,
+    "icon_positions_load" => c_icon_positions_load @ read,
+    "icon_positions_save" => c_icon_positions_save @ read,
+    "themes_list" => c_themes_list @ read,
+    "list_plugins" => c_list_plugins @ read,
+    "thumb_get" => c_thumb_get @ read,
+    "preview_data" => c_preview_data @ read,
+    "probe_local_file" => c_probe_local_file @ read,
+    "compute_size" => c_compute_size @ read,
+    "cancel_size" => c_cancel_size @ read,
+    // ---- 写类：修改被浏览的文件系统（--read-only 时服务端拒绝） ----
+    "copy_entries" => c_copy_entries @ write,
+    "move_entries" => c_move_entries @ write,
+    "copy_entries_plan" => c_copy_entries_plan @ write,
+    "move_entries_plan" => c_move_entries_plan @ write,
+    // 只读扫描（沿用既有口径：扫描不写盘）
+    "scan_conflicts" => c_scan_conflicts @ read,
+    "scan_dir_duplicates" => c_scan_dir_duplicates @ read,
+    "rename_entry" => c_rename_entry @ write,
+    "delete_entries" => c_delete_entries @ write,
+    "permanent_delete_entries" => c_permanent_delete_entries @ write,
+    "restore_from_trash" => c_restore_from_trash @ write,
+    "create_dir" => c_create_dir @ write,
+    "create_file" => c_create_file @ write,
+    "cancel_transfer" => c_cancel_transfer @ read,
+    "compress_items" => c_compress_items @ write,
+    "extract_archive" => c_extract_archive @ write,
     // ---- 第三批：SFTP（NFS 插件链路不桥接） ----
-    "sftp_list_servers" => c_sftp_list_servers,
-    "sftp_save_server" => c_sftp_save_server,
-    "sftp_remove_server" => c_sftp_remove_server,
-    "sftp_set_server_group" => c_sftp_set_server_group,
-    "sftp_master_key_status" => c_sftp_master_key_status,
-    "sftp_set_master_key" => c_sftp_set_master_key,
-    "sftp_reset_master_key" => c_sftp_reset_master_key,
-    "sftp_connect" => c_sftp_connect,
-    "sftp_disconnect" => c_sftp_disconnect,
-    "sftp_download" => c_sftp_download,
-    "sftp_download_to" => c_sftp_download_to,
-    "sftp_upload" => c_sftp_upload,
-    "sftp_relay" => c_sftp_relay,
-    "sftp_mkdir" => c_sftp_mkdir,
-    "sftp_create_file" => c_sftp_create_file,
-    "sftp_delete" => c_sftp_delete,
-    "sftp_rename" => c_sftp_rename,
-    "sftp_move_entry" => c_sftp_move_entry,
-    "sftp_scan_conflicts" => c_sftp_scan_conflicts,
-    "sftp_export_servers" => c_sftp_export_servers,
-    "sftp_import_servers" => c_sftp_import_servers,
+    "sftp_list_servers" => c_sftp_list_servers @ read,
+    // 服务器凭据库改动（v0.50 评审纳入只读门禁）
+    "sftp_save_server" => c_sftp_save_server @ write,
+    "sftp_remove_server" => c_sftp_remove_server @ write,
+    "sftp_set_server_group" => c_sftp_set_server_group @ write,
+    "sftp_master_key_status" => c_sftp_master_key_status @ read,
+    "sftp_set_master_key" => c_sftp_set_master_key @ write,
+    "sftp_reset_master_key" => c_sftp_reset_master_key @ write,
+    "sftp_connect" => c_sftp_connect @ read,
+    "sftp_disconnect" => c_sftp_disconnect @ read,
+    // 落临时目录（远程预览前置）= 缓存类，只读可用
+    "sftp_download" => c_sftp_download @ read,
+    "sftp_download_to" => c_sftp_download_to @ write,
+    "sftp_upload" => c_sftp_upload @ write,
+    "sftp_relay" => c_sftp_relay @ write,
+    "sftp_mkdir" => c_sftp_mkdir @ write,
+    "sftp_create_file" => c_sftp_create_file @ write,
+    "sftp_delete" => c_sftp_delete @ write,
+    "sftp_rename" => c_sftp_rename @ write,
+    // v0.46 同服务器剪切粘贴：服务器端一次 rename（不走中转）
+    "sftp_move_entry" => c_sftp_move_entry @ write,
+    "sftp_scan_conflicts" => c_sftp_scan_conflicts @ read,
+    // 导出/导入凭据库：写用户指定路径 / 导入写凭据库
+    "sftp_export_servers" => c_sftp_export_servers @ write,
+    "sftp_import_servers" => c_sftp_import_servers @ write,
     // ---- 比对 / 文本 / 搜索 / 杂项 ----
-    "diff_dirs" => c_diff_dirs,
-    "cancel_diff" => c_cancel_diff,
-    "diff_text_files" => c_diff_text_files,
-    "read_text_file" => c_read_text_file,
-    "write_text_file" => c_write_text_file,
-    "search_content" => c_search_content,
-    "find_files" => c_find_files,
-    "index_status" => c_index_status,
-    "launch_paths_take" => c_launch_paths_take,
-    "shell_integration_status" => c_shell_integration_status,
-    "shell_integration_register" => c_shell_integration_register,
-    "shell_integration_unregister" => c_shell_integration_unregister,
-    "create_shortcuts" => c_create_shortcuts,
-    "index_search" => c_index_search,
-    "index_rebuild" => c_index_rebuild,
-    "index_get_config" => c_index_get_config,
-    "index_set_config" => c_index_set_config,
-    "file_fingerprints" => c_file_fingerprints,
-    "remote_temp_info" => c_remote_temp_info,
-    "remote_temp_clear" => c_remote_temp_clear,
-    "http_download_to" => c_http_download_to,
-    "cancel_http_download" => c_cancel_http_download,
-    // ---- 主题管理 / 插件开关 ----
-    "theme_install" => c_theme_install,
-    "theme_delete" => c_theme_delete,
-    "theme_save" => c_theme_save,
-    "theme_export" => c_theme_export,
-    "set_plugin_enabled" => c_set_plugin_enabled,
+    "diff_dirs" => c_diff_dirs @ read,
+    "cancel_diff" => c_cancel_diff @ read,
+    "diff_text_files" => c_diff_text_files @ read,
+    "read_text_file" => c_read_text_file @ read,
+    "write_text_file" => c_write_text_file @ write,
+    "search_content" => c_search_content @ read,
+    "find_files" => c_find_files @ read,
+    "index_status" => c_index_status @ read,
+    "launch_paths_take" => c_launch_paths_take @ read,
+    // 系统集成：处理函数内无条件 WEB_UNSUPPORTED（比门禁更强），标记只作声明
+    "shell_integration_status" => c_shell_integration_status @ read,
+    "shell_integration_register" => c_shell_integration_register @ read,
+    "shell_integration_unregister" => c_shell_integration_unregister @ read,
+    // v0.46 快捷方式创建（.lnk / 符号链接落盘）
+    "create_shortcuts" => c_create_shortcuts @ write,
+    "index_search" => c_index_search @ read,
+    // 索引重建/配置 = 应用自身配置与缓存（既有口径：只读可用）
+    "index_rebuild" => c_index_rebuild @ read,
+    "index_get_config" => c_index_get_config @ read,
+    "index_set_config" => c_index_set_config @ read,
+    "file_fingerprints" => c_file_fingerprints @ read,
+    // 远端临时目录 = 应用缓存，清理属缓存类
+    "remote_temp_info" => c_remote_temp_info @ read,
+    "remote_temp_clear" => c_remote_temp_clear @ read,
+    "http_download_to" => c_http_download_to @ write,
+    "cancel_http_download" => c_cancel_http_download @ read,
+    // ---- 主题管理 / 插件开关（应用自身配置，既有口径只读可用；导出落用户指定路径 = 写） ----
+    "theme_install" => c_theme_install @ read,
+    "theme_delete" => c_theme_delete @ read,
+    "theme_save" => c_theme_save @ read,
+    "theme_export" => c_theme_export @ write,
+    "set_plugin_enabled" => c_set_plugin_enabled @ read,
 }
 
 #[cfg(test)]
@@ -1305,11 +1333,10 @@ mod tests {
         // 非写命令不受只读影响
         let ok = rt.block_on(dispatch(&ctx, "get_home_dir", &json!({})));
         assert!(ok.is_ok());
-        // 写命令清单与分发表登记一致性：WRITE_COMMANDS 的每项都必须已桥接
-        // （漏登记 = 拒绝了一个不存在的命令；反向漏登记 = 只读模式出现写通道）
-        for w in WRITE_COMMANDS {
-            assert!(COMMANDS.contains(w), "WRITE_COMMANDS 含未桥接命令 {w}");
-        }
+        // 写标记与登记同源（宏生成）：is_write_command 对未登记命令恒 false，
+        // 不存在「写清单含未桥接命令」与「写命令漏标记」两类漂移面
+        assert!(!is_write_command("__no_such_command__"));
+        assert!(!is_write_command("list_dir"));
     }
 
     #[test]
@@ -1375,11 +1402,17 @@ mod tests {
 
     #[test]
     fn read_only_keeps_remote_preview_but_blocks_remote_writes() {
-        // 只读口径：sftp_download（落临时目录，远程预览前置）不在写清单；
-        // 远端写与落用户目录的下载在写清单
-        assert!(!WRITE_COMMANDS.contains(&"sftp_download"));
-        assert!(!WRITE_COMMANDS.contains(&"read_text_file"));
-        assert!(!WRITE_COMMANDS.contains(&"diff_dirs"));
+        // 只读口径：sftp_download（落临时目录，远程预览前置）不是写类；
+        // 远端写、落用户目录的下载、凭据库改动是写类
+        assert!(!is_write_command("sftp_download"));
+        assert!(!is_write_command("read_text_file"));
+        assert!(!is_write_command("diff_dirs"));
+        // 配置/缓存类写入按既有口径只读可用
+        assert!(!is_write_command("session_save"));
+        assert!(!is_write_command("theme_save"));
+        assert!(!is_write_command("set_plugin_enabled"));
+        assert!(!is_write_command("index_set_config"));
+        assert!(!is_write_command("remote_temp_clear"));
         for w in [
             "sftp_upload",
             "sftp_relay",
@@ -1391,8 +1424,16 @@ mod tests {
             "sftp_download_to",
             "write_text_file",
             "http_download_to",
+            // v0.50 评审纳入：凭据库与导出类
+            "sftp_save_server",
+            "sftp_import_servers",
+            "sftp_remove_server",
+            "sftp_set_server_group",
+            "sftp_set_master_key",
+            "sftp_export_servers",
+            "theme_export",
         ] {
-            assert!(WRITE_COMMANDS.contains(&w), "写清单缺 {w}");
+            assert!(is_write_command(w), "写类标记缺失 {w}");
         }
     }
 

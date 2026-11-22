@@ -117,6 +117,405 @@ const CONTEXT_MENU_ITEMS: { id: string; label: string }[] = [
  * - 外观：颜色模式 浅色 / 深色 / 跟随系统（持久化到 localStorage，system 随系统实时切换）
  * - 快捷键：点击"录制"按组合键自定义（当前平台），Esc 取消，冲突检测，恢复默认
  */
+/** 全盘索引分区（v0.50 评审拆分）：状态轮询/配置草稿/保存与预设全部自管——
+ *  与主组件唯一的耦合是 open（对话框可见性，门控轮询与配置拉取）。渲染由主
+ *  组件的锚点 div 包裹（左栏分区导航滚动定位仍由 sectionRefs 承担）。 */
+function IndexSettingsSection({ open }: { open: boolean }) {
+  const t = useT();
+  // v0.45 全盘索引（自管：状态轮询 + 配置文本区；开关本体在「插件」分区）
+  const [indexSt, setIndexSt] = useState<IndexStatusView | null>(null);
+  const [indexRoots, setIndexRoots] = useState("");
+  const [indexExcl, setIndexExcl] = useState("");
+  const [indexNameExcl, setIndexNameExcl] = useState("");
+  const [indexDirty, setIndexDirty] = useState(false);
+  const [indexSaving, setIndexSaving] = useState(false);
+  const [indexSaved, setIndexSaved] = useState(false);
+  // v0.46 扫描选项：频率（秒；0=仅事件）与实时监视开关——改动即存（用已落盘的
+  // roots/排除清单，不携带文本区未保存草稿）；indexSavedCfg 记录最近一次落盘值
+  const [indexFreq, setIndexFreq] = useState(600);
+  const [indexWatch, setIndexWatch] = useState(true);
+  // v0.46 索引隐藏开关（改动即存）+ 文件类型索引模式与扩展名草稿（随「保存」落盘）
+  const [indexHidden, setIndexHidden] = useState(true);
+  const [indexFileMode, setIndexFileMode] = useState<IndexConfigFile["fileMode"]>("all");
+  const [indexExcludeExts, setIndexExcludeExts] = useState("");
+  const [indexIncludeExts, setIndexIncludeExts] = useState("");
+  const [indexSavedCfg, setIndexSavedCfg] = useState<{
+    roots: string[];
+    exclusions: string[];
+    nameExclusions: string[];
+    indexHidden: boolean;
+    fileMode: IndexConfigFile["fileMode"];
+    excludeExts: string[];
+    includeExts: string[];
+  }>({ roots: [], exclusions: [], nameExclusions: [], indexHidden: true, fileMode: "all", excludeExts: [], includeExts: [] });
+  /** 最近落盘值的同步 ref：改动即存的开关（隐藏/频率/监视）同帧连续拨动时，
+   *  state 闭包可能读到陈旧整包而相互覆盖——统一走 ref 取/写最新值 */
+  const indexSavedCfgRef = useRef(indexSavedCfg);
+  const applyIndexOptions = useCallback(
+    async (freq: number, watch: boolean, hidden: boolean) => {
+      try {
+        const c = indexSavedCfgRef.current;
+        await indexSetConfig(c.roots, c.exclusions, c.nameExclusions, hidden, c.fileMode, c.excludeExts, c.includeExts, freq, watch);
+        indexSavedCfgRef.current = { ...c, indexHidden: hidden };
+        setIndexSavedCfg(indexSavedCfgRef.current);
+        setIndexSaved(true);
+        window.setTimeout(() => setIndexSaved(false), 2000);
+      } catch {
+        /* 保存失败静默（下次轮询状态可见配置未生效） */
+      }
+    },
+    [],
+  );
+  const handleSaveIndexConfig = useCallback(async () => {
+    setIndexSaving(true);
+    try {
+      const roots = indexRoots.split("\n").map((s) => s.trim()).filter(Boolean);
+      const excl = indexExcl.split("\n").map((s) => s.trim()).filter(Boolean);
+      const nameExcl = indexNameExcl.split("\n").map((s) => s.trim()).filter(Boolean);
+      const excludeExts = indexExcludeExts.split("\n").map((s) => s.trim()).filter(Boolean);
+      const includeExts = indexIncludeExts.split("\n").map((s) => s.trim()).filter(Boolean);
+      await indexSetConfig(roots, excl, nameExcl, indexHidden, indexFileMode, excludeExts, includeExts, indexFreq, indexWatch);
+      const saved = { roots, exclusions: excl, nameExclusions: nameExcl, indexHidden, fileMode: indexFileMode, excludeExts, includeExts };
+      indexSavedCfgRef.current = saved;
+      setIndexSavedCfg(saved);
+      setIndexDirty(false);
+      setIndexSaved(true);
+      window.setTimeout(() => setIndexSaved(false), 2000);
+    } catch {
+      /* 保存失败静默（下次轮询状态可见配置未生效） */
+    }
+    setIndexSaving(false);
+  }, [indexRoots, indexExcl, indexNameExcl, indexHidden, indexFileMode, indexExcludeExts, indexIncludeExts, indexFreq, indexWatch]);
+  /** 添加索引范围目录：系统目录选择对话框，选完追加为草稿新行 */
+  const handleAddIndexRoot = useCallback(async () => {
+    try {
+      const picked = await openDialog({
+        title: t("添加索引范围目录"),
+        multiple: false,
+        directory: true,
+      });
+      if (!picked || Array.isArray(picked)) return;
+      setIndexRoots((prev) => (prev.trim() ? `${prev.trimEnd()}\n${picked}` : picked));
+      setIndexDirty(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  // v0.46 文件类型预设（点击并入当前模式的扩展名草稿；label 用字面量 t() 保证可被语言包提取）
+  const indexExtPresets = [
+    { label: t("文档"), exts: ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "md", "txt", "csv", "epub"] },
+    {
+      label: t("代码"),
+      exts: ["ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "c", "cpp", "h", "rb", "php", "swift", "kt", "cs", "sql", "sh", "json", "yaml", "yml", "toml", "html", "css"],
+    },
+    { label: t("图片"), exts: ["jpg", "jpeg", "png", "gif", "webp", "svg", "heic", "bmp"] },
+    { label: t("音视频"), exts: ["mp4", "mov", "mkv", "avi", "mp3", "flac", "wav", "aac"] },
+  ];
+  /** 预设扩展名并入当前模式的草稿（已有项保留，追加缺失项） */
+  const applyExtPreset = useCallback(
+    (exts: string[]) => {
+      const setter = indexFileMode === "exclude" ? setIndexExcludeExts : setIndexIncludeExts;
+      setter((prev) => {
+        const cur = prev.split("\n").map((s) => s.trim()).filter(Boolean);
+        return [...new Set([...cur, ...exts])].join("\n");
+      });
+      setIndexDirty(true);
+    },
+    [indexFileMode],
+  );
+  // v0.45 全盘索引：打开设置期间每 2s 轮询状态（顺带在后端同步插件开关）+ 首次拉取配置
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    const poll = () =>
+      indexStatus()
+        .then((s) => {
+          if (alive) setIndexSt(s);
+        })
+        .catch(() => {});
+    poll();
+    const timer = window.setInterval(poll, 2000);
+    indexGetConfig()
+      .then((c) => {
+        if (!alive) return;
+        // 不覆盖编辑中的草稿（仅在为空时填充）；扫描选项直接反映落盘值。
+        // 新字段带 ?? 兜底：旧后端/e2e mock 缺字段时读 undefined 不崩（字符串
+        // 字段回落默认值），设置页保持可开
+        setIndexRoots((prev) => prev || c.roots.join("\n"));
+        setIndexExcl((prev) => prev || c.exclusions.join("\n"));
+        setIndexNameExcl((prev) => prev || (c.nameExclusions ?? []).join("\n"));
+        setIndexExcludeExts((prev) => prev || (c.excludeExts ?? []).join("\n"));
+        setIndexIncludeExts((prev) => prev || (c.includeExts ?? []).join("\n"));
+        setIndexHidden(c.indexHidden ?? true);
+        setIndexFileMode(c.fileMode ?? "all");
+        // ?? 兜底对齐邻行：旧后端/旧 mock 缺字段时 state 不落 undefined
+        setIndexFreq(c.rescanIntervalSecs ?? 600);
+        setIndexWatch(c.watchEnabled ?? true);
+        const saved = {
+          roots: c.roots,
+          exclusions: c.exclusions,
+          nameExclusions: c.nameExclusions ?? [],
+          indexHidden: c.indexHidden ?? true,
+          fileMode: c.fileMode ?? "all",
+          excludeExts: c.excludeExts ?? [],
+          includeExts: c.includeExts ?? [],
+        };
+        indexSavedCfgRef.current = saved;
+        setIndexSavedCfg(saved);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [open]);
+
+  return (
+    <>
+        <div>
+              <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("全盘索引")}</div>
+              <p className="mb-2.5 text-[11px] text-muted-foreground">
+                {t("后台索引本地磁盘文件名，搜索面板点亮「全盘」即瞬时检索。启用开关在「插件」分区（默认关闭）。")}
+              </p>
+              <div className="overflow-hidden rounded-md border bg-card">
+                <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+                  <span className="min-w-0 flex-1 truncate">
+                    {indexSt == null
+                      ? t("状态加载中…")
+                      : indexSt.phase === "disabled"
+                        ? t("未启用（在「插件」分区开启）")
+                        : indexSt.phase === "building"
+                          ? t("索引构建中（已索引 {n} 项）…", { n: indexSt.entries })
+                          : t("已索引 {n} 项", { n: indexSt.entries })}
+                    {indexSt != null && indexSt.errors > 0 && (
+                      <span className="ml-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                        {t("（枚举跳过 {n} 项：无权限或已消失）", { n: indexSt.errors })}
+                      </span>
+                    )}
+                  </span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {indexSaved && (
+                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400">{t("已保存")}</span>
+                    )}
+                    <button
+                      onClick={() => void handleSaveIndexConfig()}
+                      disabled={indexSaving || !indexDirty}
+                      className="rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {indexSaving ? t("保存中…") : t("保存索引配置")}
+                    </button>
+                    <button
+                      onClick={() => void indexRebuild()}
+                      disabled={indexSt == null || indexSt.phase === "disabled"}
+                      className="rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                      title={t("丢弃快照，从磁盘重新全量构建（期间旧索引继续可查）")}
+                    >
+                      <RotateCcw className="mr-1 inline h-3 w-3" />
+                      {t("重建索引")}
+                    </button>
+                  </div>
+                </div>
+                {indexSt != null && indexSt.lastScanMs > 0 && (
+                  <div className="flex items-center justify-between gap-3 border-t px-3 py-2 text-[11px] text-muted-foreground">
+                    <span>
+                      {t("上次扫描：{t}（耗时 {ms} ms）", {
+                        t: new Date(indexSt.lastScanMs).toLocaleString(),
+                        ms: indexSt.lastDurationMs,
+                      })}
+                    </span>
+                    <span
+                      className={
+                        indexSt.watch
+                          ? "shrink-0 text-emerald-600 dark:text-emerald-400"
+                          : indexSt.watchEnabled
+                            ? "shrink-0 text-amber-600 dark:text-amber-400"
+                            : "shrink-0 text-muted-foreground/70"
+                      }
+                    >
+                      {indexSt.watch
+                        ? t("实时监视：已开启（外部变更秒级自动同步）")
+                        : indexSt.watchEnabled
+                          ? t("实时监视：降级（周期扫描兜底，检查磁盘访问权限）")
+                          : t("实时监视：已关闭")}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
+                  <span>{t("例行扫描频率")}</span>
+                  <select
+                    value={indexFreq}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setIndexFreq(v);
+                      void applyIndexOptions(v, indexWatch, indexHidden);
+                    }}
+                    aria-label={t("例行扫描频率")}
+                    title={t("目录未变化时的重扫是零成本 stat；外部变更由实时监视秒级捕获，无需调高频率")}
+                    className="w-36 rounded border bg-background px-2 py-1"
+                  >
+                    <option value={60}>{t("每 1 分钟")}</option>
+                    <option value={300}>{t("每 5 分钟")}</option>
+                    <option value={600}>{t("每 10 分钟（默认）")}</option>
+                    <option value={1800}>{t("每 30 分钟")}</option>
+                    <option value={0}>{t("仅实时监视触发")}</option>
+                  </select>
+                </div>
+                <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
+                  <span>{t("实时监视（外部新增/删除/改名秒级进索引）")}</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={indexWatch}
+                    aria-label={t("实时监视")}
+                    onClick={() => {
+                      const next = !indexWatch;
+                      setIndexWatch(next);
+                      void applyIndexOptions(indexFreq, next, indexHidden);
+                    }}
+                    className="flex cursor-pointer"
+                  >
+                    <SwitchVisual checked={indexWatch} />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
+                  <span>{t("索引隐藏文件与目录（dot 开头）")}</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={indexHidden}
+                    aria-label={t("索引隐藏文件与目录")}
+                    onClick={() => {
+                      const next = !indexHidden;
+                      setIndexHidden(next);
+                      void applyIndexOptions(indexFreq, indexWatch, next);
+                    }}
+                    className="flex cursor-pointer"
+                  >
+                    <SwitchVisual checked={indexHidden} />
+                  </button>
+                </div>
+                <div className="border-t px-3 py-2.5">
+                  <div className="mb-1 text-[11px] text-muted-foreground">{t("索引文件类型")}</div>
+                  <div className="flex gap-1">
+                    {(["all", "exclude", "include"] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => {
+                          setIndexFileMode(m);
+                          setIndexDirty(true);
+                        }}
+                        className={`flex-1 rounded border px-2 py-1 text-[11px] transition-colors ${
+                          indexFileMode === m
+                            ? "border-transparent bg-secondary text-secondary-foreground"
+                            : "text-muted-foreground hover:bg-accent"
+                        }`}
+                      >
+                        {m === "all" ? t("全部文件") : m === "exclude" ? t("排除所选类型") : t("仅索引所选类型")}
+                      </button>
+                    ))}
+                  </div>
+                  {indexFileMode !== "all" && (
+                    <label className="mt-2 block">
+                      <span className="mb-1 block text-[11px] text-muted-foreground">
+                        {indexFileMode === "exclude"
+                          ? t("排除的类型（每行一个扩展名，如 log）")
+                          : t("仅索引的类型（每行一个扩展名，如 md；无扩展名文件不会被索引）")}
+                      </span>
+                      <textarea
+                        value={indexFileMode === "exclude" ? indexExcludeExts : indexIncludeExts}
+                        onChange={(e) => {
+                          if (indexFileMode === "exclude") setIndexExcludeExts(e.target.value);
+                          else setIndexIncludeExts(e.target.value);
+                          setIndexDirty(true);
+                        }}
+                        rows={3}
+                        spellCheck={false}
+                        className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
+                      />
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                        {indexExtPresets.map((p) => (
+                          <button
+                            key={p.label}
+                            type="button"
+                            onClick={() => applyExtPreset(p.exts)}
+                            title={p.exts.join(" ")}
+                            className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                        <span className="text-[10px] text-muted-foreground/70">
+                          {t("扩展名不含点，多级扩展名（如 tar.gz）填最后一段 gz")}
+                        </span>
+                      </div>
+                    </label>
+                  )}
+                </div>
+                <div className="border-t px-3 py-2.5">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-muted-foreground">
+                      {t("索引范围（每行一个根目录）")}
+                    </span>
+                    <button
+                      onClick={() => void handleAddIndexRoot()}
+                      className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      title={t("选择目录加入索引范围")}
+                    >
+                      <Plus className="mr-0.5 inline h-3 w-3" />
+                      {t("添加目录…")}
+                    </button>
+                  </div>
+                  <textarea
+                    value={indexRoots}
+                    onChange={(e) => {
+                      setIndexRoots(e.target.value);
+                      setIndexDirty(true);
+                    }}
+                    rows={3}
+                    spellCheck={false}
+                    className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
+                  />
+                  <label className="mt-2 block">
+                    <span className="mb-1 block text-[11px] text-muted-foreground">
+                      {t("排除目录（每行一个，含其全部子内容）")}
+                    </span>
+                    <textarea
+                      value={indexExcl}
+                      onChange={(e) => {
+                        setIndexExcl(e.target.value);
+                        setIndexDirty(true);
+                      }}
+                      rows={3}
+                      spellCheck={false}
+                      className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
+                    />
+                  </label>
+                  <label className="mt-2 block">
+                    <span className="mb-1 block text-[11px] text-muted-foreground">
+                      {t("排除目录名（每行一个名字，对任意层级下的同名目录生效，如 node_modules）")}
+                    </span>
+                    <textarea
+                      value={indexNameExcl}
+                      onChange={(e) => {
+                        setIndexNameExcl(e.target.value);
+                        setIndexDirty(true);
+                      }}
+                      rows={3}
+                      spellCheck={false}
+                      className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
+                    />
+                  </label>
+                </div>
+              </div>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                {t("保存后范围/排除变化会自动触发重新构建；外部变更由实时监视秒级同步（监视不可用时退回例行扫描）。首次构建可能需要数分钟，期间可照常使用。")}
+              </p>
+            </div>
+    </>
+  );
+}
+
 export function SettingsDialog({
   open,
   onClose,
@@ -249,107 +648,6 @@ export function SettingsDialog({
   /** v0.7 分享设置 */
   const [shareAllowParent, setShareAllowParent] = useState(() => loadShareAllowParent());
   const [shareExpiresHours, setShareExpiresHours] = useState<number | null>(() => loadShareDefaultExpires());
-  // v0.45 全盘索引（自管：状态轮询 + 配置文本区；开关本体在「插件」分区）
-  const [indexSt, setIndexSt] = useState<IndexStatusView | null>(null);
-  const [indexRoots, setIndexRoots] = useState("");
-  const [indexExcl, setIndexExcl] = useState("");
-  const [indexNameExcl, setIndexNameExcl] = useState("");
-  const [indexDirty, setIndexDirty] = useState(false);
-  const [indexSaving, setIndexSaving] = useState(false);
-  const [indexSaved, setIndexSaved] = useState(false);
-  // v0.46 扫描选项：频率（秒；0=仅事件）与实时监视开关——改动即存（用已落盘的
-  // roots/排除清单，不携带文本区未保存草稿）；indexSavedCfg 记录最近一次落盘值
-  const [indexFreq, setIndexFreq] = useState(600);
-  const [indexWatch, setIndexWatch] = useState(true);
-  // v0.46 索引隐藏开关（改动即存）+ 文件类型索引模式与扩展名草稿（随「保存」落盘）
-  const [indexHidden, setIndexHidden] = useState(true);
-  const [indexFileMode, setIndexFileMode] = useState<IndexConfigFile["fileMode"]>("all");
-  const [indexExcludeExts, setIndexExcludeExts] = useState("");
-  const [indexIncludeExts, setIndexIncludeExts] = useState("");
-  const [indexSavedCfg, setIndexSavedCfg] = useState<{
-    roots: string[];
-    exclusions: string[];
-    nameExclusions: string[];
-    indexHidden: boolean;
-    fileMode: IndexConfigFile["fileMode"];
-    excludeExts: string[];
-    includeExts: string[];
-  }>({ roots: [], exclusions: [], nameExclusions: [], indexHidden: true, fileMode: "all", excludeExts: [], includeExts: [] });
-  /** 最近落盘值的同步 ref：改动即存的开关（隐藏/频率/监视）同帧连续拨动时，
-   *  state 闭包可能读到陈旧整包而相互覆盖——统一走 ref 取/写最新值 */
-  const indexSavedCfgRef = useRef(indexSavedCfg);
-  const applyIndexOptions = useCallback(
-    async (freq: number, watch: boolean, hidden: boolean) => {
-      try {
-        const c = indexSavedCfgRef.current;
-        await indexSetConfig(c.roots, c.exclusions, c.nameExclusions, hidden, c.fileMode, c.excludeExts, c.includeExts, freq, watch);
-        indexSavedCfgRef.current = { ...c, indexHidden: hidden };
-        setIndexSavedCfg(indexSavedCfgRef.current);
-        setIndexSaved(true);
-        window.setTimeout(() => setIndexSaved(false), 2000);
-      } catch {
-        /* 保存失败静默（下次轮询状态可见配置未生效） */
-      }
-    },
-    [],
-  );
-  const handleSaveIndexConfig = useCallback(async () => {
-    setIndexSaving(true);
-    try {
-      const roots = indexRoots.split("\n").map((s) => s.trim()).filter(Boolean);
-      const excl = indexExcl.split("\n").map((s) => s.trim()).filter(Boolean);
-      const nameExcl = indexNameExcl.split("\n").map((s) => s.trim()).filter(Boolean);
-      const excludeExts = indexExcludeExts.split("\n").map((s) => s.trim()).filter(Boolean);
-      const includeExts = indexIncludeExts.split("\n").map((s) => s.trim()).filter(Boolean);
-      await indexSetConfig(roots, excl, nameExcl, indexHidden, indexFileMode, excludeExts, includeExts, indexFreq, indexWatch);
-      const saved = { roots, exclusions: excl, nameExclusions: nameExcl, indexHidden, fileMode: indexFileMode, excludeExts, includeExts };
-      indexSavedCfgRef.current = saved;
-      setIndexSavedCfg(saved);
-      setIndexDirty(false);
-      setIndexSaved(true);
-      window.setTimeout(() => setIndexSaved(false), 2000);
-    } catch {
-      /* 保存失败静默（下次轮询状态可见配置未生效） */
-    }
-    setIndexSaving(false);
-  }, [indexRoots, indexExcl, indexNameExcl, indexHidden, indexFileMode, indexExcludeExts, indexIncludeExts, indexFreq, indexWatch]);
-  /** 添加索引范围目录：系统目录选择对话框，选完追加为草稿新行 */
-  const handleAddIndexRoot = useCallback(async () => {
-    try {
-      const picked = await openDialog({
-        title: t("添加索引范围目录"),
-        multiple: false,
-        directory: true,
-      });
-      if (!picked || Array.isArray(picked)) return;
-      setIndexRoots((prev) => (prev.trim() ? `${prev.trimEnd()}\n${picked}` : picked));
-      setIndexDirty(true);
-    } catch {
-      /* ignore */
-    }
-  }, []);
-  // v0.46 文件类型预设（点击并入当前模式的扩展名草稿；label 用字面量 t() 保证可被语言包提取）
-  const indexExtPresets = [
-    { label: t("文档"), exts: ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "md", "txt", "csv", "epub"] },
-    {
-      label: t("代码"),
-      exts: ["ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "c", "cpp", "h", "rb", "php", "swift", "kt", "cs", "sql", "sh", "json", "yaml", "yml", "toml", "html", "css"],
-    },
-    { label: t("图片"), exts: ["jpg", "jpeg", "png", "gif", "webp", "svg", "heic", "bmp"] },
-    { label: t("音视频"), exts: ["mp4", "mov", "mkv", "avi", "mp3", "flac", "wav", "aac"] },
-  ];
-  /** 预设扩展名并入当前模式的草稿（已有项保留，追加缺失项） */
-  const applyExtPreset = useCallback(
-    (exts: string[]) => {
-      const setter = indexFileMode === "exclude" ? setIndexExcludeExts : setIndexIncludeExts;
-      setter((prev) => {
-        const cur = prev.split("\n").map((s) => s.trim()).filter(Boolean);
-        return [...new Set([...cur, ...exts])].join("\n");
-      });
-      setIndexDirty(true);
-    },
-    [indexFileMode],
-  );
   /** 正在录制键位的 actionId（null = 未录制） */
   const [recordingId, setRecordingId] = useState<string | null>(null);
   /** v0.8 分类导航当前分区（由滚动位置反推，用于左栏高亮） */
@@ -411,52 +709,6 @@ export function SettingsDialog({
       setShellBusy(false);
     }
   }, [shellStatus, shellBusy, t]);
-
-  // v0.45 全盘索引：打开设置期间每 2s 轮询状态（顺带在后端同步插件开关）+ 首次拉取配置
-  useEffect(() => {
-    if (!open) return;
-    let alive = true;
-    const poll = () =>
-      indexStatus()
-        .then((s) => {
-          if (alive) setIndexSt(s);
-        })
-        .catch(() => {});
-    poll();
-    const timer = window.setInterval(poll, 2000);
-    indexGetConfig()
-      .then((c) => {
-        if (!alive) return;
-        // 不覆盖编辑中的草稿（仅在为空时填充）；扫描选项直接反映落盘值。
-        // 新字段带 ?? 兜底：旧后端/e2e mock 缺字段时读 undefined 不崩（字符串
-        // 字段回落默认值），设置页保持可开
-        setIndexRoots((prev) => prev || c.roots.join("\n"));
-        setIndexExcl((prev) => prev || c.exclusions.join("\n"));
-        setIndexNameExcl((prev) => prev || (c.nameExclusions ?? []).join("\n"));
-        setIndexExcludeExts((prev) => prev || (c.excludeExts ?? []).join("\n"));
-        setIndexIncludeExts((prev) => prev || (c.includeExts ?? []).join("\n"));
-        setIndexHidden(c.indexHidden ?? true);
-        setIndexFileMode(c.fileMode ?? "all");
-        setIndexFreq(c.rescanIntervalSecs);
-        setIndexWatch(c.watchEnabled);
-        const saved = {
-          roots: c.roots,
-          exclusions: c.exclusions,
-          nameExclusions: c.nameExclusions ?? [],
-          indexHidden: c.indexHidden ?? true,
-          fileMode: c.fileMode ?? "all",
-          excludeExts: c.excludeExts ?? [],
-          includeExts: c.includeExts ?? [],
-        };
-        indexSavedCfgRef.current = saved;
-        setIndexSavedCfg(saved);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [open]);
 
   /** 更改远程临时目录：系统目录选择对话框（取消不动） */
   const handlePickRemoteTempDir = useCallback(async () => {
@@ -1587,252 +1839,13 @@ export function SettingsDialog({
                 </div>
             </div>
 
-            {/* v0.45 全盘索引：状态统计 + 范围/排除配置（开关本体在「插件」分区） */}
+            {/* v0.45 全盘索引（v0.50 评审拆分为自管子组件）：锚点仍由主组件承担 */}
             <div
               ref={(el) => { sectionRefs.current.index = el; }}
               data-settings-section="index"
               className="scroll-mt-3 mb-6"
             >
-                <div>
-                  <div className="sec-t mb-1.5 text-[11px] font-medium text-muted-foreground">{t("全盘索引")}</div>
-                  <p className="mb-2.5 text-[11px] text-muted-foreground">
-                    {t("后台索引本地磁盘文件名，搜索面板点亮「全盘」即瞬时检索。启用开关在「插件」分区（默认关闭）。")}
-                  </p>
-                  <div className="overflow-hidden rounded-md border bg-card">
-                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
-                      <span className="min-w-0 flex-1 truncate">
-                        {indexSt == null
-                          ? t("状态加载中…")
-                          : indexSt.phase === "disabled"
-                            ? t("未启用（在「插件」分区开启）")
-                            : indexSt.phase === "building"
-                              ? t("索引构建中（已索引 {n} 项）…", { n: indexSt.entries })
-                              : t("已索引 {n} 项", { n: indexSt.entries })}
-                        {indexSt != null && indexSt.errors > 0 && (
-                          <span className="ml-1.5 text-[11px] text-amber-600 dark:text-amber-400">
-                            {t("（枚举跳过 {n} 项：无权限或已消失）", { n: indexSt.errors })}
-                          </span>
-                        )}
-                      </span>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        {indexSaved && (
-                          <span className="text-[11px] text-emerald-600 dark:text-emerald-400">{t("已保存")}</span>
-                        )}
-                        <button
-                          onClick={() => void handleSaveIndexConfig()}
-                          disabled={indexSaving || !indexDirty}
-                          className="rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {indexSaving ? t("保存中…") : t("保存索引配置")}
-                        </button>
-                        <button
-                          onClick={() => void indexRebuild()}
-                          disabled={indexSt == null || indexSt.phase === "disabled"}
-                          className="rounded border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                          title={t("丢弃快照，从磁盘重新全量构建（期间旧索引继续可查）")}
-                        >
-                          <RotateCcw className="mr-1 inline h-3 w-3" />
-                          {t("重建索引")}
-                        </button>
-                      </div>
-                    </div>
-                    {indexSt != null && indexSt.lastScanMs > 0 && (
-                      <div className="flex items-center justify-between gap-3 border-t px-3 py-2 text-[11px] text-muted-foreground">
-                        <span>
-                          {t("上次扫描：{t}（耗时 {ms} ms）", {
-                            t: new Date(indexSt.lastScanMs).toLocaleString(),
-                            ms: indexSt.lastDurationMs,
-                          })}
-                        </span>
-                        <span
-                          className={
-                            indexSt.watch
-                              ? "shrink-0 text-emerald-600 dark:text-emerald-400"
-                              : indexSt.watchEnabled
-                                ? "shrink-0 text-amber-600 dark:text-amber-400"
-                                : "shrink-0 text-muted-foreground/70"
-                          }
-                        >
-                          {indexSt.watch
-                            ? t("实时监视：已开启（外部变更秒级自动同步）")
-                            : indexSt.watchEnabled
-                              ? t("实时监视：降级（周期扫描兜底，检查磁盘访问权限）")
-                              : t("实时监视：已关闭")}
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
-                      <span>{t("例行扫描频率")}</span>
-                      <select
-                        value={indexFreq}
-                        onChange={(e) => {
-                          const v = Number(e.target.value);
-                          setIndexFreq(v);
-                          void applyIndexOptions(v, indexWatch, indexHidden);
-                        }}
-                        aria-label={t("例行扫描频率")}
-                        title={t("目录未变化时的重扫是零成本 stat；外部变更由实时监视秒级捕获，无需调高频率")}
-                        className="w-36 rounded border bg-background px-2 py-1"
-                      >
-                        <option value={60}>{t("每 1 分钟")}</option>
-                        <option value={300}>{t("每 5 分钟")}</option>
-                        <option value={600}>{t("每 10 分钟（默认）")}</option>
-                        <option value={1800}>{t("每 30 分钟")}</option>
-                        <option value={0}>{t("仅实时监视触发")}</option>
-                      </select>
-                    </div>
-                    <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
-                      <span>{t("实时监视（外部新增/删除/改名秒级进索引）")}</span>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={indexWatch}
-                        aria-label={t("实时监视")}
-                        onClick={() => {
-                          const next = !indexWatch;
-                          setIndexWatch(next);
-                          void applyIndexOptions(indexFreq, next, indexHidden);
-                        }}
-                        className="flex cursor-pointer"
-                      >
-                        <SwitchVisual checked={indexWatch} />
-                      </button>
-                    </div>
-                    <div className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-xs">
-                      <span>{t("索引隐藏文件与目录（dot 开头）")}</span>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={indexHidden}
-                        aria-label={t("索引隐藏文件与目录")}
-                        onClick={() => {
-                          const next = !indexHidden;
-                          setIndexHidden(next);
-                          void applyIndexOptions(indexFreq, indexWatch, next);
-                        }}
-                        className="flex cursor-pointer"
-                      >
-                        <SwitchVisual checked={indexHidden} />
-                      </button>
-                    </div>
-                    <div className="border-t px-3 py-2.5">
-                      <div className="mb-1 text-[11px] text-muted-foreground">{t("索引文件类型")}</div>
-                      <div className="flex gap-1">
-                        {(["all", "exclude", "include"] as const).map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            onClick={() => {
-                              setIndexFileMode(m);
-                              setIndexDirty(true);
-                            }}
-                            className={`flex-1 rounded border px-2 py-1 text-[11px] transition-colors ${
-                              indexFileMode === m
-                                ? "border-transparent bg-secondary text-secondary-foreground"
-                                : "text-muted-foreground hover:bg-accent"
-                            }`}
-                          >
-                            {m === "all" ? t("全部文件") : m === "exclude" ? t("排除所选类型") : t("仅索引所选类型")}
-                          </button>
-                        ))}
-                      </div>
-                      {indexFileMode !== "all" && (
-                        <label className="mt-2 block">
-                          <span className="mb-1 block text-[11px] text-muted-foreground">
-                            {indexFileMode === "exclude"
-                              ? t("排除的类型（每行一个扩展名，如 log）")
-                              : t("仅索引的类型（每行一个扩展名，如 md；无扩展名文件不会被索引）")}
-                          </span>
-                          <textarea
-                            value={indexFileMode === "exclude" ? indexExcludeExts : indexIncludeExts}
-                            onChange={(e) => {
-                              if (indexFileMode === "exclude") setIndexExcludeExts(e.target.value);
-                              else setIndexIncludeExts(e.target.value);
-                              setIndexDirty(true);
-                            }}
-                            rows={3}
-                            spellCheck={false}
-                            className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
-                          />
-                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                            {indexExtPresets.map((p) => (
-                              <button
-                                key={p.label}
-                                type="button"
-                                onClick={() => applyExtPreset(p.exts)}
-                                title={p.exts.join(" ")}
-                                className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                              >
-                                {p.label}
-                              </button>
-                            ))}
-                            <span className="text-[10px] text-muted-foreground/70">
-                              {t("扩展名不含点，多级扩展名（如 tar.gz）填最后一段 gz")}
-                            </span>
-                          </div>
-                        </label>
-                      )}
-                    </div>
-                    <div className="border-t px-3 py-2.5">
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <span className="text-[11px] text-muted-foreground">
-                          {t("索引范围（每行一个根目录）")}
-                        </span>
-                        <button
-                          onClick={() => void handleAddIndexRoot()}
-                          className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                          title={t("选择目录加入索引范围")}
-                        >
-                          <Plus className="mr-0.5 inline h-3 w-3" />
-                          {t("添加目录…")}
-                        </button>
-                      </div>
-                      <textarea
-                        value={indexRoots}
-                        onChange={(e) => {
-                          setIndexRoots(e.target.value);
-                          setIndexDirty(true);
-                        }}
-                        rows={3}
-                        spellCheck={false}
-                        className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
-                      />
-                      <label className="mt-2 block">
-                        <span className="mb-1 block text-[11px] text-muted-foreground">
-                          {t("排除目录（每行一个，含其全部子内容）")}
-                        </span>
-                        <textarea
-                          value={indexExcl}
-                          onChange={(e) => {
-                            setIndexExcl(e.target.value);
-                            setIndexDirty(true);
-                          }}
-                          rows={3}
-                          spellCheck={false}
-                          className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
-                        />
-                      </label>
-                      <label className="mt-2 block">
-                        <span className="mb-1 block text-[11px] text-muted-foreground">
-                          {t("排除目录名（每行一个名字，对任意层级下的同名目录生效，如 node_modules）")}
-                        </span>
-                        <textarea
-                          value={indexNameExcl}
-                          onChange={(e) => {
-                            setIndexNameExcl(e.target.value);
-                            setIndexDirty(true);
-                          }}
-                          rows={3}
-                          spellCheck={false}
-                          className="w-full resize-y rounded border bg-background px-2 py-1.5 font-mono text-[11px]"
-                        />
-                      </label>
-                    </div>
-                  </div>
-                  <p className="mt-1.5 text-[11px] text-muted-foreground">
-                    {t("保存后范围/排除变化会自动触发重新构建；外部变更由实时监视秒级同步（监视不可用时退回例行扫描）。首次构建可能需要数分钟，期间可照常使用。")}
-                  </p>
-                </div>
+              <IndexSettingsSection open={open} />
             </div>
 
             <div

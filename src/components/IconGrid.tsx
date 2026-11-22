@@ -38,9 +38,10 @@ import {
   setNativeDragOut,
   setHtml5Drag,
 } from "@/lib/native-drag";
-import { useDragRubberBand, measureZoomRatio } from "@/hooks/useDragRubberBand";
+import { useDragRubberBand } from "@/hooks/useDragRubberBand";
+import { measureZoomRatio } from "@/lib/zoom";
 import { DragGhost } from "@/components/DragGhost";
-import { computeSlotShift, shiftKey } from "@/lib/slot-shift";
+import { computeSlotShift, shiftKey, type ShiftSlot } from "@/lib/slot-shift";
 import { isElegant } from "@/lib/anim";
 import { useT } from "@/lib/LanguageProvider";
 import { FileIcon } from "@/components/FileIcon";
@@ -541,8 +542,13 @@ export function IconGrid({
    *  预览即终态,松手零跳动。key 为 shiftKey 序列化（mousemove 去重）。 */
   const [slotPreview, setSlotPreview] = useState<{
     key: string;
+
     map: Map<string, { c: number; r: number }> | null;
   }>({ key: "", map: null });
+
+  /** 挤开预览的上一帧（from,to）槽位：目标槽未变时短路 computeSlotShift 重算 */
+  const slotPreviewFromRef = useRef<ShiftSlot | null>(null);
+  const slotPreviewToRef = useRef<ShiftSlot | null>(null);
   const {
     rubber,
     suppressClickRef,
@@ -620,6 +626,12 @@ export function IconGrid({
       return;
     }
     const to = slotAt(x, y);
+    // 跨槽位边界才可能改变推移结果：目标槽与上一帧相同（光标在格子内部移动）
+    // 时直接短路——shiftKey 去重只防住了重渲染，computeSlotShift 的 O(n) 占用表
+    // 重建此前每帧照跑（10k 图标目录 × 60Hz 的纯浪费）
+    if (slotPreviewFromRef.current === from && slotPreviewToRef.current === to) return;
+    slotPreviewFromRef.current = from;
+    slotPreviewToRef.current = to;
     const map = computeSlotShift(from, to, cols, slotsByName, new Set([name]));
     const key = shiftKey(map);
     setSlotPreview((prev) => (prev.key === key ? prev : { key, map }));

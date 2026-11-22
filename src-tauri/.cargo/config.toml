@@ -1,0 +1,4 @@
+# rustc 1.100 起全量重编时默认 16 并行 + codegen-units=1 + thin LTO 会 OOM（32GB RAM）
+# 压到 6 并行，峰值内存可控；增量构建不受影响
+[build]
+jobs = 6

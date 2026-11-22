@@ -312,10 +312,22 @@ impl SftpSession {
     /// **流水线并发写**：此前逐包停等（32KB/RTT，一条 50ms RTT 链路顶天 ~0.6MB/s，
     /// 不如命令行 sftp 的并发窗口）；现一次发出至多 WINDOW 个写请求、按 request-id
     /// 对账应答（应答可乱序），配合 128KB 大包，吞吐 ≈ 窗口×包长/RTT，受链路带宽约束。
+    /// 上传暂存名：目标同目录下 `<名>.rdir-<pid>-<序号>.part`（与中转 B 端 .part
+    /// 同款命名，原文件名在暂存名中可见便于排查）。
+    /// 覆盖写先落暂存名、成功后 rename_over 原子替换——旧实现 OPEN 即 FXF_TRUNC
+    /// 截断目标本体，「写失败/取消」直接毁掉用户原文件（0 字节残留或内容消失），
+    /// 且放大了扫描与落盘之间的 TOCTOU 窗口；暂存化后任何失败路径目标都完好。
+    /// 附带语义：上传落到「指向别处的符号链接」上是替换链接本身而非穿透写目标
+    /// （与旧 OPEN 跟随链接行为不同）——对文件管理器而言「粘到这个名字 = 这个
+    /// 名字变成粘的内容」更可预期，且不会静默改写链接目标处的数据。
+    fn staged_upload_path(remote: &str) -> String {
+        format!("{remote}.rdir-{}.part", crate::remote_temp::relay_suffix())
+    }
+
     /// cb(done, total)：已确认字节 / 本地文件总字节；返回 false 中止上传
-    /// （排空在途应答后关闭远程句柄并尽力删除远端半成品，返回「已取消」）。
-    /// 写循环失败统一走 [`Self::abort_upload`]：清理远端残留（OPEN 即 FXF_TRUNC
-    /// 截断/新建，失败残留就是用户看到的「0 字节空文件」）+ 磁盘满分级警告。
+    /// （排空在途应答后关闭远程句柄并尽力删除远端暂存文件，返回「已取消」）。
+    /// 写循环失败统一走 [`Self::abort_upload`]：清理远端暂存残留（目标本体全程
+    /// 不受影响）+ 磁盘满分级警告。成功后经 [`Self::rename_over`] 原子替换落地。
     pub async fn upload(
         &mut self,
         local: &Path,
@@ -329,30 +341,38 @@ impl SftpSession {
 
         let total = std::fs::metadata(local).map(|m| m.len()).unwrap_or(0);
         let mut f = std::fs::File::open(local).map_err(|e| format!("读取本地失败：{e}"))?;
+        let staged = Self::staged_upload_path(remote);
         let (_ty, body) = self
             .request(proto::OPEN, |b| {
-                b.str(remote);
+                b.str(&staged);
                 b.u32(proto::FXF_WRITE | proto::FXF_CREAT | proto::FXF_TRUNC);
                 b.u32(proto::ATTR_PERMISSIONS);
                 b.u32(proto::DEFAULT_FILE_PERM);
             })
             .await?;
         let handle = read_handle(&body)?;
-        match self.upload_loop(&handle, remote, &mut f, total, &mut cb).await {
+        match self.upload_loop(&handle, &staged, &mut f, total, &mut cb).await {
             Ok(acked) => {
                 self.request(proto::CLOSE, |b| b.str(&handle)).await?;
+                // 原子替换落地：posix-rename 覆盖已存在目标；不支持该扩展的服务器
+                // 在 rename_over 内回退「删目标 + 普通 rename」（此时上传已成功，
+                // 回退窗口仅剩目标短暂缺失，无内容损毁面）
+                if let Err(e) = self.rename_over(&staged, remote).await {
+                    let _ = self.remove(&staged).await;
+                    return Err(format!("{e}（上传已完成，目标原内容未受影响）"));
+                }
                 Ok(acked)
             }
-            Err((orig, code)) => Err(self.abort_upload(&handle, remote, orig, code).await),
+            Err((orig, code)) => Err(self.abort_upload(&handle, &staged, orig, code).await),
         }
     }
 
     /// [`Self::upload`] 的写循环（OPEN 之后）：错误以 (原始消息, STATUS 码位) 抛出，
-    /// 由调用方收口清理与分类。
+    /// 由调用方收口清理与分类。目标路径仅供调用方收口使用，循环内不需要。
     async fn upload_loop(
         &mut self,
         handle: &str,
-        remote: &str,
+        _remote: &str,
         f: &mut std::fs::File,
         total: u64,
         cb: &mut impl FnMut(u64, u64) -> bool,
@@ -559,10 +579,11 @@ impl SftpSession {
     }
 
     /// [`Self::upload_pipe`] 的写循环（OPEN 之后）。错误以 (原始消息, STATUS 码位) 抛出。
+    /// 目标路径（暂存名）仅供调用方收口使用，循环内不需要。
     async fn upload_pipe_loop(
         &mut self,
         handle: &str,
-        remote: &str,
+        _remote: &str,
         rx: &mut mpsc::Receiver<(u64, Vec<u8>)>,
         total: u64,
         cb: &mut impl FnMut(u64, u64) -> bool,
@@ -633,9 +654,10 @@ impl SftpSession {
     }
 
     /// 上传失败收口（[`Self::upload`] / [`Self::upload_pipe`] 共用）：
-    /// ①关闭句柄；②删除远端残留——OPEN 带 FXF_TRUNC，打开即截断/新建，写失败
-    /// 残留就是用户看到的「0 字节空文件」（与取消路径的既有行为一致）；
-    /// ③磁盘满分级警告：先文本匹配（跨服务器通用），FAILURE 码位再查
+    /// 上传失败收口：①关闭句柄；②删除远端残留——调用方传入的是暂存名（v0.50
+    /// 评审起 upload 全量暂存化），删除只落在 `.rdir-*.part` 上，目标本体全程
+    /// 不受影响（旧实现 OPEN 即截断目标，失败残留是「0 字节空文件」甚至内容
+    /// 消失）；③磁盘满分级警告：先文本匹配（跨服务器通用），FAILURE 码位再查
     /// statvfs@openssh.com 可用空间 <4MB 兜底（OpenSSH 把 ENOSPC 归入 FAILURE
     /// 且常不带文本，单靠文本匹配漏报）。
     async fn abort_upload(

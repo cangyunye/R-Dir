@@ -72,16 +72,19 @@ pub(crate) fn build_exclude_set(patterns: &[String], case_sensitive: bool) -> Op
                     count += 1;
                 }
             };
-            add(p);
             // `dir/**` → 目录本体也命中，walk 遇到即可整棵跳过
             if let Some(base) = p.strip_suffix("/**") {
                 add(base);
             }
-            // 无 `/` → 任意层级同名；`**/x` → 根层级兜底（零路径段语义）
+            // 无 `/` → 任意层级同名剪枝。globset literal_separator 下 `**/`
+            // 匹配零或多级路径段（含根层级），裸 `p` 冗余（v0.50 评审：GlobSet
+            // 逐一尝试，模式翻倍即开销翻倍）
             if !p.contains('/') {
                 add(&format!("**/{p}"));
             } else if let Some(rest) = p.strip_prefix("**/") {
                 add(rest);
+            } else {
+                add(p);
             }
         }
     }
@@ -116,16 +119,14 @@ pub fn search_content(
     } else {
         regex::escape(trimmed)
     };
-    let re = Regex::new(&pattern)
-        .map(|r| {
-            if case_sensitive {
-                r
-            } else {
-                // 构造不区分大小写版本
-                Regex::new(&format!("(?i){pattern}")).expect("regex 已合法")
-            }
-        })
-        .map_err(|e| e.to_string())?;
+    // 单次编译：不区分大小写用内联作用域旗标 (?i:...) 包裹——旧实现先编译
+    // 验证再用 expect 重编译同一 pattern（双倍编译成本 + 隐式推理的 expect）
+    let final_pattern = if case_sensitive {
+        pattern
+    } else {
+        format!("(?i:{pattern})")
+    };
+    let re = Regex::new(&final_pattern).map_err(|e| e.to_string())?;
 
     let mut out = Vec::new();
     let mut total = 0usize;

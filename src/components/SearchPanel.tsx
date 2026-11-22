@@ -455,6 +455,37 @@ function SearchDropZones({
  * feat/search-drag：结果行可左键拖动——拖到窗格=复制、右下角垃圾箱=删除（可撤销）、
  * Esc/右键/右上角取消区=取消；拖动期间面板隐藏（invisible 不卸载），收尾一律恢复。
  */
+/** 全盘索引状态行（自管 2s 轮询 index_status）：轮询只重渲染本行——旧实现
+ *  setIdxStatus 新对象进主组件 state，灯钮点亮期间整面板（含至多 500 行结果）
+ *  每 2s 全量重渲染一遍（v0.50 评审 P2）。组件仅在面板卸载时随卸载清理。 */
+function IndexStatusLine() {
+  const t = useT();
+  const [status, setStatus] = useState<IndexStatusView | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const poll = () =>
+      indexStatus()
+        .then((s) => {
+          if (alive) setStatus(s);
+        })
+        .catch(() => {});
+    poll();
+    const timer = window.setInterval(poll, 2000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+  if (!status) return null;
+  const text =
+    status.phase === "building"
+      ? t("索引构建中（已索引 {n} 项）", { n: status.entries })
+      : status.phase === "disabled"
+        ? t("索引未启用（设置 → 插件 → 全盘索引搜索）")
+        : t("已索引 {n} 项", { n: status.entries });
+  return ` · ${text}`;
+}
+
 export function SearchPanel({
   entries,
   dir,
@@ -570,6 +601,15 @@ export function SearchPanel({
   const dragGhostRef = useRef<HTMLDivElement | null>(null);
   /** 指针链分支的取消收口（Esc/右键/失焦共用：摘 mousemove/mouseup、还原 userSelect/拖影） */
   const pointerCancelRef = useRef<(() => void) | null>(null);
+  // 卸载兜底：拖拽进行中组件被卸载（父级关面板）→ 摘 window 监听、还原
+  // userSelect、终结拖拽会话（对比：上方 Esc/右键守卫只覆盖面板存活期）
+  useEffect(
+    () => () => {
+      pointerCancelRef.current?.();
+      pointerCancelRef.current = null;
+    },
+    [],
+  );
   /** 起拖后置位：吞掉松手落回源行时的合成 click（防拖完误改选中），下一宏任务复位 */
   const suppressClickRef = useRef(false);
 
@@ -830,7 +870,6 @@ export function SearchPanel({
   const [idxResults, setIdxResults] = useState<IndexHit[]>([]);
   const [idxLoading, setIdxLoading] = useState(false);
   const [idxError, setIdxError] = useState<string | null>(null);
-  const [idxStatus, setIdxStatus] = useState<IndexStatusView | null>(null);
   const idxTimer = useRef<number | null>(null);
   const idxSeq = useRef(0);
 
@@ -948,24 +987,6 @@ export function SearchPanel({
       if (idxTimer.current) window.clearTimeout(idxTimer.current);
     };
   }, [query, idxEnabled, nameCase, nameMode, nameHidden]);
-
-  // 全盘灯钮点亮时轮询索引状态（构建中提示「已索引 n 项」；顺带在后端同步插件开关）
-  useEffect(() => {
-    if (!idxEnabled) return;
-    let alive = true;
-    const poll = () =>
-      indexStatus()
-        .then((s) => {
-          if (alive) setIdxStatus(s);
-        })
-        .catch(() => {});
-    poll();
-    const t = window.setInterval(poll, 2000);
-    return () => {
-      alive = false;
-      window.clearInterval(t);
-    };
-  }, [idxEnabled]);
 
   // 内容搜索：防抖 250ms，后台线程执行
   useEffect(() => {
@@ -1163,16 +1184,9 @@ export function SearchPanel({
                   ...(fdEnabled
                     ? [maxDepth == null ? t("深度不限") : t("深度：{n} 层", { n: maxDepth })]
                     : []),
-                  ...(idxEnabled && idxStatus
-                    ? [
-                        idxStatus.phase === "building"
-                          ? t("索引构建中（已索引 {n} 项）", { n: idxStatus.entries })
-                          : idxStatus.phase === "disabled"
-                            ? t("索引未启用（设置 → 插件 → 全盘索引搜索）")
-                            : t("已索引 {n} 项", { n: idxStatus.entries }),
-                      ]
-                    : []),
+
                 ].join(" · ")}
+                {idxEnabled && <IndexStatusLine />}
               </p>
             </>
           ) : (

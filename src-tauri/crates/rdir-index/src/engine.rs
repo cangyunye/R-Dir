@@ -143,10 +143,6 @@ impl EngineState {
         self.arena.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.meta.is_empty()
-    }
-
     // ==================== 查询 ====================
 
     /// 查询。`case_sensitive` 对 Contains 生效；Glob/Regex 自带大小写语义。
@@ -176,6 +172,7 @@ impl EngineState {
                     // 无 gram 可用（单字查询）：全量名字扫描回退
                     None => self.scan_fallback(&needle),
                 };
+let mut hay_buf: Vec<char> = Vec::with_capacity(64);
                 for id in cands {
                     let m = &self.meta[id as usize];
                     if let Some(d) = is_dir {
@@ -190,7 +187,7 @@ impl EngineState {
                     let matched = if case_sensitive {
                         name.contains(q)
                     } else {
-                        ci_contains(name, &needle)
+                        ci_contains(&mut hay_buf, name, &needle)
                     };
                     if matched {
                         hits.push(id);
@@ -542,13 +539,18 @@ impl RescanCollector {
     }
 }
 
-/// 不区分大小写子串匹配（无分配）：needle 预小写成 char 数组（调用方缓存一份），
-/// hay 侧逐字符小写流式比较。候选 ≤ CANDIDATE_CAP，朴素算法足够。
-fn ci_contains(hay: &str, needle: &[char]) -> bool {
+/// 不区分大小写子串匹配：needle 预小写成 char 数组（调用方缓存一份）；
+/// hay 侧小写展开进调用方复用缓冲——同一查询数万候选只发生一次缓冲分配
+/// （旧实现每候选 `Vec::collect` 一次堆分配，CANDIDATE_CAP=10_000 时即 1 万次）。
+/// 朴素算法足够（候选上限 + 名字短）。小写展开是 1:N（如 İ→i̇），先展开再比
+/// 是正确性要求，不能用字节级快径替代。
+fn ci_contains(buf: &mut Vec<char>, hay: &str, needle: &[char]) -> bool {
     if needle.is_empty() {
         return true;
     }
-    let hay_l: Vec<char> = lower_chars(hay).collect();
+    buf.clear();
+    buf.extend(lower_chars(hay));
+    let hay_l = &buf[..];
     'outer: for start in 0..hay_l.len() {
         let mut ni = 0usize;
         while ni < needle.len() {

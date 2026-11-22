@@ -180,9 +180,16 @@ export type TagNames = Record<string, string>;
 const TAG_NAMES_KEY = "rfm.tag-names";
 
 export function loadTagNames(): TagNames {
+  // 形状校验对齐新键 loader：损坏/异形数据回落空值而不是毒化下游合并
   try {
     const raw = localStorage.getItem(TAG_NAMES_KEY);
-    return raw ? (JSON.parse(raw) as TagNames) : {};
+    const v = raw ? (JSON.parse(raw) as unknown) : {};
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out: TagNames = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof val === "string" && val.trim()) out[k] = val;
+    }
+    return out;
   } catch {
     return {};
   }
@@ -212,7 +219,15 @@ const QUICK_KEY = "rfm.quick";
 export function loadFileTags(): FileTags {
   try {
     const raw = localStorage.getItem(TAGS_KEY);
-    return raw ? (JSON.parse(raw) as FileTags) : {};
+    const v = raw ? (JSON.parse(raw) as unknown) : {};
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out: FileTags = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (Array.isArray(val)) {
+        out[k] = val.filter((x): x is string => typeof x === "string");
+      }
+    }
+    return out;
   } catch {
     return {};
   }
@@ -235,7 +250,9 @@ export const MAX_QUICK = 10;
 export function loadCustomQuick(): CustomQuick {
   try {
     const raw = localStorage.getItem(QUICK_KEY);
-    return raw ? (JSON.parse(raw) as CustomQuick) : [];
+    const v = raw ? (JSON.parse(raw) as unknown) : [];
+    if (!Array.isArray(v)) return [];
+    return v.filter((x): x is string => typeof x === "string");
   } catch {
     return [];
   }
