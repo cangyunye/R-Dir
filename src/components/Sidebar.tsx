@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { formatSize } from "@/lib/format";
 import { hasScheme } from "@/lib/cmdline";
 import { canPointerDnd } from "@/lib/native-drag";
 import type { QuickAccessItem, SftpServerView, VolumeInfo } from "@/lib/types";
@@ -85,6 +86,71 @@ const QUICK_LABELS = Object.fromEntries(
 
 /** v0.31 侧边栏服务器拖拽换组的 DnD 标记类型（与文件拖拽/窗格交换分流互不干扰） */
 const SERVER_DND_TYPE = "application/x-rdir-server-id";
+
+/** 占用百分比（0–100 钳位）。总量无效（null/0）由调用方判空。 */
+function usagePct(used: number, total: number): number {
+  return Math.min(100, Math.max(0, (used / total) * 100));
+}
+
+/** 百分比展示：≥10 取整（44%），不足 10 保留一位小数（3.5%） */
+function formatPct(pct: number): string {
+  return pct >= 10 ? String(Math.round(pct)) : pct.toFixed(1);
+}
+
+/** 卷用量分档：<70% 绿（充裕）/ ≥70% 黄（偏高）/ ≥90% 红（告急），与主流文件管理器一致。
+    bar = 用量条填充：左浅右深渐变（400 → 600，跨两档，趋势一眼可辨）；
+    text = 百分比文字色（代码库惯例 600 / dark:500） */
+function usageTier(pct: number): { bar: string; text: string } {
+  if (pct >= 90)
+    return { bar: "bg-linear-to-r from-red-400 to-red-600", text: "text-red-600 dark:text-red-500" };
+  if (pct >= 70)
+    return {
+      bar: "bg-linear-to-r from-amber-400 to-amber-600",
+      text: "text-amber-600 dark:text-amber-500",
+    };
+  return {
+    bar: "bg-linear-to-r from-emerald-400 to-emerald-600",
+    text: "text-emerald-600 dark:text-emerald-500",
+  };
+}
+
+/** v0.50.2 卷用量条：细横向彩条 + 悬停 tooltip（已用 / 总量 / 百分比）。
+    25/50/75/100 处叠 1px 标尺刻度线（无数字）：浅色主题白线 / 深色主题黑线，
+    低透明度弱化不抢眼；叠在填充之上，读数不用对齐条端。
+    数据源 VolumeInfo.used_bytes/total_bytes，网络卷或查询失败不渲染。 */
+const USAGE_TICKS = [25, 50, 75, 100];
+
+function VolumeUsageBar({ used, total }: { used: number; total: number }) {
+  const t = useT();
+  const pct = usagePct(used, total);
+  return (
+    <span
+      className="relative mt-0.5 block h-1 w-full overflow-hidden rounded-full bg-muted"
+      title={t("已用 {used} / {total}（{pct}%）", {
+        used: formatSize(used),
+        total: formatSize(total),
+        pct: formatPct(pct),
+      })}
+    >
+      <span
+        className={cn(
+          "block h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none",
+          usageTier(pct).bar,
+        )}
+        style={{ width: `${pct}%` }}
+      />
+      {USAGE_TICKS.map((p) => (
+        <span
+          key={p}
+          data-vol-tick=""
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 w-px bg-white/40 dark:bg-black/40"
+          style={{ left: p === 100 ? "calc(100% - 1px)" : `${p}%` }}
+        />
+      ))}
+    </span>
+  );
+}
 
 function isActive(current: string, target: string): boolean {
   if (current === target) return true;
@@ -893,7 +959,12 @@ export function Sidebar({
             <HardDrive className="h-3.5 w-3.5" />
             {!collapsed && t("磁盘 / 卷")}
           </div>
-          {volumes.map((vol) => (
+          {volumes.map((vol) => {
+            const volPct =
+              vol.total_bytes != null && vol.total_bytes > 0
+                ? usagePct(vol.used_bytes ?? 0, vol.total_bytes)
+                : null;
+            return (
             <ContextMenu key={vol.path} onOpenChange={(o) => !o && setExpandedMenu(null)}>
               <ContextMenuTrigger asChild>
                 <button
@@ -909,14 +980,34 @@ export function Sidebar({
                   )}
                 >
                     <HardDrive className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    {!collapsed && <span className="min-w-0 truncate">{vol.name}</span>}
+                    {!collapsed && (
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-baseline gap-1.5">
+                          <span className="min-w-0 truncate">{vol.name}</span>
+                          {volPct != null && (
+                            <span
+                              className={cn(
+                                "ml-auto shrink-0 text-[10px] tabular-nums",
+                                usageTier(volPct).text,
+                              )}
+                            >
+                              {formatPct(volPct)}%
+                            </span>
+                          )}
+                        </span>
+                        {vol.total_bytes != null && vol.total_bytes > 0 && (
+                          <VolumeUsageBar used={vol.used_bytes ?? 0} total={vol.total_bytes} />
+                        )}
+                      </span>
+                    )}
                 </button>
               </ContextMenuTrigger>
               <ContextMenuContent className="min-w-44" collisionPadding={10}>
                 {dirMenuItems(vol.path)}
               </ContextMenuContent>
             </ContextMenu>
-          ))}
+            );
+          })}
           {volumes.length === 0 && !collapsed && (
             <div className="px-2 py-1 text-xs text-muted-foreground">{t("未检测到磁盘")}</div>
           )}

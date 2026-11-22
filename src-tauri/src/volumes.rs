@@ -10,6 +10,12 @@ pub struct VolumeInfo {
     /// 简化分类：root / fixed / removable / network / optical / unknown / volume
     /// （network = 映射网络驱动器；索引默认只收 fixed，见 indexer::default_roots）
     pub kind: String,
+    /// 已用 / 总容量（字节）。侧边栏用量条数据源；网络卷（GetDiskFreeSpaceExW
+    /// 对断连映射盘会阻塞数秒，正是卷枚举改用 GetDriveTypeW 规避的场景）或
+    /// 查询失败时为 None，前端不画条。注意 volumes_signature 刻意不含这两个
+    /// 字段——用量随写入时刻变化，纳入签名会让 2s 轮询 watcher 不停推事件。
+    pub used_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -24,10 +30,13 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
     #[cfg(target_os = "macos")]
     {
         let mut vols = Vec::new();
+        let root_usage = query_usage("/");
         vols.push(VolumeInfo {
             name: volume_display_name("/").unwrap_or_else(|| "Macintosh HD".into()),
             path: "/".into(),
             kind: "root".into(),
+            used_bytes: root_usage.map(|u| u.0),
+            total_bytes: root_usage.map(|u| u.1),
         });
         if let Ok(rd) = std::fs::read_dir("/Volumes") {
             for e in rd.flatten() {
@@ -38,10 +47,13 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
                         continue;
                     }
                 }
+                let usage = query_usage(&p.to_string_lossy());
                 vols.push(VolumeInfo {
                     name: e.file_name().to_string_lossy().to_string(),
                     path: p.to_string_lossy().to_string(),
                     kind: "volume".into(),
+                    used_bytes: usage.map(|u| u.0),
+                    total_bytes: usage.map(|u| u.1),
                 });
             }
         }
@@ -76,10 +88,19 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             // 接受的显式状态），换取不再阻塞。
             let exists = kind == "network" || std::fs::metadata(&drive).is_ok();
             if exists {
+                // 用量只对本地卷查询（fixed/removable/optical/unknown）；network 卷
+                // 连元数据都刻意跳过（断连映射盘阻塞问题），此处同样跳过。
+                let usage = if kind == "network" {
+                    None
+                } else {
+                    query_usage(&drive)
+                };
                 vols.push(VolumeInfo {
                     name: format!("{} ({})", c as char, drive),
                     path: drive,
                     kind: kind.into(),
+                    used_bytes: usage.map(|u| u.0),
+                    total_bytes: usage.map(|u| u.1),
                 });
             }
         }
@@ -88,6 +109,46 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         Vec::new()
+    }
+}
+
+/// 卷用量查询 → (已用, 总容量)。调用方已按卷类别过滤，本函数只管系统调用。
+/// 失败（无介质的光驱 / BitLocker 未解锁 / 权限等）返回 None，前端不画条。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn query_usage(path: &str) -> Option<(u64, u64)> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+        let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut total = 0u64;
+        let mut free = 0u64;
+        let ok = unsafe {
+            GetDiskFreeSpaceExW(
+                PCWSTR::from_raw(wide.as_ptr()),
+                None,
+                Some(std::ptr::addr_of_mut!(total)),
+                Some(std::ptr::addr_of_mut!(free)),
+            )
+        };
+        ok.ok()?;
+        // free > total 理论上不该发生，clamp 防止减法下溢
+        Some((total.saturating_sub(free.min(total)), total))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let c = std::ffi::CString::new(path).ok()?;
+        let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+        let rc = unsafe { libc::statvfs(c.as_ptr(), &mut st) };
+        if rc != 0 {
+            return None;
+        }
+        let frsize = st.f_frsize.max(1) as u64;
+        let total = st.f_blocks as u64 * frsize;
+        // 用 f_bfree（真实空闲，含 root 保留）而非 f_bavail（普通用户可用），
+        // 使 used + free == total，与资源管理器/Finder 的已用口径一致
+        let free = st.f_bfree as u64 * frsize;
+        Some((total.saturating_sub(free.min(total)), total))
     }
 }
 
@@ -110,6 +171,8 @@ fn drive_kind(dt: u32) -> &'static str {
 
 /// 卷集合签名：把名称/路径/类别按固定分隔符拼接，用于判断集合是否变化。
 /// 分隔符选用控制字符，避免与文件名/路径中可能出现的可见字符冲突。
+/// 刻意不含用量字段——用量随写入时刻变化，纳入会让 2s 轮询不停推事件
+/// （用量保鲜由前端定期拉 get_volumes 承担，见 App.tsx）。
 fn volumes_signature(vols: &[VolumeInfo]) -> String {
     let mut s = String::new();
     for v in vols {
@@ -186,6 +249,8 @@ mod tests {
             name: name.into(),
             path: path.into(),
             kind: kind.into(),
+            used_bytes: None,
+            total_bytes: None,
         }
     }
 
@@ -210,6 +275,38 @@ mod tests {
         let x = vec![vol("a", "b", "volume")];
         let y = vec![vol("ab", "", "volume")];
         assert_ne!(volumes_signature(&x), volumes_signature(&y));
+    }
+
+    /// 用量字段绝不能参与签名：写入文件 → 用量变化是常态，纳入签名会让
+    /// spawn_watcher 的 2s 轮询经 volumes://changed 不停推全量列表。
+    #[test]
+    fn signature_ignores_usage_fields() {
+        let mut a = vec![vol("C (C:\\)", "C:\\", "fixed")];
+        let mut b = a.clone();
+        a[0].used_bytes = Some(100);
+        a[0].total_bytes = Some(1000);
+        b[0].used_bytes = Some(900);
+        b[0].total_bytes = Some(1000);
+        assert_eq!(volumes_signature(&a), volumes_signature(&b));
+    }
+
+    /// 系统盘用量查询冒烟：总量 > 0 且已用 ≤ 总量（与 system_drive_classified_fixed
+    /// 同款前置：无系统盘时跳过，避免依赖具体机器）。
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[test]
+    fn query_usage_reports_system_drive() {
+        let path = if cfg!(target_os = "windows") {
+            let tmp = std::env::temp_dir();
+            let prefix = tmp.to_string_lossy().chars().next().unwrap().to_string();
+            format!("{prefix}:\\")
+        } else {
+            "/".to_string()
+        };
+        let Some((used, total)) = query_usage(&path) else {
+            panic!("系统盘 {path} 的用量查询不应失败");
+        };
+        assert!(total > 0, "总容量必须 > 0，实际 {total}");
+        assert!(used <= total, "已用 {used} 不得超过总量 {total}");
     }
 
     /// Win32 驱动器类型常量 → 分类的映射（纯函数，无需真实硬件）

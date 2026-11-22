@@ -858,9 +858,20 @@ export default function App() {
       if (disposed) u();
       else un = u;
     });
+    // v0.50.2 卷用量条保鲜：volumes://changed 只在卷集合变化时推送（watcher
+    // 签名刻意不含用量，否则 2s 轮询会不停推事件），用量变化由前端定期拉取；
+    // getVolumes 仅做驱动器映射表 + 本地盘统计查询，30s 一次开销可忽略。
+    const timer = window.setInterval(() => {
+      void getVolumes()
+        .then((vols) => {
+          if (!disposed) setVolumes(vols);
+        })
+        .catch(() => {});
+    }, 30_000);
     return () => {
       disposed = true;
       un?.();
+      window.clearInterval(timer);
     };
   }, []);
 

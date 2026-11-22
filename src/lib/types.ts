@@ -16,6 +16,9 @@ export interface VolumeInfo {
   name: string;
   path: string;
   kind: string;
+  /** 已用 / 总容量（字节）：侧边栏用量条数据源；网络卷或查询失败为 null（不画条） */
+  used_bytes: number | null;
+  total_bytes: number | null;
 }
 
 export interface QuickAccessItem {

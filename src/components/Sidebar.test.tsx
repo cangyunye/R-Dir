@@ -171,3 +171,70 @@ describe("Sidebar 收缩为图标栏（v0.44.0）", () => {
     expect(screen.getByTestId("sidebar-collapse-toggle").title).toBe("展开侧边栏（Ctrl+E）");
   });
 });
+
+describe("卷用量条（v0.50.2）", () => {
+  const vol = {
+    name: "系统 (C:\)",
+    path: "C:\\",
+    kind: "fixed",
+    used_bytes: 220 * 1024 ** 3,
+    total_bytes: 500 * 1024 ** 3,
+  };
+  const barSel = 'span[title*="已用"]';
+
+  it("有用量数据时渲染彩条：宽度=已用百分比，分档颜色与 tooltip", () => {
+    const { container } = render(<Sidebar {...base} volumes={[vol]} />);
+    const bar = container.querySelector(barSel) as HTMLElement;
+    expect(bar).toBeTruthy();
+    // tooltip：t() 无语言包时回退 key 并插值（formatSize 取整 G）
+    expect(bar.title).toBe("已用 220G / 500G（44%）");
+    const fill = bar.firstElementChild as HTMLElement;
+    expect(fill.style.width).toBe("44%");
+    // 填充为左浅右深微渐变（400 → 500）
+    expect(fill.className).toContain("bg-linear-to-r");
+    expect(fill.className).toContain("from-emerald-400");
+    expect(fill.className).toContain("to-emerald-600");
+    // 名称右侧百分比：与条同分档色
+    expect(screen.getByText("44%").className).toContain("text-emerald-600");
+    // 25/50/75/100 标尺刻度线：4 根 1px 细线，100% 贴右缘内收
+    const ticks = bar.querySelectorAll("[data-vol-tick]");
+    expect(ticks).toHaveLength(4);
+    expect((ticks[0] as HTMLElement).style.left).toBe("25%");
+    expect((ticks[1] as HTMLElement).style.left).toBe("50%");
+    expect((ticks[3] as HTMLElement).style.left).toBe("calc(100% - 1px)");
+  });
+
+  it("分档：≥70% 黄、≥90% 红（条与百分比同色）", () => {
+    const amber = render(
+      <Sidebar {...base} volumes={[{ ...vol, used_bytes: 400 * 1024 ** 3 }]} />,
+    );
+    const amberFill = amber.container.querySelector(`${barSel} > span`) as HTMLElement;
+    expect(amberFill.className).toContain("from-amber-400");
+    expect(amberFill.className).toContain("to-amber-600");
+    expect(screen.getByText("80%").className).toContain("text-amber-600");
+    amber.unmount();
+    const red = render(
+      <Sidebar {...base} volumes={[{ ...vol, used_bytes: 480 * 1024 ** 3 }]} />,
+    );
+    const redFill = red.container.querySelector(`${barSel} > span`) as HTMLElement;
+    expect(redFill.className).toContain("from-red-400");
+    expect(redFill.className).toContain("to-red-600");
+    expect(screen.getByText("96%").className).toContain("text-red-600");
+  });
+
+  it("用量缺失（网络卷）与收缩态都不渲染条与百分比", () => {
+    const net = {
+      name: "Z: (Z:\)",
+      path: "Z:\\",
+      kind: "network",
+      used_bytes: null,
+      total_bytes: null,
+    };
+    const { container } = render(<Sidebar {...base} volumes={[net]} />);
+    expect(container.querySelector(barSel)).toBeNull();
+    expect(container.textContent).not.toContain("%");
+    const collapsed = render(<Sidebar {...base} volumes={[vol]} collapsed />);
+    expect(collapsed.container.querySelector(barSel)).toBeNull();
+    expect(collapsed.container.textContent).not.toContain("%");
+  });
+});
