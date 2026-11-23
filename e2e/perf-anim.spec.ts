@@ -166,8 +166,9 @@ test("素/雅性能对比套件（stdout 输出 __PERF_JSON__ 单行 JSON）", a
       await page.reload();
       await expect(page.locator(`[data-path="${HOME}/Notes.txt"]`)).toBeVisible();
 
-      // 导航到合成目录
-      await page.keyboard.press("Control+l");
+      // 导航到合成目录（mac 上 mod=⌘ 即 Meta，win/linux mod=Ctrl；本套件仅本地跑，
+      // 按运行机平台选修饰键——写死 Control+l 在 mac 上匹配不到 mod+l 绑定）
+      await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+l`);
       await page.locator("#rdir-addr-input").fill("/mock/perf");
       await page.keyboard.press("Enter");
       await expect(page.locator('[role="row"]').first()).toBeVisible({ timeout: 15_000 });
