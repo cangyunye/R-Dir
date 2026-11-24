@@ -1099,7 +1099,7 @@ export function FileList({
                     {/* v0.52 标签方案：圆点/竖条置于图标与文件名之间（现状位置），
                         药丸自带语义文字，移到文件名之后（对标 tag-stripe-preview.html） */}
                     {tagScheme !== "pills" && (
-                      <TagMarker path={entry.path} fileTags={fileTags} tags={tags} scheme={tagScheme} />
+                      <TagMarker path={entry.path} fileTags={fileTags} tags={tags} tagNames={tagNames} scheme={tagScheme} />
                     )}
                     {isRenaming ? (
                       <RenameInput
@@ -1124,7 +1124,7 @@ export function FileList({
                       </span>
                     )}
                     {tagScheme === "pills" && (
-                      <TagMarker path={entry.path} fileTags={fileTags} tags={tags} scheme="pills" />
+                      <TagMarker path={entry.path} fileTags={fileTags} tags={tags} tagNames={tagNames} scheme="pills" />
                     )}
                   </div>
                   <div className="px-2 text-right tabular-nums text-muted-foreground">

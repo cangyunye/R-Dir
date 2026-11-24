@@ -1024,7 +1024,7 @@ export function SettingsDialog({
                       </div>
                     </div>
                     <div className="border-t px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
-                      {t("仅在详情列表中显示；大图标与标签视图保持圆点")}
+                      {t("在详情与树形列表中显示；大图标与标签视图保持圆点")}
                     </div>
                   </div>
                 </div>

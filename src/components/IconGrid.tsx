@@ -1047,7 +1047,7 @@ export function IconGrid({
                               </span>
                             </>
                           )}
-                          <TagDots path={entry.path} fileTags={fileTags} tags={tagsProp} />
+                          <TagDots path={entry.path} fileTags={fileTags} tags={tagsProp} tagNames={tagNames} />
                         </div>
                       </ContextMenuTrigger>
                       <EntryContextMenuContent

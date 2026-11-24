@@ -28,7 +28,7 @@ import { RenameInput, routeRenameRowPress } from "@/components/RenameInput";
 import { DragGhost } from "@/components/DragGhost";
 import { ROW_HEIGHT, visibleRange } from "@/lib/virtual-scroll";
 import type { DiffMarkMap } from "@/lib/sync-link";
-import { TAG_DEFS, type FileTags, type MenuConfig, type TagDef, type TagNames } from "@/lib/persist";
+import { TAG_DEFS, type FileTags, type MenuConfig, type TagDef, type TagNames, type TagScheme } from "@/lib/persist";
 import { BlankContextMenuContent, EntryContextMenuContent } from "@/components/EntryContextMenu";
 import { rank } from "@/lib/fuzzy";
 import { isMac } from "@/lib/keymap";
@@ -37,6 +37,7 @@ import { dragOutFiles } from "@/lib/api";
 import { canNativeDragOut, fileUriList, setNativeDragOut, setHtml5Drag } from "@/lib/native-drag";
 import { useDragRubberBand } from "@/hooks/useDragRubberBand";
 import { QuickJump, type QuickJumpRow } from "@/components/QuickJump";
+import { TagMarker } from "@/components/TagView";
 import type { RenameState } from "@/components/FileList";
 
 /** 树行缩进步长（px/层）与首层基准左边距 */
@@ -84,6 +85,7 @@ export function FileTreeList({
   fileTags,
   tags: tagsProp,
   tagNames,
+  tagScheme,
   customQuick,
   onToggleTag,
   onToggleQuick,
@@ -174,6 +176,8 @@ export function FileTreeList({
   fileTags: FileTags;
   /** 全量标签 = 预设 + 自定义（v0.28.0；缺省回落预设） */
   tags?: TagDef[];
+  /** v0.52 标签方案：树形列表与详情列表同款标签标记 */
+  tagScheme: TagScheme;
   tagNames: TagNames;
   customQuick: string[];
   onToggleTag: (path: string, tagId: string) => void;
@@ -898,6 +902,10 @@ export function FileTreeList({
                               <span className="mr-1 h-4 w-4 shrink-0" />
                             )}
                             <FileIcon entry={entry} size={16} className="shrink-0" />
+                            {/* v0.52 标签方案（与详情列表同款）：圆点/竖条在图标后，药丸在文件名后 */}
+                            {tagScheme !== "pills" && (
+                              <TagMarker path={entry.path} fileTags={fileTags} tags={tagsProp ?? TAG_DEFS} tagNames={tagNames} scheme={tagScheme} />
+                            )}
                             {mark && (
                               <span
                                 data-diff-mark={mark.status}
@@ -927,6 +935,9 @@ export function FileTreeList({
                               >
                                 {showExtensions ? entry.name : hideExtension(entry.name, entry.is_dir)}
                               </span>
+                            )}
+                            {tagScheme === "pills" && (
+                              <TagMarker path={entry.path} fileTags={fileTags} tags={tagsProp ?? TAG_DEFS} tagNames={tagNames} scheme="pills" />
                             )}
                           </div>
                         </ContextMenuTrigger>

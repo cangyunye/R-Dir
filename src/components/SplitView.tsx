@@ -668,6 +668,7 @@ const PaneView = memo(function PaneView({
           <FileTreeList
         paneId={pane.id}
         entries={pane.entries}
+        tagScheme={tagScheme}
         sortKey={pane.sortKey}
         sortDir={pane.sortDir}
         selection={pane.selection}

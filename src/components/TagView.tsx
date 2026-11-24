@@ -255,7 +255,7 @@ export function TagView({
         <span className="min-w-0 flex-1 truncate font-medium text-foreground">
           {isRenaming ? renameInput : displayNameOf(p, isDir)}
         </span>
-        <TagDots path={p} fileTags={fileTags} tags={tagsProp} />
+        <TagDots path={p} fileTags={fileTags} tags={tagsProp} tagNames={tagNames} />
         <span className="min-w-0 max-w-[45%] truncate text-[10px] text-[color-mix(in_srgb,var(--tag)_40%,var(--muted-foreground))]">
           {aliasOf(p) ? `${nameOf(p)} · ${p}` : p}
         </span>
@@ -281,7 +281,7 @@ export function TagView({
         className="group relative w-full cursor-default rounded-xl border bg-card p-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-[color-mix(in_srgb,var(--tag)_45%,transparent)] hover:shadow-[0_8px_22px_color-mix(in_srgb,var(--tag)_16%,transparent)]"
       >
         <span className="absolute right-2.5 top-2.5">
-          <TagDots path={p} fileTags={fileTags} tags={tagsProp} />
+          <TagDots path={p} fileTags={fileTags} tags={tagsProp} tagNames={tagNames} />
         </span>
         <div className="grid h-9 w-9 place-items-center rounded-[11px] bg-[color-mix(in_srgb,var(--tag)_11%,transparent)] transition-colors group-hover:bg-[color-mix(in_srgb,var(--tag)_20%,transparent)]">
           <FileIcon entry={entry} size={18} className="text-muted-foreground" />
@@ -510,11 +510,14 @@ export function TagDots({
   path,
   fileTags,
   tags: tagsProp,
+  tagNames: tagNamesProp,
 }: {
   path: string;
   fileTags: FileTags;
   /** 全量标签 = 预设 + 自定义（v0.28.0；缺省回落预设） */
   tags?: TagDef[];
+  /** 标签自定义显示名（v0.52 修复：标签重命名后色点 title / 药丸文字跟随） */
+  tagNames?: TagNames;
 }) {
   const t = useT();
   const tagIds = fileTags[path] ?? [];
@@ -530,7 +533,7 @@ export function TagDots({
             key={d.id}
             className="h-2 w-2 rounded-full ring-1 ring-background"
             style={{ background: d.color }}
-            title={t("标签：{name}", { name: tagLabel(d, {}) })}
+            title={t("标签：{name}", { name: tagLabel(d, tagNamesProp ?? {}) })}
           />
         ))}
     </span>
@@ -566,12 +569,15 @@ export function TagMarker({
   path,
   fileTags,
   tags: tagsProp,
+  tagNames: tagNamesProp,
   scheme,
 }: {
   path: string;
   fileTags: FileTags;
   /** 全量标签 = 预设 + 自定义（缺省回落预设） */
   tags?: TagDef[];
+  /** 标签自定义显示名（v0.52 修复：标签重命名后药丸文字 / title 跟随） */
+  tagNames?: TagNames;
   scheme: TagScheme;
 }) {
   const t = useT();
@@ -593,9 +599,9 @@ export function TagMarker({
             key={d.id}
             className="max-w-32 truncate rounded-full px-[7px] py-[3px] text-[11px] leading-none"
             style={pillStyle(d.color)}
-            title={t("标签：{name}", { name: tagLabel(d, {}) })}
+            title={t("标签：{name}", { name: tagLabel(d, tagNamesProp ?? {}) })}
           >
-            {tagLabel(d, {})}
+            {tagLabel(d, tagNamesProp ?? {})}
           </span>
         ))}
         {overflow > 0 && (
@@ -611,7 +617,7 @@ export function TagMarker({
                 className="shrink-0 whitespace-nowrap rounded-full px-[7px] py-[3px] text-[11px] leading-none"
                 style={pillStyle(d.color)}
               >
-                {tagLabel(d, {})}
+                {tagLabel(d, tagNamesProp ?? {})}
               </span>
             ))}
           </span>
@@ -637,7 +643,7 @@ export function TagMarker({
               : "h-2 w-2 rounded-full ring-1 ring-background",
           )}
           style={{ background: d.color }}
-          title={t("标签：{name}", { name: tagLabel(d, {}) })}
+          title={t("标签：{name}", { name: tagLabel(d, tagNamesProp ?? {}) })}
         />
       ))}
     </span>
