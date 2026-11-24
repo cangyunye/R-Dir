@@ -168,7 +168,7 @@ export function DeleteConfirmDialog({
           {t("将移入回收站，可随时按 Ctrl+Z 撤销恢复。")}
         </p>
 
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onCancel}>
             {t("取消")}
           </Button>

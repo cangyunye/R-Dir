@@ -193,7 +193,7 @@ function ConflictDialogBody({
           </Button>
         </div>
 
-        <div className="mt-3 flex justify-end gap-2">
+        <div className="mt-3 flex flex-wrap justify-end gap-2">
           <Button variant="outline" size="sm" onClick={() => act({ type: "overwrite" })}>
             {t("覆盖")}
           </Button>

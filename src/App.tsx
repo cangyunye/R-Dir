@@ -6629,14 +6629,16 @@ useEffect(() => {
             if (e.target === e.currentTarget) setCloseDialogOpen(false);
           }}
         >
-          <div className="w-[360px] max-w-[92vw] rounded-lg border bg-background p-4 shadow-xl">
+          <div data-quit-dialog="" className="w-[360px] max-w-[92vw] rounded-lg border bg-background p-4 shadow-xl">
             <div className="text-sm font-semibold">{t("保存会话布局？")}</div>
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
               {t("会话已随使用自动保存，程序意外中断后下次启动会恢复最近布局。「保存并退出」立即保存当前布局；「不保存」将清除已保存会话，下次启动回到默认页。")}
               <br />
               {t("SFTP 远程目录需验证主密钥后恢复，否则显示占位。")}
             </p>
-            <div className="mt-4 flex justify-end gap-2">
+            {/* 长翻译（德/法等）三钮总宽会超卡片：flex-wrap 让整钮折行右对齐，配合按钮
+                自带的 whitespace-nowrap 保证钮内不换行（此前溢出卡片右缘的错位根因） */}
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setCloseDialogOpen(false)}>
                 {t("取消")}<span className="ml-1.5 text-[10px] opacity-60">Esc</span>
               </Button>

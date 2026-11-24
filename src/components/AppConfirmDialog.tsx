@@ -80,7 +80,7 @@ export function AppConfirmDialog({
         <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
           {req.message}
         </p>
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onCancel}>
             {req.cancelLabel ?? t("取消")}
           </Button>
