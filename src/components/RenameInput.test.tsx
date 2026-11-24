@@ -260,3 +260,50 @@ describe("行级路由 everPressed 标记（v0.49 BUG2 硬化：路由路径 sel
     }
   });
 });
+
+describe("初始选区 = 主名（v0.52 排除扩展名，访达/资源管理器语义）", () => {
+  /** 挂载后拨到 0ms 档重试聚焦（初始选区在链上设置），返回输入框 */
+  function mountSel(initial: string, isDir = false): HTMLInputElement {
+    vi.useFakeTimers();
+    try {
+      render(<RenameInput initial={initial} isDir={isDir} onCommit={vi.fn()} onCancel={vi.fn()} />);
+      const input = document.querySelector("input")!;
+      act(() => {
+        vi.advanceTimersByTime(1); // 首档（0ms）
+      });
+      return input;
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it("文件带扩展名：只选最后一个「.」之前的主名", () => {
+    const input = mountSel("main.rs");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(4); // "main"
+  });
+
+  it("多点扩展名：选到最后一个「.」（archive.tar.gz → archive.tar）", () => {
+    const input = mountSel("archive.tar.gz");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(11);
+  });
+
+  it("目录：不做扩展名排除，整串全选（「.」非扩展名语义）", () => {
+    const input = mountSel("My.Folder", true);
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(9);
+  });
+
+  it("隐藏文件（.bashrc 点在串首不算扩展名）整串全选", () => {
+    const input = mountSel(".bashrc");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(7);
+  });
+
+  it("无扩展名整串全选", () => {
+    const input = mountSel("README");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(6);
+  });
+});

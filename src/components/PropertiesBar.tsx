@@ -51,9 +51,11 @@ export const PropertiesBar = memo(function PropertiesBar({
           const e = selectedEntries[0];
           const kind = e.is_dir
             ? t("目录")
-            : e.extension
-              ? t("{ext} 文件", { ext: e.extension.toUpperCase() })
-              : t("文件");
+            : e.is_symlink
+              ? t("链接")
+              : e.extension
+                ? t("{ext} 文件", { ext: e.extension.toUpperCase() })
+                : t("文件");
           return (
             <>
               {/* v0.44.0 名称至多占属性栏 40% 并截断（悬停看全名）：长文件名不再把

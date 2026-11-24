@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { List, Plus, X } from "lucide-react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { cn, fgOnTagColor } from "@/lib/utils";
 import { isMac } from "@/lib/keymap";
+import { toggleWindowMaximize } from "@/lib/window-commands";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { WindowControls } from "@/components/WindowControls";
@@ -294,10 +294,9 @@ export function TabBar({
         // 捕获阶段合成事件 stopPropagation 会停掉原生传播——drag.js 的 document
         // 冒泡监听收不到，internal_toggle_maximize（只能还原）不再触发；
         // 改调无门槛的公开 toggle_maximize，两个方向都正确。
+        // （v0.52 起 mac 走 window_toggle_maximize 瞬时切换，见 window-commands.ts）
         e.stopPropagation();
-        void getCurrentWindow()
-          .toggleMaximize()
-          .catch(() => {});
+        toggleWindowMaximize();
       }}
       className="relative flex items-end gap-0.5 border-b bg-sidebar px-1.5 pt-1 select-none"
     >

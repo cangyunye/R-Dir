@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { fileKindOf, isArchiveExt, THUMBNAIL_KINDS, FILE_KINDS } from "./filekind";
 
-const mk = (is_dir: boolean, extension: string) => ({ is_dir, extension });
+const mk = (is_dir: boolean, extension: string, is_symlink?: boolean) => ({
+  is_dir,
+  extension,
+  is_symlink,
+});
 
 describe("fileKindOf（v0.27 文件类型分类）", () => {
   it("目录恒为 folder，不看扩展名", () => {
@@ -34,9 +38,16 @@ describe("fileKindOf（v0.27 文件类型分类）", () => {
     expect(fileKindOf(mk(false, ""))).toBe("file");
   });
 
-  it("13 类完整且缩略图资格是子集", () => {
-    expect(FILE_KINDS).toHaveLength(13);
+  it("14 类完整且缩略图资格是子集", () => {
+    expect(FILE_KINDS).toHaveLength(14); // v0.52 新增 link（符号链接锁链图标）
     for (const k of THUMBNAIL_KINDS) expect(FILE_KINDS).toContain(k);
+  });
+
+  it("v0.52 符号链接独立为 link 类型（类型列/图标以链接呈现，不论扩展名）", () => {
+    expect(fileKindOf(mk(false, "txt", true))).toBe("link");
+    expect(fileKindOf(mk(false, "", true))).toBe("link");
+    expect(fileKindOf(mk(true, "", true))).toBe("folder"); // 目录优先于链接判定
+    expect(fileKindOf(mk(false, "png"))).not.toBe("link");
   });
 
   it("v0.32 isArchiveExt：常见压缩包可解压，裸 xz 例外（后端暂不支持）", () => {

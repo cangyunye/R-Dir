@@ -55,7 +55,7 @@ import {
   shellIntegrationUnregister,
   type ShellIntegrationStatusView,
 } from "@/lib/api";
-import type { MenuConfig } from "@/lib/persist";
+import type { AnimLevel, MenuConfig } from "@/lib/persist";
 import {
   indexGetConfig,
   indexRebuild,
@@ -521,6 +521,9 @@ export function SettingsDialog({
   onClose,
   themeMode,
   onThemeModeChange,
+  /** 动画级别：素=瞬时（历史行为）/ 雅=苹果式丝滑动效（v0.52 开关回归设置面板） */
+  animLevel,
+  onAnimLevelChange,
   /** v0.39 主题包（本地安装的纯数据配色；null = 尚未加载） */
   themePacks = null,
   themeErrors = [],
@@ -578,6 +581,9 @@ export function SettingsDialog({
   /** 主题颜色模式：显式浅色/深色，或跟随系统 */
   themeMode: ThemeMode;
   onThemeModeChange: (m: ThemeMode) => void;
+  /** 动画级别：素=瞬时（历史行为）/ 雅=苹果式丝滑动效（v0.52 开关回归设置面板） */
+  animLevel: AnimLevel;
+  onAnimLevelChange: (v: AnimLevel) => void;
   /** v0.39 已安装主题包；themeErrors = 解析失败的坏包（不阻塞列表） */
   themePacks?: ThemePack[] | null;
   themeErrors?: ThemeLoadError[];
@@ -938,6 +944,43 @@ export function SettingsDialog({
                           </button>
                         ))}
                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 动画级别（v0.52 回归）：素=瞬时（历史行为）/ 雅=苹果式丝滑动效；
+                    雅不受系统「减弱动态效果」影响（v0.49.1 拍板，RDP/关窗口动画的
+                    机器不被静默压制）——关闭动效的唯一途径 = 素 */}
+                <div className="mb-5">
+                  <div className="overflow-hidden rounded-md border bg-card">
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+                      <span className="text-foreground">{t("动画效果")}</span>
+                      <div className="flex gap-1">
+                        {(
+                          [
+                            { v: "plain" as AnimLevel, label: "朴素" },
+                            { v: "elegant" as AnimLevel, label: "优雅" },
+                          ]
+                        ).map(({ v, label }) => (
+                          <button
+                            key={v}
+                            data-testid={`anim-level-${v}`}
+                            aria-pressed={animLevel === v}
+                            onClick={() => onAnimLevelChange(v)}
+                            className={cn(
+                              "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors",
+                              animLevel === v
+                                ? "bg-primary text-primary-foreground"
+                                : "bg-muted text-muted-foreground hover:bg-accent",
+                            )}
+                          >
+                            {t(label)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="border-t px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
+                      {t("雅：菜单展开、拖拽反馈与动效平滑跟手；素：全部瞬时（原始行为）")}
                     </div>
                   </div>
                 </div>

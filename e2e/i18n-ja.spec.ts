@@ -30,7 +30,8 @@ test.describe("i18n 日语冒烟", () => {
   test("应用菜单：条目为日语", async ({ page }) => {
     await page.getByTitle("アプリメニュー").click();
     await expect(page.getByRole("menuitem", { name: /新しいタブ/ })).toBeVisible();
-    await expect(page.getByText("ファイル", { exact: true })).toBeVisible();
+    // 收窄到菜单内：详情行类型列（文件型条目）会以同词渲染，裸精确匹配会撞 strict v0.52 夹具
+    await expect(page.getByRole("menu").getByText("ファイル", { exact: true })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: /隠しファイルを表示/ })).toBeVisible();
   });
 

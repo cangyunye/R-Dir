@@ -224,7 +224,16 @@ export function ConnectDialog({
               onChange={(e) => setGroup(e.target.value)}
               placeholder={t("可选，用于侧边栏分组管理")}
               className="pr-7"
+              list="rdir-sftp-group-candidates"
             />
+            {/* v0.52 分组候选枚举：现有分组名去重（排除空=默认组）供下拉候选，
+                仍可自由输入新组名（datalist 不限制输入）；顺序与侧栏分组一致
+                （保持清单首现序） */}
+            <datalist id="rdir-sftp-group-candidates">
+              {[...new Set((servers ?? []).map((s) => s.group).filter(Boolean))].map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
           </label>
           <label className="grid grid-cols-[70px_1fr] items-center gap-2 text-xs">
             <span className="text-muted-foreground">{t("主机")}</span>

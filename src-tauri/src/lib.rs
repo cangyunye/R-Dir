@@ -23,21 +23,21 @@ mod themes;
 mod thumbs;
 mod volumes;
 
-#[cfg(feature = "sftp")]
-mod sftp;
 mod nfs_backend;
 #[cfg(feature = "nfs-sidecar")]
 mod nfs_plugin;
+#[cfg(feature = "sftp")]
+mod sftp;
 mod smb;
 
+mod http_autoindex;
 mod opener;
 pub mod paths;
 mod plugins;
-mod shellint;
-mod shortcut;
-mod http_autoindex;
 #[cfg(feature = "share")]
 mod share;
+mod shellint;
+mod shortcut;
 /// v0.43 web 服务（rdir-web bin 专用，web feature 门控）
 #[cfg(feature = "web")]
 pub mod web;
@@ -147,7 +147,11 @@ fn collect_path_args<I: IntoIterator<Item = String>>(args: I) -> Vec<OpenPathEnt
     let mut out = Vec::new();
     for a in args {
         let p = if a.starts_with("file://") {
-            match a.parse::<tauri::Url>().ok().and_then(|u| u.to_file_path().ok()) {
+            match a
+                .parse::<tauri::Url>()
+                .ok()
+                .and_then(|u| u.to_file_path().ok())
+            {
                 Some(p) => p,
                 None => continue,
             }
@@ -171,7 +175,9 @@ fn collect_path_args<I: IntoIterator<Item = String>>(args: I) -> Vec<OpenPathEnt
 /// 取走启动路径（前端挂载时拉取一次；此后二次启动 / Finder 打开走 open://paths 事件）
 #[tauri::command]
 fn launch_paths_take(state: tauri::State<'_, LaunchPaths>) -> Vec<OpenPathEntry> {
-    state.pulled.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .pulled
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     std::mem::take(&mut *state.pending.lock().unwrap())
 }
 
@@ -202,9 +208,11 @@ async fn create_shortcuts(
     to_desktop: bool,
     link_suffix: String,
 ) -> Result<shortcut::ShortcutOutcome, String> {
-    tauri::async_runtime::spawn_blocking(move || shortcut::create_shortcuts(&paths, to_desktop, &link_suffix))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        shortcut::create_shortcuts(&paths, to_desktop, &link_suffix)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ==================== 后端能力抽象（v0.18 同步比对） ====================
@@ -249,12 +257,27 @@ impl BackendKind {
 
     fn caps(self) -> BackendCaps {
         match self {
-            BackendKind::Local => BackendCaps { max_diff_level: 3, can_mkdir: true },
+            BackendKind::Local => BackendCaps {
+                max_diff_level: 3,
+                can_mkdir: true,
+            },
             // SMB：UNC 委托本地引擎，hash 也可执行，能力等同本地
-            BackendKind::Smb => BackendCaps { max_diff_level: 3, can_mkdir: true },
-            BackendKind::Sftp => BackendCaps { max_diff_level: 2, can_mkdir: true },
-            BackendKind::Http => BackendCaps { max_diff_level: 1, can_mkdir: false },
-            BackendKind::Nfs => BackendCaps { max_diff_level: 2, can_mkdir: true },
+            BackendKind::Smb => BackendCaps {
+                max_diff_level: 3,
+                can_mkdir: true,
+            },
+            BackendKind::Sftp => BackendCaps {
+                max_diff_level: 2,
+                can_mkdir: true,
+            },
+            BackendKind::Http => BackendCaps {
+                max_diff_level: 1,
+                can_mkdir: false,
+            },
+            BackendKind::Nfs => BackendCaps {
+                max_diff_level: 2,
+                can_mkdir: true,
+            },
         }
     }
 }
@@ -262,10 +285,7 @@ impl BackendKind {
 /// 列目录的统一后端调度：`list_dir` 命令与 `diff_dirs` 共用，
 /// 「哪些后端能列目录」只有这一个权威答案。
 /// 全后端目录列表路由（smb/sftp/nfs/http/local）；GUI 命令与 web 桥共用
-pub(crate) async fn list_side(
-    state: &AppState,
-    path: &str,
-) -> Result<Vec<FileEntry>, String> {
+pub(crate) async fn list_side(state: &AppState, path: &str) -> Result<Vec<FileEntry>, String> {
     if smb::is_smb_path(path) || smb::is_unc_server_root(path) {
         if !plugins::plugin_enabled(&state.plugins, "smb") {
             return Err("SMB 插件已禁用（设置 → 插件中可重新启用）".into());
@@ -321,10 +341,7 @@ async fn list_dir(
 
 /// 条目类型探测：返回 "dir" / "file" / "symlink"（标签/远程虚拟目录双击跳转用）。
 #[tauri::command]
-async fn stat_path(
-    state: tauri::State<'_, AppState>,
-    path: String,
-) -> Result<String, String> {
+async fn stat_path(state: tauri::State<'_, AppState>, path: String) -> Result<String, String> {
     stat_path_core(&state, path).await
 }
 
@@ -486,7 +503,11 @@ pub(crate) async fn sftp_list_servers_core(
     ensure_plugin(&state, "sftp")?;
     let file = sftp::servers::load_file(&path);
     let pool = state.sftp_pool.lock().await;
-    Ok(file.servers.iter().map(|s| sftp::to_view(s, &pool)).collect())
+    Ok(file
+        .servers
+        .iter()
+        .map(|s| sftp::to_view(s, &pool))
+        .collect())
 }
 
 /// 保存（新增或更新）服务器；返回最新清单。
@@ -522,14 +543,27 @@ pub(crate) async fn sftp_save_server_core(
     // 编辑保留：已存在服务器且对应字段留空 → 沿用旧值（密文原样保留）
     if let Some(old) = file.servers.iter().find(|s| s.id == id) {
         match (&mut server.auth, &old.auth) {
-            (AuthConfig::Password { password, .. }, AuthConfig::Password { password: old_pw, .. }) => {
+            (
+                AuthConfig::Password { password, .. },
+                AuthConfig::Password {
+                    password: old_pw, ..
+                },
+            ) => {
                 if password.is_empty() {
                     *password = old_pw.clone();
                 }
             }
             (
-                AuthConfig::PublicKey { key_path, passphrase, save_passphrase },
-                AuthConfig::PublicKey { key_path: old_kp, passphrase: old_pp, .. },
+                AuthConfig::PublicKey {
+                    key_path,
+                    passphrase,
+                    save_passphrase,
+                },
+                AuthConfig::PublicKey {
+                    key_path: old_kp,
+                    passphrase: old_pp,
+                    ..
+                },
             ) => {
                 if key_path.is_empty() {
                     *key_path = old_kp.clone();
@@ -550,7 +584,11 @@ pub(crate) async fn sftp_save_server_core(
     }
     sftp::servers::save_file(&path, &file)?;
     let pool = state.sftp_pool.lock().await;
-    Ok(file.servers.iter().map(|s| sftp::to_view(s, &pool)).collect())
+    Ok(file
+        .servers
+        .iter()
+        .map(|s| sftp::to_view(s, &pool))
+        .collect())
 }
 
 /// 删除服务器配置（连接不断开）
@@ -576,7 +614,11 @@ pub(crate) async fn sftp_remove_server_core(
     file.servers.retain(|s| s.id != id);
     sftp::servers::save_file(&path, &file)?;
     let pool = state.sftp_pool.lock().await;
-    Ok(file.servers.iter().map(|s| sftp::to_view(s, &pool)).collect())
+    Ok(file
+        .servers
+        .iter()
+        .map(|s| sftp::to_view(s, &pool))
+        .collect())
 }
 
 /// 批量设置服务器分组（侧边栏拖拽换组 / 分组整体重命名共用）。
@@ -613,7 +655,11 @@ pub(crate) async fn sftp_set_server_group_core(
         sftp::servers::save_file(&path, &file)?;
     }
     let pool = state.sftp_pool.lock().await;
-    Ok(file.servers.iter().map(|s| sftp::to_view(s, &pool)).collect())
+    Ok(file
+        .servers
+        .iter()
+        .map(|s| sftp::to_view(s, &pool))
+        .collect())
 }
 
 /// master-key 状态：是否设置过（有校验值）+ 当前内存是否已输入
@@ -702,7 +748,12 @@ pub(crate) async fn sftp_reset_master_key_core(
     file.master_key_check = None;
     // 清空所有 enc:v1: 开头的密码（无法解密的密文）
     for srv in file.servers.iter_mut() {
-        if let sftp::servers::AuthConfig::Password { password, save_password, .. } = &mut srv.auth {
+        if let sftp::servers::AuthConfig::Password {
+            password,
+            save_password,
+            ..
+        } = &mut srv.auth
+        {
             if password.starts_with(sftp::servers::ENC_PREFIX) {
                 password.clear();
                 *save_password = false;
@@ -742,31 +793,35 @@ pub(crate) async fn sftp_connect_core(
             server = stored.clone();
         } else {
             match (&mut server.auth, &stored.auth) {
-            (
-                sftp::servers::AuthConfig::Password { password, .. },
-                sftp::servers::AuthConfig::Password { password: sp, .. },
-            ) => {
-                if password.is_empty() && !sp.is_empty() {
-                    *password = sp.clone();
+                (
+                    sftp::servers::AuthConfig::Password { password, .. },
+                    sftp::servers::AuthConfig::Password { password: sp, .. },
+                ) => {
+                    if password.is_empty() && !sp.is_empty() {
+                        *password = sp.clone();
+                    }
                 }
+                (
+                    sftp::servers::AuthConfig::PublicKey {
+                        key_path,
+                        passphrase,
+                        ..
+                    },
+                    sftp::servers::AuthConfig::PublicKey {
+                        key_path: skp,
+                        passphrase: spp,
+                        ..
+                    },
+                ) => {
+                    if key_path.is_empty() {
+                        *key_path = skp.clone();
+                    }
+                    if passphrase.is_none() {
+                        *passphrase = spp.clone();
+                    }
+                }
+                _ => {}
             }
-            (
-                sftp::servers::AuthConfig::PublicKey { key_path, passphrase, .. },
-                sftp::servers::AuthConfig::PublicKey {
-                    key_path: skp,
-                    passphrase: spp,
-                    ..
-                },
-            ) => {
-                if key_path.is_empty() {
-                    *key_path = skp.clone();
-                }
-                if passphrase.is_none() {
-                    *passphrase = spp.clone();
-                }
-            }
-            _ => {}
-        }
         }
     }
     // 密文密码 → 用 master-key 解密（内存无 key 时要求先输入）
@@ -964,10 +1019,7 @@ async fn favorites_load(app: tauri::AppHandle) -> Result<Option<FavoritesFile>, 
 #[tauri::command]
 async fn favorites_save(app: tauri::AppHandle, items: Vec<TabFavorite>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let file = FavoritesFile {
-            version: 1,
-            items,
-        };
+        let file = FavoritesFile { version: 1, items };
         let path = favorites_path(&app)?;
         let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
         json_store::write_atomic(&path, &json, "写入收藏夹失败", "保存收藏夹失败")
@@ -1133,10 +1185,7 @@ fn cancel_diff(state: tauri::State<'_, AppState>, id: String) {
 
 /// 解析文本比较的一侧路径：本地直接用；SFTP/HTTP 先下载到临时目录（用完即删）。
 /// 返回 (本地路径, 是否临时文件)。
-async fn resolve_text_side(
-    state: &AppState,
-    path: &str,
-) -> Result<(String, bool), String> {
+async fn resolve_text_side(state: &AppState, path: &str) -> Result<(String, bool), String> {
     // SMB：smb:// 翻译为 UNC 后走本地读取（UNC 本身走下面的本地分支）
     if smb::is_smb_path(path) {
         return Ok((smb::normalize_for_local(path)?, false));
@@ -1152,8 +1201,8 @@ async fn resolve_text_side(
             std::fs::create_dir_all(&dir).map_err(|e| format!("创建临时目录失败：{e}"))?;
             // download_to 同名自动加后缀，避免两侧同名文件相互覆盖（文本比较只传单文件）
             let mut nocb = |_ev: sftp::XferEvent| true;
-            let local = sftp::download_to(&pool, &dir.to_string_lossy(), path, false, &mut nocb)
-                .await?;
+            let local =
+                sftp::download_to(&pool, &dir.to_string_lossy(), path, false, &mut nocb).await?;
             return Ok((local, true));
         }
         #[cfg(not(feature = "sftp"))]
@@ -1168,14 +1217,22 @@ async fn resolve_text_side(
         let mut nocb = |_ev: nfs_backend::XferEvent| true;
         let local = state
             .nfs
-            .download_to(dir.to_string_lossy().to_string(), path.to_string(), false, &mut nocb)
+            .download_to(
+                dir.to_string_lossy().to_string(),
+                path.to_string(),
+                false,
+                &mut nocb,
+            )
             .await?;
         Ok((local, true))
     } else if path.starts_with("http://") || path.starts_with("https://") {
         if !plugins::plugin_enabled(&state.plugins, "http") {
             return Err("HTTP autoindex 插件已禁用（设置 → 插件中可重新启用）".into());
         }
-        Ok((http_autoindex::download_to_temp(path.to_string()).await?, true))
+        Ok((
+            http_autoindex::download_to_temp(path.to_string()).await?,
+            true,
+        ))
     } else {
         Ok((path.to_string(), false))
     }
@@ -1219,8 +1276,10 @@ pub(crate) async fn diff_text_files_core(
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = (|| -> Result<text_diff::TextDiffOutcome, String> {
             let enc = encoding.as_deref();
-            let (lt, llossy, lbytes) = text_diff::read_local_text(std::path::Path::new(&llocal), enc)?;
-            let (rt, rlossy, rbytes) = text_diff::read_local_text(std::path::Path::new(&rlocal), enc)?;
+            let (lt, llossy, lbytes) =
+                text_diff::read_local_text(std::path::Path::new(&llocal), enc)?;
+            let (rt, rlossy, rbytes) =
+                text_diff::read_local_text(std::path::Path::new(&rlocal), enc)?;
             let la = text_diff::split_lines(&lt);
             let rb = text_diff::split_lines(&rt);
             let (segments, coarse) = if ignores.is_empty() {
@@ -1381,8 +1440,7 @@ pub(crate) async fn write_text_file_core(
     if smb::is_smb_path(&path) {
         let unc = smb::normalize_for_local(&path)?;
         return tauri::async_runtime::spawn_blocking(move || {
-            std::fs::write(std::path::Path::new(&unc), &bytes)
-                .map_err(|e| format!("写入失败：{e}"))
+            std::fs::write(std::path::Path::new(&unc), &bytes).map_err(|e| format!("写入失败：{e}"))
         })
         .await
         .map_err(|e| format!("写入任务失败：{e}"))?;
@@ -1407,12 +1465,7 @@ pub(crate) async fn write_text_file_core(
                 let mut nocb = |_ev: nfs_backend::XferEvent| true;
                 state
                     .nfs
-                    .upload_path(
-                        tmpfile.to_string_lossy().to_string(),
-                        dir,
-                        name,
-                        &mut nocb,
-                    )
+                    .upload_path(tmpfile.to_string_lossy().to_string(), dir, name, &mut nocb)
                     .await
                     .map(|_: String| ())
             }
@@ -1436,8 +1489,8 @@ pub(crate) async fn write_text_file_core(
             ));
             std::fs::create_dir_all(&tmpdir).map_err(|e| format!("创建临时目录失败：{e}"))?;
             let tmpfile = tmpdir.join(&name);
-            let write_result = std::fs::write(&tmpfile, &bytes)
-                .map_err(|e| format!("写临时文件失败：{e}"));
+            let write_result =
+                std::fs::write(&tmpfile, &bytes).map_err(|e| format!("写临时文件失败：{e}"));
             let result = match write_result {
                 Ok(()) => {
                     let pool = state.sftp_pool.lock().await;
@@ -1458,7 +1511,8 @@ pub(crate) async fn write_text_file_core(
         }
     } else {
         tauri::async_runtime::spawn_blocking(move || {
-            std::fs::write(std::path::Path::new(&path), &bytes).map_err(|e| format!("写入失败：{e}"))
+            std::fs::write(std::path::Path::new(&path), &bytes)
+                .map_err(|e| format!("写入失败：{e}"))
         })
         .await
         .map_err(|e| format!("写入任务失败：{e}"))?
@@ -1655,9 +1709,22 @@ pub(crate) async fn sftp_download_to_core(
             return Err(e);
         }
     };
-    let mut cb = sftp_xfer_progress(sink.clone(), "download", id.clone(), label, plan.files, flag);
-    let result =
-        sftp::download_to(&pool, &local_dir, &path, overwrite.unwrap_or(false), &mut cb).await;
+    let mut cb = sftp_xfer_progress(
+        sink.clone(),
+        "download",
+        id.clone(),
+        label,
+        plan.files,
+        flag,
+    );
+    let result = sftp::download_to(
+        &pool,
+        &local_dir,
+        &path,
+        overwrite.unwrap_or(false),
+        &mut cb,
+    )
+    .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
     emit_sftp_transfer_end(&sink, "download", plan.files, &result);
     result
@@ -1716,7 +1783,15 @@ async fn sftp_relay(
     name: String,
     local_dir: Option<String>,
 ) -> Result<String, String> {
-    sftp_relay_core(&state, &EventSink::from(&app), src, dest_dir, name, local_dir).await
+    sftp_relay_core(
+        &state,
+        &EventSink::from(&app),
+        src,
+        dest_dir,
+        name,
+        local_dir,
+    )
+    .await
 }
 
 /// sftp_relay 核心（GUI 命令与 web 桥共用）
@@ -1987,10 +2062,7 @@ async fn sftp_create_file(
 /// 远程删除（目录仅空目录；文件直接删除）
 #[cfg(feature = "sftp")]
 #[tauri::command]
-async fn sftp_delete(
-    state: tauri::State<'_, AppState>,
-    paths: Vec<String>,
-) -> Result<(), String> {
+async fn sftp_delete(state: tauri::State<'_, AppState>, paths: Vec<String>) -> Result<(), String> {
     ensure_plugin(&state, "sftp")?;
     let pool = state.sftp_pool.lock().await;
     sftp::delete_entries(&pool, &paths).await
@@ -2096,33 +2168,38 @@ async fn nfs_download_to(
     let sink_task = sink.clone();
     let result = state
         .nfs
-        .download_to(local_dir, path, overwrite.unwrap_or(false), &mut move |ev| {
-            if flag.load(std::sync::atomic::Ordering::Relaxed) {
-                return false;
-            }
-            let mut p = progress::TransferProgress::start("download", &cur_label, plan.files);
-            p.id = Some(id_task.clone());
-            match ev {
-                nfs_backend::XferEvent::Start { label: l } => {
-                    cur_label = l;
-                    throttle.reset();
+        .download_to(
+            local_dir,
+            path,
+            overwrite.unwrap_or(false),
+            &mut move |ev| {
+                if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return false;
                 }
-                nfs_backend::XferEvent::Bytes { done, total } => {
-                    if throttle.ready() {
-                        p.file_done = done;
-                        p.file_total = total;
-                        p.done_files = done_files;
-                        progress::emit(&sink_task, &p);
+                let mut p = progress::TransferProgress::start("download", &cur_label, plan.files);
+                p.id = Some(id_task.clone());
+                match ev {
+                    nfs_backend::XferEvent::Start { label: l } => {
+                        cur_label = l;
+                        throttle.reset();
                     }
-                    return true;
+                    nfs_backend::XferEvent::Bytes { done, total } => {
+                        if throttle.ready() {
+                            p.file_done = done;
+                            p.file_total = total;
+                            p.done_files = done_files;
+                            progress::emit(&sink_task, &p);
+                        }
+                        return true;
+                    }
+                    nfs_backend::XferEvent::EntryDone => done_files += 1,
                 }
-                nfs_backend::XferEvent::EntryDone => done_files += 1,
-            }
-            p.label = cur_label.clone();
-            p.done_files = done_files;
-            progress::emit(&sink_task, &p);
-            true
-        })
+                p.label = cur_label.clone();
+                p.done_files = done_files;
+                progress::emit(&sink_task, &p);
+                true
+            },
+        )
         .await;
     state.transfer_cancels.lock().unwrap().remove(&id);
     emit_sftp_transfer_end(&sink, "download", plan.files, &result);
@@ -2142,7 +2219,8 @@ async fn nfs_upload(
     let sink = EventSink::from(&app);
     let label = transfer_label(&name, "上传中…");
     // 计划阶段：统计本地树（纯本地遍历，快）；失败回退单文件分母，不阻塞传输
-    let plan = nfs_backend::upload_plan(&local).unwrap_or(nfs_backend::TransferPlan { files: 1, bytes: 0 });
+    let plan = nfs_backend::upload_plan(&local)
+        .unwrap_or(nfs_backend::TransferPlan { files: 1, bytes: 0 });
     let (id, flag) = register_transfer_cancel(&state, "sftp:");
     let mut throttle = progress::Throttle::new();
     let mut done_files = 0usize;
@@ -2208,10 +2286,7 @@ async fn nfs_create_file(
 
 /// NFS 远程删除（目录递归删；文件直接删）
 #[tauri::command]
-async fn nfs_delete(
-    state: tauri::State<'_, AppState>,
-    paths: Vec<String>,
-) -> Result<(), String> {
+async fn nfs_delete(state: tauri::State<'_, AppState>, paths: Vec<String>) -> Result<(), String> {
     ensure_plugin(&state, "nfs")?;
     state.nfs.delete_entries(paths).await
 }
@@ -2270,7 +2345,14 @@ async fn sftp_export_servers(
     exported_at: String,
     master_key: Option<String>,
 ) -> Result<sftp::servers::ExportOutcome, String> {
-    sftp_export_servers_core(&state, &sftp_servers_path(&app)?, target, exported_at, master_key).await
+    sftp_export_servers_core(
+        &state,
+        &sftp_servers_path(&app)?,
+        target,
+        exported_at,
+        master_key,
+    )
+    .await
 }
 
 /// sftp_export_servers 核心（GUI 命令与 web 桥共用）
@@ -2311,7 +2393,10 @@ pub(crate) async fn sftp_export_servers_core(
     })
     .await
     .map_err(|e| format!("导出任务失败：{e}"))??;
-    Ok(sftp::servers::ExportOutcome { exported, encrypted })
+    Ok(sftp::servers::ExportOutcome {
+        exported,
+        encrypted,
+    })
 }
 
 /// 导入服务器清单：密文经导入主密码解密 → 本机主密钥回填加密 → 按 id 去重合并。
@@ -2732,7 +2817,10 @@ struct ClipboardFilesPayload {
 /// 从系统剪贴板读取文件列表（跨应用粘贴），含剪切/移动语义标志。
 #[tauri::command]
 fn clipboard_read_files() -> Result<ClipboardFilesPayload, String> {
-    clipboard::read_file_list().map(|f| ClipboardFilesPayload { paths: f.paths, cut: f.cut })
+    clipboard::read_file_list().map(|f| ClipboardFilesPayload {
+        paths: f.paths,
+        cut: f.cut,
+    })
 }
 
 /// 清空系统剪贴板：消费外部剪切（移动粘贴完成）后调用，避免残留失效的剪切项。
@@ -2745,15 +2833,225 @@ fn clipboard_clear_files() {
 /// 阻塞到松手，返回投放效果（0 = 无目标/取消，1 = copy，2 = move，4 = 快捷方式）；
 /// 空列表为 no-op（前端启动时的能力探测）。必须保持同步命令以在主线程执行。
 /// cancel_on_right_button：拖动中按下右键取消（仅搜索结果拖拽传 true，缺省 false 行为不变）。
+#[cfg(windows)]
 #[tauri::command]
 fn drag_out_files(paths: Vec<String>, cancel_on_right_button: Option<bool>) -> Result<u32, String> {
     drag_out::start(paths, cancel_on_right_button.unwrap_or(false))
+}
+
+/// 原生拖出（macOS：NSDraggingSession 携带 file URL——HTML5 uri-list 是纯文本
+/// 载荷，Dock 废纸篓/Finder 拒收文件语义，见 drag_out.rs mac 模块注释）。
+/// async 命令跑在 worker 线程：主线程发起会话后，worker 阻塞到 endedAtPoint
+/// （对齐 Windows 阻塞语义，前端 dragOutFiles 的 promise 收尾时机依赖它）。
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn drag_out_files(
+    window: tauri::WebviewWindow,
+    paths: Vec<String>,
+    cancel_on_right_button: Option<bool>,
+) -> Result<u32, String> {
+    // 空列表 = 能力探测 no-op（与 Windows 同语义，不发起会话）
+    if paths.is_empty() {
+        return Ok(0);
+    }
+    // mac 原生会话的 Esc 取消由系统处理；右键取消不支持（OLE DropSource 特有）。
+    let _ = cancel_on_right_button;
+    struct SendPtr(*mut std::ffi::c_void);
+    unsafe impl Send for SendPtr {}
+    let view = SendPtr(window.ns_view().map_err(|e| e.to_string())?);
+    let rx = drag_out::arm_channel();
+    window
+        .run_on_main_thread(move || {
+            let v = view;
+            drag_out::start_main(paths, v.0);
+        })
+        .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || rx.recv().map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 修饰键实时状态（v0.34：Windows 原生拖放投放时判定 Alt=移动）。
 #[tauri::command]
 fn query_modifiers() -> drag_out::Modifiers {
     drag_out::modifiers()
+}
+
+// ==================== macOS 无边框窗口缩放（v0.52） ====================
+//
+// 无边框窗口（decorations:false，无 Titled styleMask）的 tao toggleMaximize 走
+// `setFrame:display:animate:` 且 animate=YES——AppKit 自带动画 ~0.4s（「太慢」）；
+// 而直接 animate=NO 又完全无动画（用户反馈「生硬」）。折中方案：
+// - 素（animate=false）：瞬时一步到位；
+// - 雅（animate=true）：NSTimer 150ms easeOutCubic 步进插值（短平快，随素/雅开关）。
+
+/// 雅模式的动画时长（秒）：与 --rdir-anim-dur(180ms) 同量级、更利落
+#[cfg(target_os = "macos")]
+const MAXIMIZE_ANIM_SECS: f64 = 0.15;
+
+/// 进行中的最大化动画计时器：新动画发起时先 invalidate 旧的（帧停在当前位置，
+/// 新动画从那里续走）。只在主线程触碰；Send 为满足 static 的 Sync 手写。
+#[cfg(target_os = "macos")]
+struct MaximizeTimer(#[allow(dead_code)] objc2::rc::Retained<objc2_foundation::NSTimer>);
+#[cfg(target_os = "macos")]
+unsafe impl Send for MaximizeTimer {}
+
+#[cfg(target_os = "macos")]
+static ACTIVE_MAXIMIZE_TIMER: std::sync::Mutex<Option<MaximizeTimer>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn window_toggle_maximize(
+    window: tauri::WebviewWindow,
+    animate: Option<bool>,
+) -> Result<(), String> {
+    if window.is_fullscreen().map_err(|e| e.to_string())? {
+        // 全屏态不参与 zoom 语义（frame≈屏不含菜单栏区，会误判「非最大化」），
+        // 交回全屏切换（全屏下按钮一般不可见，防御分支）
+        return window.set_fullscreen(false).map_err(|e| e.to_string());
+    }
+    let ns_window = window.ns_window().map_err(|e| e.to_string())?;
+    struct SendPtr(*mut std::ffi::c_void);
+    unsafe impl Send for SendPtr {}
+    let win_ptr = SendPtr(ns_window);
+    let anim = animate.unwrap_or(false);
+    window
+        .run_on_main_thread(move || {
+            let w = win_ptr;
+            toggle_maximize_mac(w.0, anim);
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// 主线程执行体：当前 frame ≈ 可见区 → 还原到保存帧；否则保存当前帧并放大。
+#[cfg(target_os = "macos")]
+fn toggle_maximize_mac(ns_window: *mut std::ffi::c_void, animate: bool) {
+    use objc2::rc::Retained;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSScreen, NSWindow};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    /// 还原帧 [x, y, w, h]（macOS 坐标系，直接喂回 setFrame）
+    static SAVED_FRAME: std::sync::Mutex<Option<[f64; 4]>> = std::sync::Mutex::new(None);
+
+    // ns_window 指针来自 tauri（窗口存续期内有效）；AppKit 调用必须在主线程
+    let Some(win) = (unsafe { Retained::<NSWindow>::retain(ns_window as *mut NSWindow) }) else {
+        return;
+    };
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let visible = win
+        .screen()
+        .map(|s| s.visibleFrame())
+        .or_else(|| NSScreen::mainScreen(mtm).map(|s| s.visibleFrame()));
+    let Some(visible) = visible else { return };
+    let frame = win.frame();
+    let is_max = (frame.size.width - visible.size.width).abs() < 1.0
+        && (frame.size.height - visible.size.height).abs() < 1.0;
+    let target = if is_max {
+        let saved = SAVED_FRAME.lock().ok().and_then(|mut s| s.take());
+        match saved {
+            Some([x, y, w, h]) => NSRect::new(NSPoint::new(x, y), NSSize::new(w, h)),
+            // 无还原帧（会话恢复即最大化等）：可见区居中默认尺寸
+            None => {
+                let w = 1200.0_f64.min(visible.size.width);
+                let h = 800.0_f64.min(visible.size.height);
+                NSRect::new(
+                    NSPoint::new(
+                        visible.origin.x + (visible.size.width - w) / 2.0,
+                        visible.origin.y + (visible.size.height - h) / 2.0,
+                    ),
+                    NSSize::new(w, h),
+                )
+            }
+        }
+    } else {
+        if let Ok(mut s) = SAVED_FRAME.lock() {
+            *s = Some([
+                frame.origin.x,
+                frame.origin.y,
+                frame.size.width,
+                frame.size.height,
+            ]);
+        }
+        visible
+    };
+    if !animate {
+        win.setFrame_display_animate(target, false, false);
+        return;
+    }
+
+    // 雅：NSTimer 步进动画（easeOutCubic，~150ms）。旧动画先停（帧停当前位置，
+    // 新动画从那里续走），结束后计时器自 invalidate。
+    if let Ok(mut slot) = ACTIVE_MAXIMIZE_TIMER.lock() {
+        if let Some(t) = slot.take() {
+            t.0.invalidate();
+        }
+    }
+    use std::ptr::NonNull;
+    use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+    struct AnimState {
+        win: AtomicPtr<NSWindow>,
+        start: std::time::Instant,
+        from: [f64; 4],
+        to: [f64; 4],
+        done: AtomicU32,
+    }
+    let state = std::sync::Arc::new(AnimState {
+        win: AtomicPtr::new(ns_window as *mut NSWindow),
+        start: std::time::Instant::now(),
+        from: [
+            frame.origin.x,
+            frame.origin.y,
+            frame.size.width,
+            frame.size.height,
+        ],
+        to: [
+            target.origin.x,
+            target.origin.y,
+            target.size.width,
+            target.size.height,
+        ],
+        done: AtomicU32::new(0),
+    });
+    let st = std::sync::Arc::clone(&state);
+    let block = block2::RcBlock::new(move |timer: NonNull<objc2_foundation::NSTimer>| {
+        // 已被新动画取消（done 置位）：本帧直接退出（计时器由新命令 invalidate）
+        if st.done.load(Ordering::Relaxed) == 1 {
+            return;
+        }
+        let t = (st.start.elapsed().as_secs_f64() / MAXIMIZE_ANIM_SECS).min(1.0);
+        let e = 1.0 - (1.0 - t).powi(3); // easeOutCubic
+        let (f, to) = (st.from, st.to);
+        let lerp = |a: f64, b: f64, p: f64| a + (b - a) * p;
+        let rect = NSRect::new(
+            NSPoint::new(lerp(f[0], to[0], e), lerp(f[1], to[1], e)),
+            NSSize::new(lerp(f[2], to[2], e), lerp(f[3], to[3], e)),
+        );
+        // SAFETY: 窗口指针存续期内有效；仅主线程（timer 回调）触碰
+        if let Some(win) =
+            (unsafe { Retained::<NSWindow>::retain(st.win.load(Ordering::Relaxed)) })
+        {
+            win.setFrame_display_animate(rect, false, false);
+        }
+        if t >= 1.0 {
+            st.done.store(1, Ordering::Relaxed);
+            // SAFETY: 参数即触发本回调的计时器，runloop 保活至 invalidate
+            unsafe { timer.as_ref().invalidate() };
+        }
+    });
+    // SAFETY: NSTimer block 变体把计时器安排到当前（主线程）runloop
+    let timer =
+        unsafe { objc2_foundation::NSTimer::scheduledTimerWithTimeInterval_repeats_block(
+            1.0 / 60.0,
+            true,
+            &block,
+        ) };
+    if let Ok(mut slot) = ACTIVE_MAXIMIZE_TIMER.lock() {
+        *slot = Some(MaximizeTimer(timer));
+    }
 }
 
 /// 重命名条目，返回新路径。
@@ -2893,7 +3191,16 @@ async fn index_search(
         let ps = plugins::PluginState {
             enabled: std::sync::Mutex::new(enabled_map),
         };
-        indexer::search_checked(&ps, &ix, &query, case_sensitive, glob, regex, is_dir, show_hidden)
+        indexer::search_checked(
+            &ps,
+            &ix,
+            &query,
+            case_sensitive,
+            glob,
+            regex,
+            is_dir,
+            show_hidden,
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2988,67 +3295,73 @@ pub fn run() {
     // v0.46 系统打开转发：冷启动 argv（Explorer 右键 / CLI / Finder Open With）入队，
     // 前端挂载后 launch_paths_take 拉取；二次实例与 macOS odoc 走 open://paths 事件
     let launch_paths = LaunchPaths::default();
-    launch_paths.pending.lock().unwrap().extend(collect_path_args(std::env::args().skip(1)));
+    launch_paths
+        .pending
+        .lock()
+        .unwrap()
+        .extend(collect_path_args(std::env::args().skip(1)));
     builder = builder.manage(launch_paths);
     #[cfg(feature = "share")]
     {
         builder = builder.manage(share::ShareState::default());
     }
     builder = builder.setup(|app| {
-            #[cfg(target_os = "windows")]
-            set_app_user_model_id("com.rfm.app");
-            // Windows：禁用 WebView2 浏览器加速键。Ctrl+J（下载弹窗「下载的文件将在此显示」）、
-            // Ctrl+F（查找）、Ctrl+P（打印）、Ctrl+R/F5（整页刷新）、Ctrl+±（缩放）、F12 等
-            // 由 WebView2 优先处理，页面 JS 收不到（应用快捷键被劫持，典型：Ctrl+J = 上下分屏
-            // 变成弹下载面板）。关闭后全部按键直达页面由 keymap.ts 分发；文本编辑键
-            // （Ctrl+C/V/X/A/Z、Home/End 等）不受此设置影响。等价于 wry 的
-            // with_browser_accelerator_keys(false)（Tauri 2.11 尚未透传该选项，#16306）。
-            #[cfg(target_os = "windows")]
-            {
-                use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
-                use windows_webview::core::Interface;
-                for w in app.webview_windows().values() {
-                    let _ = w.with_webview(move |webview| unsafe {
-                        let Ok(core) = webview.controller().CoreWebView2() else {
-                            return;
-                        };
-                        let Ok(settings) = core.Settings() else {
-                            return;
-                        };
-                        if let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>() {
-                            let _ = settings3.SetAreBrowserAcceleratorKeysEnabled(false);
-                        }
-                    });
-                }
+        #[cfg(target_os = "windows")]
+        set_app_user_model_id("com.rfm.app");
+        // Windows：禁用 WebView2 浏览器加速键。Ctrl+J（下载弹窗「下载的文件将在此显示」）、
+        // Ctrl+F（查找）、Ctrl+P（打印）、Ctrl+R/F5（整页刷新）、Ctrl+±（缩放）、F12 等
+        // 由 WebView2 优先处理，页面 JS 收不到（应用快捷键被劫持，典型：Ctrl+J = 上下分屏
+        // 变成弹下载面板）。关闭后全部按键直达页面由 keymap.ts 分发；文本编辑键
+        // （Ctrl+C/V/X/A/Z、Home/End 等）不受此设置影响。等价于 wry 的
+        // with_browser_accelerator_keys(false)（Tauri 2.11 尚未透传该选项，#16306）。
+        #[cfg(target_os = "windows")]
+        {
+            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+            use windows_webview::core::Interface;
+            for w in app.webview_windows().values() {
+                let _ = w.with_webview(move |webview| unsafe {
+                    let Ok(core) = webview.controller().CoreWebView2() else {
+                        return;
+                    };
+                    let Ok(settings) = core.Settings() else {
+                        return;
+                    };
+                    if let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>() {
+                        let _ = settings3.SetAreBrowserAcceleratorKeysEnabled(false);
+                    }
+                });
             }
-            let state = app.state::<AppState>();
-            plugins::init(app.handle(), &state.plugins);
-            // 全盘索引后台线程（v0.45）：默认关闭（插件面板启用后开始构建/查询）。
-            // 启动即挂线程：快照加载 <1s 恢复，无快照时空闲节流全量构建
-            #[cfg(feature = "index")]
-            indexer::ensure(
-                &paths::config_dir(app.handle())?,
-                plugins::plugin_enabled(&state.plugins, "index-search"),
-            );
-            // v0.40 NFS 后端定型：InProcess（feature = "nfs"）或伴生进程插件（安装根定位）
-            state
-                .nfs
-                .init(paths::config_dir(app.handle()).ok().map(|d| d.join("plugins")));
-            // 命令补全索引预热（后台线程）：优先加载磁盘缓存，PATH 签名变化才重扫，
-            // 避免首次在地址栏输入裸词时全量扫描 PATH 卡住主线程
-            cmdrun::warm_cache_async(
-                state.cmd_cache.clone(),
-                cmdrun::index_path(app.handle()),
-                plugins::plugin_enabled(&state.plugins, "cmdrun"),
-            );
-            // 磁盘/卷热插拔监视（v0.27）：挂载/卸载/推出后推送最新列表，侧边栏即时刷新
-            // 事件出口：桌面实现（tauri emit）；web 模式（rdir-web）将以广播实现注入
-            let sink = EventSink::from(app.handle().clone());
-            volumes::spawn_watcher(sink.clone());
-            // 打开目录内容监视（v0.26.1）：程序外新增/删除文件推送 fs://changed，窗体即时刷新
-            fs_watch::spawn_fs_watcher(sink);
-            Ok(())
-        });
+        }
+        let state = app.state::<AppState>();
+        plugins::init(app.handle(), &state.plugins);
+        // 全盘索引后台线程（v0.45）：默认关闭（插件面板启用后开始构建/查询）。
+        // 启动即挂线程：快照加载 <1s 恢复，无快照时空闲节流全量构建
+        #[cfg(feature = "index")]
+        indexer::ensure(
+            &paths::config_dir(app.handle())?,
+            plugins::plugin_enabled(&state.plugins, "index-search"),
+        );
+        // v0.40 NFS 后端定型：InProcess（feature = "nfs"）或伴生进程插件（安装根定位）
+        state.nfs.init(
+            paths::config_dir(app.handle())
+                .ok()
+                .map(|d| d.join("plugins")),
+        );
+        // 命令补全索引预热（后台线程）：优先加载磁盘缓存，PATH 签名变化才重扫，
+        // 避免首次在地址栏输入裸词时全量扫描 PATH 卡住主线程
+        cmdrun::warm_cache_async(
+            state.cmd_cache.clone(),
+            cmdrun::index_path(app.handle()),
+            plugins::plugin_enabled(&state.plugins, "cmdrun"),
+        );
+        // 磁盘/卷热插拔监视（v0.27）：挂载/卸载/推出后推送最新列表，侧边栏即时刷新
+        // 事件出口：桌面实现（tauri emit）；web 模式（rdir-web）将以广播实现注入
+        let sink = EventSink::from(app.handle().clone());
+        volumes::spawn_watcher(sink.clone());
+        // 打开目录内容监视（v0.26.1）：程序外新增/删除文件推送 fs://changed，窗体即时刷新
+        fs_watch::spawn_fs_watcher(sink);
+        Ok(())
+    });
     // 注意：tauri Builder::invoke_handler 是“覆盖”语义（后调覆盖先调），
     // 因此所有命令必须合并到同一个 generate_handler! 中，用 cfg 属性按 feature 裁剪，
     // 否则 v0.7 独立 share 块会覆盖掉 sftp 块的全部命令（曾导致 list_dir/sftp 丢失）。
@@ -3081,6 +3394,8 @@ pub fn run() {
         clipboard_clear_files,
         drag_out_files,
         query_modifiers,
+        #[cfg(target_os = "macos")]
+        window_toggle_maximize,
         rename_entry,
         delete_entries,
         permanent_delete_entries,
@@ -3341,7 +3656,10 @@ mod sftp_tests {
             }
         }
         let auth = match key_path {
-            Some(kp) => AuthMethod::PublicKey { key_path: kp, passphrase: None },
+            Some(kp) => AuthMethod::PublicKey {
+                key_path: kp,
+                passphrase: None,
+            },
             None => {
                 // 无密钥则尝试空密码（macOS 默认不允许，仅提示）
                 AuthMethod::Password("".into())
@@ -3362,7 +3680,11 @@ mod sftp_tests {
         let home_remote = sess.realpath(".").await.expect("realpath failed");
         println!("home remote: {home_remote}");
         let entries = sess.list_dir(&home_remote).await.expect("list_dir failed");
-        println!("entries: {} (e.g. {:?})", entries.len(), entries.first().map(|(n, _)| n.clone()));
+        println!(
+            "entries: {} (e.g. {:?})",
+            entries.len(),
+            entries.first().map(|(n, _)| n.clone())
+        );
         assert!(!entries.is_empty(), "目录不应为空");
         sess.close().await;
     }
@@ -3385,7 +3707,9 @@ mod sftp_tests {
             root: None,
             save_secret: false,
         };
-        let mut sess = sftp::session::SftpSession::connect(&cfg).await.expect("connect failed");
+        let mut sess = sftp::session::SftpSession::connect(&cfg)
+            .await
+            .expect("connect failed");
         let entries = sess.list_dir("/").await.expect("list_dir failed");
         println!("root entries: {}", entries.len());
         sess.close().await;
@@ -3405,10 +3729,19 @@ mod sftp_tests {
         // 错误 key 解密失败
         assert!(sftp::servers::decrypt_password(b"wrong-key", &enc).is_err());
         // 明文透传
-        assert_eq!(sftp::servers::decrypt_password(key, "plain-secret").unwrap(), "plain-secret");
+        assert_eq!(
+            sftp::servers::decrypt_password(key, "plain-secret").unwrap(),
+            "plain-secret"
+        );
         // 校验值稳定且区分 key
-        assert_eq!(sftp::servers::master_key_check(key), sftp::servers::master_key_check(key));
-        assert_ne!(sftp::servers::master_key_check(key), sftp::servers::master_key_check(b"other-key"));
+        assert_eq!(
+            sftp::servers::master_key_check(key),
+            sftp::servers::master_key_check(key)
+        );
+        assert_ne!(
+            sftp::servers::master_key_check(key),
+            sftp::servers::master_key_check(b"other-key")
+        );
         // 校验值不包含密钥原文
         assert!(!sftp::servers::master_key_check(key).contains("my-master-key"));
     }
@@ -3428,7 +3761,10 @@ mod sftp_tests {
                 user: "u".into(),
                 root: None,
                 group: "工作".into(),
-                auth: AuthConfig::Password { password: "enc:v1:abc".into(), save_password: true },
+                auth: AuthConfig::Password {
+                    password: "enc:v1:abc".into(),
+                    save_password: true,
+                },
             }],
         };
         sftp::servers::save_file(&path, &f).unwrap();
@@ -3448,7 +3784,10 @@ mod sftp_tests {
         let json = r#"{"id":"u@h:22","name":"t","host":"h","port":22,"user":"u","root":null,"group":"","auth":"password","password":"pw","savePassword":true}"#;
         let cfg: ServerConfigFile = serde_json::from_str(json).expect("password payload");
         match &cfg.auth {
-            AuthConfig::Password { password, save_password } => {
+            AuthConfig::Password {
+                password,
+                save_password,
+            } => {
                 assert_eq!(password, "pw");
                 assert!(*save_password);
             }
@@ -3458,7 +3797,11 @@ mod sftp_tests {
         let json2 = r#"{"id":"u@h:22","name":"t","host":"h","port":22,"user":"u","root":null,"group":"","auth":"publicKey","keyPath":"/Users/vigil/.ssh/id_ed25519","passphrase":null,"savePassphrase":false}"#;
         let cfg2: ServerConfigFile = serde_json::from_str(json2).expect("publicKey payload");
         match &cfg2.auth {
-            AuthConfig::PublicKey { key_path, passphrase, save_passphrase } => {
+            AuthConfig::PublicKey {
+                key_path,
+                passphrase,
+                save_passphrase,
+            } => {
                 assert_eq!(key_path, "/Users/vigil/.ssh/id_ed25519");
                 assert!(passphrase.is_none());
                 assert!(!*save_passphrase);
@@ -3489,11 +3832,16 @@ mod sftp_tests {
             host: "127.0.0.1".into(),
             port: 22,
             user,
-            auth: AuthMethod::PublicKey { key_path: String::new(), passphrase: None },
+            auth: AuthMethod::PublicKey {
+                key_path: String::new(),
+                passphrase: None,
+            },
             root: None,
             save_secret: false,
         };
-        let mut sess = sftp::session::SftpSession::connect(&cfg).await.expect("connect failed");
+        let mut sess = sftp::session::SftpSession::connect(&cfg)
+            .await
+            .expect("connect failed");
         // 测试根：家目录下 .rdir-test-sftp（避免污染）
         let home = sess.realpath(".").await.expect("realpath home");
         let base = format!("{home}/.rdir-test-sftp");
@@ -3507,11 +3855,15 @@ mod sftp_tests {
         let local = std::env::temp_dir().join(format!("rdir-upload-{}.txt", std::process::id()));
         std::fs::write(&local, "upload content 你好").unwrap();
         let remote2 = format!("{dir}/uploaded.txt");
-        sess.upload(&local, &remote2, |_, _| true).await.expect("upload");
+        sess.upload(&local, &remote2, |_, _| true)
+            .await
+            .expect("upload");
         let renamed = format!("{dir}/renamed.txt");
         sess.rename(&f1, &renamed).await.expect("rename");
         let local2 = std::env::temp_dir().join(format!("rdir-download-{}.txt", std::process::id()));
-        sess.download(&remote2, &local2, |_, _| true).await.expect("download");
+        sess.download(&remote2, &local2, |_, _| true)
+            .await
+            .expect("download");
         let text = std::fs::read_to_string(&local2).expect("read local");
         assert_eq!(text, "upload content 你好", "上传/下载内容往返应一致");
         // 清理：文件 + 目录 + 本地临时
@@ -3540,7 +3892,10 @@ mod session_tests {
             panes: vec![],
         };
         let json = serde_json::to_string(&tab).unwrap();
-        assert!(json.contains("customTitle"), "序列化应含 customTitle：{json}");
+        assert!(
+            json.contains("customTitle"),
+            "序列化应含 customTitle：{json}"
+        );
         let back: SessionTab = serde_json::from_str(&json).unwrap();
         assert_eq!(back.custom_title.as_deref(), Some("我的标签"));
     }
@@ -3556,7 +3911,10 @@ mod session_tests {
             panes: vec![],
         };
         let json = serde_json::to_string(&tab).unwrap();
-        assert!(!json.contains("customTitle"), "无自定义名时不应输出字段：{json}");
+        assert!(
+            !json.contains("customTitle"),
+            "无自定义名时不应输出字段：{json}"
+        );
     }
 }
 
@@ -3569,7 +3927,10 @@ mod backend_tests {
     fn classify_by_prefix() {
         assert_eq!(BackendKind::classify(r"F:\data"), BackendKind::Local);
         assert_eq!(BackendKind::classify("/home/u"), BackendKind::Local);
-        assert_eq!(BackendKind::classify("sftp://u@h:22/remote"), BackendKind::Sftp);
+        assert_eq!(
+            BackendKind::classify("sftp://u@h:22/remote"),
+            BackendKind::Sftp
+        );
         assert_eq!(BackendKind::classify("http://x/"), BackendKind::Http);
         assert_eq!(BackendKind::classify("https://x/"), BackendKind::Http);
     }

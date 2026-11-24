@@ -24,10 +24,7 @@ impl FileEntry {
     /// 再做一次 symlink_metadata + metadata 的双重 stat（大目录下 2N 次 syscall 极慢）。
     fn from_direntry(entry: std::fs::DirEntry) -> Self {
         let path = entry.path();
-        let name = entry
-            .file_name()
-            .to_string_lossy()
-            .to_string();
+        let name = entry.file_name().to_string_lossy().to_string();
         // DirEntry.file_type() 来自目录枚举本身，零额外 syscall
         let ft = entry.file_type();
         let is_symlink = ft.as_ref().map(|f| f.is_symlink()).unwrap_or(false);
@@ -83,7 +80,16 @@ fn is_legacy_known_folder(name: &str) -> bool {
 /// 读取目录并返回排序后的条目：目录优先，再按名称（不区分大小写）。
 pub fn list_dir(path: &str) -> Result<Vec<FileEntry>, String> {
     let p = Path::new(path);
-    let rd = std::fs::read_dir(p).map_err(|e| format!("无法读取目录 {}：{}", path, e))?;
+    let rd = std::fs::read_dir(p).map_err(|e| {
+        // 路径不存在按码产出（NO_SUCH_PATH|详情，i18n 错误码契约）：list_dir 是
+        // 本地/SFTP/NFS 三后端共用的导航接口，前端据此判定无效路径（回滚路径栏
+        // + 报错，isNoSuchPathError 按码判定），不再依赖中文字符串匹配
+        if e.kind() == std::io::ErrorKind::NotFound {
+            format!("NO_SUCH_PATH|路径不存在：{path}")
+        } else {
+            format!("无法读取目录 {path}：{e}")
+        }
+    })?;
     let mut entries: Vec<FileEntry> = rd
         .filter_map(|e| e.ok())
         .filter(|_e| {
@@ -147,7 +153,10 @@ pub fn stat_entry(path: &str) -> Result<FileEntry, String> {
 pub fn expand_tilde(input: &str) -> PathBuf {
     if input == "~" {
         dirs::home_dir().unwrap_or_default()
-    } else if let Some(rest) = input.strip_prefix("~/").or_else(|| input.strip_prefix("~\\")) {
+    } else if let Some(rest) = input
+        .strip_prefix("~/")
+        .or_else(|| input.strip_prefix("~\\"))
+    {
         dirs::home_dir()
             .map(|h| h.join(rest))
             .unwrap_or_else(|| PathBuf::from(input))
@@ -469,7 +478,11 @@ mod tests {
         );
 
         #[cfg(unix)]
-        assert_eq!(resolve_path("/usr/local", "/tmp"), "/usr/local", "绝对路径保持原样");
+        assert_eq!(
+            resolve_path("/usr/local", "/tmp"),
+            "/usr/local",
+            "绝对路径保持原样"
+        );
         #[cfg(windows)]
         assert_eq!(
             resolve_path("C:\\Windows", "C:\\tmp"),

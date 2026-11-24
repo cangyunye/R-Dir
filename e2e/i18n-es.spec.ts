@@ -28,7 +28,8 @@ test.describe("i18n 西班牙语冒烟", () => {
   test("应用菜单：条目为西班牙语", async ({ page }) => {
     await page.getByTitle("Menú de la app").click();
     await expect(page.getByRole("menuitem", { name: /Nueva pestaña/ })).toBeVisible();
-    await expect(page.getByText("Archivo", { exact: true })).toBeVisible();
+    // 收窄到菜单内：详情行类型列（文件型条目）会以同词渲染，裸精确匹配会撞 strict v0.52 夹具
+    await expect(page.getByRole("menu").getByText("Archivo", { exact: true })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: /Mostrar archivos ocultos/ })).toBeVisible();
   });
 

@@ -8,6 +8,7 @@
 
 export type FileKind =
   | "folder"
+  | "link"
   | "image"
   | "video"
   | "audio"
@@ -23,6 +24,7 @@ export type FileKind =
 
 export const FILE_KINDS: FileKind[] = [
   "folder",
+  "link",
   "image",
   "video",
   "audio",
@@ -82,9 +84,16 @@ const EXT_KIND: ReadonlyArray<readonly [ReadonlySet<string>, FileKind]> = [
   [TEXT_EXTS, "text"],
 ];
 
-/** 分类判定：目录 → folder，按扩展名匹配，其余 → file 兜底 */
-export function fileKindOf(entry: { is_dir: boolean; extension: string }): FileKind {
+/** 分类判定：目录 → folder，符号链接 → link（linux/mac 链接本体而非指向物，
+ *  类型列/图标以「链接」呈现，锁链线性图标，缺失 PNG 资产自动回退），
+ *  按扩展名匹配，其余 → file 兜底 */
+export function fileKindOf(entry: {
+  is_dir: boolean;
+  extension: string;
+  is_symlink?: boolean;
+}): FileKind {
   if (entry.is_dir) return "folder";
+  if (entry.is_symlink) return "link";
   const ext = entry.extension;
   for (const [set, kind] of EXT_KIND) {
     if (set.has(ext)) return kind;

@@ -28,7 +28,8 @@ test.describe("i18n 繁体中文冒烟", () => {
   test("应用菜单：条目为繁体中文", async ({ page }) => {
     await page.getByTitle("應用程式選單").click();
     await expect(page.getByRole("menuitem", { name: /新增標籤頁/ })).toBeVisible();
-    await expect(page.getByText("檔案", { exact: true })).toBeVisible();
+    // 收窄到菜单内：详情行类型列（文件型条目）会以同词渲染，裸精确匹配会撞 strict v0.52 夹具
+    await expect(page.getByRole("menu").getByText("檔案", { exact: true })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: /顯示隱藏檔案/ })).toBeVisible();
   });
 

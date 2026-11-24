@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Copy, Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { toggleWindowMaximize } from "@/lib/window-commands";
 import { useT } from "@/lib/LanguageProvider";
 
 /**
@@ -46,7 +47,8 @@ export function WindowControls() {
       </button>
       <button
         title={maximized ? t("向下还原") : t("最大化")}
-        onClick={() => void getCurrentWindow().toggleMaximize().catch(() => {})}
+        // mac 即时缩放走 window_toggle_maximize（见 window-commands.ts）
+        onClick={toggleWindowMaximize}
         className="flex w-10 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         {maximized ? <Copy className="h-3 w-3" /> : <Square className="h-3 w-3" />}

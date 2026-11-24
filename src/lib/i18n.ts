@@ -84,6 +84,16 @@ export function isNotTextError(msg: string): boolean {
   return msg === ERR_NOT_TEXT || msg.startsWith(`${ERR_NOT_TEXT}|`);
 }
 
+/** 路径不存在错误码（list_dir 统一导航接口产出：本地 ENOENT / SFTP
+ *  SSH_FX_NO_SUCH_FILE / NFS NFS3ERR_NOENT 同码；跳转无效路径时前端据此
+ *  回滚路径栏并报错，不再「只变更路径栏、列表空白无提示」） */
+export const ERR_NO_SUCH_PATH = "NO_SUCH_PATH";
+
+/** 判定错误串是否为路径不存在（码或码|详情）——不用中文字符串匹配判定错误类型 */
+export function isNoSuchPathError(msg: string): boolean {
+  return msg === ERR_NO_SUCH_PATH || msg.startsWith(`${ERR_NO_SUCH_PATH}|`);
+}
+
 /** 读取持久化语言（rfm.language），缺省/非法值回退 zh */
 export function loadLanguage(): Language {
   try {

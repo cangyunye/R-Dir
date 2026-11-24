@@ -6,7 +6,7 @@ use std::path::Path;
 
 use bytes::Bytes;
 use nfs_rs::{Attr as NfsAttrRaw, Mount, OPEN_READ};
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 
 use crate::client::ERR_CANCELLED;
 
@@ -162,6 +162,10 @@ impl NfsSession {
     /// 列目录（readdirplus 一次拿名字 + 属性；流式分页收集）
     pub async fn list_dir(&mut self, sub: &str) -> Result<Vec<(String, NfsAttrs)>, String> {
         use futures_util::StreamExt;
+        // NFS3ERR_NOENT（目标不存在）按码产出（NO_SUCH_PATH|详情）：与主程序
+        // ERR_CANCELLED 同一跨进程契约——与本地 ENOENT / SFTP NO_SUCH_FILE 同码，
+        // 前端据此判定无效路径（isNoSuchPathError），不依赖中文匹配
+        const NO_SUCH_PATH: &str = "NO_SUCH_PATH";
         // 挂载根本身（空相对路径）：path 式接口不接受 ""，走 getfh + fh 版 readdirplus
         let mut stream = if normalize_sub(sub).is_empty() {
             let fh = self.mount.getfh().await;
@@ -169,7 +173,12 @@ impl NfsSession {
         } else {
             match self.mount.readdirplus_path(&normalize_sub(sub)).await {
                 Ok(s) => s,
-                Err(e) => return Err(format!("列目录失败：{e}")),
+                Err(e) => {
+                    if e.is_not_found() {
+                        return Err(format!("{NO_SUCH_PATH}|远程目录不存在：{sub}"));
+                    }
+                    return Err(format!("列目录失败：{e}"));
+                }
             }
         };
         let mut out = Vec::new();
@@ -179,7 +188,12 @@ impl NfsSession {
                     let a = e.attr.unwrap_or_default();
                     out.push((e.file_name, NfsAttrs::from_raw(&a)));
                 }
-                Err(err) => return Err(format!("列目录失败：{err}")),
+                Err(err) => {
+                    if err.is_not_found() {
+                        return Err(format!("{NO_SUCH_PATH}|远程目录不存在：{sub}"));
+                    }
+                    return Err(format!("列目录失败：{err}"));
+                }
             }
         }
         Ok(out)
@@ -431,7 +445,10 @@ mod tests {
             "nfs://h1:20490/%E6%96%87%E6%A1%A3%20dir/a~b?version=3"
         );
         // 段内 '/' 与空格不会被混入段编码；端口缺省时走 rpcbind
-        assert_eq!(mount_url("h1", None, "/x y/z%z"), "nfs://h1/x%20y/z%25z?version=3");
+        assert_eq!(
+            mount_url("h1", None, "/x y/z%z"),
+            "nfs://h1/x%20y/z%25z?version=3"
+        );
     }
 
     #[test]

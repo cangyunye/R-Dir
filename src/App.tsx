@@ -164,7 +164,7 @@ import {
 } from "@/lib/paneTree";
 import { ACTIONS, bindingOf, findAction, formatBinding, isMac, keyEventString } from "@/lib/keymap";
 import { loadLanguage, type Language } from "@/lib/i18n";
-import { isCancelledError, isExistsError, t, terr } from "@/lib/i18n";
+import { isCancelledError, isExistsError, isNoSuchPathError, t, terr } from "@/lib/i18n";
 import {
   applyThemePack,
   deleteThemePack as apiDeleteThemePack,
@@ -219,6 +219,7 @@ import {
   saveSidebarCollapsed,
   saveShowExtensions,
   loadAnimLevel,
+  saveAnimLevel,
   type AnimLevel,
   loadDiffCaseSensitive,
   loadDiffMtimeTolerance,
@@ -1702,6 +1703,12 @@ useEffect(() => {
   // 导航离开后 entries 已被替换，回来时 key 不匹配 → 正常重读；F5 / 同路径回车
   // bump refreshKey → 必然重读。加载失败不更新记录，再次激活自动重试。
   const loadedPaneKeysRef = useRef<Map<number, string>>(new Map());
+  /** 各窗格最近一次加载成功的目录态（path/history/histIndex）：跳转到无效路径
+   *  （sftp 不存在的远程目录、本地被删/无权限目录）时据此回滚路径栏与历史——
+   *  此前失败只写 pane.error（状态栏一行小字），路径栏已变更、列表空白且无提示 */
+  const lastGoodPaneRef = useRef<
+    Map<number, { path: string; title: string; history: string[]; histIndex: number }>
+  >(new Map());
   useEffect(() => {
     if (!activePane) return;
     const paneKey = `${activePane.path}:${activePane.refreshKey}`;
@@ -1743,6 +1750,12 @@ useEffect(() => {
       .then((entries) => {
         if (cancelled) return;
         loadedPaneKeysRef.current.set(activePane.id, paneKey);
+        lastGoodPaneRef.current.set(activePane.id, {
+          path: activePane.path,
+          title: activePane.title,
+          history: activePane.history,
+          histIndex: activePane.histIndex,
+        });
         // 在 updater 外消费 pending：updater 必须是纯函数（StrictMode 会双调用，
         // 在内部清 ref 的副作用会被第二次调用丢弃，导致选中不生效）
         const pending = pendingSelectRef.current;
@@ -1766,6 +1779,39 @@ useEffect(() => {
       })
       .catch((e) => {
         if (!cancelled) {
+          const msg = String(e);
+          // 加载失败可见性：不再只写 pane.error（状态栏一行小字，被传输/通知帧
+          // 盖住）——补一次报错浮层（showError 内部 terr 按码翻译）
+          showError(msg);
+          // 跳转到不存在的路径（NO_SUCH_PATH|详情，本地/SFTP/NFS 三后端统一在
+          // list_dir 接口按码产出）：回滚到上一有效目录——此前只变更路径栏、
+          // 列表空白且无「路径无效」提示。其余失败（权限/断连等）保持原位，
+          // 便于恢复后原路径直接重试。
+          const prev = isNoSuchPathError(msg) ? lastGoodPaneRef.current.get(activePane.id) : undefined;
+          if (prev && prev.path !== activePane.path) {
+            setTabs((ts) =>
+              ts.map((t) => {
+                const p = t.panes[activePane.id];
+                if (!p) return t;
+                return {
+                  ...t,
+                  panes: {
+                    ...t.panes,
+                    [activePane.id]: {
+                      ...p,
+                      path: prev.path,
+                      title: prev.title,
+                      history: prev.history,
+                      histIndex: prev.histIndex,
+                      loading: false,
+                      error: null,
+                    },
+                  },
+                };
+              }),
+            );
+            return;
+          }
           setTabs((ts) =>
             ts.map((t) => {
               const p = t.panes[activePane.id];
@@ -1774,7 +1820,7 @@ useEffect(() => {
                 ...t,
                 panes: {
                   ...t.panes,
-                  [activePane.id]: { ...p, loading: false, error: String(e) },
+                  [activePane.id]: { ...p, loading: false, error: msg },
                 },
               };
             }),
@@ -2640,7 +2686,8 @@ useEffect(() => {
 
   const openEntry = useCallback(
     (paneId: number, entry: FileEntry) => {
-      if (entry.is_dir) {
+      /** 应用内导航到目录条目（is_dir 与「符号链接指向目录」共用） */
+      const gotoDir = () => {
         // 目标 pane 导航
         setTabs((ts) =>
           ts.map((t) => {
@@ -2659,9 +2706,22 @@ useEffect(() => {
             return { ...t, panes: { ...t.panes, [paneId]: updated }, title };
           }),
         );
-      } else {
-        openFileExternal(entry.path);
+      };
+      if (entry.is_dir) {
+        gotoDir();
+        return;
       }
+      if (entry.is_symlink) {
+        // linux/mac 符号链接：后端 DirEntry.metadata 不穿透链接，指向目录的链接
+        // is_dir=false、is_symlink=true，此前落入「系统打开」既不跳转也无反馈。
+        // 探测目标类型分流：目录链接应用内直接路径跳转（read_dir 跟随目录链接，
+        // 同标签视图 openTagFile 的处理）；文件链接/断链维持系统默认打开。
+        statPath(entry.path)
+          .then((kind) => (kind === "dir" ? gotoDir() : openFileExternal(entry.path)))
+          .catch(() => openFileExternal(entry.path));
+        return;
+      }
+      openFileExternal(entry.path);
     },
     [openFileExternal],
   );
@@ -3487,11 +3547,16 @@ useEffect(() => {
     });
   }, []);
 
-  /** v0.49 动画级别（雅=默认丝滑动效 / 素=瞬时历史行为,隐藏开关不在设置面板——
-   *  紧急退路:localStorage 直写 rfm.anim-level-v2=plain 后刷新）：一份 state 写两处——
+  /** v0.49 动画级别（雅=丝滑动效 / 素=瞬时历史行为；v0.52 开关回归设置面板
+   *  「外观」区）：一份 state 写两处——
    *  documentElement.dataset.anim（CSS 侧含 Radix portal 弹层,必须挂文档根）+
    *  lib/anim 模块镜像（window 级监听器/命令式路径读不到 React 状态） */
-  const [animLevel] = useState<AnimLevel>(() => loadAnimLevel());
+  const [animLevel, setAnimLevelState] = useState<AnimLevel>(() => loadAnimLevel());
+  /** 设置面板切换动画级别：落盘 + 交给上方 effect 同步根属性与模块镜像 */
+  const changeAnimLevel = useCallback((v: AnimLevel) => {
+    setAnimLevelState(v);
+    saveAnimLevel(v);
+  }, []);
   useEffect(() => {
     // 首挂同步镜像 + 根属性（loadAnimLevel 的初始值也要进 lib/anim 镜像）
     setAnimLevelRef(animLevel);
@@ -3644,6 +3709,40 @@ useEffect(() => {
       const destIsNfs = isNfsPath(dest);
       /** 实际落点（含冲突改名后的路径）：粘贴完成后定位 + 选中 */
       const pasted: string[] = [];
+      /** 剪切语义真删了源的源条目（本地 move / 同服务器 sftpMove / 覆盖合并删源）：
+       *  粘贴收尾补刷源目录窗格用（见 refreshSourcePanes） */
+      const movedFrom: string[] = [];
+      /** 补刷源目录所在窗格：粘贴历来只刷目标窗格，跨目录/跨窗格剪切后源目录
+       *  列表保持陈旧（watcher 的变更事件被自变更静默窗口吞掉，同签名只发一次
+       *  不会再补）——按被移走条目的父目录匹配其余窗格。直接重读而非 refreshKey
+       *  bump：非活动窗格的 bump 只在其被激活时才触发重读，可见的源窗格必须
+       *  立即反映条目已移走（分屏剪切后马上就能看到，而不是切回去才更新） */
+      const refreshSourcePanes = () => {
+        if (movedFrom.length === 0) return;
+        const srcParents = new Set(movedFrom.map((p) => trimSlash(parentPath(p))));
+        for (const t of tabs) {
+          for (const p of Object.values(t.panes)) {
+            if (p.id === pid || !srcParents.has(trimSlash(p.path))) continue;
+            void listDir(p.path)
+              .then((entries) => {
+                // 同步加载键（path:refreshKey 未变）：稍后激活该窗格时直接命中
+                // 缓存早退，不再多读一轮
+                loadedPaneKeysRef.current.set(p.id, `${p.path}:${p.refreshKey}`);
+                setTabs((ts) =>
+                  ts.map((t2) => {
+                    const pp = t2.panes[p.id];
+                    if (!pp) return t2;
+                    return {
+                      ...t2,
+                      panes: { ...t2.panes, [p.id]: { ...pp, entries, loading: false, error: null } },
+                    };
+                  }),
+                );
+              })
+              .catch(() => refreshPanes([p.id])); // 重读失败：退回激活时重读兜底
+          }
+        }
+      };
       try {
         if (destIsSftp || destIsNfs) {
           // 目标远程：本地 → 远程上传；v0.44.0 SFTP → SFTP 经临时目录中转；
@@ -3750,10 +3849,14 @@ useEffect(() => {
             // 的例外改走中转递归合并，成功后删源保剪切语义。
             if (mvSrcs.has(src) && !mergeCutSrcs.has(src)) {
               pasted.push(await sftpMove(src, dest, finalName(src)));
+              movedFrom.push(src);
               continue;
             }
             pasted.push(await sftpRelay(src, dest, finalName(src)));
-            if (mergeCutSrcs.has(src)) await sftpDelete([src]);
+            if (mergeCutSrcs.has(src)) {
+              await sftpDelete([src]);
+              movedFrom.push(src);
+            }
           }
           const relayedCount = relaySrcs.filter((s) => !sameDir.includes(s) && !mvSrcs.has(s)).length;
           if (relayedCount > 0 && isCut) {
@@ -3762,6 +3865,7 @@ useEffect(() => {
           }
         setClipboard(null);
         if (pasted.length > 0) pendingSelectRef.current = pasted;
+          refreshSourcePanes();
           refreshPane(pid);
           return;
         }
@@ -3780,6 +3884,7 @@ useEffect(() => {
           if (r.moved) {
             pushOp({ kind: "move", pairs: r.moved, dest, srcPane: pid, destPane: pid });
             pasted.push(...r.moved.map(([, to]) => to));
+            movedFrom.push(...r.moved.map(([from]) => from));
             // 消费外部剪切：源已移走，清空系统剪贴板（与资源管理器行为一致）
             if (isCut && fromSystem) void clipboardClearFiles().catch(() => {});
           } else if (r.created) {
@@ -3814,6 +3919,7 @@ useEffect(() => {
             );
           }
         }
+        refreshSourcePanes();
         refreshPane(pid);
       } catch (e) {
         // 取消传输不算错误，收敛为轻提示；剪贴板保留可继续粘贴。
@@ -3822,7 +3928,7 @@ useEffect(() => {
         showTransferError(e);
       }
     },
-    [clipboard, activePane, tabs, refreshPane, showError, showTransferError, pushOp, isSftpPath, runTransfer, promptConflicts],
+    [clipboard, activePane, tabs, refreshPane, refreshPanes, listDir, showError, showTransferError, pushOp, isSftpPath, runTransfer, promptConflicts],
   );
   doPasteLatestRef.current = doPasteInner;
 
@@ -6163,6 +6269,8 @@ useEffect(() => {
         }}
         themeMode={themeMode}
         onThemeModeChange={changeThemeMode}
+        animLevel={animLevel}
+        onAnimLevelChange={changeAnimLevel}
         themePacks={themePacks}
         themeErrors={themeErrors}
         activeThemeId={activeThemeId}

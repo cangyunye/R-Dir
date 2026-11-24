@@ -71,7 +71,9 @@ export async function installTauriMock(page: Page): Promise<void> {
         { name: "Pictures", dir: true },
         { name: "Notes.txt", size: 1234 },
         { name: "photo.png", size: 204800 },
-        { name: "link-to-docs", dir: true, symlink: true },
+        // 真实后端 DirEntry.metadata 不穿透链接：指向目录的 symlink is_dir=false
+        //（仅斜体标记），双击打开靠 openEntry 的 statPath 探测分流跳转
+        { name: "link-to-docs", symlink: true },
       ],
       // v0.28 预览/图文浏览模式夹具：多图 + 文档混排
       [`${HOME}/Pictures`]: [
@@ -125,6 +127,8 @@ export async function installTauriMock(page: Page): Promise<void> {
       "sftp://u@127.0.0.1:22/remote/dst": [{ name: "tree", dir: true }],
       "sftp://u@127.0.0.1:22/remote/dst/tree": [{ name: "inner.txt", size: 12 }],
     };
+    // 链接目标键：经 link-to-docs 的 list_dir 与真实 read_dir 一样跟随目录链接
+    FS[`${HOME}/link-to-docs`] = FS[`${HOME}/Documents`];
 
     const NOW = 1_700_000_000_000;
 
@@ -251,12 +255,20 @@ export async function installTauriMock(page: Page): Promise<void> {
           return Promise.reject("NOT_TEXT|疑似二进制文件，不支持按文本读取");
         return { path: p, localPath: p, isTemp: false, lossy: false, text: TEXTS[p] ?? "", encoding: "UTF-8" };
       },
-      // 未知路径报错（与真实后端一致）：同步浏览的镜像探测依赖"列目录失败 = 对侧无此目录"
+      // 未知路径按码报错（v0.52 与真实后端 list_dir 契约一致）：本地与 sftp 的
+      // 不存在路径产出 NO_SUCH_PATH|详情（前端 isNoSuchPathError 判定后回滚路径栏
+      // +报错）；smb/nfs/http 的不可达 ≠ 不存在，保持连接型错误（不触发回滚）。
+      // 同步浏览的镜像探测依赖"列目录失败 = 对侧无此目录"
       list_dir: (a) => {
         const p = String(a.path);
         listDirCalls.push(p);
         const items = FS[p];
-        if (!items) throw new Error(`ENOENT: ${p}`);
+        if (!items) {
+          // 码化错误 reject 裸串（对齐 Tauri Err(String) 的 reject 形态；throw Error
+          // 会被 String(e) 加 "Error: " 前导致前端按码判定失效）
+          if (/^(smb|nfs|https?):\/\//.test(p)) return Promise.reject(`连接失败：${p}`);
+          return Promise.reject(`NO_SUCH_PATH|路径不存在：${p}`);
+        }
         return items.map((f) => entry(p, f));
       },
       parent_dir: (a) => parentOf(String(a.path)),
@@ -447,7 +459,13 @@ export async function installTauriMock(page: Page): Promise<void> {
           if (dir === p) return "dir";
           if (FS[dir].some((f) => `${dir}/${f.name}` === p)) {
             const f = FS[dir].find((x) => `${dir}/${x.name}` === p)!;
-            return f.dir ? "dir" : f.symlink ? "symlink" : "file";
+            // 真实后端用 metadata（跟随链接）：链接目标存在 = 目录 "dir"、
+            // 断链 = 抛错；mock 以「同名 FS 键存在」表示目标存在
+            if (f.symlink) {
+              if (FS[p]) return "dir";
+              throw new Error(`ENOENT: ${p}`);
+            }
+            return f.dir ? "dir" : "file";
           }
         }
         // 与真实后端一致：不存在即抛错（地址栏校验依赖该语义）
@@ -460,7 +478,9 @@ export async function installTauriMock(page: Page): Promise<void> {
             if (dir === p) return "dir";
             if (FS[dir].some((f) => `${dir}/${f.name}` === p)) {
               const f = FS[dir].find((x) => `${dir}/${x.name}` === p)!;
-              return f.dir ? "dir" : f.symlink ? "symlink" : "file";
+              // 同 stat_path：跟随链接（目标存在 = "dir"，断链 = "missing"）
+              if (f.symlink) return FS[p] ? "dir" : "missing";
+              return f.dir ? "dir" : "file";
             }
           }
           return "missing";
@@ -1005,6 +1025,12 @@ export async function installTauriMock(page: Page): Promise<void> {
         return null;
       },
       "plugin:window|toggle_maximize": () => {
+        winCmds.push("toggle_maximize");
+        return null;
+      },
+      // v0.52 mac 即时缩放命令（window-commands.ts 分发）：记录为同一窗口命令，
+      // titlebar 用例的接线断言不受平台分发影响
+      window_toggle_maximize: () => {
         winCmds.push("toggle_maximize");
         return null;
       },

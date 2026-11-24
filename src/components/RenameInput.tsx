@@ -75,16 +75,31 @@ export function routeRenameRowPress(input: HTMLInputElement, clientX: number): v
   beginManualTextDrag(input, offset);
 }
 
+/** 初始选区 = 主名（排除扩展名，访达/资源管理器语义）：最后一个「.」之后视为
+ *  扩展名不入选；目录、无扩展名、隐藏文件（".bashrc" 的点在串首不算扩展名）
+ *  整串全选。 */
+function selectBasename(el: HTMLInputElement, isDir: boolean): void {
+  const dot = isDir ? -1 : el.value.lastIndexOf(".");
+  if (dot <= 0) {
+    el.select();
+    return;
+  }
+  el.setSelectionRange(0, dot);
+}
+
 /** 行内重命名输入框（FileList 行 / 搜索结果行 / 图标网格共用） */
 export function RenameInput({
   initial,
   onCommit,
   onCancel,
+  isDir = false,
   fitWidth,
 }: {
   initial: string;
   onCommit: (name: string) => void;
   onCancel: () => void;
+  /** 目录名不做扩展名排除（目录的「.」不是扩展名语义），整串全选 */
+  isDir?: boolean;
   /** 图标网格用：宽度随内容自适应并钳到 [min, max]。格子远窄于长名，单行输入框
       只能露出一角（全选后浏览器滚到串尾，看起来"名字只剩尾巴"）；
       不传则维持 w-full/flex-1 铺满容器的详情行/搜索行行为。 */
@@ -149,13 +164,15 @@ export function RenameInput({
           // 拖选锚点与选区整个重置（F2 起手快速按压拖选必中招，实测失效根因）
           const pressed =
             everPressedRef.current || ref.current?.dataset.rdirPressed === "1";
-          if (!pressed) ref.current?.select();
+          // 选主名不选扩展名（访达语义，见 selectBasename）；目录整串全选
+          if (!pressed && ref.current) selectBasename(ref.current, isDir);
           // 全选会把溢出内容的输入框滚到串尾（用户只看到名字尾部）；拨回串首
           if (ref.current && !pressed) ref.current.scrollLeft = 0;
         }, ms),
       );
     return () => attempts.forEach((t) => window.clearTimeout(t));
-  }, []);
+    // isDir 决定初始选区策略；重命名会话内不变化（挂载按 renaming.path 键控）
+  }, [isDir]);
 
   useEffect(() => {
     // 仅靠失焦结束会话有盲区：Tauri 拖拽区（标签栏空白）的 mousedown 被 preventDefault
@@ -182,7 +199,6 @@ export function RenameInput({
       ref={ref}
       value={value}
       onChange={(e) => setValue(e.target.value)}
-      style={fitW !== null ? { width: fitW } : undefined}
       onFocus={() => {
         everFocusedRef.current = true;
       }}
@@ -211,7 +227,18 @@ export function RenameInput({
       // select-text：列表/网格滚动容器挂了 select-none（防误选行文本），WKWebView 会把它
       // 继承进 input——鼠标拖选/双击选词全部失效（初始 JS select() 不受影响，表现为
       // "已全选但拖不动"）。必须显式放行（同 TextView v0.41 的处理）。
-      className="h-6 min-w-0 flex-1 select-text px-1.5 text-[13px]"
+      // py-0：基础 Input 的 py-1 会把 24px 盒的内容区压到 14px，字形相对原名称 span
+      // 下沉——去纵向 padding 让文字在盒内精确居中，与被替换的名称行同一视觉位置。
+      className="h-6 min-w-0 flex-1 select-text px-1.5 py-0 text-[13px]"
+      // 字号/行高内联钉死：基础 Input 的 md:text-sm 在 md+ 媒体查询里覆盖 text-[13px]
+      //（tailwind-merge 视为不同 variant 两个都保留，样式表顺序决定实际 14px）——
+      // 名称 span 是 13px，起手改名文字 14px = 字形变大 + 基线差，用户看到的就是
+      // 「微微移动」。内联样式优先级最高，13px/20px 与被替换名称完全同规格。
+      style={{
+        fontSize: "13px",
+        lineHeight: "20px",
+        ...(fitW !== null ? { width: fitW } : {}),
+      }}
       onMouseDown={(e) => {
         // 「按在选区内的按下」手势规避（v0.48 实测 WebView2/Edge 157 与 WKWebView
         // 同样存在：起手 select() 的全选让框内按下永远落在选区内，引擎对这种按下

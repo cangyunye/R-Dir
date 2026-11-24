@@ -102,10 +102,12 @@ rust-embed = { version = "8", optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSImage", "NSBitmapImageRep"] }
+# v0.52 追加：NSWindow/NSScreen（无边框窗口即时最大化）+ NSDragging/NSEvent
+# （原生拖出会话：NSDraggingSession 携带 file URL，Dock 废纸篓/Finder 可接收）
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSImage", "NSBitmapImageRep", "NSWindow", "NSScreen", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSResponder", "NSView"] }
 # v0.27 画廊模式：PDF/视频/Office 文档缩略图走系统 QuickLook（系统能预览的都能出图）
 objc2-quick-look-thumbnailing = { version = "0.3", features = ["QLThumbnailGenerator", "QLThumbnailReply", "QLThumbnailGenerationRequest", "objc2-uniform-type-identifiers", "objc2-core-foundation", "block2"] }
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL", "NSError", "NSGeometry"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL", "NSError", "NSGeometry", "NSTimer", "NSDate"] }
 objc2-core-graphics = "0.3"
 objc2-core-foundation = "0.3"
 objc2-uniform-type-identifiers = { version = "0.3", features = ["UTType"] }

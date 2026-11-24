@@ -24,6 +24,8 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
       onClose={() => {}}
       themeMode="light"
       onThemeModeChange={onThemeModeChange}
+      animLevel="elegant"
+      onAnimLevelChange={() => {}}
       onBindingsChanged={() => {}}
       previewEnabled={false}
       onPreviewEnabledChange={() => {}}

@@ -34,6 +34,7 @@ import { isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
 import { dragOutFiles } from "@/lib/api";
 import {
   canNativeDragOut,
+  fileUriList,
   getNativeDragOut,
   setNativeDragOut,
   setHtml5Drag,
@@ -884,12 +885,11 @@ export function IconGrid({
                               e.preventDefault();
                               return;
                             }
-                            // macOS / 非 Tauri 环境：HTML5 拖出（WKWebView 把 file:// uri-list 映射为 NSURL）
-                            // 选中文本为空时拖当前项，否则拖选中项
-                            const uriList = paths
-                              .map((p) => "file://" + p.replace(/\\/g, "/"))
-                              .join("\r\n");
-                            e.dataTransfer.setData("text/uri-list", uriList);
+                            // macOS / 非 Tauri 环境：HTML5 拖出（WKWebView 把 file:// uri-list 映射为
+                            // NSURL；路径须百分号编码 + CRLF 结尾，中文/空格文件名才能进
+                            // Finder / Dock 废纸篓，见 fileUriList）。选中文本为空时拖当前项，
+                            // 否则拖选中项
+                            e.dataTransfer.setData("text/uri-list", fileUriList(paths));
                             e.dataTransfer.setData("text/plain", paths.join("\n"));
                             // 应用内拖拽标记：window 的 dragover/drop 据此驱动投放高亮与落盘
                             e.dataTransfer.setData("application/x-rdir-dnd", String(paneId));
@@ -989,9 +989,14 @@ export function IconGrid({
                             />
                           )}
                           {isRenaming ? (
-                            <div className="w-full shrink-0">
+                            // -my-[5px]：24px 输入框替换 ~14px 行高的名称标签，不加负
+                            // 外边距字形比原名称低约 5px（重命名「往下微移」）——上下
+                            // 各收 5px 让框中心对齐原标签行中心，越出的 1px 落进图标
+                            // 下方 gap 与格子底部留白，无遮挡
+                            <div className="-my-[5px] w-full shrink-0">
                               <RenameInput
                                 initial={renaming.name}
+                                isDir={entry.is_dir}
                                 fitWidth={{
                                   // 宽度下限=格子内容宽；上限=从格子内容左缘到窗格右缘的余量，
                                   // 框允许越出格子向右扩展（对齐资源管理器）但不产生横向滚动

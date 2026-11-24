@@ -42,7 +42,7 @@ import { useModalLayer } from "@/hooks/useModalLayer";
 import { isTopModalLayer } from "@/lib/modal-stack";
 import { findFiles, indexSearch, indexStatus, renameEntry, searchContent, dragOutFiles } from "@/lib/api";
 import { isSftpPath, isNfsPath, isHttpPath } from "@/lib/sftp-path";
-import { canNativeDragOut, setHtml5Drag, setNativeDragOut } from "@/lib/native-drag";
+import { canNativeDragOut, fileUriList, setHtml5Drag, setNativeDragOut } from "@/lib/native-drag";
 import {
   emitSearchDragHover,
   finishSearchDrag,
@@ -305,7 +305,7 @@ function ResultRow({
         data-search-path={path}
         className="flex w-full items-center gap-1.5 px-2 py-1"
       >
-        <RenameInput initial={renaming.name} onCommit={renaming.onCommit} onCancel={renaming.onCancel} />
+        <RenameInput initial={renaming.name} isDir={isDir} onCommit={renaming.onCommit} onCancel={renaming.onCancel} />
       </div>
     );
   }
@@ -774,8 +774,7 @@ export function SearchPanel({
         beginPointerDrag(paths);
         return;
       }
-      const uriList = paths.map((p) => "file://" + p.replace(/\\/g, "/")).join("\r\n");
-      e.dataTransfer?.setData("text/uri-list", uriList);
+      e.dataTransfer?.setData("text/uri-list", fileUriList(paths));
       e.dataTransfer?.setData("text/plain", paths.join("\n"));
       e.dataTransfer?.setData("application/x-rdir-dnd", String(sourcePaneId));
       if (e.dataTransfer) e.dataTransfer.effectAllowed = "copyMove";

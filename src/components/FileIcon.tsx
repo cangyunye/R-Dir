@@ -9,6 +9,7 @@ import {
   FileType,
   Folder,
   Film,
+  Link,
   Presentation,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -32,6 +33,7 @@ function assetFor(kind: FileKind, size: "sm" | "lg", scale: 1 | 2): string | und
 /** 分类配色（列表视图线性回退仍按此着色） */
 export function fileKindClass(entry: FileEntry): string {
   switch (fileKindOf(entry)) {
+    case "link": return "text-amber-600";
     case "image": return "text-emerald-600";
     case "video": return "text-rose-500";
     case "audio": return "text-fuchsia-600";
@@ -61,6 +63,8 @@ function Glyph({ entry, size, cls }: { entry: FileEntry; size: number; cls: stri
     case "doc": return <FileType size={size} className={cls} />;
     case "pdf": return <FileType size={size} className={cls} />;
     case "text": return <FileText size={size} className={cls} />;
+    // 锁链：符号链接本体（v0.52 新类型，指向物的图标/类型让位给「链接」）
+    case "link": return <Link size={size} className={cls} />;
     default: return <File size={size} className={cls} />;
   }
 }

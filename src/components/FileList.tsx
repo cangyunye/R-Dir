@@ -30,7 +30,7 @@ import { rank } from "@/lib/fuzzy";
 import { isMac } from "@/lib/keymap";
 import { isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
 import { dragOutFiles } from "@/lib/api";
-import { canNativeDragOut, setNativeDragOut, setHtml5Drag } from "@/lib/native-drag";
+import { canNativeDragOut, fileUriList, setNativeDragOut, setHtml5Drag } from "@/lib/native-drag";
 import { useDragRubberBand } from "@/hooks/useDragRubberBand";
 import {
   getNameColumnWidth,
@@ -837,6 +837,9 @@ export function FileList({
             className={cn(
               "relative flex h-7 min-w-0 items-center gap-1 overflow-hidden px-2 text-left hover:bg-muted",
               col.key === null && "cursor-default hover:bg-transparent",
+              // 名称表头对齐到名称文字上方（px-2 + 图标 16 + gap-2 = 32px）：
+              // 单元格文字被图标推到 32px 起，表头贴左缘显得「名称不在原位」
+              col.key === "name" && "pl-8",
             )}
             onClick={() => col.key && onSort(col.key)}
             disabled={col.key === null}
@@ -993,10 +996,11 @@ export function FileList({
                       return;
                     }
                     console.info("[rdir] drag-out: HTML5 文本拖拽（原生拖出不可用）");
-                    // macOS / 非 Tauri 环境：HTML5 拖出（WKWebView 把 file:// uri-list 映射为 NSURL）
-                    // 选中文本为空时拖当前项，否则拖选中项
-                    const uriList = paths.map(p => 'file://' + p.replace(/\\/g, '/')).join('\r\n');
-                    e.dataTransfer.setData('text/uri-list', uriList);
+                    // macOS / 非 Tauri 环境：HTML5 拖出（WKWebView 把 file:// uri-list 映射为
+                    // NSURL；路径须百分号编码 + CRLF 结尾，中文/空格文件名才能进
+                    // Finder / Dock 废纸篓，见 fileUriList）。选中文本为空时拖当前项，
+                    // 否则拖选中项
+                    e.dataTransfer.setData('text/uri-list', fileUriList(paths));
                     e.dataTransfer.setData('text/plain', paths.join('\n'));
                     // v0.22.2 应用内拖拽标记：window 的 dragover 据此开投放光标/提示条，
                     // drop 据此拿源窗格 id（types 全程可读；值在 drop 阶段才可读）
@@ -1090,6 +1094,7 @@ export function FileList({
                     {isRenaming ? (
                       <RenameInput
                         initial={renaming.name}
+                        isDir={entry.is_dir}
                         onCommit={(name) => onRenameCommit(entry.path, name)}
                         onCancel={onRenameCancel}
                       />

@@ -15,7 +15,7 @@ export function setAnimLevelRef(v: AnimLevel): void {
 /** 设置的级别（即生效级别）。**雅不受系统「减弱动态效果」影响**（v0.49.1 产品
  *  拍板）：Windows 关闭窗口动画/RDP 会话会向 WebView2 报告 prefers-reduced-motion:
  *  reduce，此前按无障碍惯例折算回素，导致这类机器上雅被静默压制成素、任何构建
- *  都无动效（用户实测）。关闭动效的唯一途径 = 素（隐藏键）。 */
+ *  都无动效（用户实测）。关闭动效的唯一途径 = 素（设置面板「外观」区开关）。 */
 export function getAnimLevelSetting(): AnimLevel {
   return mirror;
 }

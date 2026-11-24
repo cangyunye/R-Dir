@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use russh::client;
-use russh_keys::key::PublicKey;
 use russh::{Channel, ChannelMsg};
+use russh_keys::key::PublicKey;
 
 use super::proto::{self, Buf, SftpAttrs};
 
@@ -25,7 +25,10 @@ pub enum AuthMethod {
     /// 密码（存 app 配置目录）
     Password(String),
     /// OpenSSH 私钥（~/.ssh 常规方案），passphrase 为加密私钥口令
-    PublicKey { key_path: String, passphrase: Option<String> },
+    PublicKey {
+        key_path: String,
+        passphrase: Option<String>,
+    },
 }
 
 /// 远程服务器配置
@@ -50,7 +53,10 @@ struct SshHandler;
 impl client::Handler for SshHandler {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, _server_public_key: &PublicKey) -> Result<bool, Self::Error> {
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &PublicKey,
+    ) -> Result<bool, Self::Error> {
         Ok(true)
     }
 }
@@ -68,18 +74,20 @@ impl SftpSession {
     /// 建立 SSH 连接 + 认证 + 打开 sftp 子系统
     pub async fn connect(cfg: &ServerConfig) -> Result<Self, String> {
         let config = Arc::new(client::Config::default());
-        let mut session = client::connect(config.clone(), (cfg.host.as_str(), cfg.port), SshHandler)
-            .await
-            .map_err(|e| format!("连接 {}:{} 失败：{}", cfg.host, cfg.port, e))?;
+        let mut session =
+            client::connect(config.clone(), (cfg.host.as_str(), cfg.port), SshHandler)
+                .await
+                .map_err(|e| format!("连接 {}:{} 失败：{}", cfg.host, cfg.port, e))?;
 
         let authed = match &cfg.auth {
-            AuthMethod::Password(pw) => {
-                session
-                    .authenticate_password(&cfg.user, pw.as_str())
-                    .await
-                    .map_err(|e| format!("密码认证失败：{e}"))?
-            }
-            AuthMethod::PublicKey { key_path, passphrase } => {
+            AuthMethod::Password(pw) => session
+                .authenticate_password(&cfg.user, pw.as_str())
+                .await
+                .map_err(|e| format!("密码认证失败：{e}"))?,
+            AuthMethod::PublicKey {
+                key_path,
+                passphrase,
+            } => {
                 let mut authed = false;
                 for p in key_candidates(key_path) {
                     let Ok(key) = load_key(&p, passphrase.as_deref()) else {
@@ -147,6 +155,12 @@ impl SftpSession {
                     return Ok((proto::STATUS, body));
                 }
                 let msg = proto::parse_status(&body)?.unwrap_or_default();
+                // SSH_FX_NO_SUCH_FILE（目标不存在）按码产出（NO_SUCH_PATH|详情，
+                // i18n 错误码契约）：与本地 ENOENT / NFS NOENT 同码——前端据此判定
+                // 无效路径（isNoSuchPathError 回滚路径栏+报错），不依赖中文匹配
+                if code == proto::err::NO_SUCH_FILE {
+                    return Err(format!("NO_SUCH_PATH|{}", proto::err_str(code, &msg)));
+                }
                 return Err(msg);
             }
             return Ok((ty, body));
@@ -195,7 +209,11 @@ impl SftpSession {
     }
 
     /// 构造请求并等待回复（自动 id）
-    async fn request(&mut self, type_: u8, build: impl FnOnce(&mut Buf)) -> Result<(u8, Vec<u8>), String> {
+    async fn request(
+        &mut self,
+        type_: u8,
+        build: impl FnOnce(&mut Buf),
+    ) -> Result<(u8, Vec<u8>), String> {
         let id = self.next_id();
         let mut b = Buf::new();
         b.u8(type_);
@@ -208,9 +226,7 @@ impl SftpSession {
 
     /// 解析路径（服务端 realpath），用于展开 ~ 与相对路径
     pub async fn realpath(&mut self, path: &str) -> Result<String, String> {
-        let (_ty, body) = self
-            .request(proto::REALPATH, |b| b.str(path))
-            .await?;
+        let (_ty, body) = self.request(proto::REALPATH, |b| b.str(path)).await?;
         let names = proto::parse_name(&body)?;
         names
             .first()
@@ -224,9 +240,7 @@ impl SftpSession {
         let handle = read_handle(&body)?;
         let mut out = Vec::new();
         loop {
-            let (ty, body) = self
-                .request(proto::READDIR, |b| b.str(&handle))
-                .await?;
+            let (ty, body) = self.request(proto::READDIR, |b| b.str(&handle)).await?;
             match ty {
                 proto::NAME => {
                     for (name, attrs) in proto::parse_name(&body)? {
@@ -248,9 +262,7 @@ impl SftpSession {
     /// 未封装。调用方若需 lstat 语义应走 readdir 的 attrs——OpenSSH readdir
     /// 对条目即 lstat 语义）
     pub async fn stat(&mut self, path: &str) -> Result<SftpAttrs, String> {
-        let (_ty, body) = self
-            .request(proto::STAT, |b| b.str(path))
-            .await?;
+        let (_ty, body) = self.request(proto::STAT, |b| b.str(path)).await?;
         let mut r = proto::Reader::new(&body);
         proto::parse_attrs(&mut r)
     }
@@ -351,7 +363,10 @@ impl SftpSession {
             })
             .await?;
         let handle = read_handle(&body)?;
-        match self.upload_loop(&handle, &staged, &mut f, total, &mut cb).await {
+        match self
+            .upload_loop(&handle, &staged, &mut f, total, &mut cb)
+            .await
+        {
             Ok(acked) => {
                 self.request(proto::CLOSE, |b| b.str(&handle)).await?;
                 // 原子替换落地：posix-rename 覆盖已存在目标；不支持该扩展的服务器
@@ -388,7 +403,9 @@ impl SftpSession {
         while !eof || !in_flight.is_empty() {
             if !eof && in_flight.len() < WINDOW {
                 let mut buf = vec![0u8; CHUNK];
-                let n = f.read(&mut buf).map_err(|e| (format!("读取本地失败：{e}"), None))?;
+                let n = f
+                    .read(&mut buf)
+                    .map_err(|e| (format!("读取本地失败：{e}"), None))?;
                 if n == 0 {
                     eof = true;
                 } else {
@@ -409,10 +426,7 @@ impl SftpSession {
                 continue; // 先把窗口填满，再收应答
             }
             // 窗口已满（或文件读完）：收一个应答并按 id 对账（应答顺序不保证）
-            let (ty, id, body) = self
-                .receive_packet_id()
-                .await
-                .map_err(|e| (e, None))?;
+            let (ty, id, body) = self.receive_packet_id().await.map_err(|e| (e, None))?;
             let Some(pos) = in_flight.iter().position(|(i, _)| *i == id) else {
                 return Err(("write 应答 id 不匹配".into(), None));
             };
@@ -569,7 +583,10 @@ impl SftpSession {
             .await?;
         let handle = read_handle(&body)?;
         // 与 [`Self::upload`] 同一收口：失败清理远端残留 + 磁盘满分级警告
-        match self.upload_pipe_loop(&handle, remote, &mut rx, total, &mut cb).await {
+        match self
+            .upload_pipe_loop(&handle, remote, &mut rx, total, &mut cb)
+            .await
+        {
             Ok(acked) => {
                 self.request(proto::CLOSE, |b| b.str(&handle)).await?;
                 Ok(acked)
@@ -851,7 +868,10 @@ fn key_candidates(specified: &str) -> Vec<String> {
 
 fn expand_home(path: &str) -> String {
     if path == "~" {
-        dirs::home_dir().unwrap_or_default().to_string_lossy().to_string()
+        dirs::home_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
     } else if let Some(rest) = path.strip_prefix("~/") {
         dirs::home_dir()
             .map(|h| h.join(rest).to_string_lossy().to_string())
@@ -862,7 +882,10 @@ fn expand_home(path: &str) -> String {
 }
 
 /// 加载 OpenSSH 私钥（自动探测常见路径）
-fn load_key(path: &str, passphrase: Option<&str>) -> Result<Arc<russh::keys::key::KeyPair>, String> {
+fn load_key(
+    path: &str,
+    passphrase: Option<&str>,
+) -> Result<Arc<russh::keys::key::KeyPair>, String> {
     let expanded = expand_home(path);
     let p = Path::new(&expanded);
     if !p.exists() {
@@ -883,8 +906,10 @@ mod tests {
     #[test]
     fn disk_full_text_match() {
         assert!(disk_full_by_text("write failed: No space left on device"));
-        assert!(disk_full_by_text("FAILURE
-No space left on device"));
+        assert!(disk_full_by_text(
+            "FAILURE
+No space left on device"
+        ));
         assert!(disk_full_by_text("Disk quota exceeded"));
         assert!(disk_full_by_text("quota exceeded: /data"));
         assert!(disk_full_by_text("write error: The device is out of space"));

@@ -30,7 +30,8 @@ test.describe("i18n 英文冒烟", () => {
   test("应用菜单：条目为英文", async ({ page }) => {
     await page.getByTitle("App menu").click();
     await expect(page.getByRole("menuitem", { name: /New tab/ })).toBeVisible();
-    await expect(page.getByText("File", { exact: true })).toBeVisible();
+    // 收窄到菜单内：详情行类型列（文件型条目）会以同词渲染，裸精确匹配会撞 strict v0.52 夹具
+    await expect(page.getByRole("menu").getByText("File", { exact: true })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: /Show hidden files/ })).toBeVisible();
   });
 

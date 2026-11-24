@@ -141,9 +141,11 @@ export function PropertiesDialog({
   const kind = single
     ? single.is_dir
       ? t("文件夹")
-      : single.extension
-        ? t("{ext} 文件", { ext: single.extension.toUpperCase() })
-        : t("文件")
+      : single.is_symlink
+        ? t("链接")
+        : single.extension
+          ? t("{ext} 文件", { ext: single.extension.toUpperCase() })
+          : t("文件")
     : t("多个项目");
 
   return (

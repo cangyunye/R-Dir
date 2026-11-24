@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { isCancelledError, setPack, t, terr, type Pack } from "./i18n";
+import { isCancelledError, isNoSuchPathError, setPack, t, terr, type Pack } from "./i18n";
 
 const fakePack: Pack = {
   meta: { id: "xx", name: "Test", version: "0.1.0" },
@@ -96,5 +96,20 @@ describe("isCancelledError：按码判定取消", () => {
     expect(isCancelledError("无法取消关联：被占用")).toBe(false);
     expect(isCancelledError("NEED_PASSWORD")).toBe(false);
     expect(isCancelledError("")).toBe(false);
+  });
+});
+
+describe("isNoSuchPathError：按码判定路径不存在（list_dir 三后端统一产出）", () => {
+  it("纯码与码|详情均判定为路径不存在", () => {
+    expect(isNoSuchPathError("NO_SUCH_PATH")).toBe(true);
+    expect(isNoSuchPathError("NO_SUCH_PATH|路径不存在：/mock/x")).toBe(true);
+    expect(isNoSuchPathError("NO_SUCH_PATH|文件不存在（No such file）")).toBe(true);
+  });
+
+  it("其他错误不误判（含「不存在」字样的中文、其他码）", () => {
+    expect(isNoSuchPathError("文件不存在（No such file）")).toBe(false);
+    expect(isNoSuchPathError("无法读取目录 /x：权限不足")).toBe(false);
+    expect(isNoSuchPathError("NEED_MASTER_KEY")).toBe(false);
+    expect(isNoSuchPathError("")).toBe(false);
   });
 });

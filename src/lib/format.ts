@@ -54,9 +54,10 @@ export function hideExtension(name: string, isDir: boolean): string {
 
 import type { FileEntry } from "./types";
 
-/** 类型列文案：目录 / 扩展名大写 / 文件 */
+/** 类型列文案：目录 / 链接（符号链接本体，不论指向何物）/ 扩展名大写 / 文件 */
 export function extLabel(entry: FileEntry): string {
   if (entry.is_dir) return "目录";
+  if (entry.is_symlink) return "链接";
   if (entry.extension) return entry.extension.toUpperCase();
   return "文件";
 }
