@@ -13,15 +13,42 @@ import { resolve } from "node:path";
 
 const ROOT = process.cwd();
 
+/**
+ * semver 比较（数字段逐位比，平局时无预发布段 > 有预发布段——semver 规范：
+ * 1.2.3 > 1.2.3-pre；预发布段之间按字典序）。不能用 `git tag --sort=-version:refname`：
+ * git 的 version 排序不懂预发布语义，「0.51.0-pre」会排在「0.51.0」之后
+ * （降序即首位），导致转正发布时「最新 tag」断言取到 -pre 而失败。
+ */
+function semverCompare(a: string, b: string): number {
+  const parse = (v: string): { nums: number[]; pre: string | null } => {
+    const [core, pre] = v.replace(/^v/, "").split("-");
+    return { nums: core.split(".").map((n) => parseInt(n, 10) || 0), pre: pre ?? null };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa.nums[i] ?? 0) - (pb.nums[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  if (pa.pre === null && pb.pre === null) return 0;
+  if (pa.pre === null) return 1; // 无预发布段更高（1.2.3 > 1.2.3-pre）
+  if (pb.pre === null) return -1;
+  return pa.pre.localeCompare(pb.pre);
+}
+
 /** 仓库内最高 semver git tag（如 v0.14.0 → "0.14.0"）；无 tag 返回 null */
 function latestVersionTag(): string | null {
   try {
-    const out = execSync("git tag --sort=-version:refname", {
+    const out = execSync("git tag", {
       cwd: ROOT,
       encoding: "utf8",
-    }).trim();
-    const first = out.split("\n")[0];
-    return first ? first.replace(/^v/, "") : null;
+    })
+      .trim()
+      .split("\n")
+      .filter((t) => /^v\d/.test(t))
+      .map((t) => t.replace(/^v/, ""));
+    if (out.length === 0) return null;
+    return out.sort(semverCompare).at(-1) ?? null;
   } catch {
     return null;
   }
