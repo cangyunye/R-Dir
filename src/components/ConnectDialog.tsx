@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FolderCog, FolderOpen, KeyRound, Loader2, Lock, Server, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -74,7 +75,20 @@ export function ConnectDialog({
   const [savePassphrase, setSavePassphrase] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  /** 分组候选下拉（v0.52 datalist 原生白气泡不合主题，改主题化 combobox）：
+   *  open=候选展开、hi=键盘高亮项 */
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [groupHi, setGroupHi] = useState(0);
   const t = useT();
+
+  /** 现有分组名候选（去重、排除空=默认组、保持清单首现序，排除当前输入） */
+  const groupCandidates = useMemo(
+    () =>
+      [...new Set((servers ?? []).map((s) => s.group).filter(Boolean))].filter(
+        (g) => g !== group.trim(),
+      ),
+    [servers, group],
+  );
 
   useEffect(() => {
     if (open) {
@@ -217,24 +231,68 @@ export function ConnectDialog({
             <span className="text-muted-foreground">{t("显示名")}</span>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("可选，默认 user@host")} />
           </label>
-          <label className="col-span-2 grid grid-cols-[70px_1fr] items-center gap-2 text-xs">
+          <div className="col-span-2 grid grid-cols-[70px_1fr] items-center gap-2 text-xs">
             <span className="text-muted-foreground">{t("分组")}</span>
-            <Input
-              value={group}
-              onChange={(e) => setGroup(e.target.value)}
-              placeholder={t("可选，用于侧边栏分组管理")}
-              className="pr-7"
-              list="rdir-sftp-group-candidates"
-            />
-            {/* v0.52 分组候选枚举：现有分组名去重（排除空=默认组）供下拉候选，
-                仍可自由输入新组名（datalist 不限制输入）；顺序与侧栏分组一致
-                （保持清单首现序） */}
-            <datalist id="rdir-sftp-group-candidates">
-              {[...new Set((servers ?? []).map((s) => s.group).filter(Boolean))].map((g) => (
-                <option key={g} value={g} />
-              ))}
-            </datalist>
-          </label>
+            <div className="relative">
+              <Input
+                value={group}
+                onChange={(e) => {
+                  setGroup(e.target.value);
+                  setGroupHi(0);
+                }}
+                onFocus={() => setGroupOpen(true)}
+                onBlur={() => window.setTimeout(() => setGroupOpen(false), 120)}
+                placeholder={t("可选，用于侧边栏分组管理")}
+                className="pr-7"
+                onKeyDown={(e) => {
+                  if (!groupOpen || groupCandidates.length === 0) return;
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setGroupHi((i) => (i + 1) % groupCandidates.length);
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setGroupHi((i) => (i - 1 + groupCandidates.length) % groupCandidates.length);
+                  } else if (e.key === "Enter") {
+                    // 表单里 Enter 未绑定提交（密码框才有），候选高亮时优先选中
+                    e.preventDefault();
+                    const g = groupCandidates[groupHi];
+                    if (g) setGroup(g);
+                    setGroupOpen(false);
+                  } else if (e.key === "Escape") {
+                    setGroupOpen(false);
+                  }
+                }}
+              />
+              {/* 主题化候选下拉（对齐地址栏补全：bg-popover + shadow-elevate +
+                  bg-accent 高亮；↓↑ 选择 / Enter 选中 / Esc 关闭 / 点击外收口）。
+                  datalist 原生下拉是白色气泡，暗色主题下突兀。 */}
+              {groupOpen && groupCandidates.length > 0 && (
+                <div
+                  className="absolute left-0 right-0 top-full z-50 mt-1 max-h-40 overflow-y-auto rounded-md border bg-popover p-1 shadow-elevate"
+                  role="listbox"
+                >
+                  {groupCandidates.map((g, i) => (
+                    <button
+                      key={g}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault(); // 抢在输入框 blur 之前落值
+                        setGroup(g);
+                        setGroupOpen(false);
+                      }}
+                      onMouseEnter={() => setGroupHi(i)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs",
+                        i === groupHi ? "bg-accent text-accent-foreground" : "text-foreground",
+                      )}
+                    >
+                      <span className="truncate">{g}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
           <label className="grid grid-cols-[70px_1fr] items-center gap-2 text-xs">
             <span className="text-muted-foreground">{t("主机")}</span>
             <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="127.0.0.1" />
