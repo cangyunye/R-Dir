@@ -7,7 +7,7 @@
  * - 快捷键仅在窗口内生效：capture 阶段拦截 + isTopModalLayer 守卫（仿 DeleteConfirmDialog）
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Maximize2, Minimize2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/LanguageProvider";
 import { terr } from "@/lib/i18n";
@@ -79,6 +79,8 @@ export function BatchRenameDialog({
   const [undoing, setUndoing] = useState(false);
   const [notice, setNotice] = useState("");
   const [previewNonce, setPreviewNonce] = useState(0);
+  /** v0.52 窗口最大化（同比对工具：F11 / mod+shift+F 切换，按钮 title 显示键位） */
+  const [maximized, setMaximized] = useState(false);
 
   const platform = useMemo(() => targetPlatformFor(dirPath), [dirPath]);
 
@@ -184,6 +186,16 @@ export function BatchRenameDialog({
       e.preventDefault();
       e.stopPropagation();
       setPage((p) => Math.min(totalPages - 1, Math.max(0, p + (e.key === "PageDown" ? 1 : -1))));
+      return;
+    }
+    // 窗口最大化切换：F11 / mod+shift+F（同比对工具；F11 在 mac 被系统吃掉补一路 ⌘⇧F）
+    if (
+      e.key === "F11" ||
+      (e.key === "F" && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.altKey)
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      setMaximized((m) => !m);
     }
   };
   useEffect(() => {
@@ -230,13 +242,32 @@ export function BatchRenameDialog({
         if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
-      <div className="flex h-[70vh] max-h-[640px] w-[920px] max-w-[94vw] flex-col overflow-hidden rounded-lg border bg-background shadow-xl">
+      <div
+        className="flex flex-col overflow-hidden rounded-lg border bg-background shadow-xl"
+        style={
+          maximized
+            ? { width: "calc((100vw - 24px) / var(--rdir-zoom, 1))", height: "calc((100vh - 24px) / var(--rdir-zoom, 1))" }
+            : { width: "calc(min(920px, 94vw) / var(--rdir-zoom, 1))", height: "calc(min(70vh, 640px) / var(--rdir-zoom, 1))" }
+        }
+      >
         {/* 头部 */}
         <div className="flex items-center justify-between border-b px-4 py-2.5">
           <div className="flex items-baseline gap-2">
             <div className="text-sm font-semibold">{t("批量改名")}</div>
             <div className="text-[11px] text-muted-foreground">{t("仅当前窗格 · 改名后扩展名保持不变")}</div>
           </div>
+          <button
+            data-testid="br-maximize"
+            onClick={() => setMaximized((m) => !m)}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            title={
+              maximized
+                ? t("还原窗口（{keys}）", { keys: isMac ? "F11 / ⌘⇧F" : "F11 / Ctrl+Shift+F" })
+                : t("最大化（{keys}）", { keys: isMac ? "F11 / ⌘⇧F" : "F11 / Ctrl+Shift+F" })
+            }
+          >
+            {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </button>
           <button
             onClick={() => !busy && onClose()}
             className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"

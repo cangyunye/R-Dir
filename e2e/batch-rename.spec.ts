@@ -33,6 +33,16 @@ test("多选→规则替换→执行→撤销", async ({ page }) => {
   const dlg = await openBatchRename(page, `${HOME}/Notes.txt`);
   await expect(dlg.locator('[data-testid="br-row"]')).toHaveCount(2);
 
+  // 窗口最大化切换（同比对工具：F11 / mod+shift+F）
+  const card = dlg.locator("> div").first();
+  const wBefore = await card.evaluate((el) => el.getBoundingClientRect().width);
+  await page.keyboard.press("F11");
+  const wAfter = await card.evaluate((el) => el.getBoundingClientRect().width);
+  expect(wAfter).toBeGreaterThan(wBefore + 100);
+  await page.keyboard.press("Shift+F11");
+  const wRestored = await card.evaluate((el) => el.getBoundingClientRect().width);
+  expect(Math.abs(wRestored - wBefore)).toBeLessThan(2);
+
   // 规则：Notes → 笔记（photo.png 不受影响 → 未修改）
   await dlg.locator('[data-testid="br-find"]').fill("Notes");
   await dlg.locator('[data-testid="br-replace"]').fill("笔记");
