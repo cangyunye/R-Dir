@@ -43,6 +43,8 @@ test("行右键菜单提供「新建文件夹」，创建后直接进入重命�
 });
 
 test("连续新建两个文件夹：第二个默认名自动顺延「新建文件夹 (2)」", async ({ page }) => {
+  // 慢 runner 上改名提交后的列表更新偶超 5s 默认断言窗（CI 实测一次 flaky），三倍时限
+  test.slow();
   await rightClickBlank(page);
   let menu = page.locator('[data-slot="context-menu-content"]');
   await menu.getByText("新建文件夹").click();
