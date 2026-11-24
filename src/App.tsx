@@ -5519,6 +5519,14 @@ useEffect(() => {
     // v0.23 「退出」统一走确认对话框（与窗口 X 一致），不再静默保存退出
     quit: () => setCloseDialogOpen(true),
     openDiff: () => openDiff(),
+    // v0.52 批量改名：对活动窗格当前选中打开（无选中 → 窗口内切「当前目录匹配」模式）
+    batchRename: () => {
+      if (!activePane) return;
+      const entries = activePane.selection
+        .map((p) => activePane.entries.find((x) => x.path === p))
+        .filter((e): e is FileEntry => !!e);
+      setBatchRenameReq({ paneId: activePane.id, entries });
+    },
     openSyncDiff: () => toggleSyncDiff(),
     openGitDiff: () => setGitDiffOpen(true),
     toggleExtensions: () => toggleExtensions(),
@@ -5537,6 +5545,7 @@ useEffect(() => {
         binding: bindingOf(a),
       })),
       { id: "openDiff", label: "差异比对（左右窗格）…", group: "工具" },
+      { id: "batchRename", label: "批量改名…", group: "工具" },
       {
         id: "openSyncDiff",
         label: syncLink ? "断开同步比对" : "同步比对（左右窗格）",
@@ -5958,6 +5967,13 @@ useEffect(() => {
             keymapVersion={keymapVer}
             onOpenPalette={() => setPaletteOpen(true)}
             onOpenFavorites={() => setFavoritesOpen(true)}
+            onBatchRename={() => {
+              if (!activePane) return;
+              const entries = activePane.selection
+                .map((p) => activePane.entries.find((x) => x.path === p))
+                .filter((e): e is FileEntry => !!e);
+              setBatchRenameReq({ paneId: activePane.id, entries });
+            }}
             onNewTab={() => newTab()}
             onCloseTab={() => activeTab && closeTab(activeTab.id)}
             onSaveSession={() => void saveSessionNow()}

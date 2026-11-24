@@ -204,9 +204,9 @@ export function BatchRenameDialog({
       case "ready":
         return { text: t("待改名"), cls: "text-amber-600 dark:text-amber-400" };
       case "conflict":
-        return { text: `${t("冲突")}·${t(reason)}`, cls: "text-red-600 dark:text-red-400" };
+        return { text: `${t("冲突")}·${reason}`, cls: "text-red-600 dark:text-red-400" };
       default:
-        return { text: `${t("非法名称")}·${t(reason)}`, cls: "text-red-600 dark:text-red-400" };
+        return { text: `${t("非法名称")}·${reason}`, cls: "text-red-600 dark:text-red-400" };
     }
   };
 

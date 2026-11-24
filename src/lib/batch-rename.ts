@@ -9,6 +9,7 @@
  * - linux（SFTP/NFS 远端恒为 linux）：仅禁 "/" 与空名；冲突区分大小写
  */
 import { isMac } from "@/lib/keymap";
+import { t } from "@/lib/i18n";
 import { isNfsPath, isSftpPath } from "@/lib/sftp-path";
 import type { FileEntry } from "@/lib/types";
 
@@ -110,23 +111,23 @@ const CONTROL_CHARS = /[\u0000-\u001f]/;
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 
 function windowsInvalidReason(name: string): string | null {
-  if (name.length === 0) return "名称为空";
-  if (name === "." || name === "..") return "非法名称";
-  if (WINDOWS_FORBIDDEN.test(name)) return "包含 Windows 非法字符 <>:\"/\\|?*";
-  if (CONTROL_CHARS.test(name)) return "包含控制字符";
-  if (/[/\\]/.test(name)) return "名称不能包含路径分隔符";
-  if (/[. ]$/.test(name)) return "Windows 名称不能以点或空格结尾";
+  if (name.length === 0) return t("名称为空");
+  if (name === "." || name === "..") return t("非法名称");
+  if (WINDOWS_FORBIDDEN.test(name)) return t("包含 Windows 非法字符 <>:\"/\\|?*");
+  if (CONTROL_CHARS.test(name)) return t("包含控制字符");
+  if (/[/\\]/.test(name)) return t("名称不能包含路径分隔符");
+  if (/[. ]$/.test(name)) return t("Windows 名称不能以点或空格结尾");
   const stem = name.split(".")[0];
-  if (WINDOWS_RESERVED.test(stem)) return "Windows 保留设备名";
-  if (name.length > 255) return "超过 255 字符";
+  if (WINDOWS_RESERVED.test(stem)) return t("Windows 保留设备名");
+  if (name.length > 255) return t("超过 255 字符");
   return null;
 }
 
 function posixInvalidReason(name: string): string | null {
-  if (name.length === 0) return "名称为空";
-  if (name === "." || name === "..") return "非法名称";
+  if (name.length === 0) return t("名称为空");
+  if (name === "." || name === "..") return t("非法名称");
   if (name.includes("/")) return "名称不能包含 /";
-  if (name.length > 255) return "超过 255 字符";
+  if (name.length > 255) return t("超过 255 字符");
   return null;
 }
 
@@ -159,8 +160,8 @@ export function validateRows(
     if (bad) return { ...r, status: "invalid" as const, reason: bad };
     if (r.newName === r.entry.name) return { ...r, status: "unchanged" as const, reason: "" };
     const k = key(r.newName);
-    if ((counts.get(k) ?? 0) > 1) return { ...r, status: "conflict" as const, reason: "批内重名" };
-    if (disk.has(k)) return { ...r, status: "conflict" as const, reason: "目标已存在" };
+    if ((counts.get(k) ?? 0) > 1) return { ...r, status: "conflict" as const, reason: t("批内重名") };
+    if (disk.has(k)) return { ...r, status: "conflict" as const, reason: t("目标已存在") };
     return { ...r, status: "ready" as const, reason: "" };
   });
 }

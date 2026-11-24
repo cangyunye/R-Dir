@@ -27,6 +27,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   Pencil,
+  Replace,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -120,6 +121,8 @@ export interface AppMenuActions {
   onExportServers?: () => void;
   onImportServers?: () => void;
   /** 标签收藏夹面板（提供时才显示菜单项，快捷键 openFavorites） */
+  /** v0.52 批量改名（提供时才显示；对活动窗格的当前选中 / 目录模式打开） */
+  onBatchRename?: () => void;
   onOpenFavorites?: () => void;
   // 帮助 / 右上角常驻
   onOpenSettings: () => void;
@@ -243,6 +246,9 @@ export function AppMenu(actions: AppMenuActions) {
         <DropdownMenuContent align="end" className="min-w-[240px]">
           {actions.onOpenFavorites && (
             <Item icon={<Star />} label={t("收藏夹…")} shortcutId="openFavorites" onClick={actions.onOpenFavorites} />
+          )}
+          {actions.onBatchRename && (
+            <Item icon={<Replace />} label={t("批量改名…")} onClick={actions.onBatchRename} />
           )}
           <Item icon={<GitCompare />} label={t("差异比对…")} onClick={actions.onOpenDiff} />
           <Item
