@@ -962,13 +962,36 @@ useEffect(() => {
   const activePane = activeTab?.panes[activeTab.activePane] ?? null;
 
   // ---- v0.28 预览栏 / 图文浏览模式：内容跟随焦点窗格的选中项 ----
-  /** 预览目标 = 焦点窗格主选中对应的条目（目录/列表刷新窗口期缺失 → 占位提示） */
+  /** 预览目标 = 焦点窗格主选中对应的条目（目录/列表刷新窗口期缺失 → 占位提示）。
+   *  v0.52 树形列表：嵌套子目录内的选中项不在 pane.entries（children 由树组件
+   *  本地持有）→ stat_entry 异步取真实元数据（超大门槛/预览类型判定都要真值），
+   *  目录仍不给预览；预览栏关闭期间不发 stat（IO 约束）。 */
+  const [treePreviewEntry, setTreePreviewEntry] = useState<FileEntry | null>(null);
+  const selPreviewPath = activePane?.selection[0] ?? null;
+  const selInEntries = !!selPreviewPath && !!activePane?.entries.some((x) => x.path === selPreviewPath);
   const previewEntry: FileEntry | null = useMemo(() => {
-    const sel = activePane?.selection;
-    if (!sel || sel.length === 0) return null;
-    const e = activePane?.entries.find((x) => x.path === sel[0]);
+    if (!selPreviewPath || !selInEntries) return null;
+    const e = activePane?.entries.find((x) => x.path === selPreviewPath);
     return e && !e.is_dir ? e : null;
-  }, [activePane?.selection, activePane?.entries]);
+  }, [selPreviewPath, selInEntries, activePane?.entries]);
+  useEffect(() => {
+    if (!previewPrefs.enabled || !selPreviewPath || selInEntries) {
+      setTreePreviewEntry(null);
+      return;
+    }
+    let disposed = false;
+    void statEntry(selPreviewPath)
+      .then((e) => {
+        if (disposed) return;
+        setTreePreviewEntry(e && !e.is_dir ? e : null);
+      })
+      .catch(() => {
+        if (!disposed) setTreePreviewEntry(null);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [previewPrefs.enabled, selPreviewPath, selInEntries]);
   /** 浏览模式清单 = 可预览类型 + 未知类型懒嗅探命中的图片（v0.42，排序与列表同序）。
    *  嗅探仅在预览栏开启或浏览模式打开时进行（IO 约束），结果会话缓存。 */
   const browseList = useSniffPreviewList(
@@ -6193,7 +6216,7 @@ useEffect(() => {
 
         {/* v0.28 预览栏：右侧覆盖式拉门（悬浮在侧边栏+文件区上方，工具栏/状态栏保留） */}
         <PreviewDrawer
-          entry={previewEntry}
+          entry={selInEntries ? previewEntry : treePreviewEntry}
           enabled={previewPrefs.enabled}
           expanded={previewPrefs.expanded}
           width={previewPrefs.width}
