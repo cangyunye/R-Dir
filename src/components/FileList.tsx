@@ -128,6 +128,7 @@ export function FileList({
   onAddCustomOpener,
   dragTarget,
   dragOp,
+  cutPaths,
   dragDir = null,
   showHidden,
   showExtensions,
@@ -229,6 +230,8 @@ export function FileList({
   onAddCustomOpener: (path?: string, ext?: string) => Promise<void>;
   dragTarget: boolean;
   dragOp: "copy" | "move";
+  /** v0.52 剪切置灰：剪贴板 op=cut 的路径集合 */
+  cutPaths?: Set<string>;
   /** 原生拖拽悬停在本窗格某个目录行上：该行高亮为投放目标（App 的 window dragover 解析） */
   dragDir?: string | null;
   showHidden: boolean;
@@ -1076,6 +1079,8 @@ export function FileList({
                   className={cn(
                     "grid cursor-default items-center border-b text-[13px]",
                     selected ? "bg-selected" : "hover:bg-muted",
+                    // v0.52 剪切置灰（Windows 语义）：剪贴板 op=cut 的行半透明
+                    cutPaths?.has(entry.path) && "opacity-50",
                     isPrimary && "ring-1 ring-inset ring-primary/40",
                     entry.is_dir &&
                       dragDir === entry.path &&

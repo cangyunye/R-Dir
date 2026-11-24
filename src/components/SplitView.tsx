@@ -466,6 +466,7 @@ const PaneView = memo(function PaneView({
   dragOver,
   dragDir,
   canPaste,
+  cutPaths,
   fileTags,
   tagScheme,
   tags,
@@ -494,6 +495,8 @@ const PaneView = memo(function PaneView({
   /** 原生拖拽悬停在本窗格某个目录条目上（窗格 id + 目录路径），驱动投放高亮 */
   dragDir: { paneId: number; path: string } | null;
   canPaste: boolean;
+  /** v0.52 剪切置灰：剪贴板 op=cut 的路径集合（空 = 无剪切；copy 覆盖即解除） */
+  cutPaths?: Set<string>;
   fileTags: FileTags;
   /** v0.52 标签方案：详情列表的标签标记样式（仅详情列表生效） */
   tagScheme: TagScheme;
@@ -619,6 +622,7 @@ const PaneView = memo(function PaneView({
         onShareDir={(dir) => h.onShareDir(dir)}
         onPaste={() => h.onPaste(pane.id)}
         canPaste={canPaste}
+        cutPaths={cutPaths}
         onUndo={h.onUndo}
         onRedo={h.onRedo}
         canUndo={h.canUndo}
@@ -706,6 +710,7 @@ const PaneView = memo(function PaneView({
         onShareDir={(dir) => h.onShareDir(dir)}
         onPaste={() => h.onPaste(pane.id)}
         canPaste={canPaste}
+        cutPaths={cutPaths}
         onUndo={h.onUndo}
         onRedo={h.onRedo}
         canUndo={h.canUndo}
@@ -782,6 +787,7 @@ const PaneView = memo(function PaneView({
             onNewFile={() => h.onNewFile(pane.id)}
             onPaste={() => h.onPaste(pane.id)}
             canPaste={canPaste}
+            cutPaths={cutPaths}
             onUndo={h.onUndo}
             onRedo={h.onRedo}
             canUndo={h.canUndo}
@@ -917,6 +923,7 @@ export function SplitView({
   showExtensions,
   showProperties,
   canPaste,
+  cutPaths,
   renaming,
   dragOver,
   dragDir,
@@ -942,6 +949,8 @@ export function SplitView({
   showExtensions: boolean;
   showProperties: boolean;
   canPaste: boolean;
+  /** v0.52 剪切置灰：剪贴板 op=cut 的路径集合（空 = 无剪切；copy 覆盖即解除） */
+  cutPaths?: Set<string>;
   renaming: RenameState | null;
   dragOver: { targetPaneId: number; op: "copy" | "move" } | null;
   /** 原生拖拽悬停的目录条目（窗格 id + 目录路径），驱动投放高亮 */
@@ -983,6 +992,7 @@ export function SplitView({
         dragOver={dragOver}
         dragDir={dragDir}
         canPaste={canPaste}
+        cutPaths={cutPaths}
         fileTags={fileTags}
         tagScheme={tagScheme}
         tags={tags}
@@ -1015,6 +1025,7 @@ export function SplitView({
           showExtensions={showExtensions}
           showProperties={showProperties}
           canPaste={canPaste}
+          cutPaths={cutPaths}
           renaming={renaming}
           dragOver={dragOver}
           dragDir={dragDir}
@@ -1052,6 +1063,7 @@ export function SplitView({
           showExtensions={showExtensions}
           showProperties={showProperties}
           canPaste={canPaste}
+          cutPaths={cutPaths}
           renaming={renaming}
           dragOver={dragOver}
           dragDir={dragDir}

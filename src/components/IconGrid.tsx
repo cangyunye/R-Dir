@@ -175,6 +175,7 @@ export function IconGrid({
   onAddCustomOpener,
   dragTarget,
   dragOp,
+  cutPaths,
   dragDir = null,
   showHidden,
   showExtensions,
@@ -275,6 +276,8 @@ export function IconGrid({
   onAddCustomOpener: (path?: string, ext?: string) => Promise<void>;
   dragTarget: boolean;
   dragOp: "copy" | "move";
+  /** v0.52 剪切置灰：剪贴板 op=cut 的路径集合 */
+  cutPaths?: Set<string>;
   /** 原生拖拽悬停在本窗格某个文件夹图标上：该图标高亮为投放目标（App 的 window dragover 解析） */
   dragDir?: string | null;
   showHidden: boolean;
@@ -953,6 +956,8 @@ export function IconGrid({
                           className={cn(
                             "group absolute flex cursor-default flex-col items-center gap-1 rounded-lg p-2",
                             selected ? "bg-selected" : "hover:bg-muted",
+                            // v0.52 剪切置灰（Windows 语义）：剪贴板 op=cut 的行半透明
+                            cutPaths?.has(entry.path) && "opacity-50",
                             isPrimary && "ring-1 ring-inset ring-primary/40",
                             (dragDir === entry.path || folderHover === entry.path) &&
                               "bg-primary/15 ring-2 ring-inset ring-primary",

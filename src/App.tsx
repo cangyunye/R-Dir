@@ -478,6 +478,12 @@ export default function App() {
   const [favoritesOpen, setFavoritesOpen] = useState(false);
   const [homePath, setHomePath] = useState("");
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
+  /** v0.52 剪切置灰（Windows 语义）：op=cut 的路径整批半透明；随后 copy 覆盖剪贴板
+   *  或粘贴/清空后自动解除——置灰派生自剪贴板，无独立状态 */
+  const cutPaths = useMemo(
+    () => (clipboard?.op === "cut" ? new Set(clipboard.paths) : new Set<string>()),
+    [clipboard],
+  );
   /** 同名冲突裁决：非空时显示 ConflictDialog，resolve 存 ref 供异步等待 */
   const [conflictReq, setConflictReq] = useState<TransferConflict[] | null>(null);
   /** v0.32 解压加密压缩包的密码框请求：onSubmit 就地重试，resolve(true)=已解压成功 / false=放弃 */
@@ -6136,6 +6142,7 @@ useEffect(() => {
                       showExtensions={showExtensions}
                       showProperties={showProperties}
                       canPaste={!!t.panes[t.activePane]}
+                      cutPaths={cutPaths}
                       renaming={renaming}
                       dragOver={dragOver}
                       dragDir={dragDir}
