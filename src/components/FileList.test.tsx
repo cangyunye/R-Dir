@@ -61,6 +61,7 @@ function makeProps(overrides: Partial<FileListProps> = {}) {
     onSelectAll: noop,
     onInvertSelection: noop,
     fileTags: {},
+    tagScheme: "dots",
     tagNames: {},
     onRenameTag: noop,
     customQuick: [],

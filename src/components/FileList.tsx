@@ -19,12 +19,12 @@ import { RenameInput, routeRenameRowPress } from "@/components/RenameInput";
 import { DragGhost } from "@/components/DragGhost";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { TAG_DEFS, tagLabel, type FileTags, type MenuConfig, type TagDef, type TagNames } from "@/lib/persist";
+import { TAG_DEFS, tagLabel, type FileTags, type MenuConfig, type TagDef, type TagNames, type TagScheme } from "@/lib/persist";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { OpenerItem, ShellItem, GitToolItem, QuickToolItem } from "@/lib/openerApi";
 import { ROW_HEIGHT, visibleRange } from "@/lib/virtual-scroll";
 import type { DiffMarkMap } from "@/lib/sync-link";
-import { TagDots } from "@/components/TagView";
+import { TagMarker } from "@/components/TagView";
 import { BlankContextMenuContent, EntryContextMenuContent } from "@/components/EntryContextMenu";
 import { rank } from "@/lib/fuzzy";
 import { isMac } from "@/lib/keymap";
@@ -104,6 +104,7 @@ export function FileList({
   onInvertSelection,
   fileTags,
   tags: tagsProp,
+  tagScheme,
   tagNames,
   onRenameTag,
   customQuick,
@@ -197,6 +198,8 @@ export function FileList({
   fileTags: FileTags;
   /** 全量标签 = 预设 + 自定义（v0.28.0；缺省回落预设） */
   tags?: TagDef[];
+  /** v0.52 标签方案：详情列表的标签标记样式（仅本视图生效） */
+  tagScheme: TagScheme;
   tagNames: TagNames;
   onRenameTag: (tagId: string, label: string) => void;
   customQuick: string[];
@@ -1090,7 +1093,11 @@ export function FileList({
                       />
                     )}
                     <FileIcon entry={entry} size={16} className="shrink-0" />
-                    <TagDots path={entry.path} fileTags={fileTags} tags={tags} />
+                    {/* v0.52 标签方案：圆点/竖条置于图标与文件名之间（现状位置），
+                        药丸自带语义文字，移到文件名之后（对标 tag-stripe-preview.html） */}
+                    {tagScheme !== "pills" && (
+                      <TagMarker path={entry.path} fileTags={fileTags} tags={tags} scheme={tagScheme} />
+                    )}
                     {isRenaming ? (
                       <RenameInput
                         initial={renaming.name}
@@ -1112,6 +1119,9 @@ export function FileList({
                       >
                         {showExtensions ? entry.name : hideExtension(entry.name, entry.is_dir)}
                       </span>
+                    )}
+                    {tagScheme === "pills" && (
+                      <TagMarker path={entry.path} fileTags={fileTags} tags={tags} scheme="pills" />
                     )}
                   </div>
                   <div className="px-2 text-right tabular-nums text-muted-foreground">

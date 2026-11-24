@@ -53,6 +53,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import type { ViewMode } from "@/lib/types";
 import { ACTIONS, bindingOf, formatBinding } from "@/lib/keymap";
 import { useT } from "@/lib/LanguageProvider";
 import pkg from "../../package.json";
@@ -89,8 +90,8 @@ export interface AppMenuActions {
   onToggleExtensions: () => void;
   showExtensions: boolean;
   // v0.27 视图模式（当前活动窗格）
-  viewMode: "details" | "icons" | "gallery";
-  onViewModeChange: (mode: "details" | "icons" | "gallery") => void;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
   onToggleSearch: () => void;
   onRefresh: () => void;
   // 转到
@@ -389,6 +390,7 @@ export function AppMenu(actions: AppMenuActions) {
           <Item icon={null} label={t("显示文件扩展名")} checked={actions.showExtensions} onClick={actions.onToggleExtensions} />
           <Item icon={null} label={t("视图：详情列表")} shortcutId="viewDetails" checked={actions.viewMode === "details"} onClick={() => actions.onViewModeChange("details")} />
           <Item icon={null} label={t("视图：大图标")} shortcutId="viewIcons" checked={actions.viewMode === "icons"} onClick={() => actions.onViewModeChange("icons")} />
+          <Item icon={null} label={t("视图：树形列表")} shortcutId="viewTree" checked={actions.viewMode === "tree"} onClick={() => actions.onViewModeChange("tree")} />
           <Item icon={<Search />} label={t("切换搜索面板")} shortcutId="focusSearch" onClick={actions.onToggleSearch} />
           <DropdownMenuSeparator />
           <Item icon={<RefreshCw />} label={t("刷新")} shortcutId="refresh" onClick={actions.onRefresh} />

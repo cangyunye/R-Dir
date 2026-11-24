@@ -711,7 +711,8 @@ const DIFF_MTIME_KEY = "rfm.diff-mtime-tolerance";
  *  `localStorage.setItem("rfm.anim-level-v2", "plain")` 后刷新即回素。
  *  v0.49.1 换键：面板短暂存在期间（v0.49.0 前）持久化的 `rfm.anim-level` 可能
  *  残留 "plain"，面板移除后用户无入口改回，会被静默钉在素模式——旧键整体
- *  作废，不做值迁移（当时的「素/雅」只是临时对比开关，非正式用户偏好）。 */
+ *  作废，不做值迁移（当时的「素/雅」只是临时对比开关，非正式用户偏好）。
+ *  v0.52 开关回归设置面板「外观」区，本键转为正式持久化。 */
 export type AnimLevel = "plain" | "elegant";
 const ANIM_LEVEL_KEY = "rfm.anim-level-v2";
 
@@ -727,6 +728,30 @@ export function loadAnimLevel(): AnimLevel {
 export function saveAnimLevel(level: AnimLevel): void {
   try {
     localStorage.setItem(ANIM_LEVEL_KEY, level);
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---- v0.52 标签方案（详情列表的标签标记样式，三选一） ----
+/** dots=彩色圆点（现状）/ bars=细竖条 / pills=药丸标签（样式对标
+ *  tag-stripe-preview.html）。仅作用于详情列表；大图标与标签视图页
+ *  恒为圆点，不受此设置影响。 */
+export type TagScheme = "dots" | "bars" | "pills";
+const TAG_SCHEME_KEY = "rfm.tag-scheme";
+
+export function loadTagScheme(): TagScheme {
+  try {
+    const v = localStorage.getItem(TAG_SCHEME_KEY);
+    return v === "bars" || v === "pills" ? v : "dots";
+  } catch {
+    return "dots";
+  }
+}
+
+export function saveTagScheme(scheme: TagScheme): void {
+  try {
+    localStorage.setItem(TAG_SCHEME_KEY, scheme);
   } catch {
     /* ignore */
   }

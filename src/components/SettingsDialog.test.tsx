@@ -26,6 +26,8 @@ function setup(over: Partial<Parameters<typeof SettingsDialog>[0]> = {}) {
       onThemeModeChange={onThemeModeChange}
       animLevel="elegant"
       onAnimLevelChange={() => {}}
+      tagScheme="dots"
+      onTagSchemeChange={() => {}}
       onBindingsChanged={() => {}}
       previewEnabled={false}
       onPreviewEnabledChange={() => {}}

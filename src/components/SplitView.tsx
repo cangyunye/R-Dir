@@ -6,6 +6,7 @@ import {
   Info,
   LayoutGrid,
   List,
+  ListTree,
   Loader2,
   SquarePlus,
   TerminalSquare,
@@ -17,8 +18,9 @@ import { canNativeDragOut } from "@/lib/native-drag";
 import { splitPathSegments } from "@/lib/path-segments";
 import type { IconSize, PaneNode, PaneState, SplitDir, ViewMode } from "@/lib/types";
 import type { IconPositionMap } from "@/lib/api";
-import type { EntryAliases, FileTags, MenuConfig, TagDef } from "@/lib/persist";
+import type { EntryAliases, FileTags, MenuConfig, TagDef, TagScheme } from "@/lib/persist";
 import { FileList, type RenameState } from "@/components/FileList";
+import { FileTreeList } from "@/components/FileTreeList";
 import { useT } from "@/lib/LanguageProvider";
 import { IconGrid } from "@/components/IconGrid";
 import { PropertiesBar } from "@/components/PropertiesBar";
@@ -335,7 +337,7 @@ function PaneHead({
               </Fragment>
             ))}
           </div>
-          {/* v0.27 视图切换（详情/大图标，访达式段钮）。
+          {/* v0.27 视图切换（详情/大图标，访达式段钮）；v0.52 增树形列表。
               画廊模式代码已就绪但 v0.27 暂不开放（缩略图覆盖面尚不足以与
               大图标拉开差距），放开时把 gallery 项加回数组即可。 */}
           <div
@@ -349,6 +351,7 @@ function PaneHead({
                 [
                   ["details", <List key="l" className="h-3.5 w-3.5" />, t("详情列表")],
                   ["icons", <LayoutGrid key="g" className="h-3.5 w-3.5" />, t("大图标")],
+                  ["tree", <ListTree key="t" className="h-3.5 w-3.5" />, t("树形列表")],
                   // ["gallery", <GalleryVerticalEnd key="v" className="h-3.5 w-3.5" />, "画廊"],
                 ] as [ViewMode, React.ReactNode, string][]
               ).filter(([mode]) => mode !== "gallery")
@@ -462,6 +465,7 @@ const PaneView = memo(function PaneView({
   dragDir,
   canPaste,
   fileTags,
+  tagScheme,
   tags,
   tagNames,
   onRenameTag,
@@ -489,6 +493,8 @@ const PaneView = memo(function PaneView({
   dragDir: { paneId: number; path: string } | null;
   canPaste: boolean;
   fileTags: FileTags;
+  /** v0.52 标签方案：详情列表的标签标记样式（仅详情列表生效） */
+  tagScheme: TagScheme;
   /** 全量标签 = 预设 + 自定义（v0.28.0） */
   tags: TagDef[];
   tagNames: TagNames;
@@ -617,9 +623,93 @@ const PaneView = memo(function PaneView({
         onSelectAll={() => h.onSelectAll(pane.id)}
         onInvertSelection={() => h.onInvertSelection(pane.id)}
         fileTags={fileTags}
+        tagScheme={tagScheme}
         tags={tags}
         tagNames={tagNames}
         onRenameTag={onRenameTag}
+        customQuick={customQuick}
+        onToggleTag={h.onToggleTag}
+        onToggleQuick={h.onToggleQuick}
+        dragTarget={dragOver?.targetPaneId === pane.id}
+        dragOp={dragOver?.targetPaneId === pane.id ? dragOver.op : "copy"}
+        dragDir={dragDir?.paneId === pane.id ? dragDir.path : null}
+        showHidden={showHidden}
+        showExtensions={showExtensions}
+        renaming={renaming}
+        onRenameCommit={h.onRenameCommit}
+        onRenameCancel={h.onRenameCancel}
+        isActive={isActive}
+        onActivate={() => h.onActivate(pane.id)}
+        zoom={pane.zoom}
+        onZoomChange={(z) => h.onZoomChange(pane.id, z)}
+        onBack={h.onBack}
+        onForward={h.onForward}
+        onCompress={(paths, fmt) => h.onCompress(pane.id, paths, fmt)}
+        onExtract={(paths, mode) => h.onExtract(pane.id, paths, mode)}
+        onCreateShortcuts={h.onCreateShortcuts}
+        menuCfg={h.menuCfg}
+        onProperties={h.onProperties}
+        onPropertiesDir={h.onPropertiesDir}
+        onDiff={h.onDiff}
+        onSyncDiff={h.onSyncDiff}
+        compareBase={compareBase}
+        onSetCompareBase={h.onSetCompareBase}
+        onCompareWithBase={h.onCompareWithBase}
+        onComparePick={h.onComparePick}
+        onCompareSelected={h.onCompareSelected}
+        onViewPatch={h.onViewPatch}
+        diffMarks={diffMarks}
+          linkBadge={linkBadge}
+        />
+          ) : pane.viewMode === "tree" ? (
+          <FileTreeList
+        paneId={pane.id}
+        entries={pane.entries}
+        sortKey={pane.sortKey}
+        sortDir={pane.sortDir}
+        selection={pane.selection}
+        onSelect={(e, a) => h.onSelect(pane.id, e, a)}
+        onSelectRange={(paths) => h.onSelectRange(pane.id, paths)}
+        onClearSelection={() => h.onClearSelection(pane.id)}
+        onOpen={(e) => h.onOpen(pane.id, e)}
+        onMiddleOpen={(p) => h.onMiddleOpen(pane.id, p)}
+        currentDir={pane.path}
+        pluginOpener={h.pluginOpener}
+        pluginTerminal={h.pluginTerminal}
+        openers={h.openers}
+        shells={h.shells}
+        vscodeDetected={h.vscodeDetected}
+        gitTools={h.gitTools}
+        quickTools={h.quickTools}
+        onOpenWith={(toolId, p) => h.onOpenWith(toolId, p)}
+        onOpenTerminal={(shellId, p) => h.onOpenTerminal(shellId, p)}
+        onOpenVscode={h.onOpenVscode}
+        onOpenGitTool={h.onOpenGitTool}
+        onOpenQuickTool={h.onOpenQuickTool}
+        onConfigureQuickTools={h.onConfigureQuickTools}
+        onAddCustomOpener={h.onAddCustomOpener}
+        onCopy={(p) => h.onCopy(pane.id, p)}
+        onCut={(p) => h.onCut(pane.id, p)}
+        onDelete={(p) => h.onDelete(pane.id, p)}
+        onRename={(e) => h.onRename(pane.id, e)}
+        onCopyPath={h.onCopyPath}
+        onRefresh={() => h.onRefresh(pane.id)}
+        onDropPaths={(src, paths, op, target) => h.onDropPaths(src, paths, op, target)}
+        onDragOverChange={h.onDragOverChange}
+        onNewFolder={() => h.onNewFolder(pane.id)}
+        onNewFile={() => h.onNewFile(pane.id)}
+        onShareDir={(dir) => h.onShareDir(dir)}
+        onPaste={() => h.onPaste(pane.id)}
+        canPaste={canPaste}
+        onUndo={h.onUndo}
+        onRedo={h.onRedo}
+        canUndo={h.canUndo}
+        canRedo={h.canRedo}
+        onSelectAll={() => h.onSelectAll(pane.id)}
+        onInvertSelection={() => h.onInvertSelection(pane.id)}
+        fileTags={fileTags}
+        tags={tags}
+        tagNames={tagNames}
         customQuick={customQuick}
         onToggleTag={h.onToggleTag}
         onToggleQuick={h.onToggleQuick}
@@ -825,6 +915,7 @@ export function SplitView({
   dragOver,
   dragDir,
   fileTags,
+  tagScheme,
   tags,
   tagNames,
   onRenameTag,
@@ -850,6 +941,8 @@ export function SplitView({
   /** 原生拖拽悬停的目录条目（窗格 id + 目录路径），驱动投放高亮 */
   dragDir: { paneId: number; path: string } | null;
   fileTags: FileTags;
+  /** v0.52 标签方案：详情列表的标签标记样式（仅详情列表生效） */
+  tagScheme: TagScheme;
   /** 全量标签 = 预设 + 自定义（v0.28.0） */
   tags: TagDef[];
   tagNames: TagNames;
@@ -885,6 +978,7 @@ export function SplitView({
         dragDir={dragDir}
         canPaste={canPaste}
         fileTags={fileTags}
+        tagScheme={tagScheme}
         tags={tags}
         tagNames={tagNames}
         onRenameTag={onRenameTag}
@@ -919,6 +1013,7 @@ export function SplitView({
           dragOver={dragOver}
           dragDir={dragDir}
           fileTags={fileTags}
+          tagScheme={tagScheme}
           tags={tags}
           tagNames={tagNames}
           onRenameTag={onRenameTag}
@@ -955,6 +1050,7 @@ export function SplitView({
           dragOver={dragOver}
           dragDir={dragDir}
           fileTags={fileTags}
+          tagScheme={tagScheme}
           tags={tags}
           tagNames={tagNames}
           onRenameTag={onRenameTag}

@@ -19,6 +19,7 @@ import {
   type FileTags,
   type TagDef,
   type TagNames,
+  type TagScheme,
 } from "@/lib/persist";
 import { FileIcon } from "@/components/FileIcon";
 import { statPaths } from "@/lib/api";
@@ -532,6 +533,113 @@ export function TagDots({
             title={t("标签：{name}", { name: tagLabel(d, {}) })}
           />
         ))}
+    </span>
+  );
+}
+
+/** pill 文字用色：浅色（黄系，亮度 > 0.7）掺黑加深保证浅底可读，
+ *  其余直接同色（对标 tag-stripe-preview.html：黄底文字 #b8860b 思路） */
+function pillColor(color: string): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!m) return color;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.7
+    ? `color-mix(in srgb, ${color} 65%, black)`
+    : color;
+}
+
+function pillStyle(color: string): CSSProperties {
+  return {
+    color: pillColor(color),
+    background: `color-mix(in srgb, ${color} 14%, transparent)`,
+  };
+}
+
+/** v0.52 详情列表的标签标记（三方案，样式对标 tag-stripe-preview.html）：
+ *  dots=彩色圆点（同 TagDots）/ bars=细竖条（3px 宽、图标同高）/
+ *  pills=药丸标签（自带语义文字，置于文件名之后；多标签折叠为 +N，
+ *  hover 浮层展开全部）。颜色与 TagDots 同源（TagDef.color）。 */
+export function TagMarker({
+  path,
+  fileTags,
+  tags: tagsProp,
+  scheme,
+}: {
+  path: string;
+  fileTags: FileTags;
+  /** 全量标签 = 预设 + 自定义（缺省回落预设） */
+  tags?: TagDef[];
+  scheme: TagScheme;
+}) {
+  const t = useT();
+  const tagIds = fileTags[path] ?? [];
+  if (tagIds.length === 0) return null;
+  const defs = tagsProp ?? TAG_DEFS;
+  const resolved = tagIds
+    .map((id) => defs.find((d) => d.id === id))
+    .filter((d): d is NonNullable<typeof d> => !!d);
+  if (resolved.length === 0) return null;
+
+  if (scheme === "pills") {
+    const MAX = 2;
+    const overflow = resolved.length - MAX;
+    return (
+      <span className="group/pills relative flex shrink-0 items-center gap-[5px]">
+        {resolved.slice(0, MAX).map((d) => (
+          <span
+            key={d.id}
+            className="max-w-32 truncate rounded-full px-[7px] py-[3px] text-[11px] leading-none"
+            style={pillStyle(d.color)}
+            title={t("标签：{name}", { name: tagLabel(d, {}) })}
+          >
+            {tagLabel(d, {})}
+          </span>
+        ))}
+        {overflow > 0 && (
+          <span className="shrink-0 rounded-full bg-muted px-[7px] py-[3px] text-[11px] leading-none text-muted-foreground">
+            +{overflow}
+          </span>
+        )}
+        {overflow > 0 && (
+          <span className="absolute left-0 top-1/2 z-20 hidden -translate-y-1/2 items-center gap-[5px] whitespace-nowrap rounded-md border bg-popover px-1.5 py-1 shadow-elevate group-hover/pills:flex">
+            {resolved.map((d) => (
+              <span
+                key={d.id}
+                className="shrink-0 whitespace-nowrap rounded-full px-[7px] py-[3px] text-[11px] leading-none"
+                style={pillStyle(d.color)}
+              >
+                {tagLabel(d, {})}
+              </span>
+            ))}
+          </span>
+        )}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center",
+        scheme === "bars" ? "gap-[3px]" : "gap-0.5",
+      )}
+    >
+      {resolved.map((d) => (
+        <span
+          key={d.id}
+          className={cn(
+            "shrink-0",
+            scheme === "bars"
+              ? "h-4 w-[3px] rounded-[2px]"
+              : "h-2 w-2 rounded-full ring-1 ring-background",
+          )}
+          style={{ background: d.color }}
+          title={t("标签：{name}", { name: tagLabel(d, {}) })}
+        />
+      ))}
     </span>
   );
 }

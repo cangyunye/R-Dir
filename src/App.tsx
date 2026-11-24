@@ -221,6 +221,9 @@ import {
   loadAnimLevel,
   saveAnimLevel,
   type AnimLevel,
+  loadTagScheme,
+  saveTagScheme,
+  type TagScheme,
   loadDiffCaseSensitive,
   loadDiffMtimeTolerance,
   loadPrefsFromDisk,
@@ -3566,6 +3569,13 @@ useEffect(() => {
     document.documentElement.dataset.anim = animLevel;
   }, [animLevel]);
 
+  /** v0.52 标签方案（详情列表的标签标记样式，圆点/竖条/药丸；仅详情列表生效） */
+  const [tagScheme, setTagScheme] = useState<TagScheme>(() => loadTagScheme());
+  const changeTagScheme = useCallback((v: TagScheme) => {
+    setTagScheme(v);
+    saveTagScheme(v);
+  }, []);
+
   const toggleTag = useCallback((path: string, tagId: string) => {
     setFileTags((prev) => {
       const cur = prev[path] ?? [];
@@ -5441,6 +5451,9 @@ useEffect(() => {
     viewIcons: () => {
       if (activePane) setPaneViewMode(activePane.id, "icons");
     },
+    viewTree: () => {
+      if (activePane) setPaneViewMode(activePane.id, "tree");
+    },
     viewGallery: () => {
       if (activePane) setPaneViewMode(activePane.id, "gallery");
     },
@@ -6090,6 +6103,7 @@ useEffect(() => {
                       dragDir={dragDir}
                       paneSwap={paneSwap}
                       fileTags={fileTags}
+                      tagScheme={tagScheme}
                       tags={tags}
                       tagNames={tagNames}
                       onRenameTag={renameTag}
@@ -6274,6 +6288,8 @@ useEffect(() => {
         onThemeModeChange={changeThemeMode}
         animLevel={animLevel}
         onAnimLevelChange={changeAnimLevel}
+        tagScheme={tagScheme}
+        onTagSchemeChange={changeTagScheme}
         themePacks={themePacks}
         themeErrors={themeErrors}
         activeThemeId={activeThemeId}

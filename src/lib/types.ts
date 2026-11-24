@@ -32,8 +32,9 @@ export type SortDir = "asc" | "desc";
 /** 主题颜色模式：显式浅色/深色，或跟随系统（随系统深浅色实时切换） */
 export type ThemeMode = "light" | "dark" | "system";
 
-/** 窗格视图模式（v0.27.0）：详情列表 / 大图标（可自由摆放）/ 画廊（缩略图墙） */
-export type ViewMode = "details" | "icons" | "gallery";
+/** 窗格视图模式（v0.27.0）：详情列表 / 大图标（可自由摆放）/ 画廊（缩略图墙）；
+ *  v0.52 增树形列表（tree，访达式行内展开目录树，懒加载子目录） */
+export type ViewMode = "details" | "icons" | "gallery" | "tree";
 /** 大图标/画廊模式的图标档位（px） */
 export const ICON_SIZES = [48, 64, 96, 128] as const;
 export type IconSize = (typeof ICON_SIZES)[number];
