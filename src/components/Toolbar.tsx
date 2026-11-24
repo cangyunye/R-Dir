@@ -30,6 +30,7 @@ import { terr } from "@/lib/i18n";
 import { useT } from "@/lib/LanguageProvider";
 import { completeCommands, completePath, listDir, resolvePath, runCommand, statPath } from "@/lib/api";
 import { firstCommandToken, hasScheme, isCommandToken } from "@/lib/cmdline";
+import { normalizeScpLikeSftp } from "@/lib/sftp-path";
 import { splitPathSegments } from "@/lib/path-segments";
 import type { CommandSuggest } from "@/lib/types";
 
@@ -278,7 +279,9 @@ export function Toolbar({
 
   /** 回车提交：本地路径先校验（不存在就地提示，不切换窗格）；目录导航、文件跳父目录选中 */
   const submitDraft = useCallback(async () => {
-    const raw = draft.trim();
+    // 「host:/abs」scp 式写法归一为 sftp://host/abs（127.0.0.1:/home/user 直接连，
+    // 须在 statPath 预检之前——否则被当本地相对路径拼进当前目录而误报不存在）
+    const raw = normalizeScpLikeSftp(draft.trim());
     if (!raw) return;
     // 远程/虚拟路径交给既有导航逻辑（sftp 连接框、smb/nfs 直连、tags 视图、http 索引）。
     // scheme 用通用判定——v0.39 修复：枚举漏了 smb/nfs，输入被 resolvePath 拼进

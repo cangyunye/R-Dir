@@ -85,7 +85,14 @@ pub fn find_files(
         .require_git(false)
         .follow_links(false)
         .max_depth(max_depth)
-        .sort_by_file_path(|a, b| a.cmp(b)); // 确定性输出
+        .sort_by_file_path(|a, b| a.cmp(b)) // 确定性输出
+        // Windows 系统目录剪枝（回收站/系统卷信息）：这些目录不以点开头，
+        // 躲过 hidden 过滤（ignore 只认 `.` 前缀不看 DOS 属性），盘根搜索
+        // 时会搜进回收站（v0.51.1 用户反馈）；目录命中整棵跳过
+        .filter_entry(|e| {
+            !e.file_type().is_some_and(|ft| ft.is_dir())
+                || !crate::search::is_system_junk_dir(e.file_name().to_string_lossy().as_ref())
+        });
 
     let mut out: Vec<FindEntry> = Vec::new();
     for entry in builder.build() {

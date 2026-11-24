@@ -64,7 +64,7 @@ import type {
   VolumeInfo,
 } from "@/lib/types";
 import { dedupeName } from "@/lib/favorites";
-import { parseSftpAuthority, isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
+import { normalizeScpLikeSftp, parseSftpAuthority, isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
 import { backendCaps, backendKind, maxDiffLevelFor, pathScheme } from "@/lib/backends";
 import {
   computeAlignment,
@@ -1857,8 +1857,11 @@ useEffect(() => {
   const sftp = useSftp({ navigate: navigateVia, patchPane, listDir, showError, showInfo });
 
   const navigate = useCallback(
-    async (path: string) => {
+    async (rawPath: string) => {
       if (!activePane) return;
+      // 「host:/abs」scp 式写法归一（127.0.0.1:/home/user → sftp://127.0.0.1/home/user）：
+      // 放在最前，覆盖补全选中/菜单/键盘路径等全部入口（地址栏 submitDraft 另有预检归一）
+      let path = normalizeScpLikeSftp(rawPath);
       // v0.18：地址栏支持 "~"（主目录）与相对路径，统一解析为绝对路径后再导航。
       // 仅对本地原始输入生效；带 scheme 的虚拟路径（sftp/http/smb/nfs…）与标签
       // 路径原样交给各自分支——scheme 判定统一走 cmdline.hasScheme（通用正则，

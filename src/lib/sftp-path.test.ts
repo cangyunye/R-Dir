@@ -3,6 +3,7 @@ import {
   isSftpPath,
   isHttpPath,
   isNfsPath,
+  normalizeScpLikeSftp,
   parseSftpAuthority,
   joinRemote,
   sftpUrl,
@@ -44,7 +45,10 @@ describe("parseSftpAuthority", () => {
 
   it("无 user@ 返回 null", () => {
     expect(parseSftpAuthority("sftp://")).toBeNull();
-    expect(parseSftpAuthority("sftp://192.168.1.1/")).toBeNull();
+    // v0.51.1 宽松化：无 user@ 解析成功（user=""，navigate 弹连接框预填 host/root）
+    const au = parseSftpAuthority("sftp://192.168.1.1/");
+    expect(au!.host).toBe("192.168.1.1");
+    expect(au!.user).toBe("");
   });
 });
 
@@ -118,5 +122,50 @@ describe("isNfsPath（v0.39 nfs:// 判定）", () => {
     expect(isNfsPath("sftp://h1/a")).toBe(false);
     expect(isNfsPath("\\\\h1\\share")).toBe(false);
     expect(isNfsPath("C:\\Users")).toBe(false);
+  });
+});
+describe("parseSftpAuthority 无 user（v0.51.1 host:/path 兼容）", () => {
+  it("sftp://host/path 无 user@ 也可解析（user 空串，弹连接框预填用）", () => {
+    const au = parseSftpAuthority("sftp://127.0.0.1/home/user");
+    expect(au).not.toBeNull();
+    expect(au!.host).toBe("127.0.0.1");
+    expect(au!.port).toBe(22);
+    expect(au!.user).toBe("");
+    expect(au!.remotePath).toBe("/home/user");
+  });
+
+  it("全缺 host 返回 null（弹空白连接框）", () => {
+    expect(parseSftpAuthority("sftp://")).toBeNull();
+  });
+});
+
+describe("normalizeScpLikeSftp（v0.51.1 host:/abs 归一）", () => {
+  it("ip:/abs → sftp://ip/abs", () => {
+    expect(normalizeScpLikeSftp("127.0.0.1:/home/user")).toBe(
+      "sftp://127.0.0.1/home/user",
+    );
+  });
+
+  it("user@host:/abs → sftp://user@host/abs", () => {
+    expect(normalizeScpLikeSftp("kali@192.168.31.100:/data")).toBe(
+      "sftp://kali@192.168.31.100/data",
+    );
+  });
+
+  it("内网主机名（无点）也归一", () => {
+    expect(normalizeScpLikeSftp("myserver:/srv")).toBe("sftp://myserver/srv");
+  });
+
+  it("Windows 盘符路径不误伤（单字母 host 段）", () => {
+    expect(normalizeScpLikeSftp("C:/Users/demo")).toBe("C:/Users/demo");
+    expect(normalizeScpLikeSftp("C:\\Users")).toBe("C:\\Users");
+    expect(normalizeScpLikeSftp("D:/home")).toBe("D:/home");
+  });
+
+  it("已带 scheme / 标签 / ~ 原样返回", () => {
+    expect(normalizeScpLikeSftp("sftp://u@h:22/x")).toBe("sftp://u@h:22/x");
+    expect(normalizeScpLikeSftp("#红色")).toBe("#红色");
+    expect(normalizeScpLikeSftp("~/Documents")).toBe("~/Documents");
+    expect(normalizeScpLikeSftp("/mock/home")).toBe("/mock/home");
   });
 });

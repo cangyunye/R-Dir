@@ -146,6 +146,18 @@ pub fn search_content(
     Ok(out)
 }
 
+/// Windows 系统目录名（回收站三代命名 + 系统卷信息）：内容搜索/find 递归到
+/// 盘根或外层目录时会走进这些目录（它们不以点开头，躲过隐藏过滤——
+/// ignore/walkdir 的 hidden 过滤只认 `.` 前缀，不看 DOS hidden 属性），
+/// 已删除文件被当普通内容搜出来（v0.51.1 用户反馈）。名字级剪枝，全平台生效
+/// （这些名字在任何平台都该跳过）；全盘索引走 indexer 自己的排除清单，不经这里。
+pub fn is_system_junk_dir(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "$recycle.bin" | "recycler" | "recycled" | "system volume information"
+    )
+}
+
 /// `depth` = 当前目录内文件所处的层级（根的直接子文件为第 1 层）。
 /// 进入子目录的文件在第 depth+1 层，超过 `max_depth` 即剪枝（Some(1) = 只搜当前层）。
 fn walk(
@@ -187,6 +199,10 @@ fn walk(
             }
         }
         if is_dir {
+            // Windows 系统目录剪枝（回收站/系统卷信息）：递归搜索不再进入
+            if recursive && is_system_junk_dir(&name) {
+                continue;
+            }
             // 子目录内文件在第 depth+1 层，达到上限就不再进入
             if recursive && max_depth.map_or(true, |m| depth + 1 <= m) {
                 walk(
@@ -303,6 +319,47 @@ mod tests {
         let p = PathBuf::from("/a/b/c/d.txt");
         assert_eq!(rel_path(&p, &root), "c/d.txt");
         assert_eq!(rel_path(&root, &root), "b");
+    }
+
+    /// Windows 系统目录名剪枝（v0.51.1：回收站/系统卷信息不以点开头，
+    /// 躲过隐藏过滤，递归搜索盘根时被当普通内容搜出来）
+    #[test]
+    fn system_junk_dirs_recognized_case_insensitive() {
+        assert!(is_system_junk_dir("$RECYCLE.BIN"));
+        assert!(is_system_junk_dir("$Recycle.Bin"));
+        assert!(is_system_junk_dir("recycler"));
+        assert!(is_system_junk_dir("System Volume Information"));
+        assert!(!is_system_junk_dir("recycle bin"));
+        assert!(!is_system_junk_dir("正常目录"));
+        assert!(!is_system_junk_dir("photos"));
+    }
+
+    /// 递归搜索跳过系统目录：盘根场景（回收站内命中关键词不再出现在结果里）
+    #[test]
+    fn recursive_search_skips_system_dirs() {
+        let root = std::env::temp_dir().join("rfm_search_junk_test");
+        let junk = root.join("$RECYCLE.BIN");
+        std::fs::create_dir_all(&junk).unwrap();
+        std::fs::write(root.join("ok.txt"), "needle here\n").unwrap();
+        std::fs::write(junk.join("deleted.txt"), "needle in trash\n").unwrap();
+        let re = Regex::new("needle").unwrap();
+        let mut out = Vec::new();
+        let mut total = 0usize;
+        walk(
+            &root,
+            &root,
+            true,          // recursive
+            true,          // include_hidden（回收站不靠点前缀，开隐藏也要剪）
+            None,          // 不限深度
+            &re,
+            None,
+            &mut out,
+            &mut total,
+            1,
+        );
+        assert_eq!(total, 1, "回收站内的命中应被剪枝");
+        assert!(out.iter().all(|m| !m.rel_path.contains("RECYCLE")));
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// 真实目录搜索：当前层只命中直接子文件，递归命中子目录内文件
