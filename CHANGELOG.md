@@ -6,6 +6,25 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 格式：`## vX.Y.Z (YYYY-MM-DD)`，段落之间用下一个 `## ` 标题分隔。
 
 
+## v0.51.0 (2026-11-24)
+
+> v0.51.0-pre 预发转正：mac 体验批次（缩放动画/链接类型与图标/动画开关回归）+ 拖拽收尾与导航体验修复。含一处架构性回退：macOS 原生拖出真机崩溃回退 HTML5（拖到废纸篓暂不可用，Rust 侧实现保留待定位）。
+
+- **修复：剪切到另一目录后源目录不刷新**——粘贴收尾历来只刷目标窗格；watcher 的变更事件被自变更静默窗口吞掉且同签名只发一次不再补发，源目录列表永久陈旧（「再次剪切发现文件已不存在」）。现在粘贴收尾收集「真删了源」的条目（本地 move / 同服务器 sftpMove / 覆盖合并删源），按被移走条目的父目录匹配其余窗格**直接重读**写入列表——非活动但可见的源窗格立即更新（refreshKey bump 只在被激活时才触发重读，不够）。
+- **修复：重命名起手文字「微微移动」**——基础 Input 的 `md:text-sm` 在 md+ 媒体查询里覆盖 text-[13px]（tailwind-merge 视为不同 variant 两个都保留，样式表顺序决定实际 14px），改名文字 14px vs 名称 13px = 字形变大 + 基线差；内联样式钉死 13px/20px。附带大图标模式 24px 输入框替换 ~14px 标签行加 `-my-[5px]` 让框中心对齐标签行中心（DOM 实测偏差 0.15px）。
+- **修复：重命名初始选区排除扩展名**（访达/资源管理器语义）：最后一个「.」之前为主名选区；目录、无扩展名、隐藏文件（点在串首）整串全选；详情行/大图标/搜索行三挂载点全覆盖。
+- **修复：跳转到无效路径不再「只变更路径栏、列表空白无提示」**——`list_dir` 统一导航接口三后端按码产出 `NO_SUCH_PATH|详情`（本地 ENOENT / SFTP SSH_FX_NO_SUCH_FILE / NFS NFS3ERR_NOENT 同契约，nfs-sidecar 插件进程错误串原样透传，契约跨进程成立）；前端 `isNoSuchPathError` 按码判定后回滚路径栏与历史到上一有效目录 + 报错浮层；其余失败（权限/断连）保持原位便于恢复后原路径重试；smb/nfs/http 不可达 ≠ 不存在，不误回滚。
+- **修复：linux/mac 符号链接目录双击跳转**——后端 DirEntry.metadata 不穿透链接，指向目录的链接 is_dir=false、is_symlink=true，双击此前落入「系统打开」既不跳转也无反馈；现在 statPath 探测分流：目录链接应用内直接路径跳转（read_dir 跟随目录链接），文件链接/断链维持系统默认打开。
+- **优化：macOS 窗口缩放动画随素/雅分级**——无边框窗口（decorations:false，无 Titled styleMask）的 toggleMaximize 走 tao `setFrame:display:animate:` 且 animate=YES：AppKit 自带动画 ~0.4s（「右上角放大/还原太慢」根因，tao 0.35/0.37 两版行为一致）。新增 `window_toggle_maximize`：素=animate:NO 瞬时一步到位；雅=NSTimer 150ms easeOutCubic 步进插值（60fps 主线程直驱不经 IPC，中途再次点击从当前位置无缝续走，结束自回收）；还原帧本地持久。右上角按钮与双击标题栏两入口共用 `window-commands.ts` 分发。
+- **优化：「动画效果」开关回归设置面板**（v0.49 曾收进代码仅留 localStorage 隐藏键）：素/雅分段控件恢复「外观」区（颜色模式之后、主题包之前），恢复 props 与 changeAnimLevel（落盘 + 根属性 + anim 模块镜像三处同步），说明文案按 v0.49.1 语义更新（雅不受系统减弱动态影响）。
+- **优化：详情模式表头「名称」对齐到名称文字上方**——表头贴列左缘（8px）vs 名称文字被图标推到 32px 起，表头与内容错位；名称表头加 pl-8 缩进，DOM 实测对齐后偏差 0.016px。
+- **优化：SFTP 服务器分组候选枚举**——连接对话框分组输入挂 datalist：现有分组名去重（排除空=默认组）供下拉候选，仍可自由输入新组名；顺序与侧栏分组一致（清单首现序）。
+- **新类型：符号链接「链接」+ 锁链图标**——filekind 新增 link 类（第 14 类）：类型列/属性栏/属性对话框统一显示「链接」（六语言包已有词条零新增），类型排序自动归组，预览走 info 卡；图标用用户提供的 3D 锁链设计图加工四规格 PNG 资产（16/32/128/256，边界洪泛+孔心种子洪泛透明化孔洞与背景、水印擦除、小尺寸加锐化、内容缩到画布 80% 与其他文档图标视觉尺寸对齐，浅/深底验证）。
+- **macOS 原生拖出的尝试与回退（已知事项）**——确认 WKWebView 的 HTML5 uri-list 拖出是纯文本载荷（不会转成 file-url/filenames pasteboard 类型：Finder 只收文本剪辑、Dock 废纸篓拒收，「拖到废纸篓无效」的真正根因，URI 百分号编码修复不动它），实现 NSDraggingSession 原生拖出（NSURL file URL + Move|Copy|Generic，objc2 定义 NSDraggingSource，命令阻塞至 endedAtPoint 对齐 Windows OLE 语义，拖回本窗口走 WKWebView 的 HTML5 drop 合成 + nativeDragOut 会话分流）。真机拖动即 objc 崩溃退出（未定位到具体调用点），已按用户要求回退启用路径：mac 恢复 HTML5 拖出（应用内拖拽恢复正常；拖到 Dock 废纸篓仍不可用），Rust 侧实现与命令保留但不再被前端触发（canNativeDragOut 恒 false），重启用前必须先真机定位崩溃点。Windows OLE 拖出不受影响。
+- e2e：新增 optimizations-52 六用例（symlink 双击跳转/无效本地路径回滚/同路径刷新原位报错/sftp 无效路径回滚/分屏剪切源窗格立即更新/i18n 兼容）；tauri-mock 对齐真实契约（list_dir 缺路径按码 reject 裸串、symlink 夹具镜像真实后端 is_dir=false、stat 跟随链接语义）；i18n 六语言用例的菜单分组标签断言收窄到 menu 内（链接行类型列同词不再撞 strict 匹配）。回归：vitest 832 + e2e 259 全绿；tsc 0 错；cargo check default/nfs/sftp 组合全过。
+- 已知事项（语言包仓库）：待补回「动画效果/朴素/优雅/雅：菜单展开、拖拽反馈与动效平滑跟手；素：全部瞬时（原始行为）」4 个 UI key（v0.6.6 随面板移除而删，本版恢复面板）+ errors 表新增 NO_SUCH_PATH 码；查不到翻译自动回退中文不阻塞发布。
+
+
 ## v0.50.1 (2026-11-22)
 
 > 本版为 v0.45–v0.50 六版本全量代码评审（P0/P1/P2）的修复批次：性能、安全、正确性与维护性，无新特性。评审发现的 P0 一项、P1 五项全部修复；P2 主题（落盘暂存/门禁宏化/feature 门控/池锁/批量收集）与前端体验件（轮询剥离/分区拆分/zoom 归口）一并落地。
