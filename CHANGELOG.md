@@ -12,6 +12,9 @@ GitHub Release 说明（release notes），因此每次发版前请先在这里�
 
 - **SFTP 连接对话框分组候选改主题化 combobox**——v0.51.0 的分组候选枚举用 datalist 原生下拉，白色气泡与主题不符；对齐地址栏补全风格（bg-popover + shadow-elevate + bg-accent 高亮），↓↑ 导航 / Enter 选中 / Esc 关闭 / 点击外收口；候选 = 现有分组名去重、排除当前输入、保持侧栏首现序。
 - **语言包 v0.6.8（i18n 补齐）**——「动画效果 / 朴素 / 优雅 / 说明句」4 keys 回归六语言（v0.51.0 恢复动画级别设置面板时欠账，非中文界面此前回退中文）+ 磁盘卷用量「已用 {used} / {total}（{pct}%）」（v0.51.0-pre 欠账）+ NO_SUCH_PATH 错误码六语言（无效路径报错翻译）；keys.txt 重提取 1117→1122 strings、errors 22，check-coverage 六包全绿。回退中文不受影响，非中文界面观感补齐。
+- **搜索剪枝 Windows 系统目录（回收站）**——内容搜索/「搜索（当前层）」递归进入 `$RECYCLE.BIN`/`RECYCLER`/`System Volume Information`（不以点开头，躲过 ignore/walkdir 的 hidden 过滤——只认 `.` 前缀不看 DOS hidden 属性），已删除文件被当普通内容搜出来；`search.rs` 新增 `is_system_junk_dir` 名字级剪枝（大小写不敏感）递归前整棵跳过、`find.rs` 同款 `filter_entry`；全盘索引走 indexer 自己的排除清单不受影响；Rust 单测两例（含开启「显示隐藏」的盘根递归场景）。
+- **地址栏兼容 scp 式 sftp 写法**——直接输 `127.0.0.1:/home/user`（不带协议/端口/用户名）即归一 `sftp://127.0.0.1/home/user` 弹连接框预填主机/端口/根目录（用户名留待补填）；`user@host:/abs` 同样支持；单字母盘符段不误伤（`C:/Users`、`D:/home` 仍是本地路径）；`parseSftpAuthority` 宽松化允许无 user@（id 恒不与已连接 id 冲突）；`normalizeScpLikeSftp` 接入地址栏预检（避免 statPath 误报「路径不存在」）与 navigate 全入口兜底；TS 单测十例。
+- e2e：连续新建文件夹用例 `test.slow()` 加固（慢 runner 上改名提交后列表更新偶超 5s 默认断言窗，CI 实测一次 flaky）。
 
 ## v0.51.0 (2026-11-24)
 
