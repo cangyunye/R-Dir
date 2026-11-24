@@ -65,6 +65,7 @@ import {
   saveSearchFullscreen,
   saveSearchMaxDepth,
 } from "@/lib/persist";
+import { globToRegExp } from "@/lib/batch-rename";
 import type { FileEntry, FindEntry, IndexHit, IndexStatusView, SearchMatch } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -79,17 +80,6 @@ function extensionOf(path: string): string {
 function dirOf(path: string): string {
   const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return i < 0 ? "" : path.slice(0, i + 1);
-}
-
-/** 通配符转整名匹配正则：* → .*、? → .，其余转义（fd --glob 的前端等价，用于当前层过滤） */
-function globToRegExp(glob: string, caseSensitive: boolean): RegExp {
-  let src = "";
-  for (const ch of glob) {
-    if (ch === "*") src += ".*";
-    else if (ch === "?") src += ".";
-    else src += ch.replace(/[.*+?^${}()|[\]\\]/, "\\$&");
-  }
-  return new RegExp(`^${src}$`, caseSensitive ? "" : "i");
 }
 
 /** 灯芯按钮灯色分组：蓝/绿/青 = 搜索范围，琥珀/紫 = 匹配方式 */

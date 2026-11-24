@@ -382,7 +382,8 @@ pub fn rename_entry(path: &str, new_name: &str) -> Result<String, String> {
     let parent = p.parent().ok_or("无父目录")?;
     let target = parent.join(new_name);
     if target.exists() {
-        return Err(format!("{} 已存在", new_name));
+        // v0.52 契约化：对齐 create 路径的 EXISTS 码（批量改名行状态可编码化解析）
+        return Err(format!("EXISTS|同名条目已存在：{new_name}"));
     }
     fs::rename(p, &target).map_err(|e| format!("重命名失败：{}", e))?;
     Ok(target.to_string_lossy().to_string())

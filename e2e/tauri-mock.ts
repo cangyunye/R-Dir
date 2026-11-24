@@ -127,6 +127,11 @@ export async function installTauriMock(page: Page): Promise<void> {
       "sftp://u@127.0.0.1:22/remote/dst": [{ name: "tree", dir: true }],
       "sftp://u@127.0.0.1:22/remote/dst/tree": [{ name: "inner.txt", size: 12 }],
     };
+    // v0.52 批量改名分页夹具：独立顶层目录（>20 条触发翻页；不动家目录 6 项）
+    FS["/mock/bulk"] = Array.from({ length: 25 }, (_, i) => ({
+      name: `bulk${String(i + 1).padStart(2, "0")}.txt`,
+      size: 10,
+    }));
     // 链接目标键：经 link-to-docs 的 list_dir 与真实 read_dir 一样跟随目录链接
     FS[`${HOME}/link-to-docs`] = FS[`${HOME}/Documents`];
 

@@ -86,6 +86,8 @@ export interface PaneHandlers {
   onCut: (paneId: number, paths: string[]) => void;
   onDelete: (paneId: number, paths: string[]) => void;
   onRename: (paneId: number, entry: FileEntry) => void;
+  /** v0.52 批量改名（多选 ≥2 右键入口） */
+  onBatchRename: (paneId: number, entries: FileEntry[]) => void;
   onRenameCommit: (path: string, name: string) => void;
   onRenameCancel: () => void;
   /** v0.31 标签视图条目重命名（改名 + 迁移标签/快捷访问路径） */
@@ -607,6 +609,7 @@ const PaneView = memo(function PaneView({
         onCut={(p) => h.onCut(pane.id, p)}
         onDelete={(p) => h.onDelete(pane.id, p)}
         onRename={(e) => h.onRename(pane.id, e)}
+        onBatchRename={h.onBatchRename}
         onCopyPath={h.onCopyPath}
         onRefresh={() => h.onRefresh(pane.id)}
         onDropPaths={(src, paths, op, target) => h.onDropPaths(src, paths, op, target)}
@@ -692,6 +695,7 @@ const PaneView = memo(function PaneView({
         onCut={(p) => h.onCut(pane.id, p)}
         onDelete={(p) => h.onDelete(pane.id, p)}
         onRename={(e) => h.onRename(pane.id, e)}
+        onBatchRename={h.onBatchRename}
         onCopyPath={h.onCopyPath}
         onRefresh={() => h.onRefresh(pane.id)}
         onDropPaths={(src, paths, op, target) => h.onDropPaths(src, paths, op, target)}
@@ -764,6 +768,7 @@ const PaneView = memo(function PaneView({
             onCut={(p) => h.onCut(pane.id, p)}
             onDelete={(p) => h.onDelete(pane.id, p)}
             onRename={(e) => h.onRename(pane.id, e)}
+        onBatchRename={h.onBatchRename}
             onRenameCommit={h.onRenameCommit}
             onRenameCancel={h.onRenameCancel}
             onCopyPath={h.onCopyPath}

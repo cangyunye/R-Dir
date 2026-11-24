@@ -65,6 +65,7 @@ export function FileTreeList({
   onCut,
   onDelete,
   onRename,
+  onBatchRename,
   onCopyPath,
   onRefresh,
   onDropPaths,
@@ -147,6 +148,8 @@ export function FileTreeList({
   onCut: (paths: string[]) => void;
   onDelete: (paths: string[]) => void;
   onRename: (entry: FileEntry) => void;
+  /** v0.52 批量改名（多选 ≥2；转发右键菜单入口） */
+  onBatchRename?: (paneId: number, entries: FileEntry[]) => void;
   onCopyPath: (path: string) => void;
   onRefresh: () => void;
   /** 跨窗格拖拽落盘：targetPaneId 为鼠标松开时检测到的目标窗格 */
@@ -965,6 +968,7 @@ export function FileTreeList({
                           onCopy={onCopy}
                           onCut={onCut}
                           onRename={onRename}
+                          onBatchRename={onBatchRename}
                           onDelete={onDelete}
                           onUndo={onUndo}
                           onRedo={onRedo}

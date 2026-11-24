@@ -442,6 +442,7 @@ export const DEFAULT_MENU_CONFIG: Record<string, boolean> = {
   compress: true, // 压缩为
   extract: true, // 解压
   compare: true, // 比较
+  batchRename: true, // 批量改名
   tags: true, // 标签
   quickAccess: true, // 添加到快捷访问
   quickLinks: false, // 快捷链接（创建快捷方式 / 发送到桌面）：默认不显示

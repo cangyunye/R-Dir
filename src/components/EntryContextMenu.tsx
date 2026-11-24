@@ -25,6 +25,7 @@ import {
   MonitorDown,
   Pencil,
   Plus,
+  Replace,
   RefreshCw,
   Scissors,
   Share2,
@@ -188,6 +189,8 @@ export interface EntryMenuProps {
   onCopy: (paths: string[]) => void;
   onCut: (paths: string[]) => void;
   onRename: (entry: FileEntry) => void;
+  /** v0.52 批量改名（多选 ≥2 时显示；entries = targets 解析后的完整条目） */
+  onBatchRename?: (paneId: number, entries: FileEntry[]) => void;
   onDelete: (paths: string[]) => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -246,6 +249,7 @@ export function EntryContextMenuContent({
   onCopy,
   onCut,
   onRename,
+  onBatchRename,
   onDelete,
   onUndo,
   onRedo,
@@ -471,6 +475,20 @@ export function EntryContextMenuContent({
       <ContextMenuItem onClick={() => { markSuppressRefocus(); onRename(entry); }}>
         <Pencil className="mr-2 h-4 w-4" /> {t("重命名")}
       </ContextMenuItem>
+      {targets.length >= 2 && show("batchRename") && onBatchRename && (
+        <ContextMenuItem
+          onClick={() =>
+            onBatchRename(
+              paneId,
+              targets
+                .map((p) => entries.find((x) => x.path === p))
+                .filter((e): e is FileEntry => !!e),
+            )
+          }
+        >
+          <Replace className="mr-2 h-4 w-4" /> {t("批量改名…")}
+        </ContextMenuItem>
+      )}
       <ContextMenuItem
         onClick={() => onDelete(targets)}
         className="text-destructive focus:text-destructive"

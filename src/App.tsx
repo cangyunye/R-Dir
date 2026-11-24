@@ -93,6 +93,7 @@ import {
   listDir,
   moveEntries,
   moveEntriesPlan,
+  noteSelfMutatedDirs,
   queryModifiers,
   scanConflicts,
   scanDirDuplicates,
@@ -252,6 +253,7 @@ import { Button } from "@/components/ui/button";
 import { AlertCircle, Bird } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PropertiesDialog } from "@/components/PropertiesDialog";
+import { BatchRenameDialog } from "@/components/BatchRenameDialog";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { DiffDialog } from "@/components/DiffDialog";
 import { TextDiffDialog, type TextDiffSource } from "@/components/TextDiffDialog";
@@ -2894,6 +2896,9 @@ useEffect(() => {
   /** v0.16 属性弹窗：右键「属性」选中的条目（目录递归统计大小） */
   const [propertiesEntries, setPropertiesEntries] = useState<FileEntry[] | null>(null);
 
+  /** v0.52 批量改名：窗格 + 打开时多选快照（dirPath/dirEntries 渲染时从窗格现取） */
+  const [batchRenameReq, setBatchRenameReq] = useState<{ paneId: number; entries: FileEntry[] } | null>(null);
+
   /** v0.17 差异比对窗口：左右两个本地目录 */
   const [diffTarget, setDiffTarget] = useState<{
     tabId: number;
@@ -4777,6 +4782,21 @@ useEffect(() => {
     [renaming, refreshPane, showError, pushOp, isSftpPath, sftp],
   );
 
+  /** v0.52 批量改名单条执行：按 scheme 路由（含 SFTP 自动重连），错误原样抛给行状态 */
+  const renameForBatch = useCallback(
+    async (path: string, newName: string) => {
+      if (isSftpPath(path) && !(await sftp.ensureConnected(path))) {
+        throw new Error(t("未连接到该服务器"));
+      }
+      return isSftpPath(path)
+        ? await sftpRename(path, newName)
+        : isNfsPath(path)
+          ? await nfsRename(path, newName)
+          : await renameEntry(path, newName);
+    },
+    [sftp],
+  );
+
   const doDeleteNow = useCallback(
     async (p: number, list: string[]) => {
       try {
@@ -5551,6 +5571,7 @@ useEffect(() => {
     !!appConfirmReq ||
     !!confirmDelete ||
     !!propertiesEntries ||
+    !!batchRenameReq ||
     sftp.connectOpen ||
     sftp.masterKeyOpen ||
     sftp.importPwOpen ||
@@ -5675,6 +5696,7 @@ useEffect(() => {
     onCut: (paneId, paths) => doCut(paneId, paths),
     onDelete: (paneId, paths) => void doDelete(paneId, paths),
     onRename: startRename,
+    onBatchRename: (paneId, entries) => setBatchRenameReq({ paneId, entries }),
     onRenameCommit: (path, name) => void commitRename(path, name),
     onRenameCancel: () => setRenaming(null),
     onTagRename: (path, name) => void renameTagEntry(path, name),
@@ -6494,6 +6516,36 @@ useEffect(() => {
           onCancel={() => setConfirmDelete(null)}
         />
       )}
+
+      {/* v0.52 批量改名：左规则右预览，执行/撤销仅窗口内（关窗方案即弃） */}
+      {batchRenameReq &&
+        (() => {
+          let pane: PaneState | undefined;
+          for (const tb of tabs) {
+            const p = tb.panes[batchRenameReq.paneId];
+            if (p) {
+              pane = p;
+              break;
+            }
+          }
+          if (!pane) return null;
+          return (
+            <BatchRenameDialog
+              key={batchRenameReq.entries.map((e) => e.path).join("|")}
+              paneId={batchRenameReq.paneId}
+              dirPath={pane.path}
+              dirEntries={pane.entries}
+              selection={batchRenameReq.entries}
+              renameOne={renameForBatch}
+              onAfterMutation={() => {
+                noteSelfMutatedDirs([pane.path]);
+                refreshPane(pane.id);
+              }}
+              refreshDir={() => listDir(pane.path)}
+              onClose={() => setBatchRenameReq(null)}
+            />
+          );
+        })()}
 
       {/* v0.16 属性弹窗：目录递归统计大小 + 滚动数字 */}
       {propertiesEntries && (

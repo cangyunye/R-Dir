@@ -108,6 +108,7 @@ const CONTEXT_MENU_ITEMS: { id: string; label: string }[] = [
   { id: "extract", label: "解压" },
   { id: "quickLinks", label: "快捷链接（创建快捷方式 / 发送到桌面）" },
   { id: "compare", label: "比较" },
+  { id: "batchRename", label: "批量改名…" },
   { id: "tags", label: "标签" },
   { id: "quickAccess", label: "添加到快捷访问" },
 ];

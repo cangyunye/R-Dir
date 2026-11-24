@@ -133,6 +133,7 @@ export function IconGrid({
   onCut,
   onDelete,
   onRename,
+  onBatchRename,
   onRenameCommit,
   onRenameCancel,
   onCopyPath,
@@ -222,6 +223,8 @@ export function IconGrid({
   onCut: (paths: string[]) => void;
   onDelete: (paths: string[]) => void;
   onRename: (entry: FileEntry) => void;
+  /** v0.52 批量改名（多选 ≥2；转发右键菜单入口） */
+  onBatchRename?: (paneId: number, entries: FileEntry[]) => void;
   onRenameCommit: (path: string, name: string) => void;
   onRenameCancel: () => void;
   onCopyPath: (path: string) => void;
@@ -1085,6 +1088,7 @@ export function IconGrid({
                         onCopy={onCopy}
                         onCut={onCut}
                         onRename={onRename}
+                        onBatchRename={onBatchRename}
                         onDelete={onDelete}
                         onUndo={onUndo}
                         onRedo={onRedo}
