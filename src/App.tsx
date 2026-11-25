@@ -1763,6 +1763,21 @@ useEffect(() => {
     },
     [],
   );
+  /** v0.52 悬停预取：鼠标悬停目录行即后台 listDir（双击进入时缓存命中秒开；
+   *  USB/网络盘的每层枚举延迟是连钻卡顿的根源）。行元素带 data-drop-dir = 目录。 */
+  const lastHoverPrefetchRef = useRef<string | null>(null);
+  useEffect(() => {
+    const onOver = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement | null)?.closest?.("[data-path]");
+      const p = el?.getAttribute("data-path") ?? "";
+      if (!p || p === lastHoverPrefetchRef.current) return;
+      if (!el?.hasAttribute("data-drop-dir")) return; // 仅目录
+      lastHoverPrefetchRef.current = p;
+      void prefetchDir(p);
+    };
+    window.addEventListener("mouseover", onOver);
+    return () => window.removeEventListener("mouseover", onOver);
+  }, [prefetchDir]);
   /** v0.52 同路径在途加载合并（快速连钻卡死真因）：refreshKey 的任何 bump
    *  （watcher 事件 / F5 / 各类操作收尾的 refreshPane）都会重跑本 effect——
    *  旧实现无条件取消重启 listDir，慢后端（USB 大目录/远程）上刷新风暴期间
