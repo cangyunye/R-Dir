@@ -1745,45 +1745,11 @@ useEffect(() => {
   const lastGoodPaneRef = useRef<
     Map<number, { path: string; title: string; history: string[]; histIndex: number }>
   >(new Map());
-  /** v0.52 目录列表缓存 + 单击预取（快速连钻体验核心）：单击选中目录的那一刻
-   *  就后台 listDir 预取，双击导航时若缓存新鲜（<15s）直接秒显内容，再后台
-   *  静默刷新确认。USB/网络盘上「双击 → 等枚举 → 才能进」的卡顿由此消除。 */
-  const dirCacheRef = useRef<Map<string, { entries: FileEntry[]; ts: number }>>(new Map());
-  const prefetchDir = useCallback(
-    (path: string) => {
-      if (!path) return;
-      const hit = dirCacheRef.current.get(path);
-      if (hit && Date.now() - hit.ts < 15_000) return;
-      navDebugPush("prefetch", path);
-      void listDir(path)
-        .then((entries) => {
-          dirCacheRef.current.set(path, { entries, ts: Date.now() });
-        })
-        .catch(() => {});
-    },
-    [],
-  );
-  /** v0.52 悬停预取：鼠标悬停目录行即后台 listDir（双击进入时缓存命中秒开；
-   *  USB/网络盘的每层枚举延迟是连钻卡顿的根源）。行元素带 data-drop-dir = 目录。 */
-  const lastHoverPrefetchRef = useRef<string | null>(null);
-  useEffect(() => {
-    const onOver = (e: MouseEvent) => {
-      const el = (e.target as HTMLElement | null)?.closest?.("[data-path]");
-      const p = el?.getAttribute("data-path") ?? "";
-      if (!p || p === lastHoverPrefetchRef.current) return;
-      if (!el?.hasAttribute("data-drop-dir")) return; // 仅目录
-      lastHoverPrefetchRef.current = p;
-      void prefetchDir(p);
-    };
-    window.addEventListener("mouseover", onOver);
-    return () => window.removeEventListener("mouseover", onOver);
-  }, [prefetchDir]);
-  /** v0.52 同路径在途加载合并（快速连钻卡死真因）：refreshKey 的任何 bump
-   *  （watcher 事件 / F5 / 各类操作收尾的 refreshPane）都会重跑本 effect——
-   *  旧实现无条件取消重启 listDir，慢后端（USB 大目录/远程）上刷新风暴期间
-   *  每次重启都从头再来，永远加载不完 =「卡在下一个进入的目录，等一段时间
-   *  才能进去」。现在同路径在途只更新 wanted（最新 key/面板快照），在途请求
-   *  完成后按最新 wanted 落账；不同路径才取消重启。 */
+  /** v0.52 同路径在途加载合并：refreshKey 的任何 bump（watcher 事件 / F5 / 各类操作
+   *  收尾的 refreshPane）都会重跑本 effect。此前无条件取消在途请求并重启 listDir，
+   *  刷新间隔短于一次读取耗时时（慢盘大目录 / 远程）加载永远完不成。现在同路径在途
+   *  只更新 wanted（最新 key/面板快照），在途请求完成后按最新 wanted 落账；换路径才
+   *  取消重启。 */
   const loadCtlRef = useRef<
     Map<
       number,
@@ -1893,30 +1859,17 @@ useEffect(() => {
       ts.map((t) => {
         const p = t.panes[activePane.id];
         if (!p) return t;
-        // 快速重读不点亮「正在加载…」横条：本地已填充窗格的「同目录」重读毫秒级，
-        // 横条随每次刷新闪一下（此前新建后 refreshPane + fs watcher 各一轮 = 连闪两次）。
+        // 快速重读不点亮「正在加载…」横条：本地已填充窗格的重读毫秒级，横条随每次
+        // 刷新闪一下（此前新建后 refreshPane + fs watcher 各一轮 = 连闪两次）。
         // 首次进入（无内容可展示）与慢速远程后端（sftp/nfs）保留横条反馈。
-        // v0.52 修复（Windows 语义）：**换目录导航**清空旧 entries 并点亮横条——
-        // 此前本地快速重读静默保留旧目录的陈旧行且可点击，快速连钻深层目录时
-        // 双击会命中上一级目录的残留行（看起来像「卡在下一个进入的目录」）。
-        // 同目录刷新（F5/回车/watcher）维持静默，不清行不闪横条。
-        const navigating = p.path !== activePane.path;
-        // v0.52 缓存预填：单击预取命中的目录直接秒显内容（不点亮加载横条），
-        // 后台 listDir 到达后再静默换新（无缓存仍清空+横条，Windows 语义）
-        const cached = navigating ? dirCacheRef.current.get(activePane.path) : undefined;
-        const freshCache = cached && Date.now() - cached.ts < 15_000 ? cached : undefined;
-        const silentReload = !navigating && p.entries.length > 0 && !isSftpPath(p.path) && !isNfsPath(p.path);
+        // 换目录导航期间旧目录的条目保留到新列表到达（不闪空白）；这段时间列表
+        // 置灰并禁点，防止连点落到上一级的残留行上（各视图 useStaleListing）。
+        const silentReload = p.entries.length > 0 && !isSftpPath(p.path) && !isNfsPath(p.path);
         return {
           ...t,
           panes: {
             ...t.panes,
-            [activePane.id]: {
-              ...p,
-              loading: !silentReload && !freshCache,
-              entries: navigating ? (freshCache ? freshCache.entries : []) : p.entries,
-              selection: navigating ? [] : p.selection,
-              error: null,
-            },
+            [activePane.id]: { ...p, loading: !silentReload, error: null },
           },
         };
       }),
@@ -2730,8 +2683,6 @@ useEffect(() => {
   // 列表操作（作用于指定 pane）
   const select = useCallback(
     (paneId: number, entry: FileEntry, additive: boolean) => {
-      // v0.52 单击目录即预取其列表：双击进入时缓存命中，秒开
-      if (entry.is_dir) void prefetchDir(entry.path);
       setTabs((ts) =>
         ts.map((t) => {
           const pane = t.panes[paneId];

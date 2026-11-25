@@ -651,3 +651,46 @@ describe("名称列宽（v0.44.0 分屏可收缩 + zoom 换算）", () => {
     }
   });
 });
+
+describe("FileList 行单击意图（双击自实现，不依赖 dblclick 事件）", () => {
+  const rowOf = (c: HTMLElement, name: string) =>
+    c.querySelector(`[data-path="/mock/dir/${name}"]`) as HTMLElement;
+
+  it("桌面端连击序列（序号 1→4，全程无 dblclick 事件）：第 2、4 次单击打开，第 1、3 次只选中", () => {
+    const onOpen = vi.fn();
+    const onRename = vi.fn();
+    const onSelect = vi.fn();
+    const { container } = renderList({ onOpen, onRename, onSelect });
+    const row = rowOf(container, "Documents");
+    for (const detail of [1, 2, 3, 4]) fireEvent.click(row, { detail });
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    expect(onOpen).toHaveBeenLastCalledWith(ENTRIES[0]);
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    expect(onRename).not.toHaveBeenCalled();
+  });
+
+  it("不监听 dblclick 事件：浏览器补发的 dblclick 不会二次打开", () => {
+    const onOpen = vi.fn();
+    const { container } = renderList({ onOpen });
+    rowOf(container, "main.rs").dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("慢速双击（两次序号 1 的单击相隔 600ms）仍是重命名而不是打开", () => {
+    vi.useFakeTimers({ now: 100_000 });
+    try {
+      const onOpen = vi.fn();
+      const onRename = vi.fn();
+      const { container } = renderList({ onOpen, onRename });
+      const row = rowOf(container, "Documents");
+      fireEvent.click(row, { detail: 1 });
+      vi.setSystemTime(100_600);
+      fireEvent.click(row, { detail: 1 });
+      expect(onRename).toHaveBeenCalledTimes(1);
+      expect(onRename).toHaveBeenCalledWith(ENTRIES[0]);
+      expect(onOpen).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

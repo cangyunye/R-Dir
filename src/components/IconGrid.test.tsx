@@ -133,10 +133,13 @@ describe("IconGrid（v0.27 大图标/画廊视图）", () => {
     );
   });
 
-  it("双击打开", () => {
+  it("双击打开：单击序号 1 → 2（真实浏览器序列；不再依赖浏览器 dblclick 事件）", () => {
     const onOpen = vi.fn();
     const { container } = render(<IconGrid {...makeProps({ onOpen })} />);
-    fireEvent.doubleClick(container.querySelector('[data-path="/mock/dir/Documents"]')!);
+    const item = container.querySelector('[data-path="/mock/dir/Documents"]')!;
+    fireEvent.click(item, { detail: 1 });
+    expect(onOpen).not.toHaveBeenCalled();
+    fireEvent.click(item, { detail: 2 });
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ name: "Documents" }));
   });
 
