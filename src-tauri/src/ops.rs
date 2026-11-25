@@ -247,7 +247,7 @@ fn apply_dir(
         if target.is_dir() {
             // 合并：保留目标已有内容
         } else {
-            force_remove_file(target).map_err(|e| format!("覆盖 {} 失败：{}", target.display(), io_hint(e)))?;
+            force_remove_file(target).map_err(|e| busy_or(format!("覆盖 {} 失败", target.display()), e))?;
         }
     }
     fs::create_dir_all(target).map_err(|e| format!("创建目录 {} 失败：{}", target.display(), e))?;
@@ -269,7 +269,7 @@ fn apply_file(
     cb: &mut dyn FnMut(CbEvent) -> bool,
 ) -> Result<(), String> {
     if target.exists() && target.is_dir() {
-        fs::remove_dir_all(target).map_err(|e| format!("覆盖目录 {} 失败：{}", target.display(), e))?;
+        fs::remove_dir_all(target).map_err(|e| busy_or(format!("覆盖目录 {} 失败", target.display()), e))?;
     }
     if mode == Mode::Move {
         // rename 本身即可替换已存在目标（Unix 原子；Windows 走 MOVEFILE_REPLACE_EXISTING），
@@ -278,11 +278,11 @@ fn apply_file(
             return Ok(());
         }
         copy_file_progress(src, target, cb)
-            .map_err(|e| format!("移动 {} 失败：{}", src.display(), io_hint(e)))?;
-        force_remove_file(src).map_err(|e| format!("移动 {} 清理失败：{}", src.display(), io_hint(e)))?;
+            .map_err(|e| busy_or(format!("移动 {} 失败", src.display()), e))?;
+        force_remove_file(src).map_err(|e| busy_or(format!("移动 {} 清理失败", src.display()), e))?;
     } else {
         copy_file_progress(src, target, cb)
-            .map_err(|e| format!("复制 {} 失败：{}", src.display(), io_hint(e)))?;
+            .map_err(|e| busy_or(format!("复制 {} 失败", src.display()), e))?;
     }
     Ok(())
 }
@@ -325,7 +325,7 @@ pub fn copy_entries(paths: &[String], dest: &str, mut cb: ProgressCb) -> Result<
         let src = Path::new(p);
         let name = src.file_name().ok_or_else(|| format!("非法路径：{}", p))?;
         let target = dest.join(name);
-        copy_recursive(src, &target, &mut cb).map_err(|e| format!("复制 {} 失败：{}", p, e))?;
+        copy_recursive(src, &target, &mut cb).map_err(|e| busy_or(format!("复制 {p} 失败"), e))?;
         created.push(target.to_string_lossy().to_string());
         if !cb(CbEvent::EntryDone) {
             return Err(cancelled().to_string());
@@ -348,8 +348,8 @@ pub fn move_entries(paths: &[String], dest: &str, mut cb: ProgressCb) -> Result<
         let target = dest.join(name);
         // 跨卷 rename 会失败，回退 copy+delete；同卷直接覆盖
         if fs::rename(src, &target).is_err() {
-            copy_recursive(src, &target, &mut cb).map_err(|e| format!("移动 {} 失败：{}", p, e))?;
-            remove_recursive(src).map_err(|e| format!("移动 {} 清理失败：{}", p, e))?;
+            copy_recursive(src, &target, &mut cb).map_err(|e| busy_or(format!("移动 {p} 失败"), e))?;
+            remove_recursive(src).map_err(|e| busy_or(format!("移动 {p} 清理失败"), e))?;
         }
         moved.push((p.clone(), target.to_string_lossy().to_string()));
         if !cb(CbEvent::EntryDone) {
@@ -385,7 +385,7 @@ pub fn rename_entry(path: &str, new_name: &str) -> Result<String, String> {
         // v0.52 契约化：对齐 create 路径的 EXISTS 码（批量改名行状态可编码化解析）
         return Err(format!("EXISTS|同名条目已存在：{new_name}"));
     }
-    fs::rename(p, &target).map_err(|e| format!("重命名失败：{}", e))?;
+    fs::rename(p, &target).map_err(|e| busy_or("重命名失败".into(), e))?;
     Ok(target.to_string_lossy().to_string())
 }
 
@@ -400,8 +400,12 @@ fn map_trash_error(msg: String) -> String {
         format!("删除失败：权限不足，请以管理员身份运行 R-Dir，或将文件拖到回收站后手动清空。
 详情：{}", msg)
     } else if msg.contains("being used") || msg.contains("占用") {
-        format!("删除失败：文件正在被其他程序占用，请关闭后重试。
-详情：{}", msg)
+        // 码化：前端 isInUseError 命中后弹占用详情对话框（fslock 列占用者），不再只给一句提示
+        format!(
+            "{}|文件正在被其他程序占用，请关闭后重试。详情：{}",
+            crate::ERR_IN_USE,
+            msg
+        )
     } else if msg.contains("aborted") || msg.contains("Aborted") {
         // IFileOperation 的 "Some operations were aborted"：多为句柄占用或回收站瞬时不可用
         "删除失败：无法移入回收站（目录可能正被其他程序占用，或该磁盘回收站暂不可用）".to_string()
@@ -445,7 +449,7 @@ pub fn delete_entries(paths: &[String]) -> Result<(), String> {
 pub fn permanent_delete_entries(paths: &[String]) -> Result<(), String> {
     for p in paths {
         let path = Path::new(p);
-        remove_recursive(path).map_err(|e| format!("永久删除 {} 失败：{}", p, e))?;
+        remove_recursive(path).map_err(|e| busy_or(format!("永久删除 {p} 失败"), e))?;
     }
     Ok(())
 }
@@ -865,6 +869,27 @@ fn io_hint(e: std::io::Error) -> String {
         format!("{e}（文件可能为只读、已锁定或正被其他程序占用）")
     } else {
         e.to_string()
+    }
+}
+
+/// 占用类 io 错误判定：Windows 共享冲突/锁冲突（os error 32/33）、Unix EBUSY。
+#[cfg(windows)]
+fn is_busy_io(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(32) | Some(33))
+}
+
+#[cfg(unix)]
+fn is_busy_io(e: &std::io::Error) -> bool {
+    e.raw_os_error() == Some(libc::EBUSY)
+}
+
+/// 占用类 io 错误统一产出 IN_USE 码（前端 isInUseError 命中后弹占用详情对话框，
+/// fslock::probe_file_lock 列占用者），其余错误保持「{prefix}：{io_hint(e)}」原文案。
+fn busy_or(prefix: String, e: std::io::Error) -> String {
+    if is_busy_io(&e) {
+        format!("{}|{}：{}", crate::ERR_IN_USE, prefix, io_hint(e))
+    } else {
+        format!("{}：{}", prefix, io_hint(e))
     }
 }
 
