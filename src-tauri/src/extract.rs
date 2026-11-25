@@ -149,18 +149,41 @@ fn top_level_of(name: &str) -> Option<String> {
 /// - smart：顶层条目（已滤 AppleDouble）≤1 且不与目标目录现有内容冲突 → 目标目录本身；
 ///   否则 `<归档名去末段扩展>/`（同名自动改名，同 compress::unique_dest）
 /// - folder：无条件解到 `<归档名>/`（右键「解压到 归档名/」）
-fn plan_dest(names: &[String], archive: &Path, target_dir: &Path, mode: &str) -> PathBuf {
+fn plan_dest(
+    names: &[String],
+    archive: &Path,
+    target_dir: &Path,
+    mode: &str,
+    overwrite: bool,
+) -> Result<PathBuf, String> {
+    let stem_dir = target_dir.join(archive_stem(archive));
+    // v0.52：撞名不再静默编号——overwrite=false 返回 EXTRACT_CONFLICT|<落点名>
+    // 交由前端弹覆盖确认；overwrite=true 解到原名（目录合并、同名文件覆盖写入）。
+    let conflict_err = || {
+        Err(format!(
+            "EXTRACT_CONFLICT|{}",
+            stem_dir
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "extract".into())
+        ))
+    };
     if mode == "folder" {
-        return crate::compress::unique_dest(&target_dir.join(archive_stem(archive)));
+        if stem_dir.exists() && !overwrite {
+            return conflict_err();
+        }
+        return Ok(stem_dir);
     }
     let tops: std::collections::BTreeSet<String> =
         names.iter().filter_map(|n| top_level_of(n)).collect();
     let here_ok = tops.len() <= 1 && tops.iter().all(|t| !target_dir.join(t).exists());
     if here_ok {
-        target_dir.to_path_buf()
-    } else {
-        crate::compress::unique_dest(&target_dir.join(archive_stem(archive)))
+        return Ok(target_dir.to_path_buf());
     }
+    if stem_dir.exists() && !overwrite {
+        return conflict_err();
+    }
+    Ok(stem_dir)
 }
 
 /// 归档名去末段扩展（"foo.tar.gz" → "foo.tar"，与 Finder 归档实用工具一致）
@@ -219,6 +242,7 @@ fn extract_zip(
     target_dir: &Path,
     mode: &str,
     password: Option<&str>,
+    overwrite: bool,
     cb: Cb,
     check_cancel: &dyn Fn() -> bool,
 ) -> Result<ExtractOutcome, String> {
@@ -249,7 +273,7 @@ fn extract_zip(
             names.push(name);
         }
     }
-    let dest = plan_dest(&names, path, target_dir, mode);
+    let dest = plan_dest(&names, path, target_dir, mode, overwrite)?;
     std::fs::create_dir_all(&dest).map_err(|e| format!("无法创建目录：{e}"))?;
     let total = names
         .iter()
@@ -383,13 +407,14 @@ fn extract_tar(
     target_dir: &Path,
     mode: &str,
     comp: Option<TarComp>,
+    overwrite: bool,
     cb: Cb,
     check_cancel: &dyn Fn() -> bool,
 ) -> Result<ExtractOutcome, String> {
     // 第一遍：扫条目名（需顺序解压流，无法跳读；大归档多花一次解压 CPU 换取
     // 先规划落点 + 预知总数，落盘前失败不留半成品）
     let names = scan_tar(path, comp)?;
-    let dest = plan_dest(&names, path, target_dir, mode);
+    let dest = plan_dest(&names, path, target_dir, mode, overwrite)?;
     std::fs::create_dir_all(&dest).map_err(|e| format!("无法创建目录：{e}"))?;
     cb(CbEv::Plan(names.len()));
 
@@ -553,6 +578,7 @@ fn extract_sys_tar(
     path: &Path,
     target_dir: &Path,
     mode: &str,
+    overwrite: bool,
     cb: Cb,
     check_cancel: &dyn Fn() -> bool,
 ) -> Result<ExtractOutcome, String> {
@@ -574,7 +600,7 @@ fn extract_sys_tar(
         .map(|l| l.trim_end_matches('\r').to_string())
         .filter(|l| !l.is_empty())
         .collect();
-    let dest = plan_dest(&names, path, target_dir, mode);
+    let dest = plan_dest(&names, path, target_dir, mode, overwrite)?;
     std::fs::create_dir_all(&dest).map_err(|e| format!("无法创建目录：{e}"))?;
     cb(CbEv::Plan(names.len()));
     cb(CbEv::Start("解压中…", 0));
@@ -636,6 +662,7 @@ pub async fn extract_archive(
     target_dir: String,
     mode: Option<String>,
     password: Option<String>,
+    overwrite: Option<bool>,
 ) -> Result<ExtractOutcome, String> {
     // 注册取消旗标（id 随进度事件下发；phase = extract 无前缀 → 前端 cancel_transfer）
     let id = crate::next_transfer_id();
@@ -648,7 +675,7 @@ pub async fn extract_archive(
     let id_task = id.clone();
     let sink = crate::events::EventSink::from(app);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        run_extract(&sink, &id_task, &flag, &path, &target_dir, mode.as_deref().unwrap_or("smart"), password.as_deref())
+        run_extract(&sink, &id_task, &flag, &path, &target_dir, mode.as_deref().unwrap_or("smart"), password.as_deref(), overwrite.unwrap_or(false))
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -664,6 +691,7 @@ pub(crate) fn run_extract(
     target_dir: &str,
     mode: &str,
     password: Option<&str>,
+    overwrite: bool,
 ) -> Result<ExtractOutcome, String> {
     let src = Path::new(path);
     let src_name = src
@@ -729,10 +757,10 @@ pub(crate) fn run_extract(
     let guard = |r: Result<ExtractOutcome, String>| -> Result<ExtractOutcome, String> { r };
 
     let r = match kind {
-        ArchiveKind::Zip => guard(extract_zip(src, target, mode, password, cb, &check)),
-        ArchiveKind::Tar(comp) => guard(extract_tar(src, target, mode, comp, cb, &check)),
+        ArchiveKind::Zip => guard(extract_zip(src, target, mode, password, overwrite, cb, &check)),
+        ArchiveKind::Tar(comp) => guard(extract_tar(src, target, mode, comp, overwrite, cb, &check)),
         ArchiveKind::Single(comp) => guard(extract_single(src, target, comp, cb, &check)),
-        ArchiveKind::SysTar => guard(extract_sys_tar(src, target, mode, cb, &check)),
+        ArchiveKind::SysTar => guard(extract_sys_tar(src, target, mode, overwrite, cb, &check)),
     };
     if !r.is_ok() && flag.load(Ordering::Relaxed) {
         return Err(cancelled());
@@ -870,15 +898,18 @@ mod tests {
     #[test]
     fn plan_dest_folder_mode_always_stems() {
         let dir = setup("planf");
-        // folder 模式：无条件建 <归档名>/ 文件夹（即使就地也可行）
-        let d = plan_dest(&["src/".into(), "src/a.txt".into()], Path::new("/x/foo.zip"), &dir, "folder");
+        // folder 模式：无条件落 <归档名>/（无撞名时原名直达）
+        let d = plan_dest(&["src/".into(), "src/a.txt".into()], Path::new("/x/foo.zip"), &dir, "folder", false).unwrap();
         assert_eq!(d, dir.join("foo"));
-        let d = plan_dest(&["a.txt".into()], Path::new("/x/foo.zip"), &dir, "folder");
+        let d = plan_dest(&["a.txt".into()], Path::new("/x/foo.zip"), &dir, "folder", false).unwrap();
         assert_eq!(d, dir.join("foo"));
-        // 同名已存在 → (2)
+        // v0.52 同名已存在 → EXTRACT_CONFLICT（前端弹覆盖确认）；overwrite=true 原名合并
         std::fs::create_dir_all(dir.join("foo")).unwrap();
-        let d = plan_dest(&["a.txt".into()], Path::new("/x/foo.zip"), &dir, "folder");
-        assert_eq!(d, dir.join("foo (2)"));
+        let r = plan_dest(&["a.txt".into()], Path::new("/x/foo.zip"), &dir, "folder", false);
+        assert!(r.is_err());
+        assert!(String::from(r.unwrap_err()).starts_with("EXTRACT_CONFLICT|"));
+        let d = plan_dest(&["a.txt".into()], Path::new("/x/foo.zip"), &dir, "folder", true).unwrap();
+        assert_eq!(d, dir.join("foo"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -886,14 +917,20 @@ mod tests {
     fn plan_dest_smart_and_collision() {
         let dir = setup("plan");
         // 单顶层目录且不存在 → 就地
-        let d = plan_dest(&["src/".into(), "src/a.txt".into()], Path::new("/x/foo.zip"), &dir, "smart");
+        let d = plan_dest(&["src/".into(), "src/a.txt".into()], Path::new("/x/foo.zip"), &dir, "smart", false).unwrap();
         assert_eq!(d, dir);
         // 多顶层 → foo/ 文件夹
-        let d = plan_dest(&["a.txt".into(), "src/b.txt".into()], Path::new("/x/foo.zip"), &dir, "smart");
+        let d = plan_dest(&["a.txt".into(), "src/b.txt".into()], Path::new("/x/foo.zip"), &dir, "smart", false).unwrap();
         assert_eq!(d, dir.join("foo"));
-        // 单顶层但与现有内容撞 → 文件夹
+        // 单顶层但与现有文件撞 → 落到 foo/ 归档名文件夹内（内部无文件级冲突不弹提示）
         std::fs::write(dir.join("a.txt"), "x").unwrap();
-        let d = plan_dest(&["a.txt".into()], Path::new("/x/foo.zip"), &dir, "smart");
+        let d = plan_dest(&["a.txt".into()], Path::new("/x/foo.zip"), &dir, "smart", false).unwrap();
+        assert_eq!(d, dir.join("foo"));
+        // v0.52 归档名文件夹已存在 → EXTRACT_CONFLICT / overwrite 原名合并
+        std::fs::create_dir_all(dir.join("foo")).unwrap();
+        let r = plan_dest(&["a.txt".into()], Path::new("/x/foo.zip"), &dir, "smart", false);
+        assert!(r.is_err());
+        let d = plan_dest(&["a.txt".into()], Path::new("/x/foo.zip"), &dir, "smart", true).unwrap();
         assert_eq!(d, dir.join("foo"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -996,7 +1033,7 @@ mod tests {
         );
         let target = dir.join("out");
         std::fs::create_dir_all(&target).unwrap();
-        let out = extract_zip(&archive, &target, "smart", None, nocb(), &not_cancelled).unwrap();
+        let out = extract_zip(&archive, &target, "smart", None, false, nocb(), &not_cancelled).unwrap();
         assert_eq!(out.files, 2, "{out:?}");
         assert_eq!(out.skipped, 2, "{out:?}");
         // 多顶层 → 文件夹模式，落点为 归档名/
@@ -1027,7 +1064,7 @@ mod tests {
         );
         let target = dir.join("out");
         std::fs::create_dir_all(&target).unwrap();
-        let out = extract_zip(&archive, &target, "smart", None, nocb(), &not_cancelled).unwrap();
+        let out = extract_zip(&archive, &target, "smart", None, false, nocb(), &not_cancelled).unwrap();
         // 单顶层目录 proj 且不撞 → 就地解到 target/proj
         assert_eq!(Path::new(&out.dest), &target);
         assert!(target.join("proj/src/main.rs").exists());
@@ -1053,7 +1090,7 @@ mod tests {
         assert!(st.success(), "系统 tar 打包失败");
         let target = dir.join("out");
         std::fs::create_dir_all(&target).unwrap();
-        let out = extract_tar(&archive, &target, "smart", Some(TarComp::Gz), nocb(), &not_cancelled).unwrap();
+        let out = extract_tar(&archive, &target, "smart", Some(TarComp::Gz), false, nocb(), &not_cancelled).unwrap();
         // 单顶层 src 且不撞 → 就地
         assert_eq!(Path::new(&out.dest), &target);
         assert_eq!(std::fs::read(target.join("src/a.txt")).unwrap(), b"hello");
@@ -1095,7 +1132,7 @@ mod tests {
         let _ = st; // --transform 各平台行为不一，失败也不影响主断言
         let target = dir.join("out");
         std::fs::create_dir_all(&target).unwrap();
-        let out = extract_tar(&archive, &target, "smart", None, nocb(), &not_cancelled).unwrap();
+        let out = extract_tar(&archive, &target, "smart", None, false, nocb(), &not_cancelled).unwrap();
         assert_eq!(std::fs::read(target.join("src/a.txt")).unwrap(), b"hello");
         assert!(!target.join("src/._a.txt").exists(), "{out:?}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1131,7 +1168,7 @@ mod tests {
         std::fs::write(&archive, b"not a zip").unwrap();
         let target = dir.join("out");
         std::fs::create_dir_all(&target).unwrap();
-        let err = extract_zip(&archive, &target, "smart", None, nocb(), &not_cancelled).unwrap_err();
+        let err = extract_zip(&archive, &target, "smart", None, false, nocb(), &not_cancelled).unwrap_err();
         assert!(err.contains("无法读取 zip"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1159,16 +1196,16 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
 
         // 未提供密码 → 需要密码
-        let err = extract_zip(&archive, &target, "smart", None, nocb(), &not_cancelled)
+        let err = extract_zip(&archive, &target, "smart", None, false, nocb(), &not_cancelled)
             .unwrap_err();
         assert_eq!(err, ERR_NEED_PASSWORD, "{err}");
         // 密码错误 → 密码错误（且无半成品残留）
-        let err = extract_zip(&archive, &target, "smart", Some("wrong"), nocb(), &not_cancelled)
+        let err = extract_zip(&archive, &target, "smart", Some("wrong"), false, nocb(), &not_cancelled)
             .unwrap_err();
         assert_eq!(err, ERR_WRONG_PASSWORD, "{err}");
         assert!(!target.join("sec").exists(), "错误密码不应留下解出文件");
         // 密码正确 → 解出
-        let out = extract_zip(&archive, &target, "smart", Some("pw123"), nocb(), &not_cancelled)
+        let out = extract_zip(&archive, &target, "smart", Some("pw123"), false, nocb(), &not_cancelled)
             .unwrap();
         assert_eq!(out.files, 1, "{out:?}");
         assert_eq!(
@@ -1185,7 +1222,7 @@ mod tests {
         std::fs::write(&fake, b"not a rar").unwrap();
         let target = dir.join("out");
         std::fs::create_dir_all(&target).unwrap();
-        let err = extract_sys_tar(&fake, &target, "smart", nocb(), &not_cancelled).unwrap_err();
+        let err = extract_sys_tar(&fake, &target, "smart", false, nocb(), &not_cancelled).unwrap_err();
         assert!(!err.is_empty(), "{err}");
         assert!(!err.contains("Enter passphrase"), "不能出现交互提示：{err}");
         let _ = std::fs::remove_dir_all(&dir);

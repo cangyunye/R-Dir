@@ -609,6 +609,7 @@ async fn c_extract_archive(ctx: &WebCtx, args: &Value) -> Result<Value, String> 
     let target_dir: String = arg(args, "targetDir")?;
     let mode: Option<String> = opt_arg(args, "mode")?;
     let password: Option<String> = opt_arg(args, "password")?;
+    let overwrite: Option<bool> = opt_arg(args, "overwrite")?;
     let (id, flag) = register_transfer_cancel(ctx, "");
     let id_task = id.clone();
     let sink = ctx.sink.clone();
@@ -621,6 +622,7 @@ async fn c_extract_archive(ctx: &WebCtx, args: &Value) -> Result<Value, String> 
             &target_dir,
             mode.as_deref().unwrap_or("smart"),
             password.as_deref(),
+            overwrite.unwrap_or(false),
         )
     })
     .await

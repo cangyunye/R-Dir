@@ -285,12 +285,14 @@ export const extractArchive = async (
   targetDir: string,
   mode: "smart" | "folder",
   password?: string,
+  overwrite?: boolean,
 ) => {
   const outcome = await invoke<ExtractOutcome>("extract_archive", {
     path,
     targetDir,
     mode,
     password: password ?? null,
+    overwrite: overwrite ?? false,
   });
   noteSelfMutatedDirs([targetDir]);
   return outcome;

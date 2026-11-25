@@ -1743,15 +1743,41 @@ useEffect(() => {
   const lastGoodPaneRef = useRef<
     Map<number, { path: string; title: string; history: string[]; histIndex: number }>
   >(new Map());
+  /** v0.52 同路径在途加载合并（快速连钻卡死真因）：refreshKey 的任何 bump
+   *  （watcher 事件 / F5 / 各类操作收尾的 refreshPane）都会重跑本 effect——
+   *  旧实现无条件取消重启 listDir，慢后端（USB 大目录/远程）上刷新风暴期间
+   *  每次重启都从头再来，永远加载不完 =「卡在下一个进入的目录，等一段时间
+   *  才能进去」。现在同路径在途只更新 wanted（最新 key/面板快照），在途请求
+   *  完成后按最新 wanted 落账；不同路径才取消重启。 */
+  const loadCtlRef = useRef<
+    Map<
+      number,
+      {
+        path: string;
+        cancelled: boolean;
+        /** 已完成（成功/失败都算）：完成后同路径的 refreshKey bump 必须正常重载 */
+        done: boolean;
+        wanted: { key: string; path: string; title: string; history: string[]; histIndex: number };
+      }
+    >
+  >(new Map());
   useEffect(() => {
     if (!activePane) return;
     const paneKey = `${activePane.path}:${activePane.refreshKey}`;
+    const wanted = {
+      key: paneKey,
+      path: activePane.path,
+      title: activePane.title,
+      history: activePane.history,
+      histIndex: activePane.histIndex,
+    };
     // entries 可能在标签视图切换时被清空（下方 VIRTUAL_TAG 分支），空了就要重拉
     if (loadedPaneKeysRef.current.get(activePane.id) === paneKey && activePane.entries.length > 0) {
       return;
     }
     // 虚拟标签目录：不请求后端，清空 entries（由 TagView 渲染）
     if (VIRTUAL_TAG_RE.test(activePane.path)) {
+      loadCtlRef.current.delete(activePane.id);
       loadedPaneKeysRef.current.set(activePane.id, paneKey);
       setTabs((ts) =>
         ts.map((t) => {
@@ -1768,7 +1794,21 @@ useEffect(() => {
       );
       return;
     }
-    let cancelled = false;
+    const prev = loadCtlRef.current.get(activePane.id);
+    if (prev && !prev.done && prev.path === activePane.path) {
+      // 同路径「在途」：不重启（合并刷新风暴），只认领最新目标；
+      // 已完成的加载不在此列（done=true）——之后的 refreshKey bump 必须正常重载
+      prev.wanted = wanted;
+      return;
+    }
+    if (prev && !prev.done) prev.cancelled = true; // 不同路径的在途结果作废
+    const ctl: {
+      path: string;
+      cancelled: boolean;
+      done: boolean;
+      wanted: typeof wanted;
+    } = { path: activePane.path, cancelled: false, done: false, wanted };
+    loadCtlRef.current.set(activePane.id, ctl);
     setTabs((ts) =>
       ts.map((t) => {
         const p = t.panes[activePane.id];
@@ -1797,15 +1837,17 @@ useEffect(() => {
         };
       }),
     );
-    listDir(activePane.path)
+    listDir(ctl.path)
       .then((entries) => {
-        if (cancelled) return;
-        loadedPaneKeysRef.current.set(activePane.id, paneKey);
+        ctl.done = true;
+        if (ctl.cancelled) return;
+        const w = ctl.wanted;
+        loadedPaneKeysRef.current.set(activePane.id, w.key);
         lastGoodPaneRef.current.set(activePane.id, {
-          path: activePane.path,
-          title: activePane.title,
-          history: activePane.history,
-          histIndex: activePane.histIndex,
+          path: w.path,
+          title: w.title,
+          history: w.history,
+          histIndex: w.histIndex,
         });
         // 在 updater 外消费 pending：updater 必须是纯函数（StrictMode 会双调用，
         // 在内部清 ref 的副作用会被第二次调用丢弃，导致选中不生效）
@@ -1829,40 +1871,19 @@ useEffect(() => {
         );
       })
       .catch((e) => {
-        if (!cancelled) {
-          const msg = String(e);
-          // 加载失败可见性：不再只写 pane.error（状态栏一行小字，被传输/通知帧
-          // 盖住）——补一次报错浮层（showError 内部 terr 按码翻译）
-          showError(msg);
-          // 跳转到不存在的路径（NO_SUCH_PATH|详情，本地/SFTP/NFS 三后端统一在
-          // list_dir 接口按码产出）：回滚到上一有效目录——此前只变更路径栏、
-          // 列表空白且无「路径无效」提示。其余失败（权限/断连等）保持原位，
-          // 便于恢复后原路径直接重试。
-          const prev = isNoSuchPathError(msg) ? lastGoodPaneRef.current.get(activePane.id) : undefined;
-          if (prev && prev.path !== activePane.path) {
-            setTabs((ts) =>
-              ts.map((t) => {
-                const p = t.panes[activePane.id];
-                if (!p) return t;
-                return {
-                  ...t,
-                  panes: {
-                    ...t.panes,
-                    [activePane.id]: {
-                      ...p,
-                      path: prev.path,
-                      title: prev.title,
-                      history: prev.history,
-                      histIndex: prev.histIndex,
-                      loading: false,
-                      error: null,
-                    },
-                  },
-                };
-              }),
-            );
-            return;
-          }
+        ctl.done = true;
+        if (ctl.cancelled) return;
+        const w = ctl.wanted;
+        const msg = String(e);
+        // 加载失败可见性：不再只写 pane.error（状态栏一行小字，被传输/通知帧
+        // 盖住）——补一次报错浮层（showError 内部 terr 按码翻译）
+        showError(msg);
+        // 跳转到不存在的路径（NO_SUCH_PATH|详情，本地/SFTP/NFS 三后端统一在
+        // list_dir 接口按码产出）：回滚到上一有效目录——此前只变更路径栏、
+        // 列表空白且无「路径无效」提示。其余失败（权限/断连）保持原位，
+        // 便于恢复后原路径直接重试。
+        const prev = isNoSuchPathError(msg) ? lastGoodPaneRef.current.get(activePane.id) : undefined;
+        if (prev && prev.path !== w.path) {
           setTabs((ts) =>
             ts.map((t) => {
               const p = t.panes[activePane.id];
@@ -1871,17 +1892,35 @@ useEffect(() => {
                 ...t,
                 panes: {
                   ...t.panes,
-                  [activePane.id]: { ...p, loading: false, error: msg },
+                  [activePane.id]: {
+                    ...p,
+                    path: prev.path,
+                    title: prev.title,
+                    history: prev.history,
+                    histIndex: prev.histIndex,
+                    loading: false,
+                    error: null,
+                  },
                 },
               };
             }),
           );
+          return;
         }
+        setTabs((ts) =>
+          ts.map((t) => {
+            const p = t.panes[activePane.id];
+            if (!p) return t;
+            return {
+              ...t,
+              panes: {
+                ...t.panes,
+                [activePane.id]: { ...p, loading: false, error: msg },
+              },
+            };
+          }),
+        );
       });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, activePane?.id, activePane?.path, activePane?.refreshKey]);
 
   const setActivePane = useCallback(
@@ -5402,42 +5441,64 @@ useEffect(() => {
         targetDir = picked;
       }
       for (const a of archives) {
-        try {
-          const out = await extractArchive(
-            a.path,
-            targetDir,
-            mode === "folder" ? "folder" : "smart",
-          );
-          refreshPane(paneId);
-          // 解到别处时同步刷新展示该目录的其他窗格
-          if (targetDir !== pane.path) {
-            const ids = tabs
-              .flatMap((t) => Object.values(t.panes))
-              .filter((p) => p.path === targetDir && p.id !== paneId)
-              .map((p) => p.id);
-            if (ids.length > 0) refreshPanes(ids);
-          }
-          showError(t("已解压到 {name}（{n} 项）", { name: basename(out.dest), n: out.files }));
-        } catch (e) {
-          const msg = String(e);
-          if (msg === "NEED_PASSWORD" || msg === "WRONG_PASSWORD") {
-            // 密码框内就地重试，true = 已解压成功
-            const ok = await promptExtractPassword({
-              name: a.name,
-              archivePath: a.path,
+        // v0.52 覆盖确认重试环：撞名（EXTRACT_CONFLICT）→ 确认后带 overwrite 重解
+        let overwrite = false;
+        for (;;) {
+          try {
+            const out = await extractArchive(
+              a.path,
               targetDir,
-              paneId,
-              wrong: msg === "WRONG_PASSWORD",
-            });
-            if (!ok) return;
-            continue;
+              mode === "folder" ? "folder" : "smart",
+              undefined,
+              overwrite,
+            );
+            refreshPane(paneId);
+            // 解到别处时同步刷新展示该目录的其他窗格
+            if (targetDir !== pane.path) {
+              const ids = tabs
+                .flatMap((t) => Object.values(t.panes))
+                .filter((p) => p.path === targetDir && p.id !== paneId)
+                .map((p) => p.id);
+              if (ids.length > 0) refreshPanes(ids);
+            }
+            showError(t("已解压到 {name}（{n} 项）", { name: basename(out.dest), n: out.files }));
+            break;
+          } catch (e) {
+            const msg = String(e);
+            if (msg === "NEED_PASSWORD" || msg === "WRONG_PASSWORD") {
+              // 密码框内就地重试，true = 已解压成功
+              const ok = await promptExtractPassword({
+                name: a.name,
+                archivePath: a.path,
+                targetDir,
+                paneId,
+                wrong: msg === "WRONG_PASSWORD",
+              });
+              // prompt 内部已就地重解成功（true）——本归档完成，退出重试环
+              if (!ok) return;
+              break;
+            }
+            if (msg.startsWith("EXTRACT_CONFLICT|")) {
+              // v0.52 撞名不再静默编号：弹覆盖确认（覆盖=原名合并；取消=放弃本次解压）
+              const destName = msg.slice("EXTRACT_CONFLICT|".length) || a.name.replace(/\.[^.]+$/, "");
+              const ok = await appConfirm({
+                title: t("解压目标已存在"),
+                message: t("已存在同名文件夹「{name}」。覆盖将合并写入其中（同名文件将被替换）；取消则放弃本次解压。", { name: destName }),
+                confirmLabel: t("覆盖解压"),
+              });
+              if (ok) {
+                overwrite = true;
+                continue;
+              }
+              return;
+            }
+            showTransferError(e);
+            return;
           }
-          showTransferError(e);
-          return;
         }
       }
     },
-    [tabs, refreshPane, refreshPanes, showError, showTransferError, promptExtractPassword],
+    [tabs, refreshPane, refreshPanes, showError, showTransferError, promptExtractPassword, appConfirm],
   );
 
   // 快捷键：统一 keydown 分发（动作注册表 keymap.ts）
