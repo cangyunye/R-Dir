@@ -40,6 +40,7 @@ import {
   setHtml5Drag,
 } from "@/lib/native-drag";
 import { useDragRubberBand } from "@/hooks/useDragRubberBand";
+import { useStaleListing } from "@/hooks/useStaleListing";
 import { measureZoomRatio } from "@/lib/zoom";
 import { DragGhost } from "@/components/DragGhost";
 import { computeSlotShift, shiftKey, type ShiftSlot } from "@/lib/slot-shift";
@@ -389,6 +390,8 @@ export function IconGrid({
   }, [rowsByIndex, startRow, endRow]);
 
   const selectionSet = useMemo(() => new Set(selection), [selection]);
+  // v0.52 列表陈旧判定：导航后新列表到达前禁点（防快速连钻误点残留行）
+  const staleListing = useStaleListing(currentDir, entries);
   const primary = selection.length > 0 ? selection[0] : null;
 
   // 主选中滚入可视区（与 FileList 同语义）
@@ -814,7 +817,10 @@ export function IconGrid({
               ref={scrollRef}
               data-icongrid-body=""
               tabIndex={0}
-              className="min-h-0 flex-1 overflow-y-auto outline-none select-none"
+              className={cn(
+                "min-h-0 flex-1 overflow-y-auto outline-none select-none",
+                staleListing && "pointer-events-none opacity-60",
+              )}
               onMouseDown={startRubber}
               onKeyDown={handleKeyDown}
               onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}

@@ -36,6 +36,7 @@ import { isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
 import { dragOutFiles } from "@/lib/api";
 import { canNativeDragOut, fileUriList, setNativeDragOut, setHtml5Drag } from "@/lib/native-drag";
 import { useDragRubberBand } from "@/hooks/useDragRubberBand";
+import { useStaleListing } from "@/hooks/useStaleListing";
 import { QuickJump, type QuickJumpRow } from "@/components/QuickJump";
 import { TagMarker } from "@/components/TagView";
 import type { RenameState } from "@/components/FileList";
@@ -483,6 +484,8 @@ export function FileTreeList({
 
   // 选中集合 Set 化（渲染路径每行判断）
   const selectionSet = useMemo(() => new Set(selection), [selection]);
+  // v0.52 列表陈旧判定：导航后新列表到达前禁点（防快速连钻误点残留行）
+  const staleListing = useStaleListing(currentDir, entries);
   // ref 保鲜：拖拽/框选引擎与 QJ 回调的闭包读最新值
   const propsRef = useRef({
     onSelect,
@@ -735,7 +738,10 @@ export function FileTreeList({
             ref={listScrollRef}
             data-filelist-body=""
             tabIndex={0}
-            className="min-h-0 flex-1 overflow-y-auto overflow-x-auto pb-8 outline-none select-none [scrollbar-gutter:stable]"
+            className={cn(
+              "min-h-0 flex-1 overflow-y-auto overflow-x-auto pb-8 outline-none select-none [scrollbar-gutter:stable]",
+              staleListing && "pointer-events-none opacity-60",
+            )}
             onMouseDown={startRubber}
             onMouseDownCapture={(e) => {
               const ae = document.activeElement as HTMLElement | null;
