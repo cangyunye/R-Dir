@@ -8,6 +8,7 @@ mod extract;
 mod find;
 mod fs_ops;
 mod fs_watch;
+mod fslock;
 mod iconpos;
 #[cfg(feature = "index")]
 mod indexer;
@@ -58,6 +59,10 @@ pub(crate) const ERR_CANCELLED: &str = "CANCELLED";
 pub(crate) fn is_cancelled(err: &str) -> bool {
     err == ERR_CANCELLED || err.starts_with("CANCELLED|")
 }
+
+/// 占用错误码：删除/移动/改名撞到进程占用（Windows 共享冲突 / Unix EBUSY）时产出，
+/// 格式 "IN_USE|人话详情"。前端据此弹出占用详情对话框（fslock::probe_file_lock 列占用者）。
+pub(crate) const ERR_IN_USE: &str = "IN_USE";
 
 /// 应用全局状态
 #[derive(Default)]
@@ -3400,6 +3405,8 @@ pub fn run() {
         delete_entries,
         permanent_delete_entries,
         restore_from_trash,
+        fslock::probe_file_lock,
+        fslock::kill_process,
         create_dir,
         create_file,
         search_content,
