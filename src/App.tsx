@@ -1761,6 +1761,15 @@ useEffect(() => {
       }
     >
   >(new Map());
+  // v0.52 导航诊断：localStorage 设 rfm.debug-nav=1 后，控制台输出每次加载的
+  // 决策与耗时（快速连钻卡死排查用；默认关闭零开销）
+  const navDebug = (() => {
+    try {
+      return localStorage.getItem("rfm.debug-nav") === "1";
+    } catch {
+      return false;
+    }
+  })();
   useEffect(() => {
     if (!activePane) return;
     const paneKey = `${activePane.path}:${activePane.refreshKey}`;
@@ -1798,16 +1807,35 @@ useEffect(() => {
     if (prev && !prev.done && prev.path === activePane.path) {
       // 同路径「在途」：不重启（合并刷新风暴），只认领最新目标；
       // 已完成的加载不在此列（done=true）——之后的 refreshKey bump 必须正常重载
+      if (navDebug) console.info("[nav] 同路在途合并", paneKey);
       prev.wanted = wanted;
       return;
     }
-    if (prev && !prev.done) prev.cancelled = true; // 不同路径的在途结果作废
+    if (navDebug) {
+      console.info(
+        prev && !prev.done
+          ? "[nav] 取消旧路径在途 →"
+          : "[nav] 新加载 →",
+        paneKey,
+      );
+    }
+    if (prev && !prev.done) {
+      if (navDebug) console.info("[nav] 取消旧路径在途", prev.path);
+      prev.cancelled = true; // 不同路径的在途结果作废
+    }
     const ctl: {
       path: string;
       cancelled: boolean;
       done: boolean;
+      start: number;
       wanted: typeof wanted;
-    } = { path: activePane.path, cancelled: false, done: false, wanted };
+    } = {
+      path: activePane.path,
+      cancelled: false,
+      done: false,
+      start: performance.now(),
+      wanted,
+    };
     loadCtlRef.current.set(activePane.id, ctl);
     setTabs((ts) =>
       ts.map((t) => {
@@ -1840,6 +1868,13 @@ useEffect(() => {
     listDir(ctl.path)
       .then((entries) => {
         ctl.done = true;
+        if (navDebug) {
+          console.info(
+            `[nav] 完成 ${ctl.path} ${Math.round(performance.now() - ctl.start)}ms`,
+            entries.length,
+            "条",
+          );
+        }
         if (ctl.cancelled) return;
         const w = ctl.wanted;
         loadedPaneKeysRef.current.set(activePane.id, w.key);
@@ -1872,6 +1907,7 @@ useEffect(() => {
       })
       .catch((e) => {
         ctl.done = true;
+        if (navDebug) console.info(`[nav] 失败 ${ctl.path}`, String(e));
         if (ctl.cancelled) return;
         const w = ctl.wanted;
         const msg = String(e);
