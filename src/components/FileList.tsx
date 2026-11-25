@@ -147,6 +147,7 @@ export function FileList({
   onCreateShortcuts,
   menuCfg,
   onProperties,
+  onCheckLock,
   onPropertiesDir,
   onDiff,
   onSyncDiff,
@@ -259,6 +260,8 @@ export function FileList({
   menuCfg?: MenuConfig;
   /** v0.16 右键「属性」：对选中条目显示属性（目录递归统计大小） */
   onProperties: (entries: FileEntry[]) => void;
+  /** feat/file-lock 右键「查看占用」（App 弹 LockInfoDialog；不传则菜单不显示该项） */
+  onCheckLock?: (paths: string[]) => void;
   /** v0.17 空白处右键「属性（当前目录）」：统计 currentDir，与选中项无关 */
   onPropertiesDir: (dir: string) => void;
   /** v0.18 空白处右键「与另一窗格差异比对…」 */
@@ -1202,6 +1205,7 @@ export function FileList({
                 onToggleQuick={onToggleQuick}
                 onRefresh={onRefresh}
                 onProperties={onProperties}
+                        onCheckLock={onCheckLock}
                 onNewFolder={onNewFolder}
                 onNewFile={onNewFile}
               />

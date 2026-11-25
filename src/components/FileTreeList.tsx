@@ -124,6 +124,7 @@ export function FileTreeList({
   onCreateShortcuts,
   menuCfg,
   onProperties,
+  onCheckLock,
   onPropertiesDir,
   onDiff,
   onSyncDiff,
@@ -220,6 +221,8 @@ export function FileTreeList({
   onCreateShortcuts: (paths: string[], toDesktop: boolean) => void;
   menuCfg?: MenuConfig;
   onProperties: (entries: FileEntry[]) => void;
+  /** feat/file-lock 右键「查看占用」（App 弹 LockInfoDialog；不传则菜单不显示该项） */
+  onCheckLock?: (paths: string[]) => void;
   onPropertiesDir: (dir: string) => void;
   onDiff: () => void;
   onSyncDiff: () => void;
@@ -998,6 +1001,7 @@ export function FileTreeList({
                           onToggleQuick={onToggleQuick}
                           onRefresh={onRefresh}
                           onProperties={onProperties}
+                        onCheckLock={onCheckLock}
                           onNewFolder={onNewFolder}
                           onNewFile={onNewFile}
                         />

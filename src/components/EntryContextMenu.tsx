@@ -5,6 +5,7 @@
  * 展开态（MenuGroup 折叠组）由使用方持有 expandedMenu 状态传入，同一窗格内互斥展开。
  */
 import {
+  Activity,
   ArchiveRestore,
   ArrowLeftRight,
   Check,
@@ -204,6 +205,8 @@ export interface EntryMenuProps {
   onToggleQuick: (path: string) => void;
   onRefresh: () => void;
   onProperties: (entries: FileEntry[]) => void;
+  /** feat/file-lock 右键「查看占用」（仅本地条目显示；App 弹 LockInfoDialog） */
+  onCheckLock?: (paths: string[]) => void;
   /** v0.42 行菜单同样提供新建（作用于当前目录）：长列表铺满视口后右键空白困难 */
   onNewFolder: () => void;
   onNewFile: () => void;
@@ -263,6 +266,7 @@ export function EntryContextMenuContent({
   onToggleQuick,
   onRefresh,
   onProperties,
+  onCheckLock,
   onNewFolder,
   onNewFile,
 }: EntryMenuProps) {
@@ -574,6 +578,12 @@ export function EntryContextMenuContent({
       <ContextMenuItem onClick={onRefresh}>
         <RefreshCw className="mr-2 h-4 w-4" /> {t("刷新")}
       </ContextMenuItem>
+      {onCheckLock && !isSftpPath(entry.path) && !isNfsPath(entry.path) && !isHttpPath(entry.path) && (
+        // feat/file-lock 占用探测是本地语义（远程/虚拟路径不适用）
+        <ContextMenuItem onClick={() => onCheckLock(targets)}>
+          <Activity className="mr-2 h-4 w-4" /> {t("查看占用")}
+        </ContextMenuItem>
+      )}
       <ContextMenuSeparator />
       <ContextMenuItem
         onClick={() =>

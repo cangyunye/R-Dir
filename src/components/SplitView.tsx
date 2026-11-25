@@ -138,6 +138,8 @@ export interface PaneHandlers {
   menuCfg: MenuConfig;
   /** v0.16 右键「属性」 */
   onProperties: (entries: FileEntry[]) => void;
+  /** feat/file-lock 右键「查看占用」（App 弹 LockInfoDialog） */
+  onCheckLock?: (paths: string[]) => void;
   /** v0.17 空白处右键「属性（当前目录）」 */
   onPropertiesDir: (dir: string) => void;
   /** v0.18 空白处右键「与另一窗格差异比对…」 */
@@ -656,6 +658,7 @@ const PaneView = memo(function PaneView({
         onCreateShortcuts={h.onCreateShortcuts}
         menuCfg={h.menuCfg}
         onProperties={h.onProperties}
+        onCheckLock={h.onCheckLock}
         onPropertiesDir={h.onPropertiesDir}
         onDiff={h.onDiff}
         onSyncDiff={h.onSyncDiff}
@@ -742,6 +745,7 @@ const PaneView = memo(function PaneView({
         onCreateShortcuts={h.onCreateShortcuts}
         menuCfg={h.menuCfg}
         onProperties={h.onProperties}
+        onCheckLock={h.onCheckLock}
         onPropertiesDir={h.onPropertiesDir}
         onDiff={h.onDiff}
         onSyncDiff={h.onSyncDiff}
@@ -832,6 +836,7 @@ const PaneView = memo(function PaneView({
             onCreateShortcuts={h.onCreateShortcuts}
             menuCfg={h.menuCfg}
             onProperties={h.onProperties}
+        onCheckLock={h.onCheckLock}
             onPropertiesDir={h.onPropertiesDir}
             onDiff={h.onDiff}
             compareBase={compareBase}

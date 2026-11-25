@@ -2,6 +2,7 @@ import { invoke } from "./ipc";
 import { loadRemoteTempDir } from "./persist";
 import type {
   FileEntry,
+  FileLockStatus,
   FindEntry,
   IndexConfigFile,
   IndexHit,
@@ -210,6 +211,13 @@ export const restoreFromTrash = async (paths: string[]) => {
 
 /** 取消进行中的本地复制/移动（id 来自 transfer-progress 事件载荷） */
 export const cancelTransfer = (id: string) => invoke<void>("cancel_transfer", { id });
+
+/** 文件占用探测（feat/file-lock）：逐路径返回占用状态与占用进程清单 */
+export const probeFileLock = (paths: string[]) =>
+  invoke<FileLockStatus[]>("probe_file_lock", { paths });
+
+/** 结束占用进程（SIGTERM / TerminateProcess）。危险操作，调用方需二次确认 */
+export const killProcess = (pid: number) => invoke<void>("kill_process", { pid });
 
 /** 全量替换目录内容监视集合（本地窗格当前目录；变化经 fs://changed 事件回推） */
 export const fsWatchSet = (dirs: string[]) => invoke<void>("fs_watch_set", { dirs });
