@@ -1743,6 +1743,23 @@ useEffect(() => {
   const lastGoodPaneRef = useRef<
     Map<number, { path: string; title: string; history: string[]; histIndex: number }>
   >(new Map());
+  /** v0.52 目录列表缓存 + 单击预取（快速连钻体验核心）：单击选中目录的那一刻
+   *  就后台 listDir 预取，双击导航时若缓存新鲜（<15s）直接秒显内容，再后台
+   *  静默刷新确认。USB/网络盘上「双击 → 等枚举 → 才能进」的卡顿由此消除。 */
+  const dirCacheRef = useRef<Map<string, { entries: FileEntry[]; ts: number }>>(new Map());
+  const prefetchDir = useCallback(
+    (path: string) => {
+      if (!path) return;
+      const hit = dirCacheRef.current.get(path);
+      if (hit && Date.now() - hit.ts < 15_000) return;
+      void listDir(path)
+        .then((entries) => {
+          dirCacheRef.current.set(path, { entries, ts: Date.now() });
+        })
+        .catch(() => {});
+    },
+    [],
+  );
   /** v0.52 同路径在途加载合并（快速连钻卡死真因）：refreshKey 的任何 bump
    *  （watcher 事件 / F5 / 各类操作收尾的 refreshPane）都会重跑本 effect——
    *  旧实现无条件取消重启 listDir，慢后端（USB 大目录/远程）上刷新风暴期间
@@ -1762,7 +1779,8 @@ useEffect(() => {
     >
   >(new Map());
   // v0.52 导航诊断：localStorage 设 rfm.debug-nav=1 后，控制台输出每次加载的
-  // 决策与耗时（快速连钻卡死排查用；默认关闭零开销）
+  // 决策与耗时（快速连钻卡死排查用；默认关闭零开销）。同时无条件写入
+  // window.__navLog（环形缓冲 40 条，浏览器自动化可 evaluate 读取）。
   const navDebug = (() => {
     try {
       return localStorage.getItem("rfm.debug-nav") === "1";
@@ -1770,6 +1788,16 @@ useEffect(() => {
       return false;
     }
   })();
+  const navLog = (msg: string) => {
+    try {
+      const w = window as unknown as { __navLog?: string[] };
+      if (!Array.isArray(w.__navLog)) w.__navLog = [];
+      w.__navLog.push(`${Math.round(performance.now())}ms ${msg}`);
+      if (w.__navLog.length > 40) w.__navLog.shift();
+    } catch {
+      /* ignore */
+    }
+  };
   useEffect(() => {
     if (!activePane) return;
     const paneKey = `${activePane.path}:${activePane.refreshKey}`;
@@ -1807,10 +1835,12 @@ useEffect(() => {
     if (prev && !prev.done && prev.path === activePane.path) {
       // 同路径「在途」：不重启（合并刷新风暴），只认领最新目标；
       // 已完成的加载不在此列（done=true）——之后的 refreshKey bump 必须正常重载
+      navLog("同路在途合并 " + paneKey);
       if (navDebug) console.info("[nav] 同路在途合并", paneKey);
       prev.wanted = wanted;
       return;
     }
+    navLog((prev && !prev.done ? "取消旧路径在途 → " : "新加载 → ") + paneKey);
     if (navDebug) {
       console.info(
         prev && !prev.done
@@ -1849,6 +1879,10 @@ useEffect(() => {
         // 双击会命中上一级目录的残留行（看起来像「卡在下一个进入的目录」）。
         // 同目录刷新（F5/回车/watcher）维持静默，不清行不闪横条。
         const navigating = p.path !== activePane.path;
+        // v0.52 缓存预填：单击预取命中的目录直接秒显内容（不点亮加载横条），
+        // 后台 listDir 到达后再静默换新（无缓存仍清空+横条，Windows 语义）
+        const cached = navigating ? dirCacheRef.current.get(activePane.path) : undefined;
+        const freshCache = cached && Date.now() - cached.ts < 15_000 ? cached : undefined;
         const silentReload = !navigating && p.entries.length > 0 && !isSftpPath(p.path) && !isNfsPath(p.path);
         return {
           ...t,
@@ -1856,8 +1890,8 @@ useEffect(() => {
             ...t.panes,
             [activePane.id]: {
               ...p,
-              loading: !silentReload,
-              entries: navigating ? [] : p.entries,
+              loading: !silentReload && !freshCache,
+              entries: navigating ? (freshCache ? freshCache.entries : []) : p.entries,
               selection: navigating ? [] : p.selection,
               error: null,
             },
@@ -1868,6 +1902,7 @@ useEffect(() => {
     listDir(ctl.path)
       .then((entries) => {
         ctl.done = true;
+        navLog(`完成 ${ctl.path} ${Math.round(performance.now() - ctl.start)}ms ${entries.length}条`);
         if (navDebug) {
           console.info(
             `[nav] 完成 ${ctl.path} ${Math.round(performance.now() - ctl.start)}ms`,
@@ -2669,6 +2704,8 @@ useEffect(() => {
   // 列表操作（作用于指定 pane）
   const select = useCallback(
     (paneId: number, entry: FileEntry, additive: boolean) => {
+      // v0.52 单击目录即预取其列表：双击进入时缓存命中，秒开
+      if (entry.is_dir) void prefetchDir(entry.path);
       setTabs((ts) =>
         ts.map((t) => {
           const pane = t.panes[paneId];
