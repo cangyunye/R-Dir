@@ -132,6 +132,20 @@ export async function installTauriMock(page: Page): Promise<void> {
       name: `bulk${String(i + 1).padStart(2, "0")}.txt`,
       size: 10,
     }));
+    // v0.52 快速连钻复现夹具：每层 400 文件 + 1 子目录 × 3 层（大列表渲染压力）
+    FS["/mock/deep"] = [{ name: "L1", dir: true }];
+    FS["/mock/deep/L1"] = [
+      ...Array.from({ length: 400 }, (_, i) => ({ name: `f1_${String(i + 1).padStart(3, "0")}.txt`, size: 10 })),
+      { name: "L2", dir: true },
+    ];
+    FS["/mock/deep/L1/L2"] = [
+      ...Array.from({ length: 400 }, (_, i) => ({ name: `f2_${String(i + 1).padStart(3, "0")}.txt`, size: 10 })),
+      { name: "L3", dir: true },
+    ];
+    FS["/mock/deep/L1/L2/L3"] = Array.from({ length: 400 }, (_, i) => ({
+      name: `f3_${String(i + 1).padStart(3, "0")}.txt`,
+      size: 10,
+    }));
     // 链接目标键：经 link-to-docs 的 list_dir 与真实 read_dir 一样跟随目录链接
     FS[`${HOME}/link-to-docs`] = FS[`${HOME}/Documents`];
 

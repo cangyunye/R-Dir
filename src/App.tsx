@@ -1773,11 +1773,28 @@ useEffect(() => {
       ts.map((t) => {
         const p = t.panes[activePane.id];
         if (!p) return t;
-        // 快速重读不点亮「正在加载…」横条：本地已填充窗格的重读毫秒级，横条随每次
-        // 刷新闪一下（此前新建后 refreshPane + fs watcher 各一轮 = 连闪两次）。
+        // 快速重读不点亮「正在加载…」横条：本地已填充窗格的「同目录」重读毫秒级，
+        // 横条随每次刷新闪一下（此前新建后 refreshPane + fs watcher 各一轮 = 连闪两次）。
         // 首次进入（无内容可展示）与慢速远程后端（sftp/nfs）保留横条反馈。
-        const silentReload = p.entries.length > 0 && !isSftpPath(p.path) && !isNfsPath(p.path);
-        return { ...t, panes: { ...t.panes, [activePane.id]: { ...p, loading: !silentReload, error: null } } };
+        // v0.52 修复（Windows 语义）：**换目录导航**清空旧 entries 并点亮横条——
+        // 此前本地快速重读静默保留旧目录的陈旧行且可点击，快速连钻深层目录时
+        // 双击会命中上一级目录的残留行（看起来像「卡在下一个进入的目录」）。
+        // 同目录刷新（F5/回车/watcher）维持静默，不清行不闪横条。
+        const navigating = p.path !== activePane.path;
+        const silentReload = !navigating && p.entries.length > 0 && !isSftpPath(p.path) && !isNfsPath(p.path);
+        return {
+          ...t,
+          panes: {
+            ...t.panes,
+            [activePane.id]: {
+              ...p,
+              loading: !silentReload,
+              entries: navigating ? [] : p.entries,
+              selection: navigating ? [] : p.selection,
+              error: null,
+            },
+          },
+        };
       }),
     );
     listDir(activePane.path)

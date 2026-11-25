@@ -32,6 +32,7 @@ import { isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
 import { dragOutFiles } from "@/lib/api";
 import { canNativeDragOut, fileUriList, setNativeDragOut, setHtml5Drag } from "@/lib/native-drag";
 import { useDragRubberBand } from "@/hooks/useDragRubberBand";
+import { useStaleListing } from "@/hooks/useStaleListing";
 import {
   getNameColumnWidth,
   resetNameColumnWidth,
@@ -286,6 +287,8 @@ export function FileList({
     () => sortEntries(entries, sortKey, sortDir, showHidden),
     [entries, sortKey, sortDir, showHidden],
   );
+  // v0.52 列表陈旧判定：导航后新列表到达前列表禁点（防快速连钻误点残留行）
+  const staleListing = useStaleListing(currentDir, entries);
 
   const primary = selection.length > 0 ? selection[0] : null;
   /** Shift 范围选择的锚点 */
@@ -906,7 +909,10 @@ export function FileList({
         ref={listScrollRef}
         data-filelist-body=""
         tabIndex={0}
-        className="min-h-0 flex-1 overflow-y-auto overflow-x-auto pb-8 outline-none select-none [scrollbar-gutter:stable]"
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto overflow-x-auto pb-8 outline-none select-none [scrollbar-gutter:stable]",
+          staleListing && "pointer-events-none opacity-60",
+        )}
         onMouseDown={startRubber}
         onMouseDownCapture={(e) => {
           // 地址栏聚焦时保持光标；点击输入框/文本域不抢焦点；浮层内不抢焦点；否则聚焦列表
@@ -1077,7 +1083,7 @@ export function FileList({
                     }
                   }}
                   className={cn(
-                    "grid cursor-default items-center border-b text-[13px]",
+                    "grid cursor-default items-center text-[13px]",
                     selected ? "bg-selected" : "hover:bg-muted",
                     // v0.52 剪切置灰（Windows 语义）：剪贴板 op=cut 的行半透明
                     cutPaths?.has(entry.path) && "opacity-50",
