@@ -264,6 +264,8 @@ import { AppMenu } from "@/components/AppMenu";
 import { CommandPalette, type CommandItem } from "@/components/CommandPalette";
 import { FavoritesPalette } from "@/components/FavoritesPalette";
 import { PreviewDrawer } from "@/components/PreviewDrawer";
+import { NavDebugOverlay } from "@/components/NavDebugOverlay";
+import { navDebugPush, navDebugEnabled } from "@/lib/nav-debug";
 import { ThemeStudioDrawer, type ThemeStudioSession } from "@/components/ThemeStudioDrawer";
 import { BrowseMode } from "@/components/BrowseMode";
 import { useSniffPreviewList } from "@/hooks/useSniffPreviewList";
@@ -1752,6 +1754,7 @@ useEffect(() => {
       if (!path) return;
       const hit = dirCacheRef.current.get(path);
       if (hit && Date.now() - hit.ts < 15_000) return;
+      navDebugPush("prefetch", path);
       void listDir(path)
         .then((entries) => {
           dirCacheRef.current.set(path, { entries, ts: Date.now() });
@@ -1836,11 +1839,15 @@ useEffect(() => {
       // 同路径「在途」：不重启（合并刷新风暴），只认领最新目标；
       // 已完成的加载不在此列（done=true）——之后的 refreshKey bump 必须正常重载
       navLog("同路在途合并 " + paneKey);
+      navDebugPush("load.同路合并", paneKey);
+      navDebugPush("load.同路合并", paneKey);
       if (navDebug) console.info("[nav] 同路在途合并", paneKey);
       prev.wanted = wanted;
       return;
     }
     navLog((prev && !prev.done ? "取消旧路径在途 → " : "新加载 → ") + paneKey);
+    navDebugPush(prev && !prev.done ? "load.取消旧路径" : "load.新加载", paneKey);
+    navDebugPush(prev && !prev.done ? "load.取消旧路径" : "load.新加载", paneKey);
     if (navDebug) {
       console.info(
         prev && !prev.done
@@ -1903,6 +1910,8 @@ useEffect(() => {
       .then((entries) => {
         ctl.done = true;
         navLog(`完成 ${ctl.path} ${Math.round(performance.now() - ctl.start)}ms ${entries.length}条`);
+        navDebugPush("load.done", `${ctl.path} ${entries.length}条`);
+        navDebugPush("load.done", `${ctl.path} ${entries.length}条`);
         if (navDebug) {
           console.info(
             `[nav] 完成 ${ctl.path} ${Math.round(performance.now() - ctl.start)}ms`,
@@ -1943,6 +1952,8 @@ useEffect(() => {
       .catch((e) => {
         ctl.done = true;
         if (navDebug) console.info(`[nav] 失败 ${ctl.path}`, String(e));
+        navDebugPush("load.失败", `${ctl.path} ${String(e)}`);
+        navDebugPush("load.失败", `${ctl.path} ${String(e)}`);
         if (ctl.cancelled) return;
         const w = ctl.wanted;
         const msg = String(e);
@@ -2852,6 +2863,7 @@ useEffect(() => {
 
   const openEntry = useCallback(
     (paneId: number, entry: FileEntry) => {
+      navDebugPush("open", `${entry.is_dir ? "dir" : "file"} ${entry.path}`);
       /** 应用内导航到目录条目（is_dir 与「符号链接指向目录」共用） */
       const gotoDir = () => {
         // 目标 pane 导航
@@ -2874,6 +2886,7 @@ useEffect(() => {
         );
       };
       if (entry.is_dir) {
+        navDebugPush("gotoDir", entry.path);
         gotoDir();
         return;
       }
@@ -4906,6 +4919,7 @@ useEffect(() => {
   }, []);
 
   const startRename = useCallback((paneId: number, entry: FileEntry) => {
+    navDebugPush("rename-start", entry.path);
     setRenaming({ paneId, path: entry.path, name: entry.name });
   }, []);
 
@@ -5271,6 +5285,7 @@ useEffect(() => {
    *  与 navigate 的差异：路径来自面包屑段（已是绝对路径，无需解析/补全），
    *  sftp/tags 同样走 patchPane——连接中的会话内导航不涉及连接框分支。 */
   const navigatePane = useCallback((paneId: number, path: string) => {
+    navDebugPush("navigatePane", path);
     setTabs((ts) =>
       ts.map((t) => {
         const p = t.panes[paneId];
@@ -6366,6 +6381,13 @@ useEffect(() => {
         )}
 
         {/* v0.28 预览栏：右侧覆盖式拉门（悬浮在侧边栏+文件区上方，工具栏/状态栏保留） */}
+        {navDebugEnabled() && (
+          <NavDebugOverlay
+            panePath={activePane?.path ?? ""}
+            loading={!!activePane?.loading}
+            selection={activePane?.selection ?? []}
+          />
+        )}
         <PreviewDrawer
           entry={selInEntries ? previewEntry : treePreviewEntry}
           enabled={previewPrefs.enabled}
