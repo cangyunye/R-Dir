@@ -676,6 +676,21 @@ describe("FileList 行单击意图（双击自实现，不依赖 dblclick 事件
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it("选中后紧接着双击（事件序列 1,1,2，间隔 ≤450ms）：只在序号 2 打开一次，不提前打开", () => {
+    // 回归：曾把「序号 1 且距上次单击 ≤450ms」也算双击，导致双击的第一下就打开目录、
+    // 第二下落进新目录又打开一行（e2e undo-compress-move M1）
+    const onOpen = vi.fn();
+    const onRename = vi.fn();
+    const { container } = renderList({ onOpen, onRename });
+    const row = rowOf(container, "Documents");
+    fireEvent.click(row, { detail: 1 });
+    fireEvent.click(row, { detail: 1 });
+    expect(onOpen).not.toHaveBeenCalled();
+    fireEvent.click(row, { detail: 2 });
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onRename).not.toHaveBeenCalled();
+  });
+
   it("慢速双击（两次序号 1 的单击相隔 600ms）仍是重命名而不是打开", () => {
     vi.useFakeTimers({ now: 100_000 });
     try {

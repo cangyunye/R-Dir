@@ -1045,7 +1045,6 @@ export function FileList({
                       : rowClickIntent(
                           e.detail,
                           last && last.path === entry.path ? now - last.time : Infinity,
-                          !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey,
                         );
                     if (intent === "open") {
                       lastClickRef.current = null;
