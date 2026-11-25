@@ -63,6 +63,7 @@ import { MenuGroup } from "@/components/MenuGroup";
 import type { FileTags, MenuConfig, TagDef, TagNames } from "@/lib/persist";
 import type { LinkSide } from "@/lib/sync-link";
 import type { OpenerItem, ShellItem, GitToolItem } from "@/lib/openerApi";
+import { rowClickIntent } from "@/lib/row-click";
 
 interface Slot {
   c: number;
@@ -917,21 +918,30 @@ export function IconGrid({
                               suppressClickRef.current = false;
                               return;
                             }
-                            if (e.detail === 1) {
-                              const now = Date.now();
-                              const last = lastClickRef.current;
-                              if (
-                                last &&
-                                last.path === entry.path &&
-                                now - last.time > 450 &&
-                                now - last.time < 3000
-                              ) {
-                                lastClickRef.current = null;
-                                onRename(entry);
-                                return;
-                              }
-                              lastClickRef.current = { path: entry.path, time: now };
+                            // v0.52 双击改由单击自行判定（lib/row-click），不再挂 onDoubleClick：
+                            // WKWebView 只在连击序号==2 时派发 dblclick，连续快速点击后的偶数击
+                            // 不再触发（快速连钻卡在下一层的根因）；重命名框内点击不参与判定
+                            const now = Date.now();
+                            const last = lastClickRef.current;
+                            const intent = (e.target as HTMLElement).closest?.("input")
+                              ? "select"
+                              : rowClickIntent(
+                                  e.detail,
+                                  last && last.path === entry.path ? now - last.time : Infinity,
+                                  !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey,
+                                );
+                            if (intent === "open") {
+                              lastClickRef.current = null;
+                              onOpen(entry);
+                              return;
                             }
+                            if (intent === "rename") {
+                              // 慢速双击（Finder 风格）：两次独立单击同一条目、间隔 >450ms
+                              lastClickRef.current = null;
+                              onRename(entry);
+                              return;
+                            }
+                            if (e.detail === 1) lastClickRef.current = { path: entry.path, time: now };
                             if (e.shiftKey) {
                               e.preventDefault();
                               const clickIdx = sorted.findIndex((x) => x.path === entry.path);
@@ -949,7 +959,6 @@ export function IconGrid({
                             }
                             onSelect(entry, e.metaKey || e.ctrlKey);
                           }}
-                          onDoubleClick={() => onOpen(entry)}
                           onAuxClick={(e) => {
                             if (e.button === 1) {
                               e.preventDefault();

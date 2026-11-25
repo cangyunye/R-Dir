@@ -35,6 +35,7 @@ import { isMac } from "@/lib/keymap";
 import { isSftpPath, isHttpPath, isNfsPath } from "@/lib/sftp-path";
 import { dragOutFiles } from "@/lib/api";
 import { canNativeDragOut, fileUriList, setNativeDragOut, setHtml5Drag } from "@/lib/native-drag";
+import { rowClickIntent } from "@/lib/row-click";
 import { useDragRubberBand } from "@/hooks/useDragRubberBand";
 import { useStaleListing } from "@/hooks/useStaleListing";
 import { QuickJump, type QuickJumpRow } from "@/components/QuickJump";
@@ -828,17 +829,30 @@ export function FileTreeList({
                                 suppressClickRef.current = false;
                                 return;
                               }
-                              // 慢速双击（Finder 风格）→ 重命名
-                              if (e.detail === 1) {
-                                const now = Date.now();
-                                const last = lastClickRef.current;
-                                if (last && last.path === entry.path && now - last.time > 450 && now - last.time < 3000) {
-                                  lastClickRef.current = null;
-                                  onRename(entry);
-                                  return;
-                                }
-                                lastClickRef.current = { path: entry.path, time: now };
+                              // v0.52 双击改由单击自行判定（lib/row-click），不再挂 onDoubleClick：
+                              // WKWebView 只在连击序号==2 时派发 dblclick，连续快速点击后的偶数击
+                              // 不再触发（快速连钻卡在下一层的根因）；重命名框内点击不参与判定
+                              const now = Date.now();
+                              const last = lastClickRef.current;
+                              const intent = (e.target as HTMLElement).closest?.("input")
+                                ? "select"
+                                : rowClickIntent(
+                                    e.detail,
+                                    last && last.path === entry.path ? now - last.time : Infinity,
+                                    !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey,
+                                  );
+                              if (intent === "open") {
+                                lastClickRef.current = null;
+                                onOpen(entry);
+                                return;
                               }
+                              if (intent === "rename") {
+                                // 慢速双击（Finder 风格）→ 重命名
+                                lastClickRef.current = null;
+                                onRename(entry);
+                                return;
+                              }
+                              if (e.detail === 1) lastClickRef.current = { path: entry.path, time: now };
                               if (e.shiftKey) {
                                 e.preventDefault();
                                 const anchor = anchorRef.current;
@@ -857,7 +871,6 @@ export function FileTreeList({
                               anchorRef.current = entry.path;
                               onSelect(entry, e.metaKey || e.ctrlKey);
                             }}
-                            onDoubleClick={() => onOpen(entry)}
                             onAuxClick={(e) => {
                               if (e.button === 1) {
                                 e.preventDefault();
