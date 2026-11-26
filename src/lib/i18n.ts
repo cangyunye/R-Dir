@@ -94,6 +94,16 @@ export function isNoSuchPathError(msg: string): boolean {
   return msg === ERR_NO_SUCH_PATH || msg.startsWith(`${ERR_NO_SUCH_PATH}|`);
 }
 
+/** 文件被占用错误码（删除/移动/改名撞到进程占用时 Rust 产出：Windows 共享冲突
+ *  os error 32/33、Unix EBUSY、回收站「being used/占用」；前端据此弹占用详情
+ *  对话框，经 probe_file_lock 列出占用进程） */
+export const ERR_IN_USE = "IN_USE";
+
+/** 判定错误串是否为文件被占用（码或码|详情）——不用中文字符串匹配判定错误类型 */
+export function isInUseError(msg: string): boolean {
+  return msg === ERR_IN_USE || msg.startsWith(`${ERR_IN_USE}|`);
+}
+
 /** 读取持久化语言（rfm.language），缺省/非法值回退 zh */
 export function loadLanguage(): Language {
   try {

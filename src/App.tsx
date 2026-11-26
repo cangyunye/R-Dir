@@ -148,6 +148,7 @@ import type { SectionId as SettingsSectionId } from "@/components/SettingsDialog
 import { ConflictDialog } from "@/components/ConflictDialog";
 import { drilledTypeClashes, remoteNamesFromPlan, splitRemoteConflicts } from "@/lib/transfer";
 import { AppConfirmDialog, type AppConfirmRequest } from "@/components/AppConfirmDialog";
+import { LockInfoDialog, type LockInfoRequest } from "@/components/LockInfoDialog";
 import { MasterKeyDialog } from "@/components/MasterKeyDialog";
 import { basename, formatSize, isAbsolutePath } from "@/lib/format";
 import { hasScheme } from "@/lib/cmdline";
@@ -165,7 +166,7 @@ import {
 } from "@/lib/paneTree";
 import { ACTIONS, bindingOf, findAction, formatBinding, isMac, keyEventString } from "@/lib/keymap";
 import { loadLanguage, type Language } from "@/lib/i18n";
-import { isCancelledError, isExistsError, isNoSuchPathError, t, terr } from "@/lib/i18n";
+import { isCancelledError, isExistsError, isInUseError, isNoSuchPathError, t, terr } from "@/lib/i18n";
 import {
   applyThemePack,
   deleteThemePack as apiDeleteThemePack,
@@ -499,6 +500,8 @@ export default function App() {
   } | null>(null);
   /** v0.28.0 应用内确认框（替代原生 confirm：Windows 原生是经典样式弹窗） */
   const [appConfirmReq, setAppConfirmReq] = useState<AppConfirmRequest | null>(null);
+  /** feat/file-lock 占用详情弹层（删除/移动/改名 IN_USE 失败 + 右键「查看占用」共用） */
+  const [lockInfo, setLockInfo] = useState<LockInfoRequest | null>(null);
   /** 确认框裁决：confirm = 确认按钮、alt = 可选第三按钮（altLabel）、cancel = 取消/Esc/点遮罩 */
   const appConfirmResolver = useRef<((v: "confirm" | "cancel" | "alt") => void) | null>(null);
   const appConfirmChoice = useCallback(
@@ -1033,11 +1036,17 @@ useEffect(() => {
   /** 传输类失败（粘贴 / 拖拽 / 覆盖）：窗口中央红色浮层 + 状态栏留底。
    *  取消不是错误，只在状态栏轻提示。 */
   const showTransferError = useCallback(
-    (e: unknown) => {
+    (e: unknown, paths?: string[]) => {
       const msg = String(e);
       // 按码判定取消（i18n-error-codes：Rust 取消路径统一产出 CANCELLED）
       if (isCancelledError(msg)) {
         showError(t("已取消"));
+        return;
+      }
+      // 占用类失败（feat/file-lock IN_USE 码）：弹占用详情（列占用进程/可结束），状态栏留底
+      if (paths && paths.length > 0 && isInUseError(msg)) {
+        setLockInfo({ paths });
+        showError(msg);
         return;
       }
       const translated = terr(msg);
@@ -4080,7 +4089,7 @@ useEffect(() => {
         // 取消传输不算错误，收敛为轻提示；剪贴板保留可继续粘贴。
         // 真失败（覆盖被拒 / 源被占用…）走中央红色浮层——此前只有状态栏一行小字，
         // 还被 1.5 秒的传输完成帧盖住，用户以为「没反应」。
-        showTransferError(e);
+        showTransferError(e, localSrcs);
       }
     },
     [clipboard, activePane, tabs, refreshPane, refreshPanes, listDir, showError, showTransferError, pushOp, isSftpPath, runTransfer, promptConflicts],
@@ -4109,7 +4118,7 @@ useEffect(() => {
       });
       refreshPane(paneId);
     } catch (e) {
-      showTransferError(e);
+      showTransferError(e, activePane?.selection);
     }
   }, [activePane, refreshPane, showError, showTransferError, pushOp, runTransfer]);
 
@@ -4914,6 +4923,21 @@ useEffect(() => {
         }
         refreshPane(r.paneId);
       } catch (e) {
+        // 改名撞占用（feat/file-lock IN_USE 码）：列出占用进程，重试直接重走本地改名
+        if (isInUseError(String(e))) {
+          setLockInfo({
+            paths: [path],
+            onRetry: () =>
+              void renameEntry(path, trimmed)
+                .then((newPath) => {
+                  if (!r) return;
+                  pushOp({ kind: "rename", oldPath: path, newPath, paneId: r.paneId });
+                  refreshPane(r.paneId);
+                })
+                .catch((err) => showError(String(err))),
+          });
+          return;
+        }
         showError(String(e));
       }
     },
@@ -4948,19 +4972,36 @@ useEffect(() => {
             // 回收站删除可撤销：记录进撤销栈
             pushOp({ kind: "delete", paths: list, paneId: p });
           } catch (trashErr) {
-            // 回收站失败（被占用/权限/回收站不可用）：对齐资源管理器，给永久删除退路。
+            const trashMsg = String(trashErr);
+            // 被占用（feat/file-lock IN_USE 码）：占用详情对话框（列占用进程/可结束/可重试）
+            if (isInUseError(trashMsg)) {
+              setLockInfo({ paths: list, onRetry: () => void doDeleteNowRef.current(p, list) });
+              showError(trashMsg);
+              return;
+            }
+            // 回收站失败（权限/回收站不可用）：对齐资源管理器，给永久删除退路。
             // v0.28.0 应用内确认框（原 Tauri 原生 confirm 在 Windows 是经典样式弹窗）
             const ok = await appConfirm({
               title: t("移入回收站失败"),
               message: t("{err}\n\n要永久删除所选 {n} 项吗？此操作不可恢复。", {
-                err: String(trashErr),
+                err: terr(trashMsg),
                 n: list.length,
               }),
               confirmLabel: t("永久删除"),
               danger: true,
             });
             if (!ok) return;
-            await permanentDeleteEntries(list);
+            try {
+              await permanentDeleteEntries(list);
+            } catch (delErr) {
+              // 永久删除同样可能被占用 → 占用详情
+              if (isInUseError(String(delErr))) {
+                setLockInfo({ paths: list, onRetry: () => void doDeleteNowRef.current(p, list) });
+                showError(String(delErr));
+                return;
+              }
+              throw delErr;
+            }
           }
         }
         setTabs((ts) =>
@@ -4980,6 +5021,9 @@ useEffect(() => {
     },
     [refreshPane, showError, isSftpPath, pushOp, appConfirm],
   );
+  /** 占用对话框「重试」的重入句柄（同 doPasteLatestRef 模式，避免 useCallback 自引用） */
+  const doDeleteNowRef = useRef<(p: number, list: string[]) => Promise<void>>(async () => {});
+  doDeleteNowRef.current = doDeleteNow;
 
   const doDelete = useCallback(
     async (paneId?: number, paths?: string[]) => {
@@ -5920,6 +5964,7 @@ useEffect(() => {
     onCreateShortcuts: doCreateShortcuts,
     menuCfg,
     onProperties: (list) => setPropertiesEntries(list),
+    onCheckLock: (paths) => setLockInfo({ paths }),
     onPropertiesDir: (dir) => {
       // 空白处右键：统计当前目录本身（不受地址栏选中路径影响）
       void statEntry(dir)
@@ -6689,6 +6734,16 @@ useEffect(() => {
           onConfirm={() => settleAppConfirm("confirm")}
           onCancel={() => settleAppConfirm("cancel")}
           onAlt={() => settleAppConfirm("alt")}
+        />
+      )}
+
+      {/* feat/file-lock 占用详情（删除/移动/改名 IN_USE 失败 + 右键「查看占用」） */}
+      {lockInfo && (
+        <LockInfoDialog
+          req={lockInfo}
+          appConfirm={appConfirm}
+          onClose={() => setLockInfo(null)}
+          onError={(raw) => showError(raw)}
         />
       )}
 

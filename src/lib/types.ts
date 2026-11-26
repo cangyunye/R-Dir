@@ -446,3 +446,22 @@ export interface CommandSuggest {
   /** 命中的可执行文件完整路径 */
   path: string;
 }
+
+/** 单个占用进程（feat/file-lock，与 Rust 端 fslock::LockHolder 对应） */
+export interface LockHolder {
+  pid: number;
+  /** 进程/应用名（Windows=Restart Manager，mac=proc_name，Linux=comm） */
+  name: string;
+  /** 完整命令行（仅 Linux /proc 提供） */
+  command: string | null;
+}
+
+/** 单路径占用探测结果（与 Rust 端 fslock::FileLockStatus 对应） */
+export interface FileLockStatus {
+  path: string;
+  /** Windows=共享冲突；mac/Linux=有其他进程持有打开句柄（不阻断操作，仅提示） */
+  locked: boolean;
+  isDir: boolean;
+  /** 占用进程清单（已过滤自身；Windows 目录占用时为空） */
+  holders: LockHolder[];
+}

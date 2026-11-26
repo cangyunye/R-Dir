@@ -193,6 +193,7 @@ export function IconGrid({
   onCreateShortcuts,
   menuCfg,
   onProperties,
+  onCheckLock,
   onPropertiesDir,
   onDiff,
   compareBase,
@@ -300,6 +301,8 @@ export function IconGrid({
   /** v0.46 右键菜单显隐配置（设置 → 右键菜单） */
   menuCfg?: MenuConfig;
   onProperties: (entries: FileEntry[]) => void;
+  /** feat/file-lock 右键「查看占用」（App 弹 LockInfoDialog；不传则菜单不显示该项） */
+  onCheckLock?: (paths: string[]) => void;
   onPropertiesDir: (dir: string) => void;
   onDiff: () => void;
   compareBase?: { path: string; name: string } | null;
@@ -1121,6 +1124,7 @@ export function IconGrid({
                         onToggleQuick={onToggleQuick}
                         onRefresh={onRefresh}
                         onProperties={onProperties}
+                        onCheckLock={onCheckLock}
                         onNewFolder={onNewFolder}
                         onNewFile={onNewFile}
                       />
