@@ -39,8 +39,9 @@ export function LockInfoDialog({
   /** 结束进程/探测失败时的错误出口（App 传 showError，内部会过 terr） */
   onError: (raw: string) => void;
 }) {
-  // 弹层栈登记：更高层弹层（如结束进程的 appConfirm）打开时本框不抢 Esc
-  useModalLayer("lockInfo", 70, true);
+  // 弹层栈登记：z=65（内容弹层档，同 ConflictDialog）——结束进程的 appConfirm(70)
+  // 必须浮在本框之上可点；更高层弹层打开时本框不抢 Esc
+  useModalLayer("lockInfo", 65, true);
   const t = useT();
 
   const [statuses, setStatuses] = useState<FileLockStatus[] | null>(null);
@@ -103,7 +104,7 @@ export function LockInfoDialog({
   return (
     <div
       data-lock-info=""
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-[65] flex items-center justify-center bg-black/40"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
